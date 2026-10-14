@@ -117,6 +117,71 @@ the protection block [O]. The stock application never accesses it directly [O]. 
 application should **not** use this area, so that requests passed between boot and application
 across a reset survive. The full extent of boot-reserved RAM is **open**.
 
+### 5a. Boot request record at `0xFFF80080` (application ↔ boot, across a reset)
+
+A 0x48-byte record that lets the application hand a diagnostic request to the boot software
+(and back) across a software reset [O]. The boot manager start-up (`0x22444`) runs
+`0x2242C` over `0xFFF80000–0xFFF800FF` and `0xFFF84000–0xFFF840FF`; that routine **reads each word
+and writes it back** (RAM error-check initialisation), it does **not** clear them [O] — so the
+record survives the reset. Boot software runtime RAM starts at `0xFFF84100` [O].
+
+| Offset | Size | Content [O] |
+|---|---|---|
+| +0x00 | 2 | `0xA55A` |
+| +0x02 | 2 | `0x0048` (record length) |
+| +0x04 | 1 | source: 3 written by the application (`0x73FC4`) and by the bootloader (`0x11E34`); the boot manager accepts 2 or 3 |
+| +0x05 | 1 | target: **1** = bootloader, **2** = boot manager, **3** = application |
+| +0x08–0x18 | 4 each | diagnostic timing values (P2 / P2* / S3 style, from the active session's entry) |
+| +0x24 | 1 | `'w'` (0x77) = request active |
+| +0x25 | 1 | session-change flag (0x6C8C8: `0xFFF93B4E`) |
+| +0x26 | 1 | `0xFFF93B4D` (0x6C8B8) |
+| +0x2B | 1 | requested session index (`0xFFF9407C`), written when target = 1; also from 0x6C878 (`0xFFF93B4C`) |
+| +0x2C | 1 | communication-control state (`0xFFF93B4A`) |
+| +0x2E | 1 | `0xFFF924D4` |
+| +0x30 | 1 | session index to restore on return to the application |
+| +0x32, +0x33 | 1 | session status bytes |
+| +0x35 | 1 | 1 = a complete positive response is stored below; 0 = only the request is stored |
+| +0x36 | 1 | response length + 1 |
+| +0x37 | 1 | response SID (`SID \| 0x40` when +0x35 = 1, else the request SID) |
+| +0x38 | 1 | sub-function |
+| +0x39… | ≤ 8 | response data (session parameter record: P2 in ms, P2* in 10 ms, big-endian) |
+| +0x44 | 2 | `0x5AA5` |
+
+Readers [O]:
+- Boot manager `0x2264A`: if +0x00/+0x02/+0x44 are valid, +0x04 is 2 or 3 and +0x05 = 2, it
+  invalidates the header; `0x2362C` tests +0x05 = 2 and +0x24 = `'w'`.
+- Bootloader `0x11EA6`: +0x05 = 1 and +0x24 = `'w'` → stay in the bootloader and answer the
+  stored request. Going back, `0x11E34` writes source 3 and target 1 or 2 (by +0x2B), `0x11EBE` clears.
+- Application `0x7406A`: +0x05 = 3 and +0x24 = `'w'` → at start-up (`0x7FB94`, `0x80618`) send the
+  pending response, then clear the record (`0x74084`: header 0, source/target 0xFF, +0x24 = 0, +0x44 = 0).
+
+**Stock application path for DiagnosticSessionControl (0x10)** [O]:
+1. Service table entry at `0x4553C`: SID 0x10, handler `0x80A10`, confirmation `0x80C5C`,
+   session configuration `0x46660`.
+2. Session list `0x46927` (7 entries, index → session): 0 = `0x01`, 1 = `0x60`, 2 = `0x61`,
+   3 = `0x6B`, 4 = `0x02`, 5 = `0x03`, 6 = `0x66`. Handlers `0x4660C`; timing pairs `0x46628`
+   (0x01: 40 ms / 2 s; 0x60, 0x61, 0x6B: 50 ms / 5 s; 0x02, 0x03, 0x66: 40 ms / 2 s; units µs).
+3. Sessions 0x61, 0x6B and 0x02 (handlers `0x75EC6`, `0x75F38`, `0x75EFC`) check preconditions
+   (a condition bitmask; for 0x02 the mask comes from a variant-indexed table) and NRC 0x22 if
+   they fail, then run the state machine `0x76022` (state byte `0xFFF84A06`):
+   - state 0 → start shutdown preparation (`0x728F6`); answer 0x78 (response pending) until done;
+   - state 2 → prepare outputs (`0x14863A`, `0x73F76(0)`), return code 0x18 → `0x75E9C` stores the
+     request (+0x35 = 0) and `0x734FE` sets `'w'` and calls the header writer `0x73FC4` through the
+     diagnostic configuration (`0x45474` +0x1C);
+   - return code 0x17 (other path) → `0x75E2A` stores a full positive response (+0x35 = 1).
+4. `0x73FC4` sets target = 1 (bootloader) when the requested session index is 2 (`0x61`), or 3
+   (`0x6B`) with a configuration flag set; otherwise target = 2 (boot manager), which is the case
+   for the programming session `0x02`.
+5. The controller is then reset. [I] The reset is the stock reset routine `0x6865C` (reason code
+   in r0, logged in `0xFFF80D24…`, then a WDT quick reset by `0x966B8`: WRCR = `0x5A80`,
+   WTCR = `0xA563`); the exact call site after the record write was not traced.
+
+[I] **Project application (M1):** to hand over to the Bosch boot side for reprogramming, write the
+record exactly as `0x73FC4`/`0x75E9C` do for session `0x02` (target 2, request stored, +0x35 = 0)
+and reset through the WDT. The project linker keeps `0xFFF80000–0xFFF840FF` unused, so the record
+area is never touched by the application except for this write. To be confirmed on the bench
+spare before a vehicle unit relies on it.
+
 ## 6. Links that bind the application to other data
 
 - **EEPROM:** the application CRC (`0x29B578DF`) and the calibration CRC (`0x33569BA2`) are stored
@@ -185,7 +250,8 @@ vehicle exemption):
 2. CRC-32 of the stated range at +0x44 (application and calibration), computed by the build.
 3. Entry address at +0x7C; vector table from +0x80, inside the CRC range; VBR set by the entry code.
 4. Marker areas in the state shown in §3 (or written by the programming tool).
-5. No use of the boot handover RAM (§5).
+5. No use of the boot handover RAM (§5) other than writing the boot request record (§5a) when
+   handing over to the boot side for reprogramming.
 6. A defined behavior for the EEPROM CRC binding (§6).
 
 ## 8. Open items
@@ -198,4 +264,7 @@ vehicle exemption):
 3. ~~Whether the ACDP-2 recalculates CRCs~~ — it does not (user research); whether it writes the
    markers is still open.
 4. EEPROM reaction to a changed application/calibration CRC.
-5. Extent of boot-reserved RAM.
+5. Extent of boot-reserved RAM (known: `0xFFF80000–0xFFF800FF` and `0xFFF84000–0xFFF840FF` are
+   preserved across a reset; boot runtime RAM starts at `0xFFF84100`).
+6. Call site of the reset after the stock application writes the request record (§5a step 5),
+   and whether the boot manager needs anything beyond the record to start the bootloader.

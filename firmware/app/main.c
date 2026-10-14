@@ -1,4 +1,5 @@
-/* M0 application: boots, serves the watchdog and sends a bench heartbeat on CAN bus 1.
+/* M1 application: boots, serves the watchdog, receives and decodes the vehicle bus, and sends
+ * bench status frames on CAN bus 1. Drives no outputs.
  *
  * Heartbeat (BENCH USE ONLY, identifier not cleared for any vehicle bus):
  *   ID 0x7F0, DLC 8, every 100 ms
@@ -7,17 +8,67 @@
  *   bytes 2-3  uptime in seconds (big-endian)
  *   bytes 4-7  idle-loop count during the last 100 ms (big-endian); measured against the
  *              20 MHz peripheral clock this gives the CPU clock (spec 05 section 1.2)
+ *
+ * Input status (BENCH USE ONLY): ID 0x7F1, DLC 8, every 100 ms
+ *   bytes 0-1  engine speed, rpm (big-endian)
+ *   byte 2     lever range request (5 D, 6 N, 7 R, 8 P, 0 none)
+ *   byte 3     lever source (0 CAN-C 0x2EA, 1 shifter bus 0x210, 2 none)
+ *   bytes 4-5  input quality bits, 1 = valid: bit0 engine speed, 1 torque T1, 2 T2, 3 T3,
+ *              4 pedal, 5 engine temp, 6 brake, 7 engine mode, 8 park speed, 9 soak,
+ *              10 park request, 11 lever
+ *   byte 6     pedal, 0.5 % per bit
+ *   byte 7     brake state
  */
 #include "platform/platform.h"
 #include "bsw/sched/sched.h"
+#include "bsw/com/com.h"
+#include "io/vehicle/vehicle.h"
 
 #define HEARTBEAT_ID 0x7F0u
+#define INPUTS_ID    0x7F1u
 
 static uint8_t s_counter;
 
 static void task_1ms(void)
 {
+    can_frame_t f;
+
     plat_wdt_service();
+    for (uint8_t bus = 0u; bus < (uint8_t)CAN_BUS_COUNT; bus++) {
+        for (uint8_t n = 0u; n < 8u && plat_can_recv((can_bus_t)bus, &f); n++) {
+            vehicle_rx((can_bus_t)bus, &f);
+        }
+    }
+}
+
+static void task_10ms(void)
+{
+    vehicle_update_10ms();
+}
+
+static void send_inputs(void)
+{
+    const vehicle_in_t *v = vehicle_in();
+    const quality_t q[12] = {
+        v->q_engine_speed, v->q_torque_actual, v->q_torque_t2, v->q_torque_t3, v->q_pedal,
+        v->q_engine_temp, v->q_brake, v->q_engine_mode, v->q_park_speed, v->q_soak,
+        v->q_park_request, v->q_lever,
+    };
+    uint16_t bits = 0u;
+    can_frame_t f = { .id = INPUTS_ID, .dlc = 8u };
+
+    for (uint8_t i = 0u; i < 12u; i++) {
+        bits = (uint16_t)(bits | (q[i] == Q_OK ? 1u << i : 0u));
+    }
+    f.data[0] = (uint8_t)((uint16_t)v->engine_speed >> 8);
+    f.data[1] = (uint8_t)v->engine_speed;
+    f.data[2] = (uint8_t)v->lever;
+    f.data[3] = (uint8_t)v->lever_src;
+    f.data[4] = (uint8_t)(bits >> 8);
+    f.data[5] = (uint8_t)bits;
+    f.data[6] = (uint8_t)(v->pedal / 5u);
+    f.data[7] = (uint8_t)v->brake;
+    (void)plat_can_send(CAN_BUS1, &f);
 }
 
 static void task_100ms(void)
@@ -36,16 +87,20 @@ static void task_100ms(void)
     f.data[6] = (uint8_t)(idle >> 8);
     f.data[7] = (uint8_t)idle;
     (void)plat_can_send(CAN_BUS1, &f);
+    send_inputs();
 }
 
 static const task_t s_tasks[] = {
     { task_1ms,     1u, 0u },
+    { task_10ms,   10u, 1u },
     { task_100ms, 100u, 5u },
 };
 
 int main(void)
 {
     plat_init();
+    vehicle_init();
+    (void)com_register_hw();
     sched_init(s_tasks, (uint8_t)(sizeof s_tasks / sizeof s_tasks[0]));
 
     for (;;) {

@@ -10,6 +10,9 @@ include_directories(${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/include)
 
 set(CORE_SOURCES
     bsw/sched/sched.c
+    bsw/com/crc8.c
+    bsw/com/com.c
+    io/vehicle/profile_fca.c
     app/main.c
 )
 
@@ -20,8 +23,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         platform/sh7254r/start.S
         platform/sh7254r/header.c
         platform/sh7254r/plat_sh7254r.c
+        platform/sh7254r/libc_min.c
         ${CORE_SOURCES}
     )
+    # keep GCC from turning the memset/memcpy loops into calls to themselves
+    set_source_files_properties(platform/sh7254r/libc_min.c PROPERTIES
+        COMPILE_OPTIONS -fno-tree-loop-distribute-patterns)
+    target_include_directories(tcu_app.elf PRIVATE ${CMAKE_SOURCE_DIR}/platform/sh7254r/include)
     target_link_options(tcu_app.elf PRIVATE -T ${LDSCRIPT} -Wl,-Map=tcu_app.map)
     target_link_libraries(tcu_app.elf PRIVATE gcc)
     set_target_properties(tcu_app.elf PROPERTIES LINK_DEPENDS ${LDSCRIPT})
@@ -36,4 +44,10 @@ else()
     enable_testing()
     add_executable(test_sched tests/unit/test_sched.c bsw/sched/sched.c)
     add_test(NAME sched COMMAND test_sched)
+    add_executable(test_com tests/unit/test_com.c bsw/com/com.c bsw/com/crc8.c
+        tests/unit/stub_plat.c)
+    add_test(NAME com COMMAND test_com)
+    add_executable(test_profile_fca tests/unit/test_profile_fca.c io/vehicle/profile_fca.c
+        bsw/com/com.c bsw/com/crc8.c tests/unit/stub_plat.c)
+    add_test(NAME profile_fca COMMAND test_profile_fca)
 endif()

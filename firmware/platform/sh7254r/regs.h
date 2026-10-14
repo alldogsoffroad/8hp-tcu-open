@@ -70,6 +70,7 @@
 #define RCAN_IMR(b)    REG16((b) + 0x00Au)
 #define RCAN_TXPR(b)   REG32((b) + 0x020u)  /* TXPR1:TXPR0, must be written as 32 bits */
 #define RCAN_TXACK0(b) REG16((b) + 0x032u)
+#define RCAN_RXPR(b)   REG32((b) + 0x040u)  /* RXPR1:RXPR0, bit n = mailbox n; write 1 to clear */
 #define RCAN_MB_CTRL0H(b, n) REG16((b) + 0x100u + 32u * (n))          /* IDE RTR 0 STDID[10:0] EXTID[17:16] */
 #define RCAN_MB_CTRL0L(b, n) REG16((b) + 0x102u + 32u * (n))          /* EXTID[15:0] */
 #define RCAN_MB_LAFMH(b, n)  REG16((b) + 0x104u + 32u * (n))
@@ -82,6 +83,7 @@
 #define RCAN_GSR_RESET   0x0008u        /* GSR3: in reset mode  */
 #define RCAN_GSR_HALT    0x0010u        /* GSR4: halt/sleep     */
 #define RCAN_MBC_TX      (0u << 8)
+#define RCAN_MBC_RX      (3u << 8)      /* receive data frames only, LAFM usable */
 #define RCAN_MBC_OFF     (7u << 8)
 #define RCAN_MAILBOXES   32u
 

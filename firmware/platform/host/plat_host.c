@@ -1,15 +1,25 @@
 /* Host (PC) platform: real-time 1 ms tick, CAN frames printed to stdout.
- * Environment: TCU_SIM_MS = run time in milliseconds before exit (default 1000). */
+ * Environment:
+ *   TCU_SIM_MS     run time in milliseconds before exit (default 1000)
+ *   TCU_SIM_CANLOG candump -L log to replay ("(sec.usec) can0 108#0011..."); can0 = bus 1,
+ *                  can1 = bus 2; timestamps are taken relative to the first line */
 #define _POSIX_C_SOURCE 199309L
 #include "platform/platform.h"
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 static struct timespec s_next;
 static uint32_t s_ticks, s_limit = 1000u;
 static uint32_t s_idle;
+static FILE *s_log;
+static double s_log_t0 = -1.0;
+static can_bus_t s_pend_bus;
+static can_frame_t s_pend;
+static double s_pend_t;
+static bool s_pend_valid;
 
 static void add_ms(struct timespec *t)
 {
@@ -25,6 +35,11 @@ void plat_init(void)
     const char *e = getenv("TCU_SIM_MS");
     if (e != NULL) {
         s_limit = (uint32_t)strtoul(e, NULL, 10);
+    }
+    e = getenv("TCU_SIM_CANLOG");
+    if (e != NULL && (s_log = fopen(e, "r")) == NULL) {
+        perror(e);
+        exit(1);
     }
     clock_gettime(CLOCK_MONOTONIC, &s_next);
     add_ms(&s_next);
@@ -54,6 +69,63 @@ bool plat_can_send(can_bus_t bus, const can_frame_t *f)
         printf(" %02X", f->data[i]);
     }
     printf("\n");
+    return true;
+}
+
+bool plat_can_rx_register(can_bus_t bus, uint16_t id)
+{
+    (void)bus;
+    (void)id;
+    return true;            /* the replay delivers every frame; the receive layer filters */
+}
+
+/* Read the next frame of the replay log into s_pend. */
+static void log_next(void)
+{
+    char line[256], ifname[32], payload[64];
+    double t;
+    unsigned id;
+
+    s_pend_valid = false;
+    while (s_log != NULL && fgets(line, sizeof line, s_log) != NULL) {
+        char *hash;
+        size_t n;
+
+        if (sscanf(line, " (%lf) %31s %63s", &t, ifname, payload) != 3 ||
+            (hash = strchr(payload, '#')) == NULL || sscanf(payload, "%x#", &id) != 1) {
+            continue;
+        }
+        n = strlen(hash + 1) / 2u;
+        if (n > 8u || id > 0x7FFu) {
+            continue;
+        }
+        if (s_log_t0 < 0.0) {
+            s_log_t0 = t;
+        }
+        s_pend_t = (t - s_log_t0) * 1000.0;
+        s_pend_bus = strcmp(ifname, "can1") == 0 ? CAN_BUS2 : CAN_BUS1;
+        s_pend.id = (uint16_t)id;
+        s_pend.dlc = (uint8_t)n;
+        for (size_t i = 0u; i < n; i++) {
+            unsigned v;
+            sscanf(hash + 1 + 2u * i, "%2x", &v);
+            s_pend.data[i] = (uint8_t)v;
+        }
+        s_pend_valid = true;
+        return;
+    }
+}
+
+bool plat_can_recv(can_bus_t bus, can_frame_t *f)
+{
+    if (!s_pend_valid) {
+        log_next();
+    }
+    if (!s_pend_valid || s_pend_bus != bus || s_pend_t > (double)s_ticks) {
+        return false;
+    }
+    *f = s_pend;
+    s_pend_valid = false;
     return true;
 }
 

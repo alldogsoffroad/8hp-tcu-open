@@ -22,8 +22,15 @@ bool plat_tick_poll(void);
 /* Watchdog: must be called at least every 30 ms (spec 05 section 2). */
 void plat_wdt_service(void);
 
-/* Queue a frame for transmission; returns false if the transmit buffer is busy. */
+/* Queue a frame for transmission; returns false if all transmit buffers are busy. */
 bool plat_can_send(can_bus_t bus, const can_frame_t *f);
+
+/* Accept frames with this identifier on the bus (one hardware mailbox per identifier).
+ * Returns false when the bus has no free receive mailbox. */
+bool plat_can_rx_register(can_bus_t bus, uint16_t id);
+
+/* Fetch one received frame, if any. Polled from task context. */
+bool plat_can_recv(can_bus_t bus, can_frame_t *f);
 
 /* Busy-loop counter used to estimate the CPU clock during bring-up (spec 05 section 1.2). */
 void plat_idle_count(void);

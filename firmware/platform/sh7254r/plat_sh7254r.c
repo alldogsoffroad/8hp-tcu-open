@@ -1,4 +1,4 @@
-/* SH7254R platform layer for M0: safe pin state, watchdog, 1 ms tick, CAN bus 1 transmit. */
+/* SH7254R platform layer: safe pin state, watchdog, 1 ms tick, CAN buses 1 and 2. */
 #include "platform/platform.h"
 #include "regs.h"
 
@@ -83,9 +83,15 @@ bool plat_tick_poll(void)
     return false;
 }
 
-/* ---- CAN (RCAN-TL1, spec 05 section 1.1: 500 kbit/s) -------------------------- */
-#define CAN1 RCAN_A_BASE
-#define TX_MB 1u
+/* ---- CAN (RCAN-TL1, spec 05 section 1.1: 500 kbit/s) --------------------------
+ * Bus 1 (CAN-C) on channel A, bus 2 (shifter / diagnostic bus) on channel C.
+ * Mailboxes 1..3 transmit, 4..31 receive (one exact identifier each). Mailbox 0 unused. */
+#define TX_MB_FIRST 1u
+#define TX_MB_LAST  3u
+#define RX_MB_FIRST 4u
+
+static const uint32_t s_can_base[CAN_BUS_COUNT] = { RCAN_A_BASE, RCAN_C_BASE };
+static uint8_t s_rx_next[CAN_BUS_COUNT] = { RX_MB_FIRST, RX_MB_FIRST };
 
 static bool can_init(uint32_t b)
 {
@@ -108,23 +114,73 @@ static bool can_init(uint32_t b)
 
 bool plat_can_send(can_bus_t bus, const can_frame_t *f)
 {
-    const uint32_t b = CAN1;
+    uint32_t b;
 
-    if (bus != CAN_BUS1 || f->dlc > 8u) {
-        return false;                   /* M0: bus 1 only */
+    if (bus >= CAN_BUS_COUNT || f->dlc > 8u) {
+        return false;
     }
-    if ((RCAN_TXPR(b) & (1u << TX_MB)) != 0u) {
-        return false;                   /* previous frame still pending */
+    b = s_can_base[bus];
+    for (uint32_t mb = TX_MB_FIRST; mb <= TX_MB_LAST; mb++) {
+        if ((RCAN_TXPR(b) & (1u << mb)) != 0u) {
+            continue;                   /* still pending */
+        }
+        RCAN_MB_CTRL1(b, mb) = RCAN_MBC_OFF;
+        RCAN_MB_CTRL0H(b, mb) = (uint16_t)((f->id & 0x7FFu) << 2);
+        RCAN_MB_CTRL0L(b, mb) = 0u;
+        for (uint8_t i = 0u; i < 8u; i++) {
+            RCAN_MB_DATA(b, mb, i) = f->data[i];
+        }
+        RCAN_MB_CTRL1(b, mb) = (uint16_t)(RCAN_MBC_TX | f->dlc);
+        RCAN_TXPR(b) = 1u << mb;
+        return true;
     }
-    RCAN_MB_CTRL1(b, TX_MB) = RCAN_MBC_OFF;
-    RCAN_MB_CTRL0H(b, TX_MB) = (uint16_t)((f->id & 0x7FFu) << 2);
-    RCAN_MB_CTRL0L(b, TX_MB) = 0u;
-    for (uint8_t i = 0u; i < 8u; i++) {
-        RCAN_MB_DATA(b, TX_MB, i) = f->data[i];
+    return false;
+}
+
+bool plat_can_rx_register(can_bus_t bus, uint16_t id)
+{
+    uint32_t b, mb;
+
+    if (bus >= CAN_BUS_COUNT || s_rx_next[bus] >= RCAN_MAILBOXES) {
+        return false;
     }
-    RCAN_MB_CTRL1(b, TX_MB) = (uint16_t)(RCAN_MBC_TX | f->dlc);
-    RCAN_TXPR(b) = 1u << TX_MB;
+    b = s_can_base[bus];
+    mb = s_rx_next[bus]++;
+    /* Mailbox is inactive (MBC 7) since can_init, so it may be configured now. */
+    RCAN_MB_CTRL0H(b, mb) = (uint16_t)((id & 0x7FFu) << 2);   /* standard data frame */
+    RCAN_MB_CTRL0L(b, mb) = 0u;
+    RCAN_MB_LAFMH(b, mb) = 0u;                                  /* all identifier bits compared */
+    RCAN_MB_LAFML(b, mb) = 0u;
+    RCAN_MB_CTRL1(b, mb) = (uint16_t)(RCAN_MBC_RX | 8u);        /* NMC 0: newest frame kept */
     return true;
+}
+
+bool plat_can_recv(can_bus_t bus, can_frame_t *f)
+{
+    uint32_t b, pending;
+
+    if (bus >= CAN_BUS_COUNT) {
+        return false;
+    }
+    b = s_can_base[bus];
+    pending = RCAN_RXPR(b);
+    for (uint32_t mb = RX_MB_FIRST; mb < s_rx_next[bus]; mb++) {
+        if ((pending & (1u << mb)) == 0u) {
+            continue;
+        }
+        RCAN_RXPR(b) = 1u << mb;        /* clear first: a frame arriving during the copy
+                                           sets it again and is read next time */
+        f->id = (uint16_t)((RCAN_MB_CTRL0H(b, mb) >> 2) & 0x7FFu);
+        f->dlc = (uint8_t)(RCAN_MB_CTRL1(b, mb) & 0x0Fu);
+        if (f->dlc > 8u) {
+            f->dlc = 8u;
+        }
+        for (uint8_t i = 0u; i < 8u; i++) {
+            f->data[i] = RCAN_MB_DATA(b, mb, i);
+        }
+        return true;
+    }
+    return false;
 }
 
 /* ---- Idle counter ------------------------------------------------------------ */
@@ -145,6 +201,7 @@ void plat_init(void)
     wdt_init();             /* first, so the boot side's watchdog setting is replaced early */
     port_init();
     tick_init();
-    (void)can_init(CAN1);
+    (void)can_init(RCAN_A_BASE);
+    (void)can_init(RCAN_C_BASE);
     plat_wdt_service();
 }
