@@ -176,6 +176,25 @@ Readers [O]:
    in r0, logged in `0xFFF80D24…`, then a WDT quick reset by `0x966B8`: WRCR = `0x5A80`,
    WTCR = `0xA563`); the exact call site after the record write was not traced.
 
+**Power-on check of the record** [O]: the boot data block descriptor (`0x6078`) offers the user
+boot MAT a table of entry points into the boot manager: `0x24A0C`, `0x24A26`, `0x24A24` (empty),
+`0x24B10`, `0x24B26`, `0x624C`, `0x625A`, `0x631A`, `0x62F6`. [I] `0x24A26` is the start-up
+request check:
+- record header `0xA55A`, length `0x48` and trailer `0x5AA5` valid, target **2** → (source 3:
+  `0x25416` over the hand-over area) set `0xFFF8403E` = 1 and run the **boot manager** main loop
+  (`0x24974`), which takes over the stored request through its own copy of the diagnostic session
+  layer (`0x25680`, `0x2558A`; the same Bosch library as the application). `'w'` is not tested here;
+- valid header, target **1** → bootloader entry (pointer `0x24B38`);
+- a second record form at `0xFFF80000` (length `0x14`, trailer at `+0x12`) → a separate start
+  path (`0x24B70`), meaning open;
+- otherwise `0x24144(0x2F0)` and return → [I] the user boot MAT goes on to start the application.
+
+`0x24A0C` copies a 0x34-byte block into the hand-over area, clears `0xFFF8403E` and enters the
+boot manager: [I] the path used when the user boot MAT does not start the application.
+No code was found that listens on CAN at power-up **before** the application starts, without a
+record. [I] So with an application that does not hand over, the Bosch boot software is
+reachable only if the user boot MAT rejects the application (markers / CRC / header).
+
 [I] **Project application (M1):** to hand over to the Bosch boot side for reprogramming, write the
 record exactly as `0x73FC4`/`0x75E9C` do for session `0x02` (target 2, request stored, +0x35 = 0)
 and reset through the WDT. The project linker keeps `0xFFF80000–0xFFF840FF` unused, so the record
@@ -266,8 +285,9 @@ vehicle exemption):
 4. EEPROM reaction to a changed application/calibration CRC.
 5. Extent of boot-reserved RAM (known: `0xFFF80000–0xFFF800FF` and `0xFFF84000–0xFFF840FF` are
    preserved across a reset; boot runtime RAM starts at `0xFFF84100`).
-6. Whether the boot manager offers a programming entry at power-up that does not depend on the
-   application (decides how a unit with a non-cooperating application is recovered), and how
-   ACDP-2 module 19 connects (CAN diagnostics vs. bench / boot mode).
+6. The user boot MAT's start decision. ACDP-2 module 19 connects over CAN through a custom plug
+   (user, 2026-10-14), so a unit whose application does not hand over (§5a) can only be
+   recovered if the user boot MAT rejects that application, or through the chip's own boot mode
+   (which risks the user boot MAT, §6.1).
 7. Call site of the reset after the stock application writes the request record (§5a step 5),
    and whether the boot manager needs anything beyond the record to start the bootloader.
