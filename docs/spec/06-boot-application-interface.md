@@ -67,6 +67,14 @@ value 0xFFFFFFFF, final XOR 0xFFFFFFFF — identical to zlib `crc32`) over the b
 The calibration header has the same layout with its own range (`0x190000–0x1FFD5F`) and markers
 (`0x180000`, `0x180100`).
 
+**Header check in the boot manager** [O] (`0x24FD0`): a header is accepted only if the word at
++0x00 has the form `0x876543xx`, the end pointer at **+0x0C** lies inside `0x6000–0x1FFFFF` and is
+4-byte aligned, and the word at that end address is **`0x12345678`**. Every stock block carries
+this end word (application `0x17FBFC`, calibration `0x1FFDEC`, boot blocks `0x7CFC`, `0x3FDFC`);
+it lies outside the CRC range. The application tail before it (`0x17FB70`) holds an
+identification string (`0JIXC224` in the stock image), and header +0x74 points to a table of
+calibration pointers that is not referenced by the boot side [O].
+
 ## 3. Validity markers
 
 Each replaceable block has two 256-byte marker areas listed in its header and in the boot's block
@@ -172,7 +180,8 @@ vehicle exemption):
 
 ## 7. What a project image must provide (summary)
 
-1. Header at `0x40000` in the format of §2, chained to the calibration header at `0x180200`.
+1. Header at `0x40000` in the format of §2, chained to the calibration header at `0x180200`,
+   with the end word `0x12345678` at the address in +0x0C (checked by the boot manager).
 2. CRC-32 of the stated range at +0x44 (application and calibration), computed by the build.
 3. Entry address at +0x7C; vector table from +0x80, inside the CRC range; VBR set by the entry code.
 4. Marker areas in the state shown in §3 (or written by the programming tool).

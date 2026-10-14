@@ -1,0 +1,150 @@
+/* SH7254R platform layer for M0: safe pin state, watchdog, 1 ms tick, CAN bus 1 transmit. */
+#include "platform/platform.h"
+#include "regs.h"
+
+/* ---- Pins ----------------------------------------------------------------
+ * Same two-step sequence as the stock firmware (spec 01 section 4):
+ * 1. safe directions and levels (stock 0x961F0), 2. peripheral pin functions (stock 0x962E2). */
+static void port_init(void)
+{
+    /* Ports A, B, C: general input, functions cleared */
+    PACR1 = 0u; PACR2 = 0u; PACR3 = 0u; PACR4 = 0u; PAIOR = 0u; PADR = 0u; PAPSR = 0u;
+    PBCR1 = 0u; PBCR2 = 0u; PBCR3 = 0u; PBCR4 = 0u; PBIOR = 0u; PBDR = 0u;
+    PBIR = 0u; PBDSR = 0u; PBPSR = 0u;
+    PCCR1 = 0u; PCCR2 = 0u; PCCR3 = 0u; PCCR4 = 0u; PCIOR = 0u; PCDR = 0u;
+    PCPSR = 0u; PCIR = 0u; PCDSR = 0u;
+
+    /* Ports D..L at 0xFFFFC800 (values from the stock initialisation) */
+    PFC16(0x0E) = 0u;      PFC16(0x0C) = 0u;      PFC16(0x08) = 0x0010u;
+    PFC16(0x00) = 0u;      PFC16(0x04) = 0u;
+    PFC16(0x1E) = 0u;      PFC16(0x1C) = 0u;      PFC16(0x18) = 0u;
+    PFC16(0x10) = 0u;      PFC16(0x14) = 0u;      PFC16(0x16) = 0u;
+    PFC16(0x2E) = 0u;      PFC16(0x2C) = 0u;      PFC16(0x2A) = 0u;
+    PFC16(0x20) = 0u;      PFC16(0x24) = 0u;      PFC16(0x26) = 0u;
+    PFC16(0x28) = 0x8000u;
+    PFC16(0x42) = 0u;      PFC16(0x40) = 0u;      PFC16(0x44) = 0u;
+    PFC16(0x3C) = 0xFFFFu; PFC16(0x30) = 0xFFFFu; /* port G: all outputs, high (SPI CS idle) */
+    PFC16(0x34) = 0u;      PFC16(0x36) = 0u;
+    PFC16(0x58) = 0u;      PFC16(0x54) = 0u;      PFC16(0x50) = 0u;
+    PJCR1 = 0u;            PJCR2 = 0u;            PFC16(0x74) = 0u;
+    PJIOR = 0x0125u;       PJDR = 0x0125u;        /* PJ0/2/5/8 out, high: CAN TX recessive */
+    PFC16(0x64) = 0u;      PFC16(0x66) = 0u;      PJPSR = 0x024Au;
+    PFC16(0x92) = 0u;      PFC16(0x90) = 0u;
+    PFC16(0x8C) = 0x061Bu; PFC16(0x80) = 0x061Bu; /* port K: SPI clock/MOSI idle high */
+    PFC16(0x84) = 0u;      PFC16(0x86) = 0u;      PFC16(0x88) = 0x0824u;
+    PFC16(0xAE) = 0u;      PFC16(0xAC) = 0u;
+    PFC16(0xA8) = 0x01FCu; PFC16(0xA0) = 0u;      /* port L: PL2..PL8 out, low (PWM off) */
+    PFC16(0xA4) = 0u;
+    CKCR |= 0x01u;
+
+    /* Peripheral pin functions (stock 0x962E2). Only CAN is used in M0, but the full set is
+     * applied so that every pin is in the same state as under the stock firmware. */
+    PFC16(0x0E) |= 0xFDD5u; PFC16(0x0C) |= 0x00FDu;
+    PFC16(0x1E) |= 0x5000u; PFC16(0x1C) |= 0x0555u;
+    PFC16(0x2E)  = 0xFFFFu; PFC16(0x2C) |= 0x0FFFu;
+    PFC16(0x42) |= 0xAAAAu; PFC16(0x40) |= 0x00AAu;
+    PFC16(0x58) |= 0x0FFFu;
+    PJCR1 |= 0x14AFu;       PJCR2 |= 0x0005u;     /* CAN A/B/C, SCI A/B */
+    PFC16(0x92) |= 0x0AAAu; PFC16(0x90) |= 0x00A8u;
+    PFC16(0xAE) |= 0x5550u; PFC16(0xAC) |= 0x0001u;
+}
+
+/* ---- Watchdog (spec 05 section 2) ------------------------------------------ */
+static void wdt_init(void)
+{
+    WDT_WTCR  = 0xA547u;    /* stop (TME = 0) before changing the clock select */
+    WDT_WRCR  = 0x5A80u;    /* overflow resets the chip                        */
+    WDT_WTCNT = 0x5AB7u;    /* first overflow after ~60 ms                     */
+    WDT_WTCR  = 0xA567u;    /* watchdog mode, running, P/16384                 */
+}
+
+void plat_wdt_service(void)
+{
+    WDT_WTCNT = 0x5ADBu;    /* ~30 ms to overflow */
+}
+
+/* ---- 1 ms tick: CMT0, P/8 = 2.5 MHz, compare 2499 --------------------------- */
+static void tick_init(void)
+{
+    CMT_CMSTR &= (uint16_t)~0x0001u;
+    CMT_CMCR0  = 0x00u;
+    CMT_CMCNT0 = 0u;
+    CMT_CMCOR0 = 2499u;
+    CMT_CMSR0  = 0x00u;
+    CMT_CMSTR |= 0x0001u;
+}
+
+bool plat_tick_poll(void)
+{
+    if ((CMT_CMSR0 & 0x01u) != 0u) {
+        CMT_CMSR0 = 0x00u;
+        return true;
+    }
+    return false;
+}
+
+/* ---- CAN (RCAN-TL1, spec 05 section 1.1: 500 kbit/s) -------------------------- */
+#define CAN1 RCAN_A_BASE
+#define TX_MB 1u
+
+static bool can_init(uint32_t b)
+{
+    uint32_t guard;
+
+    RCAN_MCR(b) = RCAN_MCR_RESET;
+    for (guard = 100000u; guard != 0u && (RCAN_GSR(b) & RCAN_GSR_RESET) == 0u; guard--) {
+    }
+    RCAN_IMR(b)  = 0xFFFFu;             /* polled operation */
+    RCAN_BCR1(b) = 0xE330u;             /* TSEG1 15, TSEG2 4, SJW 4 */
+    RCAN_BCR0(b) = 0x0000u;             /* BRP 0 -> 500 kbit/s at 20 MHz */
+    for (uint32_t n = 0u; n < RCAN_MAILBOXES; n++) {
+        RCAN_MB_CTRL1(b, n) = RCAN_MBC_OFF;
+    }
+    RCAN_MCR(b) = 0x0000u;              /* leave reset: normal operation */
+    for (guard = 100000u; guard != 0u && (RCAN_GSR(b) & RCAN_GSR_RESET) != 0u; guard--) {
+    }
+    return guard != 0u;
+}
+
+bool plat_can_send(can_bus_t bus, const can_frame_t *f)
+{
+    const uint32_t b = CAN1;
+
+    if (bus != CAN_BUS1 || f->dlc > 8u) {
+        return false;                   /* M0: bus 1 only */
+    }
+    if ((RCAN_TXPR(b) & (1u << TX_MB)) != 0u) {
+        return false;                   /* previous frame still pending */
+    }
+    RCAN_MB_CTRL1(b, TX_MB) = RCAN_MBC_OFF;
+    RCAN_MB_CTRL0H(b, TX_MB) = (uint16_t)((f->id & 0x7FFu) << 2);
+    RCAN_MB_CTRL0L(b, TX_MB) = 0u;
+    for (uint8_t i = 0u; i < 8u; i++) {
+        RCAN_MB_DATA(b, TX_MB, i) = f->data[i];
+    }
+    RCAN_MB_CTRL1(b, TX_MB) = (uint16_t)(RCAN_MBC_TX | f->dlc);
+    RCAN_TXPR(b) = 1u << TX_MB;
+    return true;
+}
+
+/* ---- Idle counter ------------------------------------------------------------ */
+static volatile uint32_t s_idle;
+
+void plat_idle_count(void) { s_idle++; }
+
+uint32_t plat_idle_take(void)
+{
+    uint32_t v = s_idle;
+    s_idle = 0u;
+    return v;
+}
+
+/* ---- Start-up ----------------------------------------------------------------- */
+void plat_init(void)
+{
+    wdt_init();             /* first, so the boot side's watchdog setting is replaced early */
+    port_init();
+    tick_init();
+    (void)can_init(CAN1);
+    plat_wdt_service();
+}

@@ -20,3 +20,7 @@ __pycache__/
 .vscode/
 .idea/
 *.swp
+
+# Build output
+build/
+*_IFla*.bin
