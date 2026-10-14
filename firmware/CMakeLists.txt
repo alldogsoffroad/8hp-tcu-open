@@ -13,6 +13,9 @@ set(CORE_SOURCES
     bsw/com/crc8.c
     bsw/com/com.c
     io/vehicle/profile_fca.c
+    bsw/diag/isotp.c
+    bsw/diag/uds.c
+    bsw/diag/boot_record.c
     app/main.c
 )
 
@@ -50,4 +53,7 @@ else()
     add_executable(test_profile_fca tests/unit/test_profile_fca.c io/vehicle/profile_fca.c
         bsw/com/com.c bsw/com/crc8.c tests/unit/stub_plat.c)
     add_test(NAME profile_fca COMMAND test_profile_fca)
+    add_executable(test_uds tests/unit/test_uds.c bsw/diag/uds.c bsw/diag/isotp.c
+        bsw/diag/boot_record.c tests/unit/stub_plat.c)
+    add_test(NAME uds COMMAND test_uds)
 endif()

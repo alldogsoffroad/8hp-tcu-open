@@ -129,6 +129,22 @@ bool plat_can_recv(can_bus_t bus, can_frame_t *f)
     return true;
 }
 
+void plat_reset(void)
+{
+    printf("[%6u ms] RESET\n", s_ticks);
+    exit(0);
+}
+
+void plat_boot_handover(const uint8_t *rec, uint8_t len)
+{
+    printf("[%6u ms] BOOT HANDOVER record:", s_ticks);
+    for (uint8_t i = 0u; i < len; i++) {
+        printf("%s%02X", i % 16u == 0u ? "\n    " : " ", rec[i]);
+    }
+    printf("\n");
+    exit(0);
+}
+
 void plat_idle_count(void) { s_idle++; }
 
 uint32_t plat_idle_take(void)

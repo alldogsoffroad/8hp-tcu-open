@@ -183,6 +183,28 @@ bool plat_can_recv(can_bus_t bus, can_frame_t *f)
     return false;
 }
 
+/* ---- Reset and boot hand-over (spec 06 section 5a) ------------------------------ */
+#define BOOT_RECORD ((volatile uint8_t *)0xFFF80080u)   /* outside the linked RAM region */
+
+void plat_reset(void)
+{
+    __asm__ volatile ("ldc %0, sr" : : "r"(0xF0u));     /* mask all interrupts */
+    WDT_WRCR  = 0x5A80u;    /* overflow causes a reset                         */
+    WDT_WTCNT = 0x5AB0u;    /* stock 0x966B8 values: short time to overflow    */
+    WDT_WTCR  = 0xA563u;
+    for (;;) {
+    }
+}
+
+void plat_boot_handover(const uint8_t *rec, uint8_t len)
+{
+    __asm__ volatile ("ldc %0, sr" : : "r"(0xF0u));
+    for (uint8_t i = 0u; i < len; i++) {
+        BOOT_RECORD[i] = rec[i];
+    }
+    plat_reset();
+}
+
 /* ---- Idle counter ------------------------------------------------------------ */
 static volatile uint32_t s_idle;
 

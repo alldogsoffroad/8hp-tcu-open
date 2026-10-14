@@ -32,6 +32,14 @@ bool plat_can_rx_register(can_bus_t bus, uint16_t id);
 /* Fetch one received frame, if any. Polled from task context. */
 bool plat_can_recv(can_bus_t bus, can_frame_t *f);
 
+/* Software reset through the watchdog (same method as the stock reset routine 0x966B8).
+ * Does not return on the target. */
+void plat_reset(void);
+
+/* Write the boot request record (spec 06 section 5a) to 0xFFF80080, then reset, so the Bosch
+ * boot software takes over the pending diagnostic request. Does not return on the target. */
+void plat_boot_handover(const uint8_t *rec, uint8_t len);
+
 /* Busy-loop counter used to estimate the CPU clock during bring-up (spec 05 section 1.2). */
 void plat_idle_count(void);
 uint32_t plat_idle_take(void);   /* returns and clears the count */

@@ -18,10 +18,12 @@
  *              10 park request, 11 lever
  *   byte 6     pedal, 0.5 % per bit
  *   byte 7     brake state
+ * The same 8 bytes can be read over UDS as identifier 0xFD00.
  */
 #include "platform/platform.h"
 #include "bsw/sched/sched.h"
 #include "bsw/com/com.h"
+#include "bsw/diag/uds.h"
 #include "io/vehicle/vehicle.h"
 
 #define HEARTBEAT_ID 0x7F0u
@@ -36,9 +38,12 @@ static void task_1ms(void)
     plat_wdt_service();
     for (uint8_t bus = 0u; bus < (uint8_t)CAN_BUS_COUNT; bus++) {
         for (uint8_t n = 0u; n < 8u && plat_can_recv((can_bus_t)bus, &f); n++) {
-            vehicle_rx((can_bus_t)bus, &f);
+            if (!uds_rx((can_bus_t)bus, &f)) {
+                vehicle_rx((can_bus_t)bus, &f);
+            }
         }
     }
+    uds_tick_1ms();
 }
 
 static void task_10ms(void)
@@ -46,7 +51,7 @@ static void task_10ms(void)
     vehicle_update_10ms();
 }
 
-static void send_inputs(void)
+static void inputs_status(uint8_t d[8])
 {
     const vehicle_in_t *v = vehicle_in();
     const quality_t q[12] = {
@@ -55,21 +60,46 @@ static void send_inputs(void)
         v->q_park_request, v->q_lever,
     };
     uint16_t bits = 0u;
-    can_frame_t f = { .id = INPUTS_ID, .dlc = 8u };
 
     for (uint8_t i = 0u; i < 12u; i++) {
         bits = (uint16_t)(bits | (q[i] == Q_OK ? 1u << i : 0u));
     }
-    f.data[0] = (uint8_t)((uint16_t)v->engine_speed >> 8);
-    f.data[1] = (uint8_t)v->engine_speed;
-    f.data[2] = (uint8_t)v->lever;
-    f.data[3] = (uint8_t)v->lever_src;
-    f.data[4] = (uint8_t)(bits >> 8);
-    f.data[5] = (uint8_t)bits;
-    f.data[6] = (uint8_t)(v->pedal / 5u);
-    f.data[7] = (uint8_t)v->brake;
+    d[0] = (uint8_t)((uint16_t)v->engine_speed >> 8);
+    d[1] = (uint8_t)v->engine_speed;
+    d[2] = (uint8_t)v->lever;
+    d[3] = (uint8_t)v->lever_src;
+    d[4] = (uint8_t)(bits >> 8);
+    d[5] = (uint8_t)bits;
+    d[6] = (uint8_t)(v->pedal / 5u);
+    d[7] = (uint8_t)v->brake;
+}
+
+static void send_inputs(void)
+{
+    can_frame_t f = { .id = INPUTS_ID, .dlc = 8u };
+
+    inputs_status(f.data);
     (void)plat_can_send(CAN_BUS1, &f);
 }
+
+/* Leaving the application (programming session, ECU reset) only while the engine is not
+ * running. M1 drives no outputs, so no output state has to be prepared first. */
+static bool leave_allowed(void)
+{
+    const vehicle_in_t *v = vehicle_in();
+    return v->q_engine_speed != Q_OK || v->engine_speed < 50;
+}
+
+static int read_did(uint16_t did, uint8_t *out, uint16_t max)
+{
+    if (did == 0xFD00u && max >= 8u) {
+        inputs_status(out);
+        return 8;
+    }
+    return -1;
+}
+
+static const uds_app_t s_uds_app = { leave_allowed, read_did };
 
 static void task_100ms(void)
 {
@@ -100,6 +130,7 @@ int main(void)
 {
     plat_init();
     vehicle_init();
+    uds_init(&s_uds_app);
     (void)com_register_hw();
     sched_init(s_tasks, (uint8_t)(sizeof s_tasks / sizeof s_tasks[0]));
 

@@ -51,6 +51,7 @@ the stock firmware. Markers in each document: **[M]** manual, **[O]** observed i
 | [12](12-solenoid-outputs.md) | Solenoid output chain: pressure request → current (curves, temperature correction) → SPI driver channel; channel table (EDS A–E, WK, Sys, MV Pos) | draft; channel table confirmed in code, bench check pending |
 | [13](13-fault-reporting.md) | Fault memory: event table, reporting API, fault-group identification, decoded monitors (P1B14) | draft |
 | [14](14-park-range.md) | Park/range module: input struct, park-target arbiter, lever request object, redundant safety-layer check | draft; range-code names and several inputs inferred |
+| [15](15-diagnostic-services.md) | UDS addressing, service table, sessions; hand-over to the boot software | draft; transport parameters and tool sequence open |
 
 Related project data (project root): CAN message list (`1034420267_can_messages.csv`), fault-code
 list with status (`1034420267_dtc_list.csv`), EEPROM block map (`1034420267_eeprom_records.csv`).
@@ -82,6 +83,8 @@ Items that static analysis could not resolve, to be answered on the bench:
 | 19 | Function of case pins 1, 2, 7, 8, 10, 11, 12, 16 (wired, function unknown) | 01 | trace from internal A terminals (spec 01 §2.9) to MCU pins; candidates include the TOE30/TOE32 outputs |
 | 17 | Park position sensor inputs (Park / Not Park) | 01, 04 | toggle park state; watch AN5/AN6 and port inputs |
 | 18 | Which TCM connector pin pair is bus 1 / bus 2 | 01, 07 | send frames on pins 3/4 and 5/6, see which RCAN channel receives |
+| 20 | Stock hand-over to the boot software: the ACDP-2 request sequence and the record contents | 06, 15 | with the **stock** application: log both buses while the ACDP-2 starts a write; before that, read RAM `0xFFF80080–0xFFF800C7` with the measurement protocol (spec 10) in the default and extended sessions |
+| 21 | Project hand-over works | 06, 15 | on the spare running the project application: the ACDP-2 must reach the bootloader and be able to write the stock image back |
 
 **Ram capture plan (item 15).** 2014–2017 Ram 1500 (DS) has no security gateway: OBD pins 6/14
 reach CAN-C (500 kbit/s) directly, so passive logging works; from model year 2018 a gateway is

@@ -266,5 +266,8 @@ vehicle exemption):
 4. EEPROM reaction to a changed application/calibration CRC.
 5. Extent of boot-reserved RAM (known: `0xFFF80000–0xFFF800FF` and `0xFFF84000–0xFFF840FF` are
    preserved across a reset; boot runtime RAM starts at `0xFFF84100`).
-6. Call site of the reset after the stock application writes the request record (§5a step 5),
+6. Whether the boot manager offers a programming entry at power-up that does not depend on the
+   application (decides how a unit with a non-cooperating application is recovered), and how
+   ACDP-2 module 19 connects (CAN diagnostics vs. bench / boot mode).
+7. Call site of the reset after the stock application writes the request record (§5a step 5),
    and whether the boot manager needs anything beyond the record to start the bootloader.
