@@ -1,0 +1,22 @@
+# Firmware, calibration and EEPROM dumps (Bosch/FCA work product; EEPROM holds unit data)
+*.bin
+*.BIN
+*.hex
+*.s19
+*.srec
+
+# Files derived from the dumps
+*.elf
+*.gpr
+*.rep/
+ghidra/
+
+# Local tool configuration (machine-specific paths)
+.mcp.json
+
+# Python / editor clutter
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+*.swp

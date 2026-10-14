@@ -1,0 +1,242 @@
+can_id,bus,dlc,crc_and_counter,first_byte,length_bits,position,getter_address,diag_id_uds22
+0x101,B,5,no,0,1,flag: byte 0 bit 0,0x76B12,0x5001
+0x101,B,5,no,0,1,flag: byte 0 bit 1,0x76B1E,0x5002
+0x101,B,5,no,0,1,flag: byte 0 bit 2,0x76B2A,0x55BA
+0x101,B,5,no,0,1,flag: byte 0 bit 3,0x76B36,0x55B8
+0x101,B,5,no,0,1,flag: byte 0 bit 5,0x76B42,0x5003
+0x101,B,5,no,0,1,flag: byte 0 bit 6,0x76B4E,0x55B9
+0x101,B,5,no,2,8,byte 2 bits 7..0,0x76B5A,0x5004
+0x101,B,5,no,3,8,byte 3 bits 7..0,0x76B64,
+0x102,B,8,no,0,14,big-endian: byte 0 bits 5..0 (high) + byte 1 (low),0x771AC,0x5006
+0x102,B,8,no,4,3,byte 4 bits 4..2,0x771B8,0x5007
+0x102,B,8,no,4,3,byte 4 bits 7..5,0x771DC,0x5536
+0x108,A,8,yes,0,16,alt copy big-endian: byte 0 bits 7..0 (high) + byte 1 (low),0x76804,
+0x108,A,8,yes,0,16,big-endian: byte 0 bits 7..0 (high) + byte 1 (low),0x767F8,0x5008 0xF40C
+0x108,A,8,yes,2,13,alt copy big-endian: byte 2 bits 4..0 (high) + byte 3 (low),0x7681C,
+0x108,A,8,yes,2,13,big-endian: byte 2 bits 4..0 (high) + byte 3 (low),0x76810,
+0x108,A,8,yes,4,13,big-endian: byte 4 bits 4..0 (high) + byte 5 (low),0x7683C,0x55BB
+0x108,A,8,yes,4,2,byte 4 bits 7..6,0x7682E,0x5545
+0x108,A,8,yes,6,4,byte 6 bits 7..4,0x76848,0x500A
+0x108,A,8,yes,7,8,byte 7 bits 7..0,0x76856,
+0x10C,B,8,yes,0,1,flag: byte 0 bit 6,0x76CC0,0x5030
+0x10C,B,8,yes,0,1,flag: byte 0 bit 7,0x76CCC,0x5031
+0x10C,B,8,yes,6,4,byte 6 bits 7..4,0x76CD8,0x5032
+0x10C,B,8,yes,7,8,byte 7 bits 7..0,0x76CE6,0x5033
+0x10D,B,8,yes,0,13,big-endian: byte 0 bits 4..0 (high) + byte 1 (low),0x76E78,0x55DD
+0x10D,B,8,yes,0,1,flag: byte 0 bit 6,0x76E30,0x55DB
+0x10D,B,8,yes,0,1,flag: byte 0 bit 7,0x76E3C,
+0x10D,B,8,yes,2,13,big-endian: byte 2 bits 4..0 (high) + byte 3 (low),0x76E84,
+0x10D,B,8,yes,6,4,byte 6 bits 7..4,0x76E90,0x55E0
+0x10D,B,8,yes,7,8,byte 7 bits 7..0,0x76E9E,0x55DF
+0x112,A,2,no,0,3,alt copy byte 0 bits 2..0 (sign-extended),0x7671E,
+0x112,A,2,no,0,3,byte 0 bits 2..0,0x76714,
+0x112,A,2,no,0,1,flag: byte 0 bit 6,0x7672A,0x5537
+0x112,A,2,no,1,1,flag: byte 1 bit 2,0x76736,
+0x118,B,8,no,0,13,big-endian: byte 0 bits 4..0 (high) + byte 1 (low),0x76A4A,
+0x118,B,8,no,0,1,flag: byte 0 bit 5,0x76A3E,0x500E
+0x118,B,8,no,2,1,flag: byte 2 bit 5,0x76A56,0x5539
+0x118,B,8,no,2,1,flag: byte 2 bit 7,0x76A62,0x5054
+0x11C,B,8,yes,0,12,big-endian: byte 0 bits 3..0 (high) + byte 1 (low),0x76DCA,0x5012
+0x11C,B,8,yes,4,16,big-endian: byte 4 bits 7..0 (high) + byte 5 (low),0x76DD6,
+0x11C,B,8,yes,6,4,byte 6 bits 7..4,0x76DE2,0x5014
+0x11C,B,8,yes,7,8,byte 7 bits 7..0,0x76DF0,0x5015
+0x120,A,7,yes,0,13,big-endian: byte 0 bits 4..0 (high) + byte 1 (low),0x76878,0x55C1
+0x120,A,7,yes,0,1,flag: byte 0 bit 6,0x76860,0x55F9
+0x120,A,7,yes,0,1,flag: byte 0 bit 7,0x7686C,0x5016
+0x120,A,7,yes,2,8,byte 2 bits 7..0,0x76884,0x5017
+0x120,A,7,yes,3,13,big-endian: byte 3 bits 4..0 (high) + byte 4 (low),0x768B2,
+0x120,A,7,yes,3,1,flag: byte 3 bit 5,0x7688E,0x5018
+0x120,A,7,yes,3,1,flag: byte 3 bit 6,0x7689A,
+0x120,A,7,yes,3,1,flag: byte 3 bit 7,0x768A6,0x5019
+0x120,A,7,yes,5,4,byte 5 bits 7..4,0x768E2,0x501A
+0x120,A,7,yes,5,1,flag: byte 5 bit 1,0x768BE,0x5541
+0x120,A,7,yes,5,1,flag: byte 5 bit 2,0x768CA,
+0x120,A,7,yes,5,1,flag: byte 5 bit 3,0x768D6,
+0x120,A,7,yes,6,8,byte 6 bits 7..0,0x768F0,0x501B
+0x122,B,6,no,0,1,flag: byte 0 bit 3,0x76AA8,
+0x122,B,6,no,0,1,flag: byte 0 bit 5,0x76AB4,0x501D
+0x122,B,6,no,1,8,byte 1 bits 7..0,0x76AC0,0x5599
+0x122,B,6,no,2,3,byte 2 bits 2..0,0x76ACA,0x501E
+0x122,B,6,no,2,3,byte 2 bits 5..3,0x76AD4,0x501F
+0x122,B,6,no,3,4,byte 3 bits 7..4,0x76AE4,0x55ED
+0x122,B,6,no,4,16,big-endian: byte 4 bits 7..0 (high) + byte 5 (low),0x76AF2,0x5020
+0x124,B,8,no,0,8,byte 0 bits 7..0,0x76D4E,0x5608
+0x124,B,8,no,1,8,byte 1 bits 7..0,0x76D58,0x5609
+0x134,B,8,no,0,1,flag: byte 0 bit 5,0x76A10,0x5021
+0x134,B,8,no,0,1,flag: byte 0 bit 7,0x76A1C,0x55E6
+0x134,B,8,no,1,8,byte 1 bits 7..0,0x76A28,0x5022
+0x140,B,8,yes,0,2,alt copy byte 0 bits 3..2,0x76BEE,
+0x140,B,8,yes,0,2,byte 0 bits 3..2,0x76BE0,
+0x140,B,8,yes,0,1,flag: byte 0 bit 5,0x76BFE,
+0x140,B,8,yes,0,1,flag: byte 0 bit 6,0x76C0A,
+0x140,B,8,yes,0,1,flag: byte 0 bit 7,0x76C16,
+0x140,B,8,yes,1,2,alt copy byte 1 bits 3..2,0x76C30,
+0x140,B,8,yes,1,2,byte 1 bits 3..2,0x76C22,
+0x140,B,8,yes,1,2,byte 1 bits 5..4,0x76C40,0x5542
+0x140,B,8,yes,1,1,flag: byte 1 bit 6,0x76C50,
+0x140,B,8,yes,1,1,flag: byte 1 bit 7,0x76C5C,
+0x140,B,8,yes,2,3,byte 2 bits 2..0,0x76C68,
+0x140,B,8,yes,2,3,byte 2 bits 5..3,0x76C72,
+0x140,B,8,yes,2,1,flag: byte 2 bit 6,0x76C82,0x55B2
+0x140,B,8,yes,3,4,byte 3 bits 5..2,0x76C8E,
+0x140,B,8,yes,4,10,big-endian: byte 4 bits 1..0 (high) + byte 5 (low),0x76C9C,
+0x140,B,8,yes,6,4,byte 6 bits 7..4,0x76CA8,0x502E
+0x140,B,8,yes,7,8,byte 7 bits 7..0,0x76CB6,0x502F
+0x148,B,1,no,0,4,byte 0 bits 3..0,0x76BCA,0x55F8
+0x148,B,1,no,0,1,flag: byte 0 bit 6,0x76BD4,0x55F7
+0x14B,B,8,yes,0,11,alt copy big-endian: byte 0 bits 2..0 (high) + byte 1 (low),0x76CFC,
+0x14B,B,8,yes,0,11,big-endian: byte 0 bits 2..0 (high) + byte 1 (low),0x76CF0,0x5034
+0x14B,B,8,yes,6,4,byte 6 bits 7..4,0x76D0E,0x5035
+0x14B,B,8,yes,7,8,byte 7 bits 7..0,0x76D1C,
+0x14C,B,8,no,3,8,byte 3 bits 7..0,0x76D26,0x55F1
+0x14C,B,8,no,4,8,byte 4 bits 7..0,0x76D30,
+0x14C,B,8,no,5,8,byte 5 bits 7..0,0x76D3A,
+0x14C,B,8,no,7,8,byte 7 bits 7..0,0x76D44,0x55F2
+0x158,B,8,no,0,14,big-endian: byte 0 bits 5..0 (high) + byte 1 (low),0x76D70,0x2B1B 0x5039
+0x158,B,8,no,0,2,byte 0 bits 7..6,0x76D62,0x5604
+0x158,B,8,no,2,14,big-endian: byte 2 bits 5..0 (high) + byte 3 (low),0x76D8A,0x2B1C 0x503A
+0x158,B,8,no,2,2,byte 2 bits 7..6,0x76D7C,0x5605
+0x158,B,8,no,4,14,big-endian: byte 4 bits 5..0 (high) + byte 5 (low),0x76DA4,0x2B1D 0x503B
+0x158,B,8,no,4,2,byte 4 bits 7..6,0x76D96,0x5606
+0x158,B,8,no,6,14,big-endian: byte 6 bits 5..0 (high) + byte 7 (low),0x76DBE,0x2B1E
+0x158,B,8,no,6,2,byte 6 bits 7..6,0x76DB0,0x5607
+0x160,A,8,no,0,3,byte 0 bits 3..1,0x767AE,0x503D
+0x161,A,8,yes,2,11,big-endian: byte 2 bits 2..0 (high) + byte 3 (low),0x767CA,0x55BD
+0x161,A,8,yes,6,4,byte 6 bits 3..0,0x767D6,0x55BC
+0x161,A,8,yes,6,4,byte 6 bits 7..4,0x767E0,0x55BE
+0x161,A,8,yes,7,8,byte 7 bits 7..0,0x767EE,0x55BF
+0x180,B,8,no,0,8,byte 0 bits 7..0,0x769D8,0x55EB
+0x180,B,8,no,1,8,byte 1 bits 7..0,0x769E2,
+0x180,B,8,no,2,8,byte 2 bits 7..0,0x769EC,
+0x180,B,8,no,5,1,flag: byte 5 bit 7,0x769F6,
+0x1AA,A,8,no,0,1,flag: byte 0 bit 0,0x76ED4,0x55E1
+0x1AA,A,8,no,0,1,flag: byte 0 bit 1,0x76EE0,0x55E2
+0x1D0,B,8,no,2,2,byte 2 bits 1..0,0x76F5C,
+0x1F5,B,8,no,1,8,byte 1 bits 7..0,0x76780,0x55E3
+0x1F5,B,8,no,4,3,byte 4 bits 6..4,0x7678A,0x5567
+0x1F5,B,8,no,7,8,byte 7 bits 7..0,0x7679A,0x55E4
+0x200,B,8,no,1,16,big-endian: byte 1 bits 7..0 (high) + byte 2 (low),0x76742,
+0x200,B,8,no,6,8,byte 6 bits 7..0,0x7674E,
+0x212,A,8,no,3,1,flag: byte 3 bit 7,0x76A32,0x5554
+0x270,B,8,no,4,5,byte 4 bits 4..0,0x76776,0x55FB
+0x271,B,8,no,3,8,byte 3 bits 7..0,0x767A4,0x55B7
+0x278,B,8,no,1,3,byte 1 bits 2..0,0x769BE,
+0x278,B,8,no,4,2,byte 4 bits 5..4,0x769C8,
+0x29D,B,3,yes,1,3,byte 1 bits 3..1,0x76BA4,0x55D8
+0x29D,B,3,yes,1,4,byte 1 bits 7..4,0x76BB2,0x55D9
+0x29D,B,3,yes,2,8,byte 2 bits 7..0,0x76BC0,0x55DA
+0x2A0,B,8,no,3,8,byte 3 bits 7..0,0x76AFE,0x5043
+0x2A0,B,8,no,7,3,byte 7 bits 2..0,0x76B08,0x55E9
+0x2A4,B,8,yes,2,1,flag: byte 2 bit 4,0x76990,0x5613
+0x2A4,B,8,yes,4,8,byte 4 bits 7..0,0x7699C,0x5614
+0x2A4,B,8,yes,6,4,byte 6 bits 7..4,0x769A6,0x5612
+0x2A4,B,8,yes,7,8,byte 7 bits 7..0,0x769B4,0x5611
+0x2E0,B,8,no,6,2,byte 6 bits 5..4,0x76DFA,0x5543
+0x2E1,B,8,no,5,2,byte 5 bits 7..6,0x76E0A,0x55AE
+0x2E1,B,8,no,6,3,byte 6 bits 7..5,0x76E18,0x55AD
+0x2E2,B,8,no,3,3,byte 3 bits 2..0,0x76E26,0x55FA
+0x2EA,B,5,yes,0,3,alt copy byte 0 bits 2..0 (sign-extended),0x76F70,
+0x2EA,B,5,yes,0,3,byte 0 bits 2..0,0x76F66,0x5556
+0x2EA,B,5,yes,0,3,byte 0 bits 5..3,0x76F7C,0x55A0
+0x2EA,B,5,yes,0,1,flag: byte 0 bit 6,0x76F8C,0x55D3
+0x2EA,B,5,yes,1,2,byte 1 bits 5..4,0x76FC8,0x5561
+0x2EA,B,5,yes,1,1,flag: byte 1 bit 0,0x76F98,0x5557
+0x2EA,B,5,yes,1,1,flag: byte 1 bit 1,0x76FA4,
+0x2EA,B,5,yes,1,1,flag: byte 1 bit 2,0x76FB0,0x5559
+0x2EA,B,5,yes,1,1,flag: byte 1 bit 3,0x76FBC,
+0x2EA,B,5,yes,3,4,byte 3 bits 7..4,0x76FD8,0x5562
+0x2EA,B,5,yes,4,8,byte 4 bits 7..0,0x76FE6,0x5563
+0x2F8,A,8,yes,0,1,alt copy flag: byte 0 bit 7,0x76906,
+0x2F8,A,8,yes,0,13,big-endian: byte 0 bits 4..0 (high) + byte 1 (low),0x76914,
+0x2F8,A,8,yes,0,1,flag: byte 0 bit 7,0x768FA,0x5546
+0x2F8,A,8,yes,2,13,alt copy big-endian: byte 2 bits 4..0 (high) + byte 3 (low),0x7693A,
+0x2F8,A,8,yes,2,13,big-endian: byte 2 bits 4..0 (high) + byte 3 (low),0x7692E,
+0x2F8,A,8,yes,2,3,byte 2 bits 7..5,0x76920,0x5045
+0x2F8,A,8,yes,4,1,flag: byte 4 bit 4,0x7694C,0x5544
+0x2F8,A,8,yes,5,8,byte 5 bits 7..0,0x76958,0x559A
+0x2F8,A,8,yes,6,4,alt copy byte 6 bits 3..0,0x7696C,
+0x2F8,A,8,yes,6,4,byte 6 bits 3..0,0x76962,0x5011
+0x2F8,A,8,yes,6,4,byte 6 bits 7..4,0x76978,0x5047
+0x2F8,A,8,yes,7,8,byte 7 bits 7..0,0x76986,0x5048
+0x2FA,B,5,yes,0,4,byte 0 bits 7..4,0x77184,0x5051
+0x2FA,B,5,yes,1,1,alt copy flag: byte 1 bit 5,0x77154,
+0x2FA,B,5,yes,1,2,byte 1 bits 3..2,0x7712E,0x504D
+0x2FA,B,5,yes,1,2,byte 1 bits 7..6,0x77162,
+0x2FA,B,5,yes,1,1,flag: byte 1 bit 0,0x77116,0x504B
+0x2FA,B,5,yes,1,1,flag: byte 1 bit 1,0x77122,0x5547
+0x2FA,B,5,yes,1,1,flag: byte 1 bit 4,0x7713C,0x504E
+0x2FA,B,5,yes,1,1,flag: byte 1 bit 5,0x77148,0x504F
+0x2FA,B,5,yes,2,8,alt copy byte 2 bits 7..0,0x7717A,
+0x2FA,B,5,yes,2,8,byte 2 bits 7..0,0x77170,0x5050
+0x2FA,B,5,yes,4,8,byte 4 bits 7..0,0x771A2,0x5052
+0x301,B,8,no,2,3,byte 2 bits 2..0,0x76B9A,0x5564
+0x308,A,8,no,4,4,byte 4 bits 5..2,0x767BC,0x5555
+0x31F,B,8,no,5,4,byte 5 bits 3..0,0x76EBC,0x55A7
+0x31F,B,8,no,6,2,byte 6 bits 7..6,0x76EC6,
+0x324,B,8,no,7,3,byte 7 bits 5..3,0x76758,0x5055
+0x324,B,8,no,7,2,byte 7 bits 7..6,0x76768,0x5548
+0x32A,A,8,no,7,3,byte 7 bits 4..2,0x76A02,
+0x330,A,8,no,1,2,byte 1 bits 1..0,0x76EA8,0x5056
+0x330,A,8,no,6,2,byte 6 bits 1..0,0x76EB2,
+0x334,B,8,no,2,1,flag: byte 2 bit 1,0x766CC,0x5057
+0x334,B,8,no,2,1,flag: byte 2 bit 2,0x766D8,0x55FD
+0x334,B,8,no,2,1,flag: byte 2 bit 3,0x766E4,0x55FC
+0x334,B,8,no,2,1,flag: byte 2 bit 4,0x766F0,0x55FE
+0x334,B,8,no,2,1,flag: byte 2 bit 7,0x766FC,0x55B4
+0x334,B,8,no,3,12,big-endian: byte 3 bits 3..0 (high) + byte 4 (low),0x76708,0x5100
+0x381,B,8,no,0,2,byte 0 bits 1..0,0x77326,0x55AB
+0x381,B,8,no,0,1,flag: byte 0 bit 3,0x77330,0x55A9
+0x381,B,8,no,0,1,flag: byte 0 bit 4,0x7733C,0x55AA
+0x381,B,8,no,1,2,byte 1 bits 7..6,0x77348,0x55B6
+0x381,B,8,no,2,2,byte 2 bits 4..3,0x77356,0x55EE
+0x381,B,8,no,2,1,flag: byte 2 bit 7,0x77366,0x55B5
+0x38A,B,8,no,0,2,byte 0 bits 1..0,0x77372,
+0x38A,B,8,no,1,1,flag: byte 1 bit 0,0x7737C,0x5603
+0x3E0,B,8,no,0,2,byte 0 bits 1..0,0x77388,0x5058
+0x3E0,B,8,no,1,8,byte 1 bits 7..0,0x77392,
+0x3E0,B,8,no,2,8,byte 2 bits 7..0,0x7739C,
+0x3E0,B,8,no,3,8,byte 3 bits 7..0,0x773A6,
+0x3E0,B,8,no,4,8,byte 4 bits 7..0,0x773B0,
+0x3E0,B,8,no,5,8,byte 5 bits 7..0,0x773BA,
+0x3E0,B,8,no,6,8,byte 6 bits 7..0,0x773C4,
+0x3E0,B,8,no,7,8,byte 7 bits 7..0,0x773CE,
+0x3E1,B,7,no,4,5,byte 4 bits 4..0,0x76B84,0x5566
+0x3E1,B,7,no,5,16,big-endian: byte 5 bits 7..0 (high) + byte 6 (low),0x76B8E,
+0x3E4,B,8,no,0,2,byte 0 bits 1..0,0x76EF2,
+0x3E4,B,8,no,0,1,flag: byte 0 bit 7,0x76EFC,
+0x3E4,B,8,no,1,1,flag: byte 1 bit 0,0x76F08,
+0x3E4,B,8,no,1,1,flag: byte 1 bit 1,0x76F14,
+0x3E4,B,8,no,1,1,flag: byte 1 bit 3,0x76F20,0x55FF
+0x3E4,B,8,no,1,1,flag: byte 1 bit 4,0x76F2C,
+0x3E4,B,8,no,1,1,flag: byte 1 bit 7,0x76F38,
+0x3E4,B,8,no,2,1,flag: byte 2 bit 0,0x76F44,
+0x3E4,B,8,no,3,1,flag: byte 3 bit 1,0x76F50,
+0x3E8,B,8,no,0,2,byte 0 bits 1..0,0x771EA,
+0x3E8,B,8,no,0,6,byte 0 bits 7..2,0x771F4,0xF158
+0x3E8,B,8,no,1,8,byte 1 bits 7..0,0x77200,
+0x3E8,B,8,no,2,5,byte 2 bits 4..0,0x7720A,
+0x3E8,B,8,no,2,1,flag: byte 2 bit 7,0x77214,0x559B
+0x3E8,B,8,no,3,2,byte 3 bits 1..0,0x77220,
+0x3E8,B,8,no,3,4,byte 3 bits 7..4,0x77236,
+0x3E8,B,8,no,3,1,flag: byte 3 bit 2,0x7722A,
+0x3E8,B,8,no,5,4,byte 5 bits 3..0,0x77244,
+0x3E8,B,8,no,7,1,flag: byte 7 bit 6,0x7724E,0x55EF
+0x3E8,B,8,no,7,1,flag: byte 7 bit 7,0x7725A,0x55F0
+0x3E9,B,8,no,0,2,byte 0 bits 1..0,0x77266,
+0x3E9,B,8,no,1,1,flag: byte 1 bit 4,0x77270,
+0x3E9,B,8,no,3,1,flag: byte 3 bit 4,0x7727C,0x55A6
+0x3EA,B,8,no,0,2,byte 0 bits 1..0,0x77288,
+0x3EA,B,8,no,3,1,flag: byte 3 bit 6,0x77292,0x559C
+0x3EA,B,8,no,7,1,flag: byte 7 bit 3,0x7729E,
+0x3EA,B,8,no,7,1,flag: byte 7 bit 4,0x772AA,
+0x3EA,B,8,no,7,1,flag: byte 7 bit 7,0x772B6,0x55D2
+0x3EB,B,8,no,0,14,big-endian: byte 0 bits 5..0 (high) + byte 1 (low),0x772D0,
+0x3EB,B,8,no,0,2,byte 0 bits 7..6,0x772C2,0x559D
+0x3EB,B,8,no,2,16,big-endian: byte 2 bits 7..0 (high) + byte 3 (low),0x772DC,0x5551
+0x3EB,B,8,no,4,16,big-endian: byte 4 bits 7..0 (high) + byte 5 (low),0x772E8,0x5552
+0x3EB,B,8,no,6,16,big-endian: byte 6 bits 7..0 (high) + byte 7 (low),0x772F4,0x5598
+0x3F5,B,8,no,0,2,byte 0 bits 1..0,0x76B6E,0x559E
+0x3F5,B,8,no,4,16,big-endian: byte 4 bits 7..0 (high) + byte 5 (low),0x76B78,0x559F
+0x44C,B,8,no,0,2,byte 0 bits 1..0,0x77300,0x55D1
+0x44C,B,8,no,0,3,byte 0 bits 6..4,0x7730A,
+0x44C,B,8,no,6,16,big-endian: byte 6 bits 7..0 (high) + byte 7 (low),0x7731A,

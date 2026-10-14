@@ -1,0 +1,54 @@
+entry,can_id,bus,fault_group,dtcs,node_sae
+0,0x1A0,1,139,U0100-00 U0401-00,engine control module
+1,0x3E1,1,139,U0100-00 U0401-00,engine control module
+2,0x29D,1,139,U0100-00 U0401-00,engine control module
+3,0x14B,1,139,U0100-00 U0401-00,engine control module
+4,0x301,1,139,U0100-00 U0401-00,engine control module
+5,0x14C,1,139,U0100-00 U0401-00,engine control module
+6,0x1F5,1,139,U0100-00 U0401-00,engine control module
+7,0x144,1,139,U0100-00 U0401-00,engine control module
+8,0x278,1,139,U0100-00 U0401-00,engine control module
+9,0x2A0,1,141,U0102-00 U0403-00,transfer case module
+10,0x334,1,140,U0121-00 U0415-00,anti-lock brake module
+11,0x037,1,140,U0121-00 U0415-00,anti-lock brake module
+12,0x178,1,140,U0121-00 U0415-00,anti-lock brake module
+13,0x2E2,1,140,U0121-00 U0415-00,anti-lock brake module
+14,0x2F9,1,145,U0212-00 U0429-00,steering column module
+15,0x32A,1,146,U0140-00 U0422-00,body control module
+16,0x134,1,146,U0140-00 U0422-00,body control module
+17,0x270,1,146,U0140-00 U0422-00,body control module
+18,0x3E4,1,146,U0140-00 U0422-00,body control module
+19,0x2A4,1,146,U0140-00 U0422-00,body control module
+20,0x1D0,1,144,,
+21,0x2FA,1,142,U0103-00 U0404-00,gear shift module
+22,0x310,1,147,U0155-00 U0423-00,instrument cluster
+23,0x170,1,140,U0121-00 U0415-00,anti-lock brake module
+24,0x2E1,1,140,U0121-00 U0415-00,anti-lock brake module
+25,0x330,1,146,U0140-00 U0422-00,body control module
+26,0x161,1,139,U0100-00 U0401-00,engine control module
+27,0x2F8,1,146,U0140-00 U0422-00,body control module
+28,0x108,1,146,U0140-00 U0422-00,body control module
+29,0x324,1,146,U0140-00 U0422-00,body control module
+30,0x2EA,1,142,U0103-00 U0404-00,gear shift module
+31,0x10C,1,139,U0100-00 U0401-00,engine control module
+32,0x101,1,141,U0102-00 U0403-00,transfer case module
+33,0x271,1,140,U0121-00 U0415-00,anti-lock brake module
+34,0x158,1,166,U0128-00 U0417-00,park brake module
+35,0x120,1,146,U0140-00 U0422-00,body control module
+36,0x124,1,146,U0140-00 U0422-00,body control module
+37,0x3E8,1,146,U0140-00 U0422-00,body control module
+38,0x31F,1,146,U0140-00 U0422-00,body control module
+39,0x308,1,140,U0121-00 U0415-00,anti-lock brake module
+40,0x140,1,139,U0100-00 U0401-00,engine control module
+41,0x3F5,1,141,U0102-00 U0403-00,transfer case module
+42,0x148,1,139,U0100-00 U0401-00,engine control module
+43,0x102,1,146,U0140-00 U0422-00,body control module
+44,0x11C,1,166,U0128-00 U0417-00,park brake module
+45,0x112,1,140,U0121-00 U0415-00,anti-lock brake module
+46,0x118,1,170,,
+47,0x122,1,170,,
+48,0x1AA,1,171,,
+49,0x3E9,1,146,U0140-00 U0422-00,body control module
+50,0x180,1,139,U0100-00 U0401-00,engine control module
+51,0x200,2,143,U11E3-00 U1461-00,shifter private bus
+52,0x210,2,143,U11E3-00 U1461-00,shifter private bus

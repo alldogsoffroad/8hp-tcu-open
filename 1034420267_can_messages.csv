@@ -1,0 +1,103 @@
+table_index,bus,direction,can_id_hex,dlc,acceptance_mask_hex,mailbox_kind,handler_address,table_entry_address
+0,CAN-A (RCAN_A 0xFFFFD000),TX (sent by TCU),0x037,8,0x7FF,own mailbox,,0x43794
+1,CAN-A (RCAN_A 0xFFFFD000),TX (sent by TCU),0x2F9,8,0x7FF,own mailbox,,0x437A8
+2,CAN-A (RCAN_A 0xFFFFD000),TX (sent by TCU),0x144,8,0x7FF,own mailbox,,0x437BC
+3,CAN-A (RCAN_A 0xFFFFD000),TX (sent by TCU),0x170,8,0x7FF,own mailbox,,0x437D0
+4,CAN-A (RCAN_A 0xFFFFD000),TX (sent by TCU),0x1A0,7,0x7FF,own mailbox,,0x437E4
+5,CAN-A (RCAN_A 0xFFFFD000),TX (sent by TCU),0x2A8,8,0x7FF,own mailbox,,0x437F8
+6,CAN-A (RCAN_A 0xFFFFD000),TX (sent by TCU),0x178,3,0x7FF,own mailbox,,0x4380C
+7,CAN-A (RCAN_A 0xFFFFD000),TX (sent by TCU),0x3D1,4,0x7FF,own mailbox,,0x43820
+8,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x101,5,0x73C,shared Rx mailbox (group head),0x6929C,0x43834
+9,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x102,8,0x73C,shared Rx mailbox (group member),0x6953C,0x43848
+10,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x140,8,0x73C,shared Rx mailbox (group member),0x69320,0x4385C
+11,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x180,8,0x73C,shared Rx mailbox (group member),0x691C4,0x43870
+12,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x10C,8,0x7AE,shared Rx mailbox (group head),0x6935C,0x43884
+13,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x14C,8,0x7AE,shared Rx mailbox (group member),0x693A4,0x43898
+14,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x11C,8,0x7AE,shared Rx mailbox (group member),0x69428,0x438AC
+15,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x10D,8,0x7AE,shared Rx mailbox (group member),0x694E8,0x438C0
+16,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x124,8,0x5EF,shared Rx mailbox (group head),0x693E0,0x438D4
+17,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x324,8,0x5EF,shared Rx mailbox (group member),0x6914C,0x438E8
+18,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x334,8,0x5EF,shared Rx mailbox (group member),0x69110,0x438FC
+19,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x134,8,0x5EF,shared Rx mailbox (group member),0x69200,0x43910
+20,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x2E0,8,0x6FE,shared Rx mailbox (group head),0x69464,0x43924
+21,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x3E1,7,0x6FE,shared Rx mailbox (group member),0x692E4,0x43938
+22,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x2E1,8,0x6FE,shared Rx mailbox (group member),0x694AC,0x4394C
+23,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x3E0,8,0x6FE,shared Rx mailbox (group member),0x69674,0x43960
+24,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x3EA,8,0x7FC,shared Rx mailbox (group head),0x695F0,0x43974
+25,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x3EB,8,0x7FC,shared Rx mailbox (group member),0x69638,0x43988
+26,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x3E8,8,0x7FC,shared Rx mailbox (group member),0x69578,0x4399C
+27,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x3E9,8,0x7FC,shared Rx mailbox (group member),0x695B4,0x439B0
+28,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x2A0,8,0x7FB,shared Rx mailbox (group head),0x6923C,0x439C4
+29,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x2A4,8,0x7FB,shared Rx mailbox (group member),0x69188,0x439D8
+30,CAN-A (RCAN_A 0xFFFFD000),RX (received by TCU),0x112,2,0x7FF,own mailbox,,0x439EC
+31,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x200,8,0x7FF,own mailbox,,0x43A00
+32,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x270,8,0x7FF,own mailbox,,0x43A14
+33,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x1F5,8,0x7FF,own mailbox,,0x43A28
+34,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x271,8,0x7FF,own mailbox,,0x43A3C
+35,CAN-A (RCAN_A 0xFFFFD000),RX (received by TCU),0x160,8,0x7FF,own mailbox,,0x43A50
+36,CAN-A (RCAN_A 0xFFFFD000),RX (received by TCU),0x308,8,0x7FF,own mailbox,,0x43A64
+37,CAN-A (RCAN_A 0xFFFFD000),RX (received by TCU),0x161,8,0x7FF,own mailbox,,0x43A78
+38,CAN-A (RCAN_A 0xFFFFD000),RX (received by TCU),0x108,8,0x7FF,own mailbox,,0x43A8C
+39,CAN-A (RCAN_A 0xFFFFD000),RX (received by TCU),0x120,7,0x7FF,own mailbox,,0x43AA0
+40,CAN-A (RCAN_A 0xFFFFD000),RX (received by TCU),0x2F8,8,0x7FF,own mailbox,,0x43AB4
+41,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x278,8,0x7FF,own mailbox,,0x43AC8
+42,CAN-A (RCAN_A 0xFFFFD000),RX (received by TCU),0x32A,8,0x7FF,own mailbox,,0x43ADC
+43,CAN-A (RCAN_A 0xFFFFD000),RX (received by TCU),0x212,8,0x7FF,own mailbox,,0x43AF0
+44,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x118,8,0x7FF,own mailbox,,0x43B04
+45,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x122,6,0x7FF,own mailbox,,0x43B18
+46,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x3F5,8,0x7FF,own mailbox,,0x43B2C
+47,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x301,8,0x7FF,own mailbox,,0x43B40
+48,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x29D,3,0x7FF,own mailbox,,0x43B54
+49,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x148,1,0x7FF,own mailbox,,0x43B68
+50,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x14B,8,0x7FF,own mailbox,,0x43B7C
+51,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x158,8,0x7FF,own mailbox,,0x43B90
+52,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x2E2,8,0x7FF,own mailbox,,0x43BA4
+53,CAN-A (RCAN_A 0xFFFFD000),RX (received by TCU),0x330,8,0x7FF,own mailbox,,0x43BB8
+54,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x31F,8,0x7FF,own mailbox,,0x43BCC
+55,CAN-A (RCAN_A 0xFFFFD000),RX (received by TCU),0x1AA,8,0x7FF,own mailbox,,0x43BE0
+56,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x310,8,0x7FF,own mailbox,,0x43BF4
+57,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x3E4,8,0x7FF,own mailbox,,0x43C08
+58,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x1D0,8,0x7FF,own mailbox,,0x43C1C
+59,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x2EA,5,0x7FF,own mailbox,,0x43C30
+60,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x2FA,5,0x7FF,own mailbox,,0x43C44
+61,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x44C,8,0x7FF,own mailbox,,0x43C58
+62,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x381,8,0x7FF,own mailbox,,0x43C6C
+63,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x38A,8,0x7FF,own mailbox,,0x43C80
+64,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x037,8,0x7FF,own mailbox,0x69EF0,0x43C94
+65,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x2F9,8,0x7FF,own mailbox,0x69ED8,0x43CA8
+66,CAN-B (RCAN_B 0xFFFFD800),RX (received by TCU),0x170,8,0x7FF,own mailbox,0x69EF8,0x43CBC
+67,CAN-C (RCAN_C 0xFFFFE000),TX (sent by TCU),0x300,6,0x7FF,own mailbox,0x69F84,0x43CD0
+68,CAN-C (RCAN_C 0xFFFFE000),RX (received by TCU),0x210,5,0x7FF,own mailbox,,0x43CE4
+69,CAN-C (RCAN_C 0xFFFFE000),RX (received by TCU),0x200,5,0x7FF,own mailbox,,0x43CF8
+70,CAN-A (RCAN_A 0xFFFFD000),RX (received by TCU),0x7E1,8,0x7FF,own mailbox,0x74FA8,0x43D0C
+71,CAN-A (RCAN_A 0xFFFFD000),RX (received by TCU),0x441,8,0x7FF,own mailbox,0x74FA8,0x43D20
+72,CAN-A (RCAN_A 0xFFFFD000),TX (sent by TCU),0x7E9,8,0x7FF,own mailbox,0x75B6C,0x43D34
+73,CAN-C (RCAN_C 0xFFFFE000),RX (received by TCU),0x7E1,8,0x7FF,own mailbox,0x74FA8,0x43D48
+74,CAN-C (RCAN_C 0xFFFFE000),TX (sent by TCU),0x7E9,8,0x7FF,own mailbox,0x75B6C,0x43D5C
+75,CAN-A (RCAN_A 0xFFFFD000),RX (received by TCU),0x7DF,8,0x7FF,own mailbox,0x74FA8,0x43D70
+76,CAN-A (RCAN_A 0xFFFFD000),TX (sent by TCU),0x7E9,8,0x7FF,own mailbox,0x75B6C,0x43D84
+77,CAN-C (RCAN_C 0xFFFFE000),RX (received by TCU),0x6D4,8,0x7FF,own mailbox,0x7646C,0x43D98
+78,CAN-C (RCAN_C 0xFFFFE000),TX (sent by TCU),0x6D3,8,0x7FF,own mailbox,,0x43DAC
+79,CAN-A (RCAN_A 0xFFFFD000),TX (sent by TCU),0x639,8,0x7FF,own mailbox,,0x43DC0
+80,CAN-C (RCAN_C 0xFFFFE000),TX (sent by TCU),0x3B1,8,0x7FF,request/response Tx (type 5),0x7866E,0x43DD4
+81,CAN-C (RCAN_C 0xFFFFE000),TX (sent by TCU),0x3B1,8,0x7FF,request/response Tx (type 5),0x7866E,0x43DE8
+82,CAN-C (RCAN_C 0xFFFFE000),RX (received by TCU),0x3B0,8,0x7FF,own mailbox,0x7853A,0x43DFC
+83,CAN-C (RCAN_C 0xFFFFE000),TX (sent by TCU),0x3B1,8,0x7FF,request/response Tx (type 5),0x7866E,0x43E10
+84,CAN-C (RCAN_C 0xFFFFE000),TX (sent by TCU),0x3B1,8,0x7FF,request/response Tx (type 5),0x7866E,0x43E24
+85,CAN-C (RCAN_C 0xFFFFE000),TX (sent by TCU),0x3B1,8,0x7FF,request/response Tx (type 5),0x7866E,0x43E38
+86,CAN-A (RCAN_A 0xFFFFD000),TX (sent by TCU),0x3B1,8,0x7FF,request/response Tx (type 5),0x7866E,0x43E4C
+87,CAN-A (RCAN_A 0xFFFFD000),TX (sent by TCU),0x3B1,8,0x7FF,request/response Tx (type 5),0x7866E,0x43E60
+88,CAN-A (RCAN_A 0xFFFFD000),RX (received by TCU),0x3B0,8,0x7FF,own mailbox,0x7853A,0x43E74
+89,CAN-A (RCAN_A 0xFFFFD000),TX (sent by TCU),0x3B1,8,0x7FF,request/response Tx (type 5),0x7866E,0x43E88
+90,CAN-A (RCAN_A 0xFFFFD000),TX (sent by TCU),0x3B1,8,0x7FF,request/response Tx (type 5),0x7866E,0x43E9C
+91,CAN-A (RCAN_A 0xFFFFD000),TX (sent by TCU),0x3B1,8,0x7FF,request/response Tx (type 5),0x7866E,0x43EB0
+92,CAN-C (RCAN_C 0xFFFFE000),RX (received by TCU),0x361,8,0x7FF,own mailbox,0x77F24,0x43EC4
+93,CAN-C (RCAN_C 0xFFFFE000),TX (sent by TCU),0x368,8,0x7FF,request/response Tx (type 4),0x77F5E,0x43ED8
+94,CAN-C (RCAN_C 0xFFFFE000),TX (sent by TCU),0x378,8,0x7FF,request/response Tx (type 4),0x77F5E,0x43EEC
+95,CAN-C (RCAN_C 0xFFFFE000),TX (sent by TCU),0x398,8,0x7FF,request/response Tx (type 4),0x77F5E,0x43F00
+96,CAN-C (RCAN_C 0xFFFFE000),TX (sent by TCU),0x388,8,0x7FF,request/response Tx (type 4),0x77F5E,0x43F14
+97,CAN-A (RCAN_A 0xFFFFD000),RX (received by TCU),0x361,8,0x7FF,own mailbox,0x77F3C,0x43F28
+98,CAN-A (RCAN_A 0xFFFFD000),TX (sent by TCU),0x368,8,0x7FF,request/response Tx (type 4),0x77F5E,0x43F3C
+99,CAN-A (RCAN_A 0xFFFFD000),TX (sent by TCU),0x378,8,0x7FF,request/response Tx (type 4),0x77F5E,0x43F50
+100,CAN-A (RCAN_A 0xFFFFD000),TX (sent by TCU),0x398,8,0x7FF,request/response Tx (type 4),0x77F5E,0x43F64
+101,CAN-A (RCAN_A 0xFFFFD000),TX (sent by TCU),0x388,8,0x7FF,request/response Tx (type 4),0x77F5E,0x43F78

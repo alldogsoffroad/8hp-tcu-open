@@ -1,0 +1,84 @@
+can_id,bus,dlc,period_raw,crc8,counter,first_byte,length_bits,position,source
+0x037,1 (A+B),8,1,yes,yes,0,13,big-endian: byte 0 bits 4..0 (high) + byte 1,helper 0x69DFC
+0x037,1 (A+B),8,1,yes,yes,0,3,bits 7..5,packer 0x779D0
+0x037,1 (A+B),8,1,yes,yes,2,13,big-endian: byte 2 bits 4..0 (high) + byte 3,helper 0x69E2C
+0x037,1 (A+B),8,1,yes,yes,2,2,bits 7..6,packer 0x779D0
+0x037,1 (A+B),8,1,yes,yes,4,13,big-endian: byte 4 bits 4..0 (high) + byte 5,helper 0x69E5E
+0x037,1 (A+B),8,1,yes,yes,6,4,bits 7..4 = rolling counter,pre-send callback
+0x037,1 (A+B),8,1,yes,yes,7,8,bits 7..0 = CRC-8 J1850 of bytes 0..6,pre-send 0x6900C
+0x144,1 (A+B),8,2,no,yes,0,1,bit 0,packer 0x77AC4
+0x144,1 (A+B),8,2,no,yes,0,1,bit 2,packer 0x77AC4
+0x144,1 (A+B),8,2,no,yes,0,1,bit 4,packer 0x77AC4
+0x144,1 (A+B),8,2,no,yes,0,1,bit 5,packer 0x77AC4
+0x144,1 (A+B),8,2,no,yes,0,1,bit 7,packer 0x77AC4
+0x144,1 (A+B),8,2,no,yes,1,4,bits 3..0,packer 0x77AC4
+0x144,1 (A+B),8,2,no,yes,1,4,bits 7..4,packer 0x77AC4
+0x144,1 (A+B),8,2,no,yes,2,1,bit 1,packer 0x77AC4
+0x144,1 (A+B),8,2,no,yes,2,1,bit 2,packer 0x77AC4
+0x144,1 (A+B),8,2,no,yes,2,1,bit 3,packer 0x77AC4
+0x144,1 (A+B),8,2,no,yes,2,1,bit 4,packer 0x77AC4
+0x144,1 (A+B),8,2,no,yes,3,16,big-endian: byte 3 (high) + byte 4,helper 0x69E90
+0x144,1 (A+B),8,2,no,yes,5,16,big-endian: byte 5 (high) + byte 6,helper 0x69EB4
+0x144,1 (A+B),8,2,no,yes,6,4,bits 7..4 = rolling counter,pre-send callback
+0x144,1 (A+B),8,2,no,yes,7,1,bit 6,packer 0x77AC4
+0x144,1 (A+B),8,2,no,yes,7,1,bit 7,packer 0x77AC4
+0x144,1 (A+B),8,2,no,yes,7,2,bits 1..0,packer 0x77AC4
+0x170,1 (A+B),8,2,yes,yes,0,1,bit 7,packer 0x77B90
+0x170,1 (A+B),8,2,yes,yes,0,2,bits 1..0,packer 0x77B90
+0x170,1 (A+B),8,2,yes,yes,0,3,bits 4..2,packer 0x77B90
+0x170,1 (A+B),8,2,yes,yes,0,2,bits 6..5,packer 0x77B90
+0x170,1 (A+B),8,2,yes,yes,1,8,bits 7..0,packer 0x77B90
+0x170,1 (A+B),8,2,yes,yes,2,8,bits 7..0,packer 0x77B90
+0x170,1 (A+B),8,2,yes,yes,3,1,bit 0,packer 0x77B90
+0x170,1 (A+B),8,2,yes,yes,3,1,bit 1,packer 0x77B90
+0x170,1 (A+B),8,2,yes,yes,3,1,bit 4,packer 0x77B90
+0x170,1 (A+B),8,2,yes,yes,3,1,bit 5,packer 0x77B90
+0x170,1 (A+B),8,2,yes,yes,3,1,bit 6,packer 0x77B90
+0x170,1 (A+B),8,2,yes,yes,3,1,bit 7,packer 0x77B90
+0x170,1 (A+B),8,2,yes,yes,4,8,bits 7..0,packer 0x77B90
+0x170,1 (A+B),8,2,yes,yes,5,8,bits 7..0,packer 0x77B90
+0x170,1 (A+B),8,2,yes,yes,6,1,bit 0,packer 0x77B90
+0x170,1 (A+B),8,2,yes,yes,6,3,bits 3..1,packer 0x77B90
+0x170,1 (A+B),8,2,yes,yes,6,4,bits 7..4 = rolling counter,pre-send callback
+0x170,1 (A+B),8,2,yes,yes,7,8,bits 7..0 = CRC-8 J1850 of bytes 0..6,pre-send 0x6900C
+0x178,1 (A+B),3,10,no,no,0,1,bit 0,packer 0x77C54
+0x178,1 (A+B),3,10,no,no,0,1,bit 1,packer 0x77C54
+0x178,1 (A+B),3,10,no,no,0,1,bit 2,packer 0x77C54
+0x178,1 (A+B),3,10,no,no,0,1,bit 3,packer 0x77C54
+0x178,1 (A+B),3,10,no,no,0,4,bits 7..4,packer 0x77C54
+0x178,1 (A+B),3,10,no,no,1,8,bits 7..0,packer 0x77C54
+0x178,1 (A+B),3,10,no,no,2,1,bit 6,packer 0x77C54
+0x178,1 (A+B),3,10,no,no,2,1,bit 7,packer 0x77C54
+0x178,1 (A+B),3,10,no,no,2,4,bits 3..0,packer 0x77C54
+0x178,1 (A+B),3,10,no,no,2,2,bits 5..4,packer 0x77C54
+0x1A0,1 (A+B),7,2,yes,yes,0,11,big-endian: byte 0 bits 2..0 (high) + byte 1,helper 0x69D06
+0x1A0,1 (A+B),7,2,yes,yes,2,8,bits 7..0,packer 0x7792C
+0x1A0,1 (A+B),7,2,yes,yes,3,13,big-endian: byte 3 bits 4..0 (high) + byte 4,helper 0x69D36
+0x1A0,1 (A+B),7,2,yes,yes,3,1,bit 5,packer 0x7792C
+0x1A0,1 (A+B),7,2,yes,yes,3,1,bit 6,packer 0x7792C
+0x1A0,1 (A+B),7,2,yes,yes,5,1,bit 0,packer 0x7792C
+0x1A0,1 (A+B),7,2,yes,yes,5,1,bit 3,packer 0x7792C
+0x1A0,1 (A+B),7,2,yes,yes,5,4,bits 7..4 = rolling counter,pre-send callback
+0x1A0,1 (A+B),7,2,yes,yes,6,8,bits 7..0 = CRC-8 J1850 of bytes 0..5,pre-send 0x6900C
+0x2A8,1 (A+B),8,2,yes,yes,0,12,big-endian: byte 0 bits 3..0 (high) + byte 1,helper 0x69CD6
+0x2A8,1 (A+B),8,2,yes,yes,0,1,bit 4,packer 0x7784C
+0x2A8,1 (A+B),8,2,yes,yes,0,1,bit 7,packer 0x7784C
+0x2A8,1 (A+B),8,2,yes,yes,0,2,bits 6..5,packer 0x7784C
+0x2A8,1 (A+B),8,2,yes,yes,2,4,bits 3..0,packer 0x7784C
+0x2A8,1 (A+B),8,2,yes,yes,2,4,bits 7..4,packer 0x7784C
+0x2A8,1 (A+B),8,2,yes,yes,3,4,bits 3..0,packer 0x7784C
+0x2A8,1 (A+B),8,2,yes,yes,4,1,bit 6,packer 0x7784C
+0x2A8,1 (A+B),8,2,yes,yes,4,3,bits 5..3,packer 0x7784C
+0x2A8,1 (A+B),8,2,yes,yes,5,8,bits 7..0,packer 0x7784C
+0x2A8,1 (A+B),8,2,yes,yes,6,2,bits 1..0,packer 0x7784C
+0x2A8,1 (A+B),8,2,yes,yes,6,2,bits 3..2,packer 0x7784C
+0x2A8,1 (A+B),8,2,yes,yes,6,4,bits 7..4 = rolling counter,pre-send callback
+0x2A8,1 (A+B),8,2,yes,yes,7,8,bits 7..0 = CRC-8 J1850 of bytes 0..6,pre-send 0x6900C
+0x2F9,1 (A+B),8,1,yes,yes,0,13,big-endian: byte 0 bits 4..0 (high) + byte 1,helper 0x69D68
+0x2F9,1 (A+B),8,1,yes,yes,0,3,bits 7..5,packer 0x77978
+0x2F9,1 (A+B),8,1,yes,yes,2,13,big-endian: byte 2 bits 4..0 (high) + byte 3,helper 0x69D98
+0x2F9,1 (A+B),8,1,yes,yes,2,2,bits 7..6,packer 0x77978
+0x2F9,1 (A+B),8,1,yes,yes,4,13,big-endian: byte 4 bits 4..0 (high) + byte 5,packer 0x77978
+0x2F9,1 (A+B),8,1,yes,yes,6,4,bits 7..4 = rolling counter,pre-send callback
+0x2F9,1 (A+B),8,1,yes,yes,7,8,bits 7..0 = CRC-8 J1850 of bytes 0..6,pre-send 0x6900C
+0x3D1,1 (A+B),4,50,no,no,0,8,bits 7..0,packer 0x7791C
