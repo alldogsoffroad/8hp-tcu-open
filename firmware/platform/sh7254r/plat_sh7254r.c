@@ -85,10 +85,10 @@ bool plat_tick_poll(void)
 
 /* ---- CAN (RCAN-TL1, spec 05 section 1.1: 500 kbit/s) --------------------------
  * Bus 1 (CAN-C) on channel A, bus 2 (shifter / diagnostic bus) on channel C.
- * Mailboxes 1..3 transmit, 4..31 receive (one exact identifier each). Mailbox 0 unused. */
+ * Mailboxes 1..7 transmit, 8..31 receive (one exact identifier each). Mailbox 0 unused. */
 #define TX_MB_FIRST 1u
-#define TX_MB_LAST  3u
-#define RX_MB_FIRST 4u
+#define TX_MB_LAST  7u
+#define RX_MB_FIRST 8u
 
 static const uint32_t s_can_base[CAN_BUS_COUNT] = { RCAN_A_BASE, RCAN_C_BASE };
 static uint8_t s_rx_next[CAN_BUS_COUNT] = { RX_MB_FIRST, RX_MB_FIRST };
@@ -181,6 +181,29 @@ bool plat_can_recv(can_bus_t bus, can_frame_t *f)
         return true;
     }
     return false;
+}
+
+/* ---- Memory read for the measurement protocol ---------------------------------- */
+static bool readable(uint32_t a, uint16_t n)
+{
+    const uint32_t end = a + n - 1u;
+
+    if (n == 0u || end < a) {
+        return false;
+    }
+    return (a >= 0x00040000u && end <= 0x001FFFFFu) ||
+           (a >= 0xFFF80000u && end <= 0xFFF9FFFFu);
+}
+
+bool plat_mem_read(uint32_t addr, uint8_t *out, uint16_t n)
+{
+    if (!readable(addr, n)) {
+        return false;
+    }
+    for (uint16_t i = 0u; i < n; i++) {
+        out[i] = *(const volatile uint8_t *)(uintptr_t)(addr + i);
+    }
+    return true;
 }
 
 /* ---- Reset and boot hand-over (spec 06 section 5a) ------------------------------ */

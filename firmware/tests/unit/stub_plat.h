@@ -11,6 +11,7 @@ typedef struct {
     unsigned n_tx;
     unsigned resets, handovers;
     uint8_t rec[0x48];
+    uint8_t ram[0x200];         /* simulated target memory at 0xFFF80000 */
 } stub_plat_t;
 
 extern stub_plat_t stub;

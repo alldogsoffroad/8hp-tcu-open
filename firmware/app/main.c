@@ -19,12 +19,17 @@
  *   byte 6     pedal, 0.5 % per bit
  *   byte 7     brake state
  * The same 8 bytes can be read over UDS as identifier 0xFD00.
+ *
+ * Measurement protocol (spec 10, read-only): 0x361 -> 0x398 on either bus; project index list
+ * in app/meas_table.c.
  */
 #include "platform/platform.h"
 #include "bsw/sched/sched.h"
 #include "bsw/com/com.h"
 #include "bsw/diag/uds.h"
+#include "bsw/meas/meas.h"
 #include "io/vehicle/vehicle.h"
+#include "app/meas_table.h"
 
 #define HEARTBEAT_ID 0x7F0u
 #define INPUTS_ID    0x7F1u
@@ -38,7 +43,7 @@ static void task_1ms(void)
     plat_wdt_service();
     for (uint8_t bus = 0u; bus < (uint8_t)CAN_BUS_COUNT; bus++) {
         for (uint8_t n = 0u; n < 8u && plat_can_recv((can_bus_t)bus, &f); n++) {
-            if (!uds_rx((can_bus_t)bus, &f)) {
+            if (!uds_rx((can_bus_t)bus, &f) && !meas_rx((can_bus_t)bus, &f)) {
                 vehicle_rx((can_bus_t)bus, &f);
             }
         }
@@ -49,21 +54,15 @@ static void task_1ms(void)
 static void task_10ms(void)
 {
     vehicle_update_10ms();
+    meas_table_update();
+    meas_tick_10ms();
 }
 
 static void inputs_status(uint8_t d[8])
 {
     const vehicle_in_t *v = vehicle_in();
-    const quality_t q[12] = {
-        v->q_engine_speed, v->q_torque_actual, v->q_torque_t2, v->q_torque_t3, v->q_pedal,
-        v->q_engine_temp, v->q_brake, v->q_engine_mode, v->q_park_speed, v->q_soak,
-        v->q_park_request, v->q_lever,
-    };
-    uint16_t bits = 0u;
+    const uint16_t bits = vehicle_quality_bits(v);
 
-    for (uint8_t i = 0u; i < 12u; i++) {
-        bits = (uint16_t)(bits | (q[i] == Q_OK ? 1u << i : 0u));
-    }
     d[0] = (uint8_t)((uint16_t)v->engine_speed >> 8);
     d[1] = (uint8_t)v->engine_speed;
     d[2] = (uint8_t)v->lever;
@@ -131,6 +130,7 @@ int main(void)
     plat_init();
     vehicle_init();
     uds_init(&s_uds_app);
+    meas_table_init();
     (void)com_register_hw();
     sched_init(s_tasks, (uint8_t)(sizeof s_tasks / sizeof s_tasks[0]));
 

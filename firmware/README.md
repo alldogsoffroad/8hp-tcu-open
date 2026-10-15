@@ -5,7 +5,8 @@ Open C firmware for the Bosch ZF 8HP TCU (SH7254R). Architecture: `docs/firmware
 Current milestone: **M1** — boots in place of the stock application, serves the watchdog,
 receives and checks the vehicle bus (CRC-8, rolling counter, timeouts; spec 07), decodes the
 traced signals into project units (`io/vehicle/profile_fca.c`), answers diagnostics on
-`0x7E1`/`0x7DF` → `0x7E9` and hands over to the Bosch boot software on `0x10 0x02` so the
+`0x7E1`/`0x7DF` → `0x7E9`, offers a read-only measurement protocol on `0x361` → `0x398`
+(spec 10 §6a) and hands over to the Bosch boot software on `0x10 0x02` so the
 ACDP-2 can still reprogram the unit (spec 06 §5a, spec 15). It drives **no outputs**: all
 solenoid, PWM and switch outputs stay in the safe state set up by `port_init()` (same pin state
 as the stock firmware before its drivers start).
@@ -70,6 +71,23 @@ controller only.
 | `22 F1 95` | software version `8HPTCU-OPEN M1` |
 | `22 FD 00` | decoded input status (8 bytes, as `0x7F1`) |
 | `3E 00` | `7E 00` |
+
+## Measurement protocol (read-only, spec 10)
+
+Requests on `0x361`, responses on `0x398`, either bus (the first bus used is latched).
+Examples:
+
+| Request (`0x361`) | Response (`0x398`) |
+|---|---|
+| `01 00 00 00 00 00 00 00` | `21 01 '8' 'H' 'P' 'T' 'C' 'U'` (then `21 …` for the next parts) |
+| `2A 00 FF F8 00 80 00 00` | `2A 81` + 6 bytes at `0xFFF80080` |
+| `E0 81 00 02 00 0D 00 00` | periodic `0x368…0x398` every 10 ms: engine speed (2 bytes), lever |
+
+Project index list: `app/meas_table.c` (index 2 = engine speed, 13 = lever, 15 = quality bits, …).
+
+The same commands work against the **stock** firmware (with the stock index list), which is
+how bench item 20 reads the stock boot request record: `2A 00 FF F8 00 80`, `…00 86`, … up to
+`0xFFF800C7`.
 
 ## Bench checklist (spare controller, never the vehicle's unit)
 

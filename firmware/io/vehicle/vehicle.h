@@ -48,4 +48,8 @@ void vehicle_rx(can_bus_t bus, const can_frame_t *f);
 void vehicle_update_10ms(void);
 const vehicle_in_t *vehicle_in(void);
 
+/* Bit i = 1 when input i is Q_OK: 0 engine speed, 1 torque T1, 2 T2, 3 T3, 4 pedal,
+ * 5 engine temp, 6 brake, 7 engine mode, 8 park speed, 9 soak, 10 park request, 11 lever. */
+uint16_t vehicle_quality_bits(const vehicle_in_t *v);
+
 #endif

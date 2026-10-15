@@ -32,6 +32,12 @@ bool plat_can_rx_register(can_bus_t bus, uint16_t id);
 /* Fetch one received frame, if any. Polled from task context. */
 bool plat_can_recv(can_bus_t bus, can_frame_t *f);
 
+/* Read n bytes at a target address for the measurement protocol. Returns false (nothing
+ * copied) if any byte lies outside the readable areas: project application and calibration
+ * flash 0x040000-0x1FFFFF, RAM 0xFFF80000-0xFFF9FFFF. Boot flash and I/O registers are not
+ * readable (register reads can have side effects). */
+bool plat_mem_read(uint32_t addr, uint8_t *out, uint16_t n);
+
 /* Software reset through the watchdog (same method as the stock reset routine 0x966B8).
  * Does not return on the target. */
 void plat_reset(void);

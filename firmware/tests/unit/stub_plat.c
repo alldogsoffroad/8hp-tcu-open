@@ -32,3 +32,12 @@ void plat_boot_handover(const uint8_t *rec, uint8_t len)
     memcpy(stub.rec, rec, len);
     stub.handovers++;
 }
+
+bool plat_mem_read(uint32_t addr, uint8_t *out, uint16_t n)
+{
+    if (addr < 0xFFF80000u || addr - 0xFFF80000u + n > sizeof stub.ram) {
+        return false;
+    }
+    memcpy(out, &stub.ram[addr - 0xFFF80000u], n);
+    return true;
+}

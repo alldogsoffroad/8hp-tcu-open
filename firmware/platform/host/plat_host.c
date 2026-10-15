@@ -129,6 +129,14 @@ bool plat_can_recv(can_bus_t bus, can_frame_t *f)
     return true;
 }
 
+bool plat_mem_read(uint32_t addr, uint8_t *out, uint16_t n)
+{
+    (void)addr;
+    (void)out;
+    (void)n;
+    return false;           /* no target memory on the host */
+}
+
 void plat_reset(void)
 {
     printf("[%6u ms] RESET\n", s_ticks);

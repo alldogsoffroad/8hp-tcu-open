@@ -41,6 +41,10 @@ void uds_init(const uds_app_t *app)
     s_leave = LEAVE_NONE;
     for (uint8_t b = 0u; b < (uint8_t)CAN_BUS_COUNT; b++) {
         isotp_init(&s_tp[b], &s_tp_cfg[b]);
+        (void)plat_can_rx_register(s_tp_cfg[b].bus, s_tp_cfg[b].rx_id);
+        if (s_tp_cfg[b].func_id != 0u) {
+            (void)plat_can_rx_register(s_tp_cfg[b].bus, s_tp_cfg[b].func_id);
+        }
     }
 }
 
