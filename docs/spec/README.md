@@ -85,6 +85,8 @@ Items that static analysis could not resolve, to be answered on the bench:
 | 18 | Which TCM connector pin pair is bus 1 / bus 2 | 01, 07 | send frames on pins 3/4 and 5/6, see which RCAN channel receives |
 | 20 | Stock hand-over to the boot software: the ACDP-2 request sequence and the record contents | 06, 15 | with the **stock** application: log both buses while the ACDP-2 starts a write; before that, read RAM `0xFFF80080–0xFFF800C7` with the measurement protocol (spec 10) in the default and extended sessions |
 | 21 | Project hand-over works | 06, 15 | on the spare running the project application: the ACDP-2 must reach the bootloader and be able to write the stock image back |
+| 22 | Fluid temperature conversion: AN8/AN1 against a reference thermometer at 3+ temperatures (room, hot water, oven/oil bath) | 04 | read AN8/AN1 mV via the measurement protocol (project firmware indices 27/28); replace the provisional table |
+| 23 | Supply and switched-supply channels (AN21, AN19, AN20) | 04 | vary B+ and ignition on the bench; watch `0x7F2` byte 5 / measurement index 24 |
 
 **Ram capture plan (item 15).** 2014–2017 Ram 1500 (DS) has no security gateway: OBD pins 6/14
 reach CAN-C (500 kbit/s) directly, so passive logging works; from model year 2018 a gateway is

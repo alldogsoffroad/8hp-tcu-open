@@ -1,5 +1,6 @@
-/* M1 application: boots, serves the watchdog, receives and decodes the vehicle bus, and sends
- * bench status frames on CAN bus 1. Drives no outputs.
+/* M2 application: boots, serves the watchdog, receives and decodes the vehicle bus, reads the
+ * transmission sensors (speeds, fluid temperature, supply, park contacts) and sends bench status
+ * frames on CAN bus 1. Drives no outputs.
  *
  * Heartbeat (BENCH USE ONLY, identifier not cleared for any vehicle bus):
  *   ID 0x7F0, DLC 8, every 100 ms
@@ -20,6 +21,14 @@
  *   byte 7     brake state
  * The same 8 bytes can be read over UDS as identifier 0xFD00.
  *
+ * Sensor status (BENCH USE ONLY): ID 0x7F2, DLC 8, every 100 ms (UDS identifier 0xFD01)
+ *   bytes 0-1  speed channel 0 (TIF12), rpm      bytes 2-3  speed channel 1 (TIF13), rpm
+ *   byte 4     fluid temperature, degC + 40 (0xFF = not valid)
+ *   byte 5     battery, 0.1 V
+ *   byte 6     bits 1..0 park (0 unknown, 1 in P, 2 not in P); bit 2 wake 1; bit 3 wake 2;
+ *              bits 7..4 quality bits: speed 0, speed 1, fluid temp, battery (1 = valid)
+ *   byte 7     fluid temperature fault bits
+ *
  * Measurement protocol (spec 10, read-only): 0x361 -> 0x398 on either bus; project index list
  * in app/meas_table.c.
  */
@@ -29,19 +38,25 @@
 #include "bsw/diag/uds.h"
 #include "bsw/meas/meas.h"
 #include "io/vehicle/vehicle.h"
+#include "io/sensors/sensors.h"
 #include "io/vehicle/fca_tx.h"
 #include "app/meas_table.h"
 
 #define HEARTBEAT_ID 0x7F0u
 #define INPUTS_ID    0x7F1u
+#define SENSORS_ID   0x7F2u
 
 static uint8_t s_counter;
+
+/* [I] shaft assignment of the speed channels: confirm on the bench (spec 02 section 4.1) */
+static const sensors_cfg_t s_sensors_cfg = { 0u, 1u, { 60u, 60u, 60u } };
 
 static void task_1ms(void)
 {
     can_frame_t f;
 
     plat_wdt_service();
+    sensors_tick_1ms();
     for (uint8_t bus = 0u; bus < (uint8_t)CAN_BUS_COUNT; bus++) {
         for (uint8_t n = 0u; n < 8u && plat_can_recv((can_bus_t)bus, &f); n++) {
             if (!uds_rx((can_bus_t)bus, &f) && !meas_rx((can_bus_t)bus, &f)) {
@@ -55,6 +70,7 @@ static void task_1ms(void)
 static void task_10ms(void)
 {
     vehicle_update_10ms();
+    sensors_update_10ms();
     meas_table_update();
     meas_tick_10ms();
     fca_tx_tick_10ms();     /* all stock transmit messages disabled in M1 */
@@ -75,11 +91,31 @@ static void inputs_status(uint8_t d[8])
     d[7] = (uint8_t)v->brake;
 }
 
+static void sensors_status(uint8_t d[8])
+{
+    const sensors_in_t *v = sensors_in();
+    const int16_t t = (int16_t)(v->fluid_temp / 10 + 40);
+
+    d[0] = (uint8_t)((uint16_t)v->ch_speed[0] >> 8);
+    d[1] = (uint8_t)v->ch_speed[0];
+    d[2] = (uint8_t)((uint16_t)v->ch_speed[1] >> 8);
+    d[3] = (uint8_t)v->ch_speed[1];
+    d[4] = (uint8_t)(v->q_fluid_temp != Q_INVALID && t >= 0 && t < 255 ? t : 0xFF);
+    d[5] = (uint8_t)(v->battery / 100u > 255u ? 255u : v->battery / 100u);
+    d[6] = (uint8_t)((uint8_t)v->park | (v->wake1 ? 0x04u : 0u) | (v->wake2 ? 0x08u : 0u) |
+                     (v->q_ch_speed[0] == Q_OK ? 0x10u : 0u) | (v->q_ch_speed[1] == Q_OK ? 0x20u : 0u) |
+                     (v->q_fluid_temp == Q_OK ? 0x40u : 0u) | (v->q_battery == Q_OK ? 0x80u : 0u));
+    d[7] = v->fluid_temp_faults;
+}
+
 static void send_inputs(void)
 {
     can_frame_t f = { .id = INPUTS_ID, .dlc = 8u };
 
     inputs_status(f.data);
+    (void)plat_can_send(CAN_BUS1, &f);
+    f.id = SENSORS_ID;
+    sensors_status(f.data);
     (void)plat_can_send(CAN_BUS1, &f);
 }
 
@@ -95,6 +131,10 @@ static int read_did(uint16_t did, uint8_t *out, uint16_t max)
 {
     if (did == 0xFD00u && max >= 8u) {
         inputs_status(out);
+        return 8;
+    }
+    if (did == 0xFD01u && max >= 8u) {
+        sensors_status(out);
         return 8;
     }
     return -1;
@@ -131,6 +171,7 @@ int main(void)
 {
     plat_init();
     vehicle_init();
+    sensors_init(&s_sensors_cfg);
     fca_tx_init();
     uds_init(&s_uds_app);
     meas_table_init();

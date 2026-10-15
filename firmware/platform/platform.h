@@ -32,6 +32,30 @@ bool plat_can_rx_register(can_bus_t bus, uint16_t id);
 /* Fetch one received frame, if any. Polled from task context. */
 bool plat_can_recv(can_bus_t bus, can_frame_t *f);
 
+/* ---- Analog inputs (spec 04) ----
+ * Latest conversion result of channel AN0..AN27 or AN40..AN46, left-aligned 16-bit
+ * (65536 = 5.000 V at the pin, before the external divider). Returns false for channels
+ * that are not converted. Called from the 1 ms task. */
+bool plat_adc_raw(uint8_t an, uint16_t *raw);
+
+/* ---- Speed inputs (spec 02 section 4.1) ----
+ * Consistent snapshot of speed channel ch (0 = TIF12, 1 = TIF13, 2 = TIF14):
+ *   edges   rising edges counted since start (wraps at 2^16)
+ *   t_edge  time of the last edge, 4 MHz ticks (wraps at 2^24)
+ *   age     ticks since the last edge (saturates at 2^24 - 1)
+ * Returns false if the channel does not exist or no stable read was possible. */
+typedef struct {
+    uint16_t edges;
+    uint32_t t_edge;
+    uint32_t age;
+} speed_raw_t;
+
+#define SPEED_CHANNELS   3u
+#define SPEED_TICK_HZ    4000000u
+#define SPEED_TIME_MASK  0x00FFFFFFu
+
+bool plat_speed_read(uint8_t ch, speed_raw_t *r);
+
 /* Read n bytes at a target address for the measurement protocol. Returns false (nothing
  * copied) if any byte lies outside the readable areas: project application and calibration
  * flash 0x040000-0x1FFFFF, RAM 0xFFF80000-0xFFF9FFFF. Boot flash and I/O registers are not

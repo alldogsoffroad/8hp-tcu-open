@@ -142,6 +142,22 @@ channels in use. Which of A/B is turbine and which is output could not be resolv
 60 pulses per revolution is a calibration value and must be confirmed for the target
 transmission.
 
+### 4.1a Stock register values and project implementation (M2)
+
+Stock set-up [O]: prescalers `PSCR0..3 = 19, 4, 6, 0` and noise-canceller mode `NCMR = 0x9F`
+(`0x96F28`); all 20 timer F control bytes `0x20` (clock bus 1, no edge), noise filter `NCRFAn = 0x32`,
+noise cancel enabled and all subblocks started (`NCCRF = TSTRF = 0xFFFFF`, `0x9733C`); the speed
+channels F12–F14 (table `0x40DA5`) then get mode `101` and the edge from their configuration
+(`0x97444`; stock: rising) → `TCRF = 0x35`. ATU master enable through a shadowed helper
+(`0x96F56`); timer F needs `ATUENR.TFE` (bit 6) and the prescaler enable (bit 0).
+
+Project (`firmware/platform/sh7254r`, `firmware/io/sensors/speed.c`): the same register values for
+F12–F14 only. Every 10 ms the edge count (`ECNTBF`), last-edge time (`GRDF >> 8`) and time since
+the last edge (`ECNTCF >> 8`) are read consistently; speed = edges / time between edges, decaying
+with a 1.1 margin when pulses stop and reported 0 after 1 s without an edge; samples above
+12 000 rpm are rejected. Pulses per revolution are configuration (stock 60). The channel-to-shaft
+assignment is configuration, default turbine = TIF12, output = TIF13 **[I], bench to confirm**.
+
 ## 4.2 Timer G — ADC and multiplexer triggers
 
 All six timer G channels: 4 MHz clock, compare-match pulse output enabled (`TCRG = 0x12`); the

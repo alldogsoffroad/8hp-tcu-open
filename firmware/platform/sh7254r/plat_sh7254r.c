@@ -1,4 +1,4 @@
-/* SH7254R platform layer: safe pin state, watchdog, 1 ms tick, CAN buses 1 and 2. */
+/* SH7254R platform layer: safe pin state, watchdog, 1 ms tick, CAN buses 1 and 2, ADC, speed inputs. */
 #include "platform/platform.h"
 #include "regs.h"
 
@@ -183,6 +183,81 @@ bool plat_can_recv(can_bus_t bus, can_frame_t *f)
     return false;
 }
 
+/* ---- Analog inputs (spec 04) -----------------------------------------------------
+ * Both converters run in continuous scan mode and the 1 ms task reads the latest result of
+ * each channel. (The stock software uses timer-triggered scans with DMA and the external
+ * multiplexer on AN0; neither is needed for the slow signals read here.) */
+static void adc_init(void)
+{
+    ADCSR0 = 0x00u;
+    ADCSR1 = 0x00u;
+    ADANS0 = 0xFFFEu;                   /* AN1..AN15 (AN0 is the multiplexer input) */
+    ADANS1 = 0x0FFFu;                   /* AN16..AN27 */
+    ADANS3 = 0x007Fu;                   /* AN40..AN46 */
+    ADCSR0 = ADCSR_ADCS | ADCSR_ADST;
+    ADCSR1 = ADCSR_ADCS | ADCSR_ADST;
+}
+
+bool plat_adc_raw(uint8_t an, uint16_t *raw)
+{
+    if (an >= 1u && an <= 27u) {
+        *raw = ADR0(an);
+        return true;
+    }
+    if (an >= 40u && an <= 46u) {
+        *raw = ADR1(an);
+        return true;
+    }
+    return false;
+}
+
+/* ---- Speed inputs: ATU-III timer F12..F14, rotation speed mode (spec 02 4.1) -------
+ * Register values as set by the stock firmware (0x96F28, 0x9733C, 0x97444): prescalers
+ * 1 / 4 / 2.857 / 20 MHz, noise canceller mode 0x9F with filter 0x32, TCRF = 0x35
+ * (clock bus 1 = 4 MHz, MDF 101, rising edge). Only the three speed channels are started. */
+#define SPEED_FIRST_SUBBLOCK 12u
+
+static void speed_init(void)
+{
+    ATU_PSCR(0) = 19u;
+    ATU_PSCR(1) = 4u;
+    ATU_PSCR(2) = 6u;
+    ATU_PSCR(3) = 0u;
+    ATU_NCMR = 0x9Fu;
+    for (uint32_t i = 0u; i < SPEED_CHANNELS; i++) {
+        const uint32_t n = SPEED_FIRST_SUBBLOCK + i;
+        TCRF(n) = 0x35u;
+        TIERF(n) = 0u;
+        TSRF(n) = 0u;
+        NCRFA(n) = 0x32u;
+        NCCRF |= 1u << n;
+        TSTRF |= 1u << n;
+    }
+    ATUENR |= ATUENR_PSCE | ATUENR_TFE;
+}
+
+bool plat_speed_read(uint8_t ch, speed_raw_t *r)
+{
+    const uint32_t n = SPEED_FIRST_SUBBLOCK + ch;
+
+    if (ch >= SPEED_CHANNELS) {
+        return false;
+    }
+    /* the edge count must not change across the read, so all values belong to one edge */
+    for (uint8_t tries = 0u; tries < 4u; tries++) {
+        const uint16_t e1 = ECNTBF(n);
+        const uint32_t grd = GRDF(n);
+        const uint32_t cnt = ECNTCF(n);
+        if (ECNTBF(n) == e1) {
+            r->edges = e1;
+            r->t_edge = (grd >> 8) & SPEED_TIME_MASK;
+            r->age = cnt >> 8;
+            return true;
+        }
+    }
+    return false;
+}
+
 /* ---- Memory read for the measurement protocol ---------------------------------- */
 static bool readable(uint32_t a, uint16_t n)
 {
@@ -246,6 +321,8 @@ void plat_init(void)
     wdt_init();             /* first, so the boot side's watchdog setting is replaced early */
     port_init();
     tick_init();
+    adc_init();
+    speed_init();
     (void)can_init(RCAN_A_BASE);
     (void)can_init(RCAN_C_BASE);
     plat_wdt_service();

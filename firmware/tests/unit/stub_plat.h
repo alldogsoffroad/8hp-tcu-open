@@ -12,6 +12,10 @@ typedef struct {
     unsigned resets, handovers;
     uint8_t rec[0x48];
     uint8_t ram[0x200];         /* simulated target memory at 0xFFF80000 */
+    uint16_t adc[47];           /* left-aligned raw result per AN number */
+    bool adc_on[47];
+    speed_raw_t speed[SPEED_CHANNELS];
+    bool speed_on[SPEED_CHANNELS];
 } stub_plat_t;
 
 extern stub_plat_t stub;

@@ -87,4 +87,33 @@
 #define RCAN_MBC_OFF     (7u << 8)
 #define RCAN_MAILBOXES   32u
 
+
+/* ---- A/D converters (section 19) --------------------------------------- */
+#define ADCSR0   REG8(0xFFFFE800u)
+#define ADANS0   REG16(0xFFFFE820u)      /* AN0..AN15  */
+#define ADANS1   REG16(0xFFFFE822u)      /* AN16..AN27 */
+#define ADR0(n)  REG16(0xFFFFE840u + 2u * (n))
+#define ADCSR1   REG8(0xFFFFEC00u)
+#define ADANS3   REG16(0xFFFFEC20u)      /* AN40..AN47 */
+#define ADR1(n)  REG16(0xFFFFEC40u + 2u * ((n) - 40u))
+#define ADCSR_ADST 0x80u
+#define ADCSR_ADCS 0x40u                 /* continuous scan */
+
+/* ---- ATU-III (section 13) ----------------------------------------------- */
+#define ATUENR   REG16(0xFFFFF000u)
+#define ATU_NCMR REG8(0xFFFFF003u)
+#define ATU_PSCR(n) REG16(0xFFFFF100u + 2u * (n))
+#define ATUENR_PSCE 0x0001u
+#define ATUENR_TFE  0x0040u
+#define TSTRF    REG32(0xFFFFFA00u)
+#define NCCRF    REG32(0xFFFFFA04u)
+#define NCRFA(n) REG8(0xFFFFFA11u + 2u * (n))
+#define TF_BASE(n) (0xFFFFFA80u + 0x20u * (n))
+#define TCRF(n)   REG8(TF_BASE(n) + 0x00u)
+#define TIERF(n)  REG8(TF_BASE(n) + 0x01u)
+#define TSRF(n)   REG8(TF_BASE(n) + 0x03u)
+#define ECNTBF(n) REG16(TF_BASE(n) + 0x08u)
+#define ECNTCF(n) REG32(TF_BASE(n) + 0x0Cu)
+#define GRDF(n)   REG32(TF_BASE(n) + 0x1Cu)
+
 #endif

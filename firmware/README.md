@@ -2,7 +2,9 @@
 
 Open C firmware for the Bosch ZF 8HP TCU (SH7254R). Architecture: `docs/firmware/00-architecture.md`.
 
-Current milestone: **M1** — boots in place of the stock application, serves the watchdog,
+Current milestone: **M2** — adds the transmission's own sensors (speeds, fluid temperature,
+supply, park contacts; `io/sensors`, specs 02 §4.1a and 04 §4.1). M1 summary: boots in place of
+the stock application, serves the watchdog,
 receives and checks the vehicle bus (CRC-8, rolling counter, timeouts; spec 07), decodes the
 traced signals into project units (`io/vehicle/profile_fca.c`), answers diagnostics on
 `0x7E1`/`0x7DF` → `0x7E9`, offers a read-only measurement protocol on `0x361` → `0x398`
@@ -37,7 +39,7 @@ Target build (needs `sh-elf-gcc` in `~/opt/sh-elf` and Debian's `binutils-sh-elf
 ```
 cmake -S firmware -B build/sh2a -G Ninja -DCMAKE_TOOLCHAIN_FILE="$PWD/firmware/cmake/toolchain-sh2a.cmake"
 cmake --build build/sh2a
-python3 tools/build_image.py --app build/sh2a/tcu_app.hex --base "<your read-out>_IFla.bin" -o build/m1_IFla.bin
+python3 tools/build_image.py --app build/sh2a/tcu_app.hex --base "<your read-out>_IFla.bin" -o build/m2_IFla.bin
 ```
 
 `build_image.py` keeps the boot blocks and the calibration block of your own read-out,
@@ -58,7 +60,10 @@ CAN bus 1 (vehicle connector pins 5/6, CAN-C), 500 kbit/s, identifier `0x7F0`, e
 `0x7F1` every 100 ms: decoded inputs (engine speed, lever request and source, quality bits,
 pedal, brake); layout in `app/main.c`. The same bytes are readable as UDS identifier `0xFD00`.
 
-`0x7F0`/`0x7F1` are not cleared for use on a vehicle bus. The firmware is for a bench
+`0x7F2` every 100 ms: sensor status (speed channels TIF12/TIF13, fluid temperature, battery,
+park, quality bits, temperature faults); layout in `app/main.c`, also UDS identifier `0xFD01`.
+
+`0x7F0`/`0x7F1`/`0x7F2` are not cleared for use on a vehicle bus. The firmware is for a bench
 controller only.
 
 ## Diagnostics
@@ -70,6 +75,7 @@ controller only.
 | `11 01` | `51 01`, then reset |
 | `22 F1 95` | software version `8HPTCU-OPEN M1` |
 | `22 FD 00` | decoded input status (8 bytes, as `0x7F1`) |
+| `22 FD 01` | sensor status (8 bytes, as `0x7F2`) |
 | `3E 00` | `7E 00` |
 
 ## Measurement protocol (read-only, spec 10)

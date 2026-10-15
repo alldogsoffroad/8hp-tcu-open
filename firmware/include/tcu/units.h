@@ -12,6 +12,7 @@ typedef int16_t  degc10_t;   /* 0.1 degC                       */
 typedef uint16_t ma10_t;     /* 0.1 mA (solenoid current)      */
 typedef uint16_t permil_t;   /* 0.1 %, 0..1000                 */
 typedef uint32_t ms_t;       /* milliseconds since start       */
+typedef uint16_t mv_t;       /* 1 mV                           */
 
 typedef enum {
     Q_OK = 0,                /* measured, plausible            */

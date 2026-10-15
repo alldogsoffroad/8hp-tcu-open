@@ -41,3 +41,21 @@ bool plat_mem_read(uint32_t addr, uint8_t *out, uint16_t n)
     memcpy(out, &stub.ram[addr - 0xFFF80000u], n);
     return true;
 }
+
+bool plat_adc_raw(uint8_t an, uint16_t *raw)
+{
+    if (an >= 47u || !stub.adc_on[an]) {
+        return false;
+    }
+    *raw = stub.adc[an];
+    return true;
+}
+
+bool plat_speed_read(uint8_t ch, speed_raw_t *r)
+{
+    if (ch >= SPEED_CHANNELS || !stub.speed_on[ch]) {
+        return false;
+    }
+    *r = stub.speed[ch];
+    return true;
+}

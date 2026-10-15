@@ -16,6 +16,10 @@ set(CORE_SOURCES
     bsw/com/sigpack.c
     io/vehicle/vehicle.c
     io/vehicle/fca_tx.c
+    io/sensors/adc.c
+    io/sensors/speed.c
+    io/sensors/tft.c
+    io/sensors/sensors.c
     io/vehicle/profile_fca.c
     bsw/meas/meas.c
     app/meas_table.c
@@ -68,6 +72,15 @@ else()
     add_executable(test_com_tx tests/unit/test_com_tx.c bsw/com/com_tx.c bsw/com/sigpack.c
         bsw/com/crc8.c io/vehicle/fca_tx.c tests/unit/stub_plat.c)
     add_test(NAME com_tx COMMAND test_com_tx)
+    add_executable(test_sensors tests/unit/test_sensors.c io/sensors/adc.c io/sensors/speed.c
+        io/sensors/tft.c io/sensors/sensors.c tests/unit/stub_plat.c)
+    add_test(NAME sensors COMMAND test_sensors)
+    add_test(NAME tft_table_current
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/../tools/gen_tft_table.py ${CMAKE_BINARY_DIR}/tft_table.h)
+    add_test(NAME tft_table_diff
+        COMMAND ${CMAKE_COMMAND} -E compare_files ${CMAKE_BINARY_DIR}/tft_table.h
+            ${CMAKE_SOURCE_DIR}/io/sensors/tft_table.h)
+    set_tests_properties(tft_table_diff PROPERTIES DEPENDS tft_table_current)
     # the generated transmit table must match the CSV it was made from
     add_test(NAME fca_tx_fields_current
         COMMAND ${CMAKE_COMMAND} -E env python3 ${CMAKE_SOURCE_DIR}/../tools/gen_fca_tx.py

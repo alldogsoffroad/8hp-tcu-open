@@ -129,6 +129,20 @@ bool plat_can_recv(can_bus_t bus, can_frame_t *f)
     return true;
 }
 
+bool plat_adc_raw(uint8_t an, uint16_t *raw)
+{
+    (void)an;
+    (void)raw;
+    return false;           /* no analog inputs on the host */
+}
+
+bool plat_speed_read(uint8_t ch, speed_raw_t *r)
+{
+    (void)ch;
+    (void)r;
+    return false;
+}
+
 bool plat_mem_read(uint32_t addr, uint8_t *out, uint16_t n)
 {
     (void)addr;
