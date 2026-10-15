@@ -29,6 +29,7 @@
 #include "bsw/diag/uds.h"
 #include "bsw/meas/meas.h"
 #include "io/vehicle/vehicle.h"
+#include "io/vehicle/fca_tx.h"
 #include "app/meas_table.h"
 
 #define HEARTBEAT_ID 0x7F0u
@@ -56,6 +57,7 @@ static void task_10ms(void)
     vehicle_update_10ms();
     meas_table_update();
     meas_tick_10ms();
+    fca_tx_tick_10ms();     /* all stock transmit messages disabled in M1 */
 }
 
 static void inputs_status(uint8_t d[8])
@@ -129,6 +131,7 @@ int main(void)
 {
     plat_init();
     vehicle_init();
+    fca_tx_init();
     uds_init(&s_uds_app);
     meas_table_init();
     (void)com_register_hw();

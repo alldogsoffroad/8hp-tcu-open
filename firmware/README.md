@@ -6,7 +6,7 @@ Current milestone: **M1** — boots in place of the stock application, serves th
 receives and checks the vehicle bus (CRC-8, rolling counter, timeouts; spec 07), decodes the
 traced signals into project units (`io/vehicle/profile_fca.c`), answers diagnostics on
 `0x7E1`/`0x7DF` → `0x7E9`, offers a read-only measurement protocol on `0x361` → `0x398`
-(spec 10 §6a) and hands over to the Bosch boot software on `0x10 0x02` so the
+(spec 10 §6a), and has the stock periodic transmit messages ready but **disabled** (spec 08 §4a) and hands over to the Bosch boot software on `0x10 0x02` so the
 ACDP-2 can still reprogram the unit (spec 06 §5a, spec 15). It drives **no outputs**: all
 solenoid, PWM and switch outputs stay in the safe state set up by `port_init()` (same pin state
 as the stock firmware before its drivers start).

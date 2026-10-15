@@ -58,6 +58,19 @@ Messages sent by other paths: `0x639` (bus 1), `0x300` and `0x6D3` (bus 2), the 
 response `0x7E9`, and the request/response protocols `0x3B1` and `0x368`/`0x378`/`0x388`/`0x398`
 (see the CAN message list).
 
+## 4a. Project firmware (M1)
+
+- `firmware/bsw/com/com_tx.c` sends periodic messages: clears the frame, packs the fields, adds
+  the rolling counter (upper nibble of byte DLC−2, +1 per transmission, start value 0 [I]) and the
+  CRC-8 (byte DLC−1). A frame that cannot be queued is counted and retried on the next tick
+  without advancing the counter.
+- `firmware/io/vehicle/fca_tx_fields.h` is **generated** from `1034420267_can_tx_signals.csv` by
+  `tools/gen_fca_tx.py` (8 messages, 72 data fields; the 6 counters and 5 CRCs are added by the
+  layer). A host test regenerates it and fails if it differs from the committed file.
+- `firmware/io/vehicle/fca_tx.c` holds one raw value per field (all 0) and **all messages
+  disabled**. Nothing from this table is sent until the field meanings and the values a Ram
+  expects are known; the inverted second frame image (variant 2, §3) is not implemented.
+
 ## 5. Open items
 
 1. Meaning and scaling of each field (compare with a Ram capture; the TCU's own values can also be
