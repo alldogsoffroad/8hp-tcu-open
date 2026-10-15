@@ -70,6 +70,45 @@ bus-0 chips. Confirmed as current setpoints; channel use and solenoid assignment
 | SSLB0 | `0x03`, `0x09`, `0xC9`, … interleaved with SSLB1 frames | different device; [I] role open |
 | SSLB2 | one 16-bit frame, SPI mode 0 | different device; [I] role open |
 
+### 4.3 Complete job list and bus-1 protocol [O]
+
+Job descriptors (`0x409F4…0x40C74`, integrity marker `0x45B9F72D`): frame count, transmit and
+receive buffers, chip-select command table, completion handler.
+
+| Descriptor | Bus | Frames → device | Transmit (command \| data) | Handler | Notes |
+|---|---|---|---|---|---|
+| `0x40A98` | 0 | 10 → chips 0–4 | `06`, `00` | `0x921E0` | ID |
+| `0x40AB8` | 0 | 15 | `18`, `1E`, `28` | `0x92298` | status |
+| `0x40B28` | 0 | 40 | `8E 90 96 88`, reads `28 30 2E 36` | `0x923BC` | configuration |
+| `0x40B48` | 0 | 45 | cyclic (spec 12 §2b) | `0x92530` | setpoints |
+| `0x409F4` | 1 | 7 → SSLB1 | `88`×4 (data bytes), `12`, `0C`, `0A` | `0x910EE` | builder `0x91086` |
+| `0x40A14` | 1 | 4 → SSLB1 | `84`\|value, `0A`, `12`, `0C` | `0x911D8` | builder `0x91190` |
+| `0x40B80` | 1 | 4 → SSLB1/SSLB0 | `06`, `03`, `00`, `00` | `0x92AC0` | identification of both |
+| `0x40BA0` | 1 | 5 → B1/B0/B1/B0/B1 | `18`, `0C`, `1E`, `06`, `14` | `0x92BBE` | status of both |
+| `0x40BC0` | 1 | 1 → SSLB0 | (built inline) | `0x92CC8` | SSLB0 status nibble |
+| `0x40BE8` | 1 | 4 → B1/B0/B1/B0 | `8E`\|`0xFFF907D4`, `C9`\|`0xFFF9097B`, `22`, `09` | `0x92D94` | **control words**, read back and compared |
+| `0x40C0C` | 1 | 2 → SSLB1 | `90`\|enables, `24` | `0x92ED4` | **output enables** (`0x92E80`) |
+| `0x40C30` | 1 | 2 → SSLB1 | `90`\|enables, `24` | `0x92FD0` | same, from the fault path (`0x92F7C`) |
+| `0x40C54` | 1 | 2 → SSLB1 | `28`, `2E` | `0x93096` | 10-bit value + flag → `0xFFF907CC` |
+| `0x40C74` | 1 | 1 → SSLB2 (mode 0) | `0x00FF` | `0x931D4` | 16-bit value → `0xFFF908EE` |
+
+Reply headers: SSLB1 `0xA8` (mask `0xF900`, same family as the bus-0 drivers), SSLB0 `0xAA`
+(mask `0xFE00`).
+
+[I] Roles, from the data flow:
+- **SSLB1** is a driver chip of the same family with switch outputs. Its register `0x90` gets
+  `0xFFF907D6` (`0x91758`): bits 5–7 are set when switch outputs (state letter `'c'` in
+  `0xFFF90944[…]`) are on, bit 3 from `0xFFF90952`, plus bits from `0xFFF90963`. The transmit
+  value is masked with `~(status & 0xE0)`, so outputs reporting a fault are switched off.
+  Its register `0x8E` gets the control word `0xFFF907D4` (`0x91C86`).
+- **SSLB0** is a different device (supervisor / system chip). Its register `0xC9` gets
+  `0xFFF9097B` (`0x91C86`, bits from `0xFFF90957`, `0xFFF90962`, `0xFFF9094D`, `0xFFF9095A`); one
+  status read is stored inverted as a 4-bit status `0xFFF90958`.
+- **SSLB2** returns a 16-bit value each cycle; meaning open.
+
+The steady-state values of the SSLB1 `0x8E`/`0x90` and SSLB0 `0xC9` words, which are the
+likely output-enable path, still have to be evaluated (spec 12 §4).
+
 ## 5. Shutdown behavior
 
 On a fatal internal condition the software reinitialises RSPI-B, sends a frame on SSLB1 from the

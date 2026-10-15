@@ -357,6 +357,26 @@ current measurement).
 Stock values come from calibration `0x1918B4…0x1918C2` (driver configuration, not shift
 calibration). In the reduced-frequency mode the values are rescaled by 1.4 / 0.714 (`0x8FDB6`).
 
+**Reply format** (completion handlers `0x921E0`, `0x92298`, `0x923BC`, `0x92530`) [O]: every reply
+frame carries a fixed header — high byte `0xA2` for ID, diagnostic and configuration frames,
+top five bits `10100b` (`0xA000` under mask `0xF800`) for cyclic frames, followed by 11 data
+bits. A wrong header marks the chip's job as failed (record `+0x01` / `+0x02` flags).
+- Cyclic job: the read frames return the values written in the same cycle — reply of frame
+  `0x60` = data of `0xA0` (ch 0 dither), `0xC0` = `0xE8` (ch 0 setpoint), `0x66` = `0xA6`,
+  `0xD8` = `0xF0`. A mismatch is a fault; a non-zero setpoint readback sets a per-channel
+  "active" bit (record `+0x06` bits 1 / 3).
+- Diagnostic job (`0x18`, `0x1E`, `0x28`): ch 0 status → record `+0x12`, ch 1 status → `+0x1A`,
+  chip status → `+0x08`.
+- Configuration job: the reads return the configuration bytes and are compared with what was
+  written.
+- ID job: `0x06` → record `+0x05`, `0x00` → `+0x04`; record `+0x04` = `0xBD` selects a chip
+  revision handled specially (`0x901A0`, `0x92A04`).
+
+The cyclic job therefore does **not** return a measured current. The values that `0x904FA`
+scales (record `+0x0E`, `+0x16`) have no writer in the driver code that was traced; [I] the
+chips regulate current internally and report faults through the status bytes. Measuring the
+actual current is a bench task (§4).
+
 **Readback** (`0x904FA`): per channel an 11-bit signed value from the receive data (record `+0x0E`
 for ch 0, `+0x16` for ch 1), scaled by `324.92 / (n + 1)`, n from the readback-range bits of
 `0x90`/`0x96` (stock n = 4 → factor 65.0), sign inverted for odd channels → `0xFFF90258[ch]`.
