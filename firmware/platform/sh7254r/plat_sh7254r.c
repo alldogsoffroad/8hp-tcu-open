@@ -266,7 +266,7 @@ void plat_sup_init(void)
     SPSRB = 0u;
     SPPCRB = 0u;
     SPBRB = 5u;                         /* P/12 */
-    SPDCRB = 0u;
+    SPSCRB = 0u;                        /* one command (SPCMD0) */
     SPCKDB = 0u;
     SSLNDB = 0u;
     SPNDB = 1u;
@@ -293,6 +293,55 @@ uint8_t plat_sup_exchange(uint16_t tx, uint16_t *rx)
         r |= 1u;
     }
     return r;
+}
+
+/* ---- Solenoid driver chips: RSPI-A, CPU-driven jobs (spec 03 sections 2-4) ----------------
+ * Same bus settings as the stock job start (0x96468 with descriptor 0x40CD8): P/12, no extra
+ * delays, a five-command sequence SSLA3, SSLA2, SSLA1, SSLA0, SSLA5 (16 bit, MSB first, mode 1),
+ * so frame n goes to chip n mod 5. Each job restarts the sequence by toggling SPE. */
+static const uint16_t s_drv_cmd[5] = { 0xAF31u, 0xAF21u, 0xAF11u, 0xAF01u, 0xAF51u };
+
+void plat_drv_init(void)
+{
+    SPCRA = 0x00u;
+    RSPIA_DMA_REQ0 = 0u;
+    RSPIA_DMA_REQ1 = 0u;
+    SPSRA = 0u;
+    SPPCRA = 0u;
+    SPBRA = 5u;
+    SPCKDA = 0u;
+    SSLNDA = 0u;
+    SPNDA = 0u;
+    SPSCRA = 4u;                        /* sequence of five commands */
+    for (uint32_t i = 0u; i < 5u; i++) {
+        SPCMDA(i) = s_drv_cmd[i];
+    }
+}
+
+#define DRV_WAIT_LOOPS 2000u            /* far above one 16-bit frame at P/12 */
+
+bool plat_drv_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n)
+{
+    SPCRA = 0x08u;                      /* disable: restarts the command sequence */
+    SPSRA = 0u;
+    SPCRA = 0x48u;                      /* enable, master */
+    for (uint8_t i = 0u; i < n; i++) {
+        uint32_t guard;
+        for (guard = DRV_WAIT_LOOPS; guard != 0u && (SPSRA & SPSR_SPTEF) == 0u; guard--) {
+        }
+        if (guard == 0u) {
+            return false;
+        }
+        SPDRA = tx[i];
+        for (guard = DRV_WAIT_LOOPS; guard != 0u && (SPSRA & SPSR_SPRF) == 0u; guard--) {
+        }
+        if (guard == 0u) {
+            return false;
+        }
+        rx[i] = SPDRA;
+        SPSRA = (uint8_t)(SPSRA & SPSR_SPTEF);  /* clear SPRF / error flags */
+    }
+    return true;
 }
 
 /* ---- Memory read for the measurement protocol ---------------------------------- */
@@ -361,6 +410,7 @@ void plat_init(void)
     adc_init();
     speed_init();
     plat_sup_init();
+    plat_drv_init();
     (void)can_init(RCAN_A_BASE);
     (void)can_init(RCAN_C_BASE);
     plat_wdt_service();

@@ -1,6 +1,6 @@
-/* M2 application: boots, serves the watchdog, receives and decodes the vehicle bus, reads the
+/* M3 application (bench):  boots, serves the watchdog, receives and decodes the vehicle bus, reads the
  * transmission sensors (speeds, fluid temperature, supply, park contacts) and sends bench status
- * frames on CAN bus 1. Drives no outputs.
+ * frames on CAN bus 1. Solenoid outputs only through the bench test routine (app/bench_out.h).
  *
  * Heartbeat (BENCH USE ONLY, identifier not cleared for any vehicle bus):
  *   ID 0x7F0, DLC 8, every 100 ms
@@ -31,6 +31,12 @@
  *              bits 7..4 quality bits: speed 0, speed 1, fluid temp, battery (1 = valid)
  *   byte 7     fluid temperature fault bits
  *
+ * Output status (BENCH USE ONLY): ID 0x7F3, DLC 8, every 100 ms (UDS identifier 0xFD02)
+ *   byte 0     driver fault bits (SOL_F_*), byte 1 bit0 drivers ready, bit1 supervisor output
+ *              enable sent, bit2 bench test active
+ *   byte 2     bench channel, bytes 3-4 bench current mA, byte 5 remaining time 0.1 s,
+ *   byte 6     reason the last bench test ended, byte 7 chip 0 status byte
+ *
  * Measurement protocol (spec 10, read-only): 0x361 -> 0x398 on either bus; project index list
  * in app/meas_table.c.
  */
@@ -42,12 +48,15 @@
 #include "bsw/meas/meas.h"
 #include "io/vehicle/vehicle.h"
 #include "io/sensors/sensors.h"
+#include "io/actuators/sol_drv.h"
+#include "app/bench_out.h"
 #include "io/vehicle/fca_tx.h"
 #include "app/meas_table.h"
 
 #define HEARTBEAT_ID 0x7F0u
 #define INPUTS_ID    0x7F1u
 #define SENSORS_ID   0x7F2u
+#define OUTPUTS_ID   0x7F3u
 
 static uint8_t s_counter;
 
@@ -74,6 +83,8 @@ static void task_10ms(void)
 {
     vehicle_update_10ms();
     sensors_update_10ms();
+    bench_tick_10ms();      /* safety interlocks first, then the driver job */
+    sol_tick_10ms();
     meas_table_update();
     meas_tick_10ms();
     fca_tx_tick_10ms();     /* all stock transmit messages disabled in M1 */
@@ -111,6 +122,23 @@ static void sensors_status(uint8_t d[8])
     d[7] = v->fluid_temp_faults;
 }
 
+static void outputs_status(uint8_t d[8])
+{
+    const sol_status_t *sv = sol_status();
+    uint8_t res[7];
+
+    (void)bench_routine(3u, BENCH_RID, res, 0u, res, sizeof res);
+    d[0] = sv->faults;
+    d[1] = (uint8_t)((sv->ready ? 1u : 0u) | (sup_status()->enable ? 2u : 0u) |
+                     (bench_active() ? 4u : 0u));
+    d[2] = res[1];
+    d[3] = res[2];
+    d[4] = res[3];
+    d[5] = res[4];
+    d[6] = res[5];
+    d[7] = sv->chip[0].status_chip;
+}
+
 static void send_inputs(void)
 {
     can_frame_t f = { .id = INPUTS_ID, .dlc = 8u };
@@ -120,6 +148,9 @@ static void send_inputs(void)
     f.id = SENSORS_ID;
     sensors_status(f.data);
     (void)plat_can_send(CAN_BUS1, &f);
+    f.id = OUTPUTS_ID;
+    outputs_status(f.data);
+    (void)plat_can_send(CAN_BUS1, &f);
 }
 
 /* Leaving the application (programming session, ECU reset) only while the engine is not
@@ -127,7 +158,7 @@ static void send_inputs(void)
 static bool leave_allowed(void)
 {
     const vehicle_in_t *v = vehicle_in();
-    return v->q_engine_speed != Q_OK || v->engine_speed < 50;
+    return !bench_active() && (v->q_engine_speed != Q_OK || v->engine_speed < 50);
 }
 
 static int read_did(uint16_t did, uint8_t *out, uint16_t max)
@@ -140,10 +171,14 @@ static int read_did(uint16_t did, uint8_t *out, uint16_t max)
         sensors_status(out);
         return 8;
     }
+    if (did == 0xFD02u && max >= 8u) {
+        outputs_status(out);
+        return 8;
+    }
     return -1;
 }
 
-static const uds_app_t s_uds_app = { leave_allowed, read_did };
+static const uds_app_t s_uds_app = { leave_allowed, read_did, bench_routine };
 
 static void task_100ms(void)
 {
@@ -185,6 +220,8 @@ int main(void)
 {
     plat_init();
     sup_init();
+    sol_init();             /* identification + configuration; all channels off */
+    bench_init();
     vehicle_init();
     sensors_init(&s_sensors_cfg);
     fca_tx_init();

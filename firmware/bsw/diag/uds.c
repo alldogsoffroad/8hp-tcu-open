@@ -164,10 +164,38 @@ static int svc_read_did(const uint8_t *req, uint16_t len)
     return (int)pos;
 }
 
+static int svc_routine(const uint8_t *req, uint16_t len)
+{
+    const uint8_t type = (uint8_t)(req[1] & 0x7Fu);
+    int r;
+
+    if (s_session != SES_EXT) {
+        return -NRC_SNSIAS;
+    }
+    if (len < 4u) {
+        return -NRC_IMLOIF;
+    }
+    if (type < 1u || type > 3u) {
+        return -NRC_SFNS;
+    }
+    if (s_app == NULL || s_app->routine == NULL) {
+        return -NRC_ROOR;
+    }
+    r = s_app->routine(type, (uint16_t)(req[2] << 8 | req[3]), &req[4], (uint16_t)(len - 4u),
+                       &s_rsp[3], (uint16_t)(sizeof s_rsp - 4u));
+    if (r < 0) {
+        return r;
+    }
+    s_rsp[0] = type;
+    s_rsp[1] = req[2];
+    s_rsp[2] = req[3];
+    return r + 3;
+}
+
 static void process(uint8_t bus, const uint8_t *req, uint16_t len, isotp_addr_t addr)
 {
     const uint8_t sid = req[0];
-    const bool has_sub = sid == 0x10u || sid == 0x11u || sid == 0x3Eu;
+    const bool has_sub = sid == 0x10u || sid == 0x11u || sid == 0x31u || sid == 0x3Eu;
     uint8_t out[ISOTP_BUF];
     int r;
 
@@ -176,6 +204,7 @@ static void process(uint8_t bus, const uint8_t *req, uint16_t len, isotp_addr_t 
     case 0x10u: r = svc_session(req, len); break;
     case 0x11u: r = svc_reset(req, len); break;
     case 0x22u: r = svc_read_did(req, len); break;
+    case 0x31u: r = svc_routine(req, len); break;
     case 0x3Eu: r = svc_tester_present(req, len); break;
     default:    r = -NRC_SNS; break;
     }

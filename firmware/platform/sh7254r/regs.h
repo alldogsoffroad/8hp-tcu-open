@@ -93,7 +93,7 @@
 #define SPPCRB   REG8(0xFFFFB802u)
 #define SPSRB    REG8(0xFFFFB803u)
 #define SPDRB    REG16(0xFFFFB804u)
-#define SPDCRB   REG8(0xFFFFB808u)
+#define SPSCRB   REG8(0xFFFFB808u)      /* sequence length - 1 */
 #define SPBRB    REG8(0xFFFFB80Au)
 #define SPCKDB   REG8(0xFFFFB80Cu)
 #define SSLNDB   REG8(0xFFFFB80Du)
@@ -101,6 +101,19 @@
 #define SPCMDB0  REG16(0xFFFFB810u)
 #define RSPIB_DMA_REQ0 REG16(0xFFFE6074u)   /* as cleared by the stock CPU-mode set-up */
 #define RSPIB_DMA_REQ1 REG16(0xFFFE6076u)
+/* RSPI-A (bus 0, solenoid driver chips) */
+#define SPCRA    REG8(0xFFFFB000u)
+#define SPPCRA   REG8(0xFFFFB002u)
+#define SPSRA    REG8(0xFFFFB003u)
+#define SPDRA    REG16(0xFFFFB004u)
+#define SPSCRA   REG8(0xFFFFB008u)
+#define SPBRA    REG8(0xFFFFB00Au)
+#define SPCKDA   REG8(0xFFFFB00Cu)
+#define SSLNDA   REG8(0xFFFFB00Du)
+#define SPNDA    REG8(0xFFFFB00Eu)
+#define SPCMDA(n) REG16(0xFFFFB010u + 2u * (n))
+#define RSPIA_DMA_REQ0 REG16(0xFFFE6070u)
+#define RSPIA_DMA_REQ1 REG16(0xFFFE6072u)
 #define SPSR_SPRF  0x80u
 #define SPSR_SPTEF 0x20u
 

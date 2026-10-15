@@ -69,6 +69,13 @@ bool plat_mem_read(uint32_t addr, uint8_t *out, uint16_t n);
 void plat_sup_init(void);
 uint8_t plat_sup_exchange(uint16_t tx, uint16_t *rx);
 
+/* ---- Solenoid driver chips on RSPI-A (spec 03, spec 12 section 2b) ----
+ * Send n 16-bit frames; frame i goes to chip i mod 5 (SSLA3, SSLA2, SSLA1, SSLA0, SSLA5) and the
+ * reply received during frame i is stored in rx[i]. Blocking (about 13 us per frame); returns
+ * false on a bus timeout. */
+void plat_drv_init(void);
+bool plat_drv_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n);
+
 /* Software reset through the watchdog (same method as the stock reset routine 0x966B8).
  * Does not return on the target. */
 void plat_reset(void);

@@ -386,6 +386,16 @@ are still open.
 
 **ID job** (template `0x40A84`, 10 frames): `0x06`, `0x00` per chip; reply high byte `0xA2`.
 
+### 2c. Project implementation (M3)
+
+`firmware/io/actuators/sol_drv.c` reproduces the four bus-0 jobs with the stock frame layouts and
+reply checks; RSPI-A is driven by the CPU with the five-command sequence of the stock job start
+(`0x96468`). Configuration bytes `0x8E` = 0x00 [I], `0x90` = 0x21, `0x96` = 0x55, mode bit 4 set;
+dither amplitude 0 (dither not used). Any reply or read-back fault latches and forces all
+channels off. Channels are only driven by the bench test `firmware/app/bench_out.c` (safety
+design in `firmware/README.md`), which also sets the supervisor output enable (spec 03 §4.4)
+only while a test is active.
+
 ## 3. Solenoid characteristics [O]
 
 Seven pressure → current curves (calibration objects 3371–3377, group `0xFFF84D18`, struct

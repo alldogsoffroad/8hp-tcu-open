@@ -20,6 +20,12 @@ typedef struct {
     unsigned sup_n;
     bool sup_busy;              /* transmitter not free */
     uint16_t sup_reply;         /* reply returned for every frame after the first */
+    bool drv_fail;              /* driver bus timeout */
+    bool drv_bad_header;        /* chips reply with a wrong header */
+    bool drv_bad_readback;      /* chips return wrong read-back values */
+    uint8_t drv_reg[5][256];    /* simulated chip registers, by write command */
+    uint16_t drv_last_tx[45];
+    unsigned drv_jobs;
 } stub_plat_t;
 
 extern stub_plat_t stub;

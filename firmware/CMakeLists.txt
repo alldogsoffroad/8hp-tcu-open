@@ -21,6 +21,8 @@ set(CORE_SOURCES
     io/sensors/speed.c
     io/sensors/tft.c
     io/sensors/sensors.c
+    io/actuators/sol_drv.c
+    app/bench_out.c
     io/vehicle/profile_fca.c
     bsw/meas/meas.c
     app/meas_table.c
@@ -78,6 +80,13 @@ else()
     add_test(NAME sensors COMMAND test_sensors)
     add_executable(test_sup tests/unit/test_sup.c bsw/sup/sup.c tests/unit/stub_plat.c)
     add_test(NAME sup COMMAND test_sup)
+    add_executable(test_sol tests/unit/test_sol.c io/actuators/sol_drv.c tests/unit/stub_plat.c)
+    add_test(NAME sol COMMAND test_sol)
+    add_executable(test_bench tests/unit/test_bench.c app/bench_out.c io/actuators/sol_drv.c
+        bsw/sup/sup.c bsw/diag/uds.c bsw/diag/isotp.c bsw/diag/boot_record.c
+        io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
+        tests/unit/stub_plat.c)
+    add_test(NAME bench COMMAND test_bench)
     add_test(NAME tft_table_current
         COMMAND python3 ${CMAKE_SOURCE_DIR}/../tools/gen_tft_table.py ${CMAKE_BINARY_DIR}/tft_table.h)
     add_test(NAME tft_table_diff

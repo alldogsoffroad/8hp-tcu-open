@@ -2,8 +2,10 @@
 
 Open C firmware for the Bosch ZF 8HP TCU (SH7254R). Architecture: `docs/firmware/00-architecture.md`.
 
-Current milestone: **M2** — adds the transmission's own sensors (speeds, fluid temperature,
-supply, park contacts; `io/sensors`, specs 02 §4.1a and 04 §4.1). M1 summary: boots in place of
+Current milestone: **M3** — solenoid driver chips (`io/actuators/sol_drv.c`, spec 12 §2b) and a
+bench-only solenoid test (`app/bench_out.c`); outputs are off unless a bench test is running.
+M2: the transmission's own sensors (speeds, fluid temperature, supply, park contacts;
+`io/sensors`, specs 02 §4.1a and 04 §4.1). M1 summary: boots in place of
 the stock application, serves the watchdog,
 receives and checks the vehicle bus (CRC-8, rolling counter, timeouts; spec 07), decodes the
 traced signals into project units (`io/vehicle/profile_fca.c`), answers diagnostics on
@@ -77,6 +79,43 @@ controller only.
 | `22 FD 00` | decoded input status (8 bytes, as `0x7F1`) |
 | `22 FD 01` | sensor status (8 bytes, as `0x7F2`) |
 | `3E 00` | `7E 00` |
+
+## Solenoid bench test (M3) — DUMMY LOADS ONLY
+
+Never on a transmission or a vehicle. Connect a dummy load (for example a 6–10 Ω power resistor,
+or a spare solenoid on the bench) and an ammeter to the channel under test; leave every other
+output unconnected or loaded.
+
+Safety design (agreed 2026-10-15), enforced in `app/bench_out.c`:
+- outputs and the supervisor output enable are off unless a test is running;
+- a test starts only in the extended session (`10 03`), engine not running, driver chips
+  identified and configured, supervisor replying;
+- one channel at a time, channels 0–6 only (park release 7 and park hold excluded), 10–1000 mA,
+  1–5 s;
+- the test ends on timeout, stop, leaving the extended session (keep `3E 00` coming), engine
+  speed above 50 rpm, or any driver / supervisor fault.
+
+| Request | Meaning |
+|---|---|
+| `10 03` | extended session (send `3E 80` at least every 4 s to stay in it) |
+| `31 01 FE 10 ch I s` | start: channel `ch` (0 A, 1 D, 2 B, 3 E, 4 C, 5 TCC, 6 line pressure), current `I` × 10 mA, `s` seconds |
+| `31 02 FE 10` | stop |
+| `31 03 FE 10` | results: state, channel, mA, remaining 0.1 s, end reason, driver faults |
+| `22 FD 02` | output status (as `0x7F3`) |
+
+End reasons: 1 timeout, 2 stopped, 3 session ended, 4 engine running, 5 driver fault,
+6 supervisor fault. Driver fault bits (`0x7F3` byte 0): 0x01 bus timeout, 0x02 ID, 0x04
+configuration read-back, 0x08 reply header, 0x10 setpoint read-back, 0x20 start-up not done.
+
+First bench steps:
+1. With nothing connected, check `0x7F3`: byte 0 = 0 (driver chips identified and configured,
+   no faults) and `0x7F0` byte 1 bit 1 = 1 (supervisor replying). If not, stop here and record
+   the values: the reply formats in spec 12 §2b are taken from the stock checks and are not yet
+   confirmed on hardware.
+2. Channel 6 (line pressure) at 300 mA for 2 s into the dummy load; read the ammeter. Expected
+   ≈ 300 mA if the 0.1 mA unit and the ÷6 setpoint scaling (spec 12 §2b) are right.
+3. Repeat at 100, 500, 1000 mA to check linearity; then each channel 0–6 once.
+4. Record channel, requested and measured current (bench item 3 / spec 12 §4).
 
 ## Measurement protocol (read-only, spec 10)
 

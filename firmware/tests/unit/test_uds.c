@@ -19,7 +19,7 @@ static int app_did(uint16_t did, uint8_t *out, uint16_t max)
     }
     return -1;
 }
-static const uds_app_t app = { allowed, app_did };
+static const uds_app_t app = { allowed, app_did, NULL };
 
 static void rx(can_bus_t bus, uint16_t id, const uint8_t *d, uint8_t n)
 {
@@ -64,12 +64,12 @@ int main(void)
     CHECK(stub.n_tx == 0u);
 
     /* unsupported service: NRC 0x11 physically, silence functionally */
-    rx(CAN_BUS1, 0x7DFu, (const uint8_t[]){ 0x02, 0x31, 0x01 }, 3u);
+    rx(CAN_BUS1, 0x7DFu, (const uint8_t[]){ 0x02, 0x85, 0x01 }, 3u);
     ticks(1u);
     CHECK(stub.n_tx == 0u);
-    rx(CAN_BUS1, 0x7E1u, (const uint8_t[]){ 0x02, 0x31, 0x01 }, 3u);
+    rx(CAN_BUS1, 0x7E1u, (const uint8_t[]){ 0x02, 0x85, 0x01 }, 3u);
     ticks(1u);
-    CHECK(last_is(0x7E9u, (const uint8_t[]){ 0x03, 0x7F, 0x31, 0x11 }, 4u));
+    CHECK(last_is(0x7E9u, (const uint8_t[]){ 0x03, 0x7F, 0x85, 0x11 }, 4u));
 
     /* read software version (17-byte response: first frame, flow control, two CFs) */
     stub.n_tx = 0u;

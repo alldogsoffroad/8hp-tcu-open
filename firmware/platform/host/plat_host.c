@@ -160,6 +160,16 @@ uint8_t plat_sup_exchange(uint16_t tx, uint16_t *rx)
     return (uint8_t)(r | 1u);
 }
 
+void plat_drv_init(void) { }
+
+bool plat_drv_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n)
+{
+    (void)tx;
+    (void)rx;
+    (void)n;
+    return false;           /* no driver chips on the host: the driver layer reports a fault */
+}
+
 bool plat_mem_read(uint32_t addr, uint8_t *out, uint16_t n)
 {
     (void)addr;
