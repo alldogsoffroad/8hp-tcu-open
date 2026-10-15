@@ -143,9 +143,10 @@ self-test (`0x86916` via `0x8C808`) clears `0xFFF9094D`, **bit 7** from `0xFFF90
 `SPCR = 0x48`; then write a frame to `SPDR` (`0xFFFFB804`) and poll `SPSR` bit `0x20`. The bootloader
 routine `0x1D478` sends `0x8E01` followed by eleven `0x8401`.
 
-**Consequence for the project firmware:** M0–M2 do not service the supervisor. [I] On the bench this
-will most likely reset the controller periodically or keep the outputs off. The supervisor timeout is
-open; the stock period is 5 ms (boot) and the periodic task in the application.
+**Project firmware:** `firmware/bsw/sup` (from commit after M2) sends the control word every 5 ms
+with bit 2 toggling and the output enable off, using the CPU-mode set-up above, and checks the
+`0xA8` reply header; the heartbeat `0x7F0` byte 1 reports the result. Images built before it do not
+service the supervisor. The supervisor timeout is open.
 
 ## 5. Shutdown behavior
 

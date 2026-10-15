@@ -143,6 +143,23 @@ bool plat_speed_read(uint8_t ch, speed_raw_t *r)
     return false;
 }
 
+static uint16_t s_sup_last;
+static bool s_sup_pending;
+
+void plat_sup_init(void) { s_sup_pending = false; }
+
+uint8_t plat_sup_exchange(uint16_t tx, uint16_t *rx)
+{
+    uint8_t r = 0u;
+    if (s_sup_pending) {
+        *rx = (uint16_t)(0xA800u | (s_sup_last & 0x00FFu));   /* simulated reply: echo */
+        r |= 2u;
+    }
+    s_sup_last = tx;
+    s_sup_pending = true;
+    return (uint8_t)(r | 1u);
+}
+
 bool plat_mem_read(uint32_t addr, uint8_t *out, uint16_t n)
 {
     (void)addr;

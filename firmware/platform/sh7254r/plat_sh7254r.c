@@ -258,6 +258,43 @@ bool plat_speed_read(uint8_t ch, speed_raw_t *r)
     return false;
 }
 
+/* ---- External supervisor (RSPI-B, SSLB1), CPU-driven as in stock 0x9210C / 0x1D430 ------ */
+void plat_sup_init(void)
+{
+    RSPIB_DMA_REQ0 = 0u;
+    RSPIB_DMA_REQ1 = 0u;
+    SPSRB = 0u;
+    SPPCRB = 0u;
+    SPBRB = 5u;                         /* P/12 */
+    SPDCRB = 0u;
+    SPCKDB = 0u;
+    SSLNDB = 0u;
+    SPNDB = 1u;
+    SPCMDB0 = 0xAF11u;                  /* SSLB1, 16 bit, MSB first, mode 1 */
+    SPCRB = 0x48u;                      /* enable, master */
+}
+
+uint8_t plat_sup_exchange(uint16_t tx, uint16_t *rx)
+{
+    uint8_t r = 0u;
+    const uint8_t st = SPSRB;
+
+    if ((st & SPSR_SPRF) != 0u) {
+        *rx = SPDRB;
+        r |= 2u;
+    }
+    if ((st & (uint8_t)~SPSR_SPTEF) != 0u) {
+        /* clear receive / error flags (write 0 after reading 1); writing 1 to SPTEF is ignored,
+         * so it keeps its state */
+        SPSRB = (uint8_t)(st & SPSR_SPTEF);
+    }
+    if ((SPSRB & SPSR_SPTEF) != 0u) {
+        SPDRB = tx;
+        r |= 1u;
+    }
+    return r;
+}
+
 /* ---- Memory read for the measurement protocol ---------------------------------- */
 static bool readable(uint32_t a, uint16_t n)
 {
@@ -323,6 +360,7 @@ void plat_init(void)
     tick_init();
     adc_init();
     speed_init();
+    plat_sup_init();
     (void)can_init(RCAN_A_BASE);
     (void)can_init(RCAN_C_BASE);
     plat_wdt_service();

@@ -10,6 +10,7 @@ include_directories(${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/include)
 
 set(CORE_SOURCES
     bsw/sched/sched.c
+    bsw/sup/sup.c
     bsw/com/crc8.c
     bsw/com/com.c
     bsw/com/com_tx.c
@@ -75,6 +76,8 @@ else()
     add_executable(test_sensors tests/unit/test_sensors.c io/sensors/adc.c io/sensors/speed.c
         io/sensors/tft.c io/sensors/sensors.c tests/unit/stub_plat.c)
     add_test(NAME sensors COMMAND test_sensors)
+    add_executable(test_sup tests/unit/test_sup.c bsw/sup/sup.c tests/unit/stub_plat.c)
+    add_test(NAME sup COMMAND test_sup)
     add_test(NAME tft_table_current
         COMMAND python3 ${CMAKE_SOURCE_DIR}/../tools/gen_tft_table.py ${CMAKE_BINARY_DIR}/tft_table.h)
     add_test(NAME tft_table_diff

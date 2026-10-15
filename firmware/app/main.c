@@ -5,7 +5,9 @@
  * Heartbeat (BENCH USE ONLY, identifier not cleared for any vehicle bus):
  *   ID 0x7F0, DLC 8, every 100 ms
  *   byte 0     rolling counter (starts at 0 after every reset)
- *   byte 1     flags: bit0 = at least one missed 1 ms tick since start
+ *   byte 1     flags: bit0 = at least one missed 1 ms tick since start; bit1 = supervisor
+ *              replied correctly to the last frame; bit2 = a bad supervisor reply was seen;
+ *              bit3 = output enable sent to the supervisor
  *   bytes 2-3  uptime in seconds (big-endian)
  *   bytes 4-7  idle-loop count during the last 100 ms (big-endian); measured against the
  *              20 MHz peripheral clock this gives the CPU clock (spec 05 section 1.2)
@@ -34,6 +36,7 @@
  */
 #include "platform/platform.h"
 #include "bsw/sched/sched.h"
+#include "bsw/sup/sup.h"
 #include "bsw/com/com.h"
 #include "bsw/diag/uds.h"
 #include "bsw/meas/meas.h"
@@ -150,7 +153,12 @@ static void task_100ms(void)
     can_frame_t f = { .id = HEARTBEAT_ID, .dlc = 8u };
 
     f.data[0] = s_counter++;
-    f.data[1] = (uint8_t)(st->missed_ticks != 0u ? 0x01u : 0x00u);
+    {
+        const sup_status_t *sv = sup_status();
+        f.data[1] = (uint8_t)((st->missed_ticks != 0u ? 0x01u : 0u) |
+                              ((sv->last_rx & SUP_REPLY_MASK) == SUP_REPLY_OK ? 0x02u : 0u) |
+                              (sv->replies_bad != 0u ? 0x04u : 0u) | (sv->enable ? 0x08u : 0u));
+    }
     f.data[2] = (uint8_t)(up_s >> 8);
     f.data[3] = (uint8_t)up_s;
     f.data[4] = (uint8_t)(idle >> 24);
@@ -161,8 +169,14 @@ static void task_100ms(void)
     send_inputs();
 }
 
+static void task_5ms(void)
+{
+    sup_tick_5ms();     /* external supervisor service; output enable stays off */
+}
+
 static const task_t s_tasks[] = {
     { task_1ms,     1u, 0u },
+    { task_5ms,     5u, 2u },
     { task_10ms,   10u, 1u },
     { task_100ms, 100u, 5u },
 };
@@ -170,6 +184,7 @@ static const task_t s_tasks[] = {
 int main(void)
 {
     plat_init();
+    sup_init();
     vehicle_init();
     sensors_init(&s_sensors_cfg);
     fca_tx_init();

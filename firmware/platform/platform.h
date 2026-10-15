@@ -62,6 +62,13 @@ bool plat_speed_read(uint8_t ch, speed_raw_t *r);
  * readable (register reads can have side effects). */
 bool plat_mem_read(uint32_t addr, uint8_t *out, uint16_t n);
 
+/* ---- External supervisor on RSPI-B / SSLB1 (spec 03 section 4.4) ----
+ * CPU-driven 16-bit frames. plat_sup_exchange() collects the reply of the previous frame (if one
+ * has arrived) into *rx and starts sending tx if the transmitter is free.
+ * Returns bit 0 = tx started, bit 1 = *rx valid. */
+void plat_sup_init(void);
+uint8_t plat_sup_exchange(uint16_t tx, uint16_t *rx);
+
 /* Software reset through the watchdog (same method as the stock reset routine 0x966B8).
  * Does not return on the target. */
 void plat_reset(void);

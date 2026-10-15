@@ -88,6 +88,22 @@
 #define RCAN_MAILBOXES   32u
 
 
+/* ---- RSPI-B (section 17), CPU-driven access to the supervisor --------- */
+#define SPCRB    REG8(0xFFFFB800u)
+#define SPPCRB   REG8(0xFFFFB802u)
+#define SPSRB    REG8(0xFFFFB803u)
+#define SPDRB    REG16(0xFFFFB804u)
+#define SPDCRB   REG8(0xFFFFB808u)
+#define SPBRB    REG8(0xFFFFB80Au)
+#define SPCKDB   REG8(0xFFFFB80Cu)
+#define SSLNDB   REG8(0xFFFFB80Du)
+#define SPNDB    REG8(0xFFFFB80Eu)
+#define SPCMDB0  REG16(0xFFFFB810u)
+#define RSPIB_DMA_REQ0 REG16(0xFFFE6074u)   /* as cleared by the stock CPU-mode set-up */
+#define RSPIB_DMA_REQ1 REG16(0xFFFE6076u)
+#define SPSR_SPRF  0x80u
+#define SPSR_SPTEF 0x20u
+
 /* ---- A/D converters (section 19) --------------------------------------- */
 #define ADCSR0   REG8(0xFFFFE800u)
 #define ADANS0   REG16(0xFFFFE820u)      /* AN0..AN15  */

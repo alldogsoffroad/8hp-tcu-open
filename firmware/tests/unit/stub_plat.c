@@ -59,3 +59,19 @@ bool plat_speed_read(uint8_t ch, speed_raw_t *r)
     *r = stub.speed[ch];
     return true;
 }
+
+void plat_sup_init(void) { stub.sup_n = 0u; }
+
+uint8_t plat_sup_exchange(uint16_t tx, uint16_t *rx)
+{
+    uint8_t r = 0u;
+    if (stub.sup_n != 0u) {
+        *rx = stub.sup_reply;
+        r |= 2u;
+    }
+    if (!stub.sup_busy && stub.sup_n < 64u) {
+        stub.sup_tx[stub.sup_n++] = tx;
+        r |= 1u;
+    }
+    return r;
+}

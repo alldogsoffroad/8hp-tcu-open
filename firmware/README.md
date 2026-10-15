@@ -53,7 +53,7 @@ CAN bus 1 (vehicle connector pins 5/6, CAN-C), 500 kbit/s, identifier `0x7F0`, e
 | Byte | Content |
 |---|---|
 | 0 | rolling counter, restarts at 0 after every reset |
-| 1 | bit 0: a 1 ms tick was missed |
+| 1 | bit 0: a 1 ms tick was missed; bit 1: supervisor reply valid; bit 2: bad supervisor reply seen; bit 3: output enable sent |
 | 2–3 | uptime, seconds |
 | 4–7 | idle-loop count in the last 100 ms (gives the CPU clock, spec 05 §1.2) |
 
@@ -105,8 +105,9 @@ how bench item 20 reads the stock boot request record: `2A 00 FF F8 00 80`, `…
 5. Expected: `0x7F0` and `0x7F1` frames every 100 ms, the counter rising and no restarts.
    Send `7E1: 03 22 F1 95` and check the version response.
 6. If the counter restarts every ~30–60 ms or a few seconds: watchdog or external supervisor
-   reset. **Expected with M0–M2**: the external supervisor on RSPI-B (SSLB1) is not serviced yet
-   (spec 03 §4.4); the stock software toggles bit 2 of its register `0x8E` every 5 ms. If nothing is sent: the boot side did not start the application
+   reset. The firmware services the external supervisor on RSPI-B (SSLB1, spec 03 §4.4) every
+   5 ms: heartbeat byte 1 bit 1 = its last reply was valid, bit 2 = a bad reply was seen. If bit 1
+   never comes on, the supervisor link is not working and resets are expected. If nothing is sent: the boot side did not start the application
    (TPROT / marker / CRC question, spec 06 §8); [I] the boot side should then stay in the
    bootloader, but this is unconfirmed.
 7. Write the stock read-out back with the ACDP-2: this exercises the `10 02` hand-over

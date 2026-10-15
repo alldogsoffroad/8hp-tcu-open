@@ -16,6 +16,10 @@ typedef struct {
     bool adc_on[47];
     speed_raw_t speed[SPEED_CHANNELS];
     bool speed_on[SPEED_CHANNELS];
+    uint16_t sup_tx[64];
+    unsigned sup_n;
+    bool sup_busy;              /* transmitter not free */
+    uint16_t sup_reply;         /* reply returned for every frame after the first */
 } stub_plat_t;
 
 extern stub_plat_t stub;
