@@ -426,4 +426,7 @@ Seven pressure → current curves (calibration objects 3371–3377, group `0xFFF
    Park output (spec 01 §2.8).
 6. Park logic inputs (§1.2): range codes, the auxiliary park request `0xFFF89CF2`, the inhibit
    `0xFFF8E69B`, the second speed value `0xFFF89CB8`, and the units of the CAN `0x14B` speed.
-4. Identity of the SPI driver chips (spec 03) and the meaning of their other command frames.
+4. Identity of the SPI driver chips: not marked (bare dies on the ceramic hybrid, user photos
+   2026-10-15); protocol decoded from the firmware (§2b).
+7. Output enable path: SSLB1 control word bit 0 and the supervisor service (spec 03 §4.4).
+   Bench check that a channel drives a dummy load only with the enable set.

@@ -105,7 +105,8 @@ how bench item 20 reads the stock boot request record: `2A 00 FF F8 00 80`, `…
 5. Expected: `0x7F0` and `0x7F1` frames every 100 ms, the counter rising and no restarts.
    Send `7E1: 03 22 F1 95` and check the version response.
 6. If the counter restarts every ~30–60 ms or a few seconds: watchdog or external supervisor
-   (spec 03 §5) reset. If nothing is sent: the boot side did not start the application
+   reset. **Expected with M0–M2**: the external supervisor on RSPI-B (SSLB1) is not serviced yet
+   (spec 03 §4.4); the stock software toggles bit 2 of its register `0x8E` every 5 ms. If nothing is sent: the boot side did not start the application
    (TPROT / marker / CRC question, spec 06 §8); [I] the boot side should then stay in the
    bootloader, but this is unconfirmed.
 7. Write the stock read-out back with the ACDP-2: this exercises the `10 02` hand-over

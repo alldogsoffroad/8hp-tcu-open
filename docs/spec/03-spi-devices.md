@@ -109,6 +109,44 @@ Reply headers: SSLB1 `0xA8` (mask `0xF900`, same family as the bus-0 drivers), S
 The steady-state values of the SSLB1 `0x8E`/`0x90` and SSLB0 `0xC9` words, which are the
 likely output-enable path, still have to be evaluated (spec 12 §4).
 
+### 4.4 SSLB1 = external supervisor / watchdog, and the output enables [O]
+
+**SSLB1 is the external supervisor** of spec 05 (open item "external supervisor on RSPI-B"):
+
+- Both boot programs service it directly from the CPU every **5 ms** (bootloader `0x1D0B4`, boot
+  manager `0x30E40`): write `0x8E00 | bits` to RSPI-B, with **bit 2 toggled** (0x04 / 0x00) on every
+  call while running normally; bit 6 = 0x40 and bit 7 / bit 4 in special boot states.
+- The application keeps the same register in its control word `0xFFF907D4` (`0x91C86`, periodic task
+  `0x8EE82`, job `0x40BE8` with read-back `0x22`): **bit 2 = complement of the bit 2 read back** (so it
+  toggles every cycle), **bit 0 = output enable** (`0xFFF90953`), bit 1 from `0xFFF90964`, bits 3/4/7
+  cleared in normal running, bit 6 in state 6.
+- Output enable: `0xFFF90953` = 0 and `0xFFF9094A` = 1 at initialisation (`0x91DD2`). Once the start-up
+  checks pass, the monitor `0x873F0` calls `0x6C612(1)` → `0xFFF9094A` = 0, `0xFFF90953` = 1. The
+  hand-over to the boot software (spec 06 §5a) calls `0x6C612(0)` → outputs disabled.
+- When the enable changes, `0x920A4` also switches the MCU's own watchdog: enabled → WTCR out of
+  reset mode (interval timer, IPR05 low nibble = 0xE); disabled → back to reset mode,
+  `WRCR = 0x5A80` (`0x978A4` / `0x97850`). [I] While outputs are active the external supervisor is the
+  watchdog that matters.
+- Register `0x90` of SSLB1 holds switch-output enables (`0xFFF907D6`, `0x91758`): bits 5–7 follow
+  switch outputs 0–2 (`0xFFF90944[i]` = `'c'` when on, set by the switch-output manager `0x85828`
+  via `0x8C7A8`); bits 5–6 are cleared when `0xFFF90969` is set (calibration mask `0x03`);
+  calibration bits `0x1918EB/EC/EE/EF` are 0 in stock data. Faulty outputs are masked with
+  `~(status & 0xE0)` before sending.
+
+**SSLB0** register `0xC9` (`0xFFF9097B`): calibration base 0, **bit 4** set while the shutdown-path
+self-test (`0x86916` via `0x8C808`) clears `0xFFF9094D`, **bit 7** from `0xFFF9095A` (variant-dependent,
+`0x8CE48`). Normal running value [I]: `0x00`.
+
+**CPU-mode access** (as the boot software and the application's fatal path do, `0x9210C` /
+`0x1D430`): disable the RSPI-B DMA requests (`0xFFFE6074` / `0xFFFE6076` = 0), `SPSR = 0`, `SPPCR = 0`,
+`SPBR = 5`, `SPDCR = 0`, `SPCKD = 0`, `SSLND = 0`, `SPND = 1`, `SPCMD0 = 0xAF11` (SSLB1, 16 bit, mode 1),
+`SPCR = 0x48`; then write a frame to `SPDR` (`0xFFFFB804`) and poll `SPSR` bit `0x20`. The bootloader
+routine `0x1D478` sends `0x8E01` followed by eleven `0x8401`.
+
+**Consequence for the project firmware:** M0–M2 do not service the supervisor. [I] On the bench this
+will most likely reset the controller periodically or keep the outputs off. The supervisor timeout is
+open; the stock period is 5 ms (boot) and the periodic task in the application.
+
 ## 5. Shutdown behavior
 
 On a fatal internal condition the software reinitialises RSPI-B, sends a frame on SSLB1 from the
@@ -125,4 +163,6 @@ must provide an equivalent fail-safe path.
    the shift-control analysis, or bench measurement).
 3. Decode the per-chip state record (28 bytes per chip in RAM) fields that feed the write frames.
 4. Job timing: rate of the cyclic job and its relation to the control loop.
-5. Roles of SSLB0 and SSLB2.
+5. ~~Roles of SSLB0 and SSLB2~~ — SSLB1 is the supervisor (§4.4); SSLB0 a second supervisor /
+   system chip; SSLB2 open. Supervisor timeout and the meaning of SSLB1 registers `0x84`, `0x88`
+   (written at start-up) are open.
