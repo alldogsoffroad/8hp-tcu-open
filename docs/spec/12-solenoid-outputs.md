@@ -319,6 +319,53 @@ any pressure request.
 correction and the clamp; take the curves from the unit's own EEPROM characteristics where
 available (§3), and re-derive the temperature correction for the actual solenoids.
 
+## 2b. Driver chip protocol (bus 0, chips 0–4) [O]
+
+Per-chip state record `0xFFF91108 + 0x1C × chip` (fields used below) and three SPI jobs, each
+sending the same command to all five chips before the next command (frame *n* → chip *n* mod 5).
+Commands with bit 7 set are writes; the data is OR-ed into the low byte (or low 11 bits).
+
+**Cyclic job** (builder `0x924B0`, template `0x40D0C`, buffer `0xFFF88518`, 45 frames):
+
+| Frames | Command | Data | Meaning |
+|---|---|---|---|
+| 0–4 | `0x88` | record `+0x07` | **mode bits**: ch 0 in bits 1..0, ch 1 in bits 3..2 (0 = disabled, 1 = off, 2 = current control, 3 = full on); bit 4 = calibration flag (stock 1), bit 5 = a reduced-frequency mode (`0xFFF9091B` = 1) |
+| 5–9 | `0xA0` | record `+0x10` | ch 0 dither amplitude = request × 0.0215 (`1/46.5`); 0 below 50 or when not in current control |
+| 10–14 | `0xE8` | record `+0x0C` | **ch 0 current setpoint, 11 bit** |
+| 15–19 | `0xA6` | record `+0x18` | ch 1 dither amplitude |
+| 20–24 | `0xF0` | record `+0x14` | **ch 1 current setpoint, 11 bit** |
+| 25–44 | `0x60`, `0xC0`, `0x66`, `0xD8` | — | reads: [I] status and measured current per channel |
+
+**Setpoint scaling** (`0x90118`): `setpoint = (I + offset) / 6`, with I in the driver's current unit
+(maximum `0x2FFA` = 12 282 → setpoint 2047, the 11-bit full scale) and `offset` = `0xFFF9090A`
+(a small state value, 0–4). With [I] I in 0.1 mA, one setpoint step = **0.6 mA**, full scale
+≈ **1.23 A**. Mode letters (`0x89540`): `0x21` current control, `0x43` full on (setpoint forced to
+`0x2FFA`), `0x32` off. The software re-reads the setpoint from the transmit buffer and reports
+`0x238` if it differs from the commanded value by more than 15 units (buffer integrity, not a
+current measurement).
+
+**Configuration job** (builder `0x92344`, template `0x40AD8`, 40 frames): writes `0x8E`, `0x90`,
+`0x96`, `0x88`, then reads `0x28`, `0x30`, `0x2E`, `0x36`:
+
+| Command | Data (record field) | Stock value per chip | Meaning |
+|---|---|---|---|
+| `0x8E` | `+0x09` | `32000 / f − 1` (7 bit) + bit 7 from calibration (`0x80`) | [I] dither / PWM frequency divider for frequency *f* (`0x8FC5E`, set from `0x89708`) |
+| `0x90` | `+0x0A` | `0x21` | configuration; bits 7..6 = readback range; set to `…10b` when a channel's current exceeds 10 000 while the other is below |
+| `0x96` | `+0x0B` | `0x55` | configuration; bits 7..6 = readback range |
+| `0x88` | `+0x07` | mode bits as above | |
+
+Stock values come from calibration `0x1918B4…0x1918C2` (driver configuration, not shift
+calibration). In the reduced-frequency mode the values are rescaled by 1.4 / 0.714 (`0x8FDB6`).
+
+**Readback** (`0x904FA`): per channel an 11-bit signed value from the receive data (record `+0x0E`
+for ch 0, `+0x16` for ch 1), scaled by `324.92 / (n + 1)`, n from the readback-range bits of
+`0x90`/`0x96` (stock n = 4 → factor 65.0), sign inverted for odd channels → `0xFFF90258[ch]`.
+Status bits (record `+0x08`, `+0x0E` / `+0x10`) are combined into a per-chip fault byte
+(`0x931F8`). [I] This is the measured channel current; its unit and the receive-frame mapping
+are still open.
+
+**ID job** (template `0x40A84`, 10 frames): `0x06`, `0x00` per chip; reply high byte `0xA2`.
+
 ## 3. Solenoid characteristics [O]
 
 Seven pressure → current curves (calibration objects 3371–3377, group `0xFFF84D18`, struct
