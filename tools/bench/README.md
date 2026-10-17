@@ -1,0 +1,96 @@
+# TCU bench set-up
+
+Spare controller only — never the vehicle's unit. Keep the spare's full read-out (flash +
+EEPROM) before writing anything to it.
+
+## 1. Hardware
+
+| Item | Notes |
+|---|---|
+| Bench power supply | 12–13.5 V, **current limit 2 A** for M0–M2 (no loads); raise only for the M3 test |
+| Teensy 4.1 + **two 3.3 V CAN transceivers** | for example SN65HVD230 or TJA1051T/3 boards; the Teensy's CAN pins are logic level only |
+| 2 × 120 Ω resistors | CAN termination, see §3 |
+| Switch | ignition (pin 9) |
+| M3 only: power resistor ~6–10 Ω / 25 W (or a spare solenoid) and an ammeter | dummy load |
+
+## 2. Wiring
+
+TCU 16-pin round connector (spec 01 §2.8):
+
+| TCU pin | Signal | Connect to |
+|---|---|---|
+| 13 | battery B+ | supply + (through a fuse) |
+| 9 | ignition run/start | supply + through the ignition switch |
+| 14 | ground | supply − |
+| 5 | CAN-C (+) CAN_H | transceiver A CANH |
+| 6 | CAN-C (−) CAN_L | transceiver A CANL |
+| 4 | shifter CAN (+) CAN_H | transceiver B CANH |
+| 3 | shifter CAN (−) CAN_L | transceiver B CANL |
+
+Teensy 4.1 to transceivers (3.3 V supply from the Teensy, common ground with the bench supply):
+
+| Teensy pin | Transceiver |
+|---|---|
+| 22 (CAN1 TX) | A: TXD |
+| 23 (CAN1 RX) | A: RXD |
+| 1 (CAN2 TX) | B: TXD |
+| 0 (CAN2 RX) | B: RXD |
+| 3.3 V, GND | VCC, GND of both (and S/RS pin to GND = high-speed mode, if present) |
+
+## 3. Termination
+
+With everything unpowered, measure the resistance between TCU pins 5 and 6, and between 3 and 4:
+- about 120 Ω → the TCU terminates that bus: add **one** 120 Ω at the transceiver end;
+- open (very high) → add 120 Ω at both ends (or a single 60 Ω on a short bench harness).
+Many transceiver boards already carry a 120 Ω resistor; check before adding another.
+Record the readings (they tell us whether the TCU has internal termination).
+
+## 4. Teensy firmware
+
+Arduino IDE with Teensyduino: open `teensy_slcan/teensy_slcan.ino`, select **Teensy 4.1** and
+**Tools → USB Type → Dual Serial**, upload. The two USB serial ports appear as
+`/dev/ttyACM0` (bus 1, pins 5/6) and `/dev/ttyACM1` (bus 2, pins 3/4); check with
+`ls /dev/ttyACM*` after plugging in.
+
+## 5. PC software
+
+```
+sudo apt install can-utils
+python3 -m pip install --user python-can
+```
+
+Either use the ports directly:
+
+```
+python3 tools/bench/tcu_bench.py --iface slcan --bus1 /dev/ttyACM0 --bus2 /dev/ttyACM1 monitor
+```
+
+or make them SocketCAN interfaces (needed for `candump`):
+
+```
+sudo slcand -o -s6 /dev/ttyACM0 can0 && sudo ip link set can0 up
+sudo slcand -o -s6 /dev/ttyACM1 can1 && sudo ip link set can1 up
+python3 tools/bench/tcu_bench.py monitor
+```
+
+## 6. Session plan
+
+**A. Stock firmware (before anything is written to the spare)**
+1. Power up, `monitor`: list the IDs the stock TCU sends on each bus (it should transmit
+   0x037, 0x144, 0x170, … on bus 1). This also confirms the wiring and termination.
+2. `meas-ident` and `meas-read 0xFFF8B5FC 2` (engine speed variable) on bus 2: confirms the
+   measurement protocol (spec 10 §6).
+3. `item20`: dumps the stock boot request record and walks through logging the ACDP-2
+   sequence (spec 06 §5a, spec 15). **Stop the ACDP-2 before it erases anything** unless the
+   image being written is this unit's own stock read-out.
+4. `log stock_idle.log` for a minute: replay material for the simulator.
+
+**B. Project firmware (M0–M3)**, only after A and with a recovery plan (memory note: the ACDP-2
+reaches the TCU only over CAN, so the hand-over must work):
+1. Write the image built from the spare's own read-out; `monitor`:
+   - `0x7F0` every 100 ms, counter rising, `sup_ok=1`, no reset messages;
+   - which bus `0x7F0` arrives on = which pin pair is firmware bus 1 (bench item 18).
+2. `info`: software version, inputs, sensors, outputs (`driver faults [none] ready=1`).
+3. Hand-over test: ACDP-2 writes the stock image back (bench item 21). If this works, the way
+   back is proven.
+4. M3: `solenoid` with a dummy load (procedure in `firmware/README.md`).
