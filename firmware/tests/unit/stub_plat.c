@@ -129,3 +129,14 @@ bool plat_drv_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n)
     }
     return true;
 }
+
+bool plat_userboot_copy(uint8_t *dst, uint32_t len)
+{
+    if (!stub.userboot_ok) {
+        return false;
+    }
+    for (uint32_t i = 0u; i < len; i++) {
+        dst[i] = (uint8_t)(i * 7u + 3u);        /* recognisable pattern */
+    }
+    return true;
+}

@@ -31,6 +31,8 @@ SECTIONS
         __data_start = .;
         *(.data .data.*)
         . = ALIGN(4);
+        *(.ramfunc)                 /* code that must run from RAM (flash MAT switching) */
+        . = ALIGN(4);
         __data_end = .;
     } > RAM AT > APPROM
     __data_load = LOADADDR(.data);

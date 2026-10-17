@@ -26,6 +26,7 @@ typedef struct {
     uint8_t drv_reg[5][256];    /* simulated chip registers, by write command */
     uint16_t drv_last_tx[45];
     unsigned drv_jobs;
+    bool userboot_ok;
 } stub_plat_t;
 
 extern stub_plat_t stub;

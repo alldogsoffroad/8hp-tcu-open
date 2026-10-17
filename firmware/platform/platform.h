@@ -57,9 +57,9 @@ typedef struct {
 bool plat_speed_read(uint8_t ch, speed_raw_t *r);
 
 /* Read n bytes at a target address for the measurement protocol. Returns false (nothing
- * copied) if any byte lies outside the readable areas: project application and calibration
- * flash 0x040000-0x1FFFFF, RAM 0xFFF80000-0xFFF9FFFF. Boot flash and I/O registers are not
- * readable (register reads can have side effects). */
+ * copied) if any byte lies outside the readable areas: user MAT flash 0x000000-0x1FFFFF (boot
+ * blocks, application, calibration; for cross-checking read-outs) and RAM 0xFFF80000-0xFFF9FFFF.
+ * I/O registers are not readable (register reads can have side effects). */
 bool plat_mem_read(uint32_t addr, uint8_t *out, uint16_t n);
 
 /* ---- External supervisor on RSPI-B / SSLB1 (spec 03 section 4.4) ----
@@ -75,6 +75,12 @@ uint8_t plat_sup_exchange(uint16_t tx, uint16_t *rx);
  * false on a bus timeout. */
 void plat_drv_init(void);
 bool plat_drv_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n);
+
+/* ---- User boot MAT read-out (SH7254R manual 25.9.1) ----
+ * Copy the 32 KB user boot MAT into dst (4-byte aligned, at least len bytes) by switching the
+ * flash MAT from RAM-resident code with interrupts masked. Returns false if not available. */
+#define USERBOOT_SIZE 0x8000u
+bool plat_userboot_copy(uint8_t *dst, uint32_t len);
 
 /* Software reset through the watchdog (same method as the stock reset routine 0x966B8).
  * Does not return on the target. */

@@ -117,6 +117,11 @@
 #define SPSR_SPRF  0x80u
 #define SPSR_SPTEF 0x20u
 
+/* ---- Flash MAT selection and ROM cache (sections 25, 27) ---------------- */
+#define ROMMAT   REG16(0xFFFFA820u)      /* write 0x3B00 | sel: 0 user MAT, 1 user boot MAT */
+#define RCCR     REG32(0xFFFC1400u)      /* bit 3 RCF, 2 RCFI, 1 RCFD flush; bit 0 RCE enable */
+#define RCCR_FLUSH_ALL 0x0000000Fu       /* flush data + instruction lines, keep the cache on */
+
 /* ---- A/D converters (section 19) --------------------------------------- */
 #define ADCSR0   REG8(0xFFFFE800u)
 #define ADANS0   REG16(0xFFFFE820u)      /* AN0..AN15  */

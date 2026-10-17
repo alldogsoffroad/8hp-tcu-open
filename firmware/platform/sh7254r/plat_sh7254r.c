@@ -352,7 +352,7 @@ static bool readable(uint32_t a, uint16_t n)
     if (n == 0u || end < a) {
         return false;
     }
-    return (a >= 0x00040000u && end <= 0x001FFFFFu) ||
+    return end <= 0x001FFFFFu ||
            (a >= 0xFFF80000u && end <= 0xFFF9FFFFu);
 }
 
@@ -364,6 +364,47 @@ bool plat_mem_read(uint32_t addr, uint8_t *out, uint16_t n)
     for (uint16_t i = 0u; i < n; i++) {
         out[i] = *(const volatile uint8_t *)(uintptr_t)(addr + i);
     }
+    return true;
+}
+
+/* ---- User boot MAT read-out (manual 25.9.1) ----------------------------------------------
+ * Runs from RAM (.ramfunc, copied with .data at start-up): no flash access and no calls while the
+ * user boot MAT is selected. The user boot MAT appears at the start of the ROM area. */
+__attribute__((section(".ramfunc"), noinline))
+static void userboot_copy_ram(uint32_t *dst, uint32_t words)
+{
+    uint32_t sr;
+    uintptr_t a = 0u;
+    const volatile uint32_t *src;
+
+    __asm__ volatile ("stc sr, %0" : "=r"(sr));
+    __asm__ volatile ("ldc %0, sr" : : "r"(sr | 0xF0u));    /* mask interrupts */
+    __asm__ volatile ("" : "+r"(a));                         /* address 0 without UB */
+    src = (const volatile uint32_t *)a;
+
+    RCCR = RCCR_FLUSH_ALL;
+    ROMMAT = 0x3B01u;                                        /* select the user boot MAT */
+    (void)ROMMAT;
+    __asm__ volatile ("nop\n nop\n nop\n nop\n nop\n nop");
+    RCCR = RCCR_FLUSH_ALL;
+    for (uint32_t i = 0u; i < words; i++) {
+        dst[i] = src[i];
+    }
+    ROMMAT = 0x3B00u;                                        /* back to the user MAT */
+    (void)ROMMAT;
+    __asm__ volatile ("nop\n nop\n nop\n nop\n nop\n nop");
+    RCCR = RCCR_FLUSH_ALL;
+    __asm__ volatile ("ldc %0, sr" : : "r"(sr));
+}
+
+bool plat_userboot_copy(uint8_t *dst, uint32_t len)
+{
+    if (((uintptr_t)dst & 3u) != 0u || len > USERBOOT_SIZE) {
+        return false;
+    }
+    plat_wdt_service();
+    userboot_copy_ram((uint32_t *)(void *)dst, len / 4u);
+    plat_wdt_service();
     return true;
 }
 

@@ -50,6 +50,7 @@
 #include "io/sensors/sensors.h"
 #include "io/actuators/sol_drv.h"
 #include "app/bench_out.h"
+#include "app/bench_dump.h"
 #include "io/vehicle/fca_tx.h"
 #include "app/meas_table.h"
 
@@ -178,7 +179,16 @@ static int read_did(uint16_t did, uint8_t *out, uint16_t max)
     return -1;
 }
 
-static const uds_app_t s_uds_app = { leave_allowed, read_did, bench_routine };
+static int app_routine(uint8_t type, uint16_t rid, const uint8_t *in, uint16_t n, uint8_t *out,
+                       uint16_t max)
+{
+    if (rid == DUMP_RID) {
+        return bench_active() ? -0x22 : dump_routine(type, rid, in, n, out, max);
+    }
+    return bench_routine(type, rid, in, n, out, max);
+}
+
+static const uds_app_t s_uds_app = { leave_allowed, read_did, app_routine };
 
 static void task_100ms(void)
 {

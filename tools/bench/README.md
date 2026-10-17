@@ -112,6 +112,9 @@ reaches the TCU only over CAN, so the hand-over must work):
    - `0x7F0` every 100 ms, counter rising, `sup_ok=1`, no reset messages;
    - which bus `0x7F0` arrives on = which pin pair is firmware bus 1 (bench item 18).
 2. `info`: software version, inputs, sensors, outputs (`driver faults [none] ready=1`).
+2a. Back up the user boot MAT: first prove the reading path with
+    `meas-read 0x0 0x40000 --compare "<read-out>_IFla.bin"` (boot blocks identical), then
+    `dump-userboot -o userboot_mat.bin` (CRC-32 must report OK). Keep the file private.
 3. Hand-over test: ACDP-2 writes the stock image back (bench item 21). If this works, the way
    back is proven.
 4. M3: `solenoid` with a dummy load (procedure in `firmware/README.md`).

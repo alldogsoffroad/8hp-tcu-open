@@ -150,8 +150,8 @@ addresses, `0x20`, `0x28`, `0x2A`, `0x30` reads, and `0xE0` periodic lists sent 
 All write commands, `0x08`, `0x0E`, `0x12`, `0x23`, `0x29`, `0x33` answer `0x03`.
 Differences from stock:
 - requests are accepted on either bus; the first bus used is latched (no `0x77F3C` check on bus 1);
-- readable areas: application and calibration flash `0x040000–0x1FFFFF` and RAM
-  `0xFFF80000–0xFFF9FFFF`; boot flash and I/O registers are not readable;
+- readable areas: user MAT flash `0x000000–0x1FFFFF` (boot blocks, application, calibration —
+  for cross-checking read-outs) and RAM `0xFFF80000–0xFFF9FFFF`; I/O registers are not readable;
 - measurement indices are the project's own list (`firmware/app/meas_table.c`), not the stock
   list of §5.
 

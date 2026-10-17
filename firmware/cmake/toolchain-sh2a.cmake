@@ -11,7 +11,8 @@ set(CMAKE_SIZE         "/usr/bin/sh-elf-size" CACHE FILEPATH "")
 
 set(CMAKE_C_FLAGS_INIT   "-m2a -mb -ffreestanding -fno-builtin -ffunction-sections -fdata-sections")
 set(CMAKE_ASM_FLAGS_INIT "-m2a -mb")
-set(CMAKE_EXE_LINKER_FLAGS_INIT "-nostdlib -nostartfiles -Wl,--gc-sections")
+# .ramfunc (code copied to RAM with .data) makes the RAM segment executable on purpose
+set(CMAKE_EXE_LINKER_FLAGS_INIT "-nostdlib -nostartfiles -Wl,--gc-sections -Wl,--no-warn-rwx-segments")
 
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)

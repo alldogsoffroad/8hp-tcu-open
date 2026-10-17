@@ -275,7 +275,12 @@ vehicle exemption):
 
 ## 8. Open items
 
-1. Boot selection logic in the user boot MAT (not dumped): exact conditions for starting the
+1. **Read-out route for the user boot MAT** [M][D]: software can select it with `ROMMAT`
+   (`0xFFFFA820`, write `0x3B01`; back with `0x3B00`) from RAM-resident code with interrupts
+   masked and the ROM cache flushed (manual §25.3.5, §25.9.1). The project firmware does this on
+   request (UDS routine `FE20`, `firmware/app/bench_dump.c`); not possible with the stock firmware,
+   whose memory services refuse the code area.
+   Boot selection logic in the user boot MAT (not dumped): exact conditions for starting the
    application (markers, CRC, protection check) and the register state at hand-over (stack, SR).
 2. Protection (`TPROT`) behavior with a modified application. Bench test on a spare: change one
    unused byte in the application, fix the CRC with `fix_header_crc.py`, write with the ACDP-2,

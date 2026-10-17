@@ -103,6 +103,16 @@ Safety design (agreed 2026-10-15), enforced in `app/bench_out.c`:
 | `31 03 FE 10` | results: state, channel, mA, remaining 0.1 s, end reason, driver faults |
 | `22 FD 02` | output status (as `0x7F3`) |
 
+## User boot MAT read-out (routine FE20)
+
+The 32 KB user boot MAT (power-on start-up code) is not in the ACDP-2 read-out. In the extended
+session, `31 01 FE 20` copies it into a RAM buffer (flash MAT switched from RAM-resident code,
+interrupts masked, under 1 ms) and replies `status addr(4) len(2) crc32(4)`; the buffer is then read
+with the measurement protocol. Bench tool: `tcu_bench.py dump-userboot -o userboot.bin` (checks
+the CRC-32). The file is Bosch boot code: keep it with the other read-outs, never in the
+repository. Cross-check the reading path first: `tcu_bench.py meas-read 0x0 0x40000 --compare
+"<read-out>_IFla.bin"` must report the boot blocks identical.
+
 End reasons: 1 timeout, 2 stopped, 3 session ended, 4 engine running, 5 driver fault,
 6 supervisor fault. Driver fault bits (`0x7F3` byte 0): 0x01 bus timeout, 0x02 ID, 0x04
 configuration read-back, 0x08 reply header, 0x10 setpoint read-back, 0x20 start-up not done.

@@ -18,6 +18,9 @@ Commands:
   meas-read ADDR LEN [--bus N] [-o FILE]   read memory with measurement command 0x2A
   item20                  bench item 20 on the STOCK firmware: dump the boot request record
   solenoid [--csv FILE]   guided M3 solenoid test (DUMMY LOADS ONLY), records ammeter readings
+  dump-userboot [-o FILE] PROJECT firmware: copy the 32 KB user boot MAT to RAM (routine FE20),
+                          download it with the measurement protocol, check the CRC-32
+  meas-read ... --compare IMAGE   compare the read bytes with a full flash image (_IFla.bin)
   canstat [--send]        Teensy adapter error counters per bus (slcan only); --send first
                           transmits a tester-present frame on each bus to provoke ACK errors
 """
@@ -277,10 +280,50 @@ def dump(addr, data):
 
 def cmd_meas_read(b, args):
     addr, length = int(args.addr, 0), int(args.len, 0)
+    t0 = time.time()
     data = read_mem(b, args.bus, addr, length)
-    dump(addr, data)
+    if length <= 256:
+        dump(addr, data)
+    print(f"{length} bytes in {time.time() - t0:.1f} s")
     if args.output:
         open(args.output, "wb").write(data)
+        print(f"saved {args.output}")
+    if args.compare:
+        ref = open(args.compare, "rb").read()[addr:addr + length]
+        diff = [i for i in range(min(len(ref), len(data))) if ref[i] != data[i]]
+        if not diff and len(ref) == len(data):
+            print(f"identical to {args.compare} at 0x{addr:06X}..0x{addr + length - 1:06X}")
+        else:
+            print(f"{len(diff)} differing bytes; first at 0x{addr + diff[0]:06X}" if diff else
+                  f"length mismatch: image has {len(ref)} bytes there")
+
+
+def cmd_dump_userboot(b, args):
+    import zlib
+    u = Uds(b, 1)
+    r = u.extended()
+    if not r or r[0] != 0x50:
+        sys.exit(f"extended session failed: {hexs(r)}")
+    stop_tp = u.start_tester_present()
+    try:
+        r = u.request(b"\x31\x01\xFE\x20", timeout=2.0)
+        if not r or r[0] != 0x71 or len(r) < 15:
+            sys.exit(f"routine FE20 refused: {hexs(r)} (project firmware only)")
+        status, addr = r[4], int.from_bytes(r[5:9], "big")
+        length, crc = int.from_bytes(r[9:11], "big") or 0x10000, int.from_bytes(r[11:15], "big")
+        if status != 1:
+            sys.exit("the firmware could not copy the user boot MAT")
+        print(f"user boot MAT copied to RAM 0x{addr:08X}, {length} bytes, CRC-32 0x{crc:08X}; downloading")
+        t0 = time.time()
+        data = read_mem(b, args.bus, addr, length)
+        got = zlib.crc32(data) & 0xFFFFFFFF
+        print(f"downloaded in {time.time() - t0:.0f} s, CRC-32 0x{got:08X}:",
+              "OK" if got == crc else "MISMATCH - do not use this file")
+        name = args.output or f"userboot_mat_{time.strftime('%Y%m%d_%H%M%S')}.bin"
+        open(name, "wb").write(data)
+        print(f"saved {name}  (Bosch boot code: keep it private, never commit it)")
+    finally:
+        stop_tp.set()
 
 
 def cmd_item20(b, args):
@@ -383,6 +426,9 @@ def main():
     p = sub.add_parser("meas-ident"); p.add_argument("--bus", type=int, default=2)
     p = sub.add_parser("meas-read"); p.add_argument("addr"); p.add_argument("len")
     p.add_argument("--bus", type=int, default=2); p.add_argument("-o", "--output")
+    p.add_argument("--compare", help="full flash image to compare against")
+    p = sub.add_parser("dump-userboot"); p.add_argument("--bus", type=int, default=2)
+    p.add_argument("-o", "--output")
     p = sub.add_parser("item20"); p.add_argument("--bus", type=int, default=2)
     p = sub.add_parser("solenoid"); p.add_argument("--bus", type=int, default=1)
     p.add_argument("--csv", default="m3_solenoid_results.csv")
@@ -393,7 +439,8 @@ def main():
     try:
         {"monitor": cmd_monitor, "log": cmd_log, "uds": cmd_uds, "info": cmd_info,
          "meas-ident": cmd_meas_ident, "meas-read": cmd_meas_read, "item20": cmd_item20,
-         "solenoid": cmd_solenoid, "canstat": cmd_canstat}[args.cmd](b, args)
+         "solenoid": cmd_solenoid, "canstat": cmd_canstat,
+         "dump-userboot": cmd_dump_userboot}[args.cmd](b, args)
     finally:
         b.shutdown()
 

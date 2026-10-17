@@ -178,6 +178,13 @@ bool plat_mem_read(uint32_t addr, uint8_t *out, uint16_t n)
     return false;           /* no target memory on the host */
 }
 
+bool plat_userboot_copy(uint8_t *dst, uint32_t len)
+{
+    (void)dst;
+    (void)len;
+    return false;           /* no flash on the host */
+}
+
 void plat_reset(void)
 {
     printf("[%6u ms] RESET\n", s_ticks);
