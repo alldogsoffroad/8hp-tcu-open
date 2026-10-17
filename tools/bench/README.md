@@ -57,11 +57,22 @@ Arduino IDE with Teensyduino: open `teensy_slcan/teensy_slcan.ino`, select **Tee
 `/dev/ttyACM0` (bus 1, pins 5/6) and `/dev/ttyACM1` (bus 2, pins 3/4); check with
 `ls /dev/ttyACM*` after plugging in.
 
+Command line instead (arduino-cli in `~/opt/arduino-cli`, Teensy core 1.62.0 installed):
+
+```
+~/opt/arduino-cli/arduino-cli compile --fqbn teensy:avr:teensy41:usb=serial2 tools/bench/teensy_slcan
+~/opt/arduino-cli/arduino-cli board list
+~/opt/arduino-cli/arduino-cli upload --fqbn teensy:avr:teensy41:usb=serial2 -p <port from board list> tools/bench/teensy_slcan
+```
+
+Uploading as a normal user needs PJRC's udev rule once:
+`wget https://www.pjrc.com/teensy/00-teensy.rules && sudo cp 00-teensy.rules /etc/udev/rules.d/`
+(then unplug and replug the Teensy).
+
 ## 5. PC software
 
 ```
-sudo apt install can-utils
-python3 -m pip install --user python-can
+sudo apt install can-utils python3-can
 ```
 
 Either use the ports directly:
