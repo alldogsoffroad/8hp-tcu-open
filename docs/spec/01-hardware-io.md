@@ -126,6 +126,11 @@ TCM connector: 16-pin round.
 | 14 | ground | Z908 |
 | 15 | **TRS Park signal output** (hard-wired, to another module) | T824 |
 
+**Bench measurement (2026-10-17, spare unit, unpowered):** 27.68 kΩ between pins 5–6 and
+27.68 kΩ between pins 3–4, i.e. **no internal CAN termination** on either bus; the value is the
+transceivers' unpowered input resistance. On the bench each bus needs 120 Ω at the TCU end as
+well as at the tester end.
+
 Pins 1, 2, 7, 8, 10, 11, 12, 16 are not shown in that document. Mapping to MCU pins: bus 1 /
 bus 2 assignment of the two CAN pairs is in spec 07 §1; the TRS Park output driver is open.
 

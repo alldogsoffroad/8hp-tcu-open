@@ -50,6 +50,11 @@ With everything unpowered, measure the resistance between TCU pins 5 and 6, and 
 Many transceiver boards already carry a 120 Ω resistor; check before adding another.
 Record the readings (they tell us whether the TCU has internal termination).
 
+**Measured on the spare (2026-10-17): 27.68 kΩ on both pairs → the TCU has no termination.**
+With the Waveshare boards (120 Ω on board) at the Teensy end, add **one 120 Ω resistor across
+TCU pins 5–6 and one across pins 3–4**. With everything connected and unpowered, each bus should
+then read about 60 Ω.
+
 ## 4. Teensy firmware
 
 Arduino IDE with Teensyduino: open `teensy_slcan/teensy_slcan.ino`, select **Teensy 4.1** and
