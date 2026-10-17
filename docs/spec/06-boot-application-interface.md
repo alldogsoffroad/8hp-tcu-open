@@ -201,6 +201,30 @@ and reset through the WDT. The project linker keeps `0xFFF80000–0xFFF840FF` un
 area is never touched by the application except for this write. To be confirmed on the bench
 spare before a vehicle unit relies on it.
 
+### 5b. ACDP-2 (module 19) read operations — bench observations (2026-10-17)
+
+Captured passively on bus 1 (TCU pins 5/6; the module 19 harness uses only this pair) with a
+listen-only adapter. A normal (acknowledging, error-active) node on the bus made the flash read
+fail; sniffing must be listen-only.
+
+- **Identification:** plain UDS on `0x7E1`/`0x7E9` at 500 kbit/s while the application runs:
+  `3E 80` ×3, `3E 00`, `22 F1 90` (VIN). The harness powers the TCU only for an operation.
+- **Flash, maps and EEPROM read:** the ACDP-2 powers the TCU and, within milliseconds, sends the
+  fixed 4-byte frame **`7E1#D7 65 69 15`**. The TCU answers on `0x7E9` within 0.4 ms with a
+  4-byte value that differs every time (`B1A461B7`, `8C390217`, `02AE1C9F` …), then the transfer
+  runs on `0x7E1`/`0x7E9` (DLC 8, 500 kbit/s) with **every frame encrypted** (all 256 first-byte
+  values; not one repeated frame, even over erased flash areas). The application never starts
+  (no periodic messages). Volumes from the TCU: flash 302 914 frames (≈ 2.42 MB), maps 65 568
+  frames (512 KB + 256 B), EEPROM 17 603 frames (≈ 141 KB).
+- [I] So there is a **CAN entry at power-up that does not depend on the application**, served by
+  boot code (boot blocks or the user boot MAT), using a challenge (4-byte random value) and an
+  encrypted session. If writing uses the same entry, a unit whose application does not hand over
+  (§5a) is still reachable by the ACDP-2 — to be confirmed with a write capture.
+- **"Full backup data":** an 8 KB block followed by the flash and EEPROM transfers on the bus;
+  the saved `_Full.bin` (2 818 064 bytes) is an encrypted container (no plain image inside). It does
+  not contain a readable user boot MAT.
+- Flash and maps read on 2026-10-17 are byte-identical to the September read-outs (same unit).
+
 ## 6. Links that bind the application to other data
 
 - **EEPROM:** the application CRC (`0x29B578DF`) and the calibration CRC (`0x33569BA2`) are stored

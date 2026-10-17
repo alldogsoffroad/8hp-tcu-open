@@ -101,6 +101,8 @@ python3 tools/bench/tcu_bench.py monitor
    0x037, 0x144, 0x170, … on bus 1). This also confirms the wiring and termination.
 2. `meas-ident` and `meas-read 0xFFF8B5FC 2` (engine speed variable) on bus 2: confirms the
    measurement protocol (spec 10 §6).
+   **Sniffing is always listen-only**: `log` puts the Teensy in listen-only mode by default.
+   An acknowledging node on the bus made an ACDP-2 flash read fail (spec 06 §5b).
 3. `item20`: dumps the stock boot request record and walks through logging the ACDP-2
    sequence (spec 06 §5a, spec 15). **Stop the ACDP-2 before it erases anything** unless the
    image being written is this unit's own stock read-out.

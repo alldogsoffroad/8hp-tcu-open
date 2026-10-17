@@ -11,7 +11,11 @@ Interfaces:
 
 Commands:
   monitor                 decode bench frames 0x7F0..0x7F3, detect resets, list IDs per bus
-  log FILE                log both buses in candump -L format (replayable by the simulator)
+  log FILE [--active]     log both buses in candump -L format (replayable by the simulator).
+                          With the Teensy (slcan) the adapter is LISTEN-ONLY with automatic bit
+                          rate by default, so it never disturbs the bus (a normal node broke an
+                          ACDP-2 flash read); rate changes appear as frames 1FFFFF00#<kbit/s>.
+                          --active: acknowledge frames like a normal node (other adapters).
   uds [--bus N] HEX...    send one UDS request on 0x7E1, print the response from 0x7E9
   info                    software version and status identifiers FD00..FD02 (project firmware)
   meas-ident [--bus N]    measurement protocol identification (0x01 / 0x21)
@@ -199,10 +203,27 @@ def cmd_monitor(b, args):
         pass
 
 
+def teensy_passive(ports, mode=b"P2"):
+    """Set the Teensy channels to listen-only (+auto bit rate) before python-can opens them."""
+    import serial
+    for port in ports:
+        if port:
+            s = serial.Serial(port, 2000000, timeout=0.3)
+            s.write(b"C\r" + mode + b"\r")
+            time.sleep(0.05)
+            s.read(16)
+            s.close()
+
+
 def cmd_log(b, args):
     names = {1: "can0", 2: "can1"}      # simulator replay: can0 = bus 1, can1 = bus 2
     n_frames = 0
-    with open(args.file, "w") as f:
+    if args.iface == "slcan" and not args.active:
+        b.shutdown()
+        teensy_passive([args.bus1, args.bus2])
+        b.__init__(args)
+        print("listen-only, automatic bit rate")
+    with open(args.file, "w", buffering=1) as f:          # line-buffered: live progress
         print(f"logging both buses to {args.file} (Ctrl-C to stop)")
         try:
             while True:
@@ -213,6 +234,9 @@ def cmd_log(b, args):
                     ts = m.timestamp or time.time()
                     f.write(f"({ts:.6f}) {names[n]} {m.arbitration_id:03X}#{m.data.hex().upper()}\n")
                     n_frames += 1
+                    if m.arbitration_id == 0x1FFFFF00:
+                        f.flush()
+                        print(f"bus {n}: bit rate now {int.from_bytes(m.data[:2], 'big')} kbit/s")
         except KeyboardInterrupt:
             pass
     print(f"{n_frames} frames written")
@@ -420,7 +444,7 @@ def main():
     ap.add_argument("--bus2", default="can1", help="interface/channel for TCU pins 3/4 ('' = none)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("monitor")
-    p = sub.add_parser("log"); p.add_argument("file")
+    p = sub.add_parser("log"); p.add_argument("file"); p.add_argument("--active", action="store_true")
     p = sub.add_parser("uds"); p.add_argument("--bus", type=int, default=1); p.add_argument("hex", nargs="+")
     p = sub.add_parser("info"); p.add_argument("--bus", type=int, default=1)
     p = sub.add_parser("meas-ident"); p.add_argument("--bus", type=int, default=2)

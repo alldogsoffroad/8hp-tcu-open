@@ -24,3 +24,6 @@ __pycache__/
 # Build output
 build/
 *_IFla*.bin
+
+# Raw bench captures that carry flash / EEPROM content (Bosch/FCA data)
+bench_captures/
