@@ -77,6 +77,7 @@ static void task_1ms(void)
         }
     }
     uds_tick_1ms();
+    fca_tx_tick_1ms();      /* stock transmit messages: all disabled */
 }
 
 static void task_10ms(void)
@@ -87,7 +88,6 @@ static void task_10ms(void)
     sol_tick_10ms();
     meas_table_update();
     meas_tick_10ms();
-    fca_tx_tick_10ms();     /* all stock transmit messages disabled in M1 */
 }
 
 static void inputs_status(uint8_t d[8])

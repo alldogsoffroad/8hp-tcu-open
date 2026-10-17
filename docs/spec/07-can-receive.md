@@ -69,8 +69,10 @@ messages are rejected.
 ## 3. Timing
 
 Each message object carries an expected period and a timeout (≈ 2 × period) in raw units:
-1, 2, 4, 5, 6, 10, 50, 100, 200 (timeouts 5 … 400) [O]. [I] The unit is most likely the 10 ms
-task tick, giving 10 ms … 2 s periods. To confirm on the bench.
+1, 2, 4, 5, 6, 10, 50, 100, 200 (timeouts 5 … 400) [O]. On the transmit side the same raw unit
+was measured as **15.625 ms** (spec 08 §2, bench 2026-10-17); [I] the receive table uses the same
+unit, giving 15.6 ms … 3.1 s periods. The project profile still uses 10 ms × raw timeouts
+(shorter, i.e. stricter); to be revised with a Ram capture.
 
 ## 4. Diagnostic read-back of received signals
 

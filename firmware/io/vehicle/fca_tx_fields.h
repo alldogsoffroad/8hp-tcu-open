@@ -4,16 +4,17 @@
 #ifndef TCU_FCA_TX_FIELDS_H
 #define TCU_FCA_TX_FIELDS_H
 
-/* Messages: id, DLC, period (stock raw x 10 ms [I]), CRC-8, rolling counter. */
+/* Messages: id, DLC, period in ms (stock raw x 15.625 ms, measured on the bench spare
+ * 2026-10-17), CRC-8, rolling counter. */
 #define FCA_TX_MESSAGES(X) \
-    X(M_037, 0x037u, 8u, 10u, true, true) \
-    X(M_144, 0x144u, 8u, 20u, false, true) \
-    X(M_170, 0x170u, 8u, 20u, true, true) \
-    X(M_178, 0x178u, 3u, 100u, false, false) \
-    X(M_1A0, 0x1A0u, 7u, 20u, true, true) \
-    X(M_2A8, 0x2A8u, 8u, 20u, true, true) \
-    X(M_2F9, 0x2F9u, 8u, 10u, true, true) \
-    X(M_3D1, 0x3D1u, 4u, 500u, false, false)
+    X(M_037, 0x037u, 8u, 16u, true, true) \
+    X(M_144, 0x144u, 8u, 31u, false, true) \
+    X(M_170, 0x170u, 8u, 31u, true, true) \
+    X(M_178, 0x178u, 3u, 156u, false, false) \
+    X(M_1A0, 0x1A0u, 7u, 31u, true, true) \
+    X(M_2A8, 0x2A8u, 8u, 31u, true, true) \
+    X(M_2F9, 0x2F9u, 8u, 16u, true, true) \
+    X(M_3D1, 0x3D1u, 4u, 781u, false, false)
 
 /* Fields: name, message, start byte, most significant bit, length in bits. */
 #define FCA_TX_FIELDS(X) \

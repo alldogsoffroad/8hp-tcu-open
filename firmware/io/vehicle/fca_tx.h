@@ -23,7 +23,7 @@ void fca_tx_init(void);
 void fca_tx_set(fca_tx_field_t f, uint16_t raw);
 uint16_t fca_tx_get(fca_tx_field_t f);
 void fca_tx_enable(fca_tx_msg_t m, bool on);
-/* Send due messages; call every 10 ms. */
-void fca_tx_tick_10ms(void);
+/* Send due messages; call every 1 ms (periods are 16, 31, 156 and 781 ms). */
+void fca_tx_tick_1ms(void);
 
 #endif

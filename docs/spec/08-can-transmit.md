@@ -33,7 +33,23 @@ Byte order: multi-byte fields are **big-endian**, high bits in the first byte [O
 | `0x178` | 3 | 10 | no | no | flags, 4-bit field, byte 1 |
 | `0x3D1` | 4 | 50 | no | no | byte 0 |
 
-Period units as in spec 07 (raw value; [I] most likely 10 ms). [I] The three 13-bit values in the
+**Bench measurement (spare unit, stock firmware, no vehicle, 2026-10-17)** [O]:
+
+| Message | Measured period | CRC-8 | Counter |
+|---|---|---|---|
+| `0x037`, `0x2F9` | 15.5 ms | valid in every frame | +1 per frame |
+| `0x144` | 31.0 ms | none | **constant** (byte 6 high nibble does not change) |
+| `0x170`, `0x1A0`, `0x2A8` | 31.2 ms | valid | +1 per frame |
+| `0x178` | 155 ms | none | none |
+| `0x3D1` | 786 ms | none | none |
+| `0x639` | (2 frames in 5 s) | — | — |
+| `0x300` (bus 2) | 20.0 ms | valid | +1 per frame |
+
+The raw period unit is therefore **15.625 ms (1/64 s)**, not 10 ms: raw 1, 2, 10, 50 →
+15.6, 31.3, 156, 781 ms. CRC-8 (SAE J1850) and counter layout of §3 confirmed on hardware.
+Idle payloads without a vehicle (first frames): `0x037` / `0x2F9` = `1F FF 1F FF 1F FF …`
+(13-bit fields at `0x1FFF` = invalid), `0x144` = `00 FF 00 00 00 00 00 04`, `0x178` = `F0 FF 80`,
+`0x3D1` = `01 00 00 00`, `0x300` = `00 00 FF 00 1x CRC`. [I] The three 13-bit values in the
 fast, protected messages `0x037` and `0x2F9` have the shape of torque request/limit values sent to
 the engine controller; meaning to be confirmed.
 

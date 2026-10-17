@@ -53,11 +53,12 @@ def main():
     L.append("#ifndef TCU_FCA_TX_FIELDS_H")
     L.append("#define TCU_FCA_TX_FIELDS_H")
     L.append("")
-    L.append("/* Messages: id, DLC, period (stock raw x 10 ms [I]), CRC-8, rolling counter. */")
+    L.append("/* Messages: id, DLC, period in ms (stock raw x 15.625 ms, measured on the bench spare")
+    L.append(" * 2026-10-17), CRC-8, rolling counter. */")
     L.append("#define FCA_TX_MESSAGES(X) \\")
     for i, (cid, dlc, per, crc, ctr) in enumerate(msgs):
         end = " \\" if i < len(msgs) - 1 else ""
-        L.append(f"    X(M_{cid:03X}, 0x{cid:03X}u, {dlc}u, {per * 10}u, {'true' if crc else 'false'}, "
+        L.append(f"    X(M_{cid:03X}, 0x{cid:03X}u, {dlc}u, {round(per * 15.625)}u, {'true' if crc else 'false'}, "
                  f"{'true' if ctr else 'false'}){end}")
     L.append("")
     L.append("/* Fields: name, message, start byte, most significant bit, length in bits. */")

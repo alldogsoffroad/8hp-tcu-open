@@ -18,6 +18,8 @@ Commands:
   meas-read ADDR LEN [--bus N] [-o FILE]   read memory with measurement command 0x2A
   item20                  bench item 20 on the STOCK firmware: dump the boot request record
   solenoid [--csv FILE]   guided M3 solenoid test (DUMMY LOADS ONLY), records ammeter readings
+  canstat [--send]        Teensy adapter error counters per bus (slcan only); --send first
+                          transmits a tester-present frame on each bus to provoke ACK errors
 """
 import argparse
 import csv
@@ -56,7 +58,11 @@ class Buses:
 
     def shutdown(self):
         for b in self.bus.values():
-            b.shutdown()
+            try:
+                b.shutdown()
+            except Exception:
+                pass                      # already closed (canstat uses the raw ports)
+        self.bus = {}
 
 
 # ----------------------------------------------------------------------------- ISO-TP / UDS
@@ -100,6 +106,12 @@ class Uds:
                     if len(data) >= need:
                         return data[:need]
             return None
+
+    def extended(self):
+        """Enter the extended session. The stock firmware ignores the first 10 03 after power-up,
+        so send 10 01 first (spec 15 section 4a); the project firmware accepts either order."""
+        self.request(b"\x10\x01")
+        return self.request(b"\x10\x03")
 
     def start_tester_present(self, period=2.0):
         stop = threading.Event()
@@ -289,7 +301,7 @@ def cmd_solenoid(b, args):
     if input("Dummy load and ammeter connected, transmission NOT connected? [yes/no] ").strip() != "yes":
         return
     u = Uds(b, args.bus)
-    r = u.request(b"\x10\x03")
+    r = u.extended()
     if not r or r[0] != 0x50:
         sys.exit(f"extended session failed: {hexs(r)}")
     stop_tp = u.start_tester_present()
@@ -323,6 +335,41 @@ def cmd_solenoid(b, args):
         print(f"{len(rows)} rows appended to {args.csv}")
 
 
+def cmd_canstat(b, args):
+    import serial
+    ports = {1: args.bus1, 2: args.bus2}
+    b.shutdown()                                  # use the raw serial ports
+    for n, port in ports.items():
+        if not port:
+            continue
+        s = serial.Serial(port, 2000000, timeout=0.3)
+        s.reset_input_buffer()
+        for cmd in (b"C\r", b"S6\r", b"O\r"):
+            s.write(cmd); time.sleep(0.03); s.read(16)
+        if args.send:
+            for _ in range(3):
+                s.write(b"t7E10802" + b"3E00AAAAAAAAAA" + b"\r"); time.sleep(0.05)
+            s.read(64)
+        time.sleep(0.2)
+        s.reset_input_buffer()
+        s.write(b"E\r")
+        r = s.read_until(b"\r").decode(errors="replace").strip()
+        s.write(b"C\r")
+        s.close()
+        if not r.startswith("E") or len(r) < 13:
+            print(f"bus {n} ({port}): no error-state reply ({r!r}); reflash the Teensy sketch")
+            continue
+        tec, rec, esr = int(r[1:3], 16), int(r[3:5], 16), int(r[5:13], 16)
+        conf = ["error active", "error passive", "bus off", "bus off"][esr >> 4 & 3]
+        flags = [name for bit, name in ((13, "ACK error"), (14, "bit0 error"), (15, "bit1 error"),
+                                        (10, "stuff error"), (11, "form error"), (12, "CRC error"),
+                                        (18, "synchronised"), (7, "idle")) if esr >> bit & 1]
+        print(f"bus {n} ({port}): TEC={tec} REC={rec} {conf}; {', '.join(flags) or 'no flags'}")
+    print("ACK errors / TEC rising = nobody acknowledges (TCU off or not on the bus); "
+          "stuff/form/CRC/bit errors or REC rising = CAN_H/CAN_L swapped or wrong bit rate; "
+          "not 'synchronised' = the controller sees no bus activity at all.")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--iface", default="socketcan")
@@ -339,13 +386,14 @@ def main():
     p = sub.add_parser("item20"); p.add_argument("--bus", type=int, default=2)
     p = sub.add_parser("solenoid"); p.add_argument("--bus", type=int, default=1)
     p.add_argument("--csv", default="m3_solenoid_results.csv")
+    p = sub.add_parser("canstat"); p.add_argument("--send", action="store_true")
     args = ap.parse_args()
 
     b = Buses(args)
     try:
         {"monitor": cmd_monitor, "log": cmd_log, "uds": cmd_uds, "info": cmd_info,
          "meas-ident": cmd_meas_ident, "meas-read": cmd_meas_read, "item20": cmd_item20,
-         "solenoid": cmd_solenoid}[args.cmd](b, args)
+         "solenoid": cmd_solenoid, "canstat": cmd_canstat}[args.cmd](b, args)
     finally:
         b.shutdown()
 

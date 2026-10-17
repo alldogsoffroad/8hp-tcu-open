@@ -49,7 +49,7 @@ void fca_tx_enable(fca_tx_msg_t m, bool on)
     com_tx_enable((uint8_t)m, on);
 }
 
-void fca_tx_tick_10ms(void)
+void fca_tx_tick_1ms(void)
 {
-    com_tx_tick(10u);
+    com_tx_tick(1u);
 }

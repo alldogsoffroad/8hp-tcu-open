@@ -64,33 +64,41 @@ int main(void)
     CHECK(fca_tx_get(FCA_F_3D1_B0_7) == 0x34u);
 
     /* nothing is sent while disabled */
-    for (int i = 0; i < 100; i++) {
-        fca_tx_tick_10ms();
+    for (int i = 0; i < 1000; i++) {
+        fca_tx_tick_1ms();
     }
     CHECK(stub.n_tx == 0u);
 
-    /* periods: 0x037 every 10 ms, 0x144 every 20 ms, 0x3D1 every 500 ms */
+    /* periods (bench measurement): 0x037 every 16 ms, 0x144 every 31 ms, 0x3D1 every 781 ms;
+     * over 800 ms: 0x037 at 0, 16, ... 784 = 50, 0x144 at 0, 31, ... 775 = 26, 0x3D1 at 0, 781 = 2 */
     fca_tx_enable(FCA_M_037, true);
     fca_tx_enable(FCA_M_144, true);
     fca_tx_enable(FCA_M_3D1, true);
-    for (int i = 0; i < 6; i++) {
-        fca_tx_tick_10ms();
-    }
-    CHECK(count_id(0x037u) == 6u);
-    CHECK(count_id(0x144u) == 3u);
-    CHECK(count_id(0x3D1u) == 1u);
-    for (unsigned i = 0u; i < stub.n_tx; i++) {
-        if (stub.tx[i].id == 0x3D1u) {
-            CHECK(stub.tx[i].dlc == 4u && stub.tx[i].data[0] == 0x34u);
+    {
+        unsigned n037 = 0u, n144 = 0u, n3d1 = 0u;
+        for (int i = 0; i < 800; i++) {
+            stub.n_tx = 0u;
+            fca_tx_tick_1ms();
+            n037 += count_id(0x037u);
+            n144 += count_id(0x144u);
+            n3d1 += count_id(0x3D1u);
+            for (unsigned k = 0u; k < stub.n_tx; k++) {
+                if (stub.tx[k].id == 0x3D1u) {
+                    CHECK(stub.tx[k].dlc == 4u && stub.tx[k].data[0] == 0x34u);
+                }
+            }
         }
+        CHECK(n037 == 50u);
+        CHECK(n144 == 26u);
+        CHECK(n3d1 == 2u);
     }
 
     /* rolling counter: +1 per transmission, wraps after 15; CRC valid each time */
     stub.n_tx = 0u;
     fca_tx_enable(FCA_M_144, false);
     fca_tx_enable(FCA_M_3D1, false);
-    for (int i = 0; i < 20; i++) {
-        fca_tx_tick_10ms();
+    for (int i = 0; i < 320; i++) {          /* 20 frames of 0x037 at 16 ms */
+        fca_tx_tick_1ms();
     }
     for (unsigned i = 1u; i < stub.n_tx; i++) {
         const uint8_t a = (uint8_t)(stub.tx[i - 1u].data[6] >> 4), b = (uint8_t)(stub.tx[i].data[6] >> 4);
@@ -99,11 +107,13 @@ int main(void)
     }
 
     /* controller busy: counted, retried next tick without advancing the counter */
-    stub.n_tx = STUB_TX_MAX;
-    fca_tx_tick_10ms();
+    for (int i = 0; i < 16 && com_tx_state(FCA_M_037)->busy == 0u; i++) {
+        stub.n_tx = STUB_TX_MAX;
+        fca_tx_tick_1ms();
+    }
     CHECK(com_tx_state(FCA_M_037)->busy == 1u);
     stub.n_tx = 0u;
-    fca_tx_tick_10ms();
+    fca_tx_tick_1ms();
     CHECK(stub.n_tx == 1u);
 
     if (fails == 0) {

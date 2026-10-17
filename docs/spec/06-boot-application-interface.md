@@ -131,7 +131,7 @@ record survives the reset. Boot software runtime RAM starts at `0xFFF84100` [O].
 | +0x02 | 2 | `0x0048` (record length) |
 | +0x04 | 1 | source: 3 written by the application (`0x73FC4`) and by the bootloader (`0x11E34`); the boot manager accepts 2 or 3 |
 | +0x05 | 1 | target: **1** = bootloader, **2** = boot manager, **3** = application |
-| +0x08–0x18 | 4 each | diagnostic timing values (P2 / P2* / S3 style, from the active session's entry) |
+| +0x08–0x18 | 4 each | diagnostic timing values from the active session's entry; bench (stock, after a diagnostic connection): `+0x08` 0, `+0x0C` 40 000, `+0x10` 5 000 000, `+0x14` 5 000, `+0x18` 500 000 (spec 15 §4a); all zero before any diagnostic request |
 | +0x24 | 1 | `'w'` (0x77) = request active |
 | +0x25 | 1 | session-change flag (0x6C8C8: `0xFFF93B4E`) |
 | +0x26 | 1 | `0xFFF93B4D` (0x6C8B8) |

@@ -131,8 +131,9 @@ TCM connector: 16-pin round.
 transceivers' unpowered input resistance. On the bench each bus needs 120 Ω at the TCU end as
 well as at the tester end.
 
-Pins 1, 2, 7, 8, 10, 11, 12, 16 are not shown in that document. Mapping to MCU pins: bus 1 /
-bus 2 assignment of the two CAN pairs is in spec 07 §1; the TRS Park output driver is open.
+Pins 1, 2, 7, 8, 10, 11, 12, 16 are not shown in that document. **Bus assignment (bench 2026-10-17):** pins 5/6 carry
+the firmware's bus 1 traffic (`0x037`, `0x144`, … spec 08 §2) and pins 3/4 bus 2 (`0x300`), i.e.
+**pins 5/6 = bus 1 (RCAN-A/B), pins 3/4 = bus 2 (RCAN-C)**; the TRS Park output driver is open.
 
 Sensors inside the mechatronic: input-speed (turbine) sensor ISS (Hall, on the input-side
 carrier), output-speed sensor OSS (Hall), oil temperature thermistor, park position sensor (two

@@ -1,7 +1,9 @@
 # Spec 10 — Measurement protocol on CAN `0x361` / `0x398`
 
 Status: **draft.** Transport, enable condition, command set, address permissions and the
-measurement index list are decoded from the stock firmware. **Not yet tried on hardware.**
+measurement index list are decoded from the stock firmware. **Confirmed on the bench spare
+(2026-10-17):** on bus 2, `0x2A` reads return `2A 81` + 6 bytes, and identification `0x01`
+returns `0x03` ("not in sequence") as predicted in §6.
 Markers: **[M]** manual, **[O]** observed in stock firmware, **[I]** inference, **[D]** derived.
 
 Why it matters: this protocol lets a tester read any application RAM variable of the running

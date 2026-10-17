@@ -12,7 +12,8 @@
  * Supported SLCAN commands: S0..S8 (bit rate), O (open), L (open; listen-only is not
  * implemented, see below), C (close), t/T (send standard / extended frame), r/R (remote frame),
  * V (version), N (serial number), F (status flags), Z0/Z1 (timestamps), M/m (acceptance filter:
- * accepted, all frames are passed). Received frames: "tIIILDD..[TTTT]\r" / "TIIIIIIIILDD..\r".
+ * accepted, all frames are passed), E (project extension: error state,
+ * reply "E<TEC 2 hex><REC 2 hex><ESR1 8 hex>", then ESR1 is read-cleared). Received frames: "tIIILDD..[TTTT]\r" / "TIIIIIIIILDD..\r".
  *
  * Library: FlexCAN_T4 (included with Teensyduino).
  */
@@ -67,6 +68,16 @@ static bool parse_hex(const char *s, uint8_t n, uint32_t *out) {
 }
 
 static void reply(int i, const char *s) { ch[i].port->print(s); }
+
+/* FlexCAN error counters (ECR: TX count bits 7..0, RX count bits 15..8) and status (ESR1) */
+static void cmd_error_state(int i) {
+  char buf[24];
+  const uint32_t ecr = i == 0 ? FLEXCAN1_ECR : FLEXCAN2_ECR;
+  const uint32_t esr = i == 0 ? FLEXCAN1_ESR1 : FLEXCAN2_ESR1;
+  snprintf(buf, sizeof buf, "E%02lX%02lX%08lX\r", (unsigned long)(ecr & 0xFF),
+           (unsigned long)((ecr >> 8) & 0xFF), (unsigned long)esr);
+  reply(i, buf);
+}
 static void ok(int i) { ch[i].port->write('\r'); }
 static void err(int i) { ch[i].port->write('\a'); }
 
@@ -133,6 +144,7 @@ static void handle_line(int i) {
     case 'v': reply(i, "vTCU1\r"); break;
     case 'N': snprintf(buf, sizeof buf, "N%04X\r", i == 0 ? 0xA001 : 0xA002); reply(i, buf); break;
     case 'F': reply(i, "F00\r"); break;
+    case 'E': cmd_error_state(i); break;
     case 'Z': ch[i].timestamps = s[1] == '1'; ok(i); break;
     case 'M':
     case 'm':

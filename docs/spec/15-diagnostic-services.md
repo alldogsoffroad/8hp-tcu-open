@@ -64,6 +64,19 @@ addresses of §1. `0x10 0x02` answers `0x7F 0x10 0x78`, writes the record of spe
 resets; the Bosch boot software then sends the positive response. Allowed only while the
 engine is not running.
 
+## 4a. Bench observations (stock firmware, 2026-10-17)
+
+- Physical requests on `0x7E1` are answered on `0x7E9` on **both** buses; single frames are
+  padded with `0xAA` (same as the project transport).
+- `3E 00` → `7E 00`; `22 F1 95` → `7F 22 31` (identifier not supported).
+- `10 01` → `50 01 00 28 00 C8` (P2 40 ms, P2* 2 s); `10 03` → `50 03 00 28 00 C8`.
+- The **first** `10 03` after power-up (and a `10 03` on bus 2 while bus 1 held the extended
+  session) got **no response**; after a `10 01`, `10 03` was accepted. Testers should send `10 01`
+  first. Reason open.
+- After these requests the boot request record held the timing words of spec 06 §5a
+  (`+0x0C` = 40 000, `+0x10` = 5 000 000, `+0x14` = 5 000, `+0x18` = 500 000, `+0x29` = `+0x2E` =
+  `0x18`); the project firmware now writes these values.
+
 ## 5. Open items
 
 1. Transport-layer parameters of the stock application (padding, BS, STmin) and the role of
