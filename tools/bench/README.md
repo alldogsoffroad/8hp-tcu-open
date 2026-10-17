@@ -37,6 +37,11 @@ Teensy 4.1 to transceivers (3.3 V supply from the Teensy, common ground with the
 | 0 (CAN2 RX) | B: RXD |
 | 3.3 V, GND | VCC, GND of both (and S/RS pin to GND = high-speed mode, if present) |
 
+**Waveshare SN65HVD230 CAN board:** pins are labelled `3V3`, `GND`, `CTX`, `CRX`, `CANH`, `CANL`.
+`CTX` goes to the Teensy TX pin (22 or 1), `CRX` to the RX pin (23 or 0). The board carries its
+own **120 Ω termination** between CANH and CANL, so it already terminates the Teensy end; do not
+add a second resistor there (§3).
+
 ## 3. Termination
 
 With everything unpowered, measure the resistance between TCU pins 5 and 6, and between 3 and 4:
