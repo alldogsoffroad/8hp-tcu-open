@@ -266,9 +266,13 @@ Matching bit-inverted identifiers, each followed by key data (not reproduced her
 [I] This is Bosch's secured flashing (the `TPROT` question of §6): the application ("TSW") and the
 calibration are authenticated against keys in the boot area, and programming needs an
 authorisation (`Auth_Prog`). The ACDP-2's encrypted power-up session (§5b) writes modified images,
-so it bypasses or satisfies this path. **Whether anything checks the application at every
-start-up** (rather than only during Bosch reprogramming) is the deciding question for the project
-firmware: bench item 12 answers it.
+so it bypasses or satisfies this path. Whether anything checks the application at every
+start-up was **answered on the bench (item 12, 2026-10-17): no.** An image with 5 changed bytes in
+the application padding (`0x172000 = 5A`, `0x172004–07` chosen so the CRC-32 stays `29B578DF`) was
+written with the ACDP-2 (it rewrote only the changed region: ≈ 900 bytes on the bus), read back
+byte-identical, and the application started normally (periodic messages and UDS replies). So the
+Bosch authentication only guards the Bosch reprogramming path; at power-on the boot side accepts
+any application whose header, CRC and markers are valid (§7).
 
 The power-up handler that answers `7E1#D7 65 69 15` is **not** in the dumped flash (the constant
 does not occur in any byte order; block 0 does not drive CAN). [I] It is in the user boot MAT.
@@ -341,9 +345,10 @@ vehicle exemption):
    whose memory services refuse the code area.
    Boot selection logic in the user boot MAT (not dumped): exact conditions for starting the
    application (markers, CRC, protection check) and the register state at hand-over (stack, SR).
-2. Protection (`TPROT`) behavior with a modified application. Bench test on a spare: change one
-   unused byte in the application, fix the CRC with `fix_header_crc.py`, write with the ACDP-2,
-   and observe whether the application starts (CAN traffic, diagnostics).
+2. ~~Protection (`TPROT`) behavior with a modified application~~ — **answered 2026-10-17**: a
+   modified application (content changed, CRC kept) starts normally (§6.0a). Still open: an image
+   whose header CRC changes (the project image) — the boot check of the CRC is known (§2), the
+   EEPROM CRC binding (§6) only matters to the stock application.
 3. ~~Whether the ACDP-2 recalculates CRCs~~ — it does not (user research); whether it writes the
    markers is still open.
 4. EEPROM reaction to a changed application/calibration CRC.

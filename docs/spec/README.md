@@ -75,7 +75,7 @@ Items that static analysis could not resolve, to be answered on the bench:
 | 9 | Physical switches on AN5/AN6 (and AN3/AN4 variant) | 04 | toggle candidate switches, observe |
 | 10 | External supervisor protocol on RSPI-B (SSLB1) and its timeout | 03, 05 | capture SSLB1 traffic; stop servicing on a spare and observe reset |
 | 11 | Discrete port A/B/C signals | 01 | probe with stock firmware running |
-| 12 | Does a modified application start? (protection check, CRC, markers) | 06 | on a spare: change one non-functional byte in the application, fix the CRC, write with the ACDP-2, observe start-up |
+| 12 | ~~Does a modified application start?~~ — **yes (2026-10-17)**: 5 bytes changed in padding (CRC kept), written with the ACDP-2, read back identical, application started (spec 06 §6.0a) | 06 | |
 | 13 | Does the ACDP-2 recalculate CRCs / write markers? | 06 | ACDP-2 documentation; compare a read-back after writing a modified image |
 | 14 | EEPROM reaction to a changed application/calibration CRC | 06 | read the EEPROM before and after item 12; compare with `eeprom_diff.py` |
 | 15 | Meaning and scaling of the CAN signals (torque, pedal, speeds) | 07, 08, 09 | full CAN-C capture from a stock Ram (below); also log the dedicated shifter bus (TCM pins 3/4) |
