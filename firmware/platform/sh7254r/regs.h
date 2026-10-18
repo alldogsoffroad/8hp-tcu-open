@@ -79,6 +79,9 @@
 #define RCAN_MB_DATA(b, n, i) REG8((b) + 0x108u + 32u * (n) + (i))
 #define RCAN_MB_CTRL1(b, n)  REG16((b) + 0x110u + 32u * (n))          /* NMC ATX DART MBC[2:0] DLC[3:0] */
 
+#define RCAN_MCR_IDR     0x8000u        /* MCR15 ID reorder = 1 (reset value): the mailbox layout
+                                           IDE RTR 0 STDID[10:0] EXTID[17:16] used below. Clearing
+                                           it shifts every identifier by 2 bits (bench 2026-10-17) */
 #define RCAN_MCR_RESET   0x0001u        /* MCR0: reset request  */
 #define RCAN_MCR_HALT    0x0002u        /* MCR1: halt request   */
 #define RCAN_GSR_RESET   0x0008u        /* GSR3: in reset mode  */

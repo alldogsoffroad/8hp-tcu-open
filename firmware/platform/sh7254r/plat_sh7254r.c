@@ -97,7 +97,7 @@ static bool can_init(uint32_t b)
 {
     uint32_t guard;
 
-    RCAN_MCR(b) = RCAN_MCR_RESET;
+    RCAN_MCR(b) = RCAN_MCR_IDR | RCAN_MCR_RESET;
     for (guard = 100000u; guard != 0u && (RCAN_GSR(b) & RCAN_GSR_RESET) == 0u; guard--) {
     }
     RCAN_IMR(b)  = 0xFFFFu;             /* polled operation */
@@ -106,7 +106,7 @@ static bool can_init(uint32_t b)
     for (uint32_t n = 0u; n < RCAN_MAILBOXES; n++) {
         RCAN_MB_CTRL1(b, n) = RCAN_MBC_OFF;
     }
-    RCAN_MCR(b) = 0x0000u;              /* leave reset: normal operation */
+    RCAN_MCR(b) = RCAN_MCR_IDR;         /* leave reset: normal operation, ID reorder kept */
     for (guard = 100000u; guard != 0u && (RCAN_GSR(b) & RCAN_GSR_RESET) != 0u; guard--) {
     }
     return guard != 0u;

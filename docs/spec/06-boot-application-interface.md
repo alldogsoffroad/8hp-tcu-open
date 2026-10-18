@@ -332,6 +332,15 @@ vehicle exemption):
 2. CRC-32 of the stated range at +0x44 (application and calibration), computed by the build.
 3. Entry address at +0x7C; vector table from +0x80, inside the CRC range; VBR set by the entry code.
 4. Marker areas in the state shown in §3 (or written by the programming tool).
+4a. **The stock identification (bench 2026-10-17)**: tail record `0x17FB70–0x17FBFB` with the
+   project code `0JIXC224` (followed by zeros), header +0x74 = `0x17FA70` and the table there
+   (pointers into the calibration's identification). An image that was byte-correct in flash but
+   carried `8HPTCU-OPEN M0` in the tail and +0x74 = 0 was **not started**: the boot manager stayed
+   in control (its identifiers answered, blank VIN). The same firmware with these fields copied
+   from the unit's read-out (`build_image.py --stock-ident`) started. [I] The boot side compares
+   the project code `0JIX` (present in every Bosch block: `4HJD0JIX` at `0x7C74`, `0JIX22` in the
+   boot manager at `0x21A1E`, `0JIX0JIX` in the protection block at `0x3FD70`); which of the three
+   fields is checked was not isolated.
 5. No use of the boot handover RAM (§5) other than writing the boot request record (§5a) when
    handing over to the boot side for reprogramming.
 6. A defined behavior for the EEPROM CRC binding (§6).

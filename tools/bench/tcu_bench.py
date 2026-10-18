@@ -55,6 +55,10 @@ class Buses:
             sys.exit("python-can is required: pip install python-can")
         self.names = {1: args.bus1, 2: args.bus2}
         self.bus = {}
+        if args.iface == "slcan" and getattr(args, "teensy_mode", b"P0"):
+            # the Teensy keeps listen-only (P1/P2, set by `log`) until reset and then silently
+            # drops every frame we send: return to normal mode unless the caller set a mode
+            teensy_passive([args.bus1, args.bus2], getattr(args, "teensy_mode", b"P0"))
         for n, chan in self.names.items():
             if not chan:
                 continue
@@ -70,7 +74,7 @@ class Buses:
 
     def send(self, n, arb_id, data):
         data = bytes(data)
-        self.get(n).send(can.Message(arbitration_id=arb_id, data=data, is_extended_id=False))
+        self.get(n).send(can.Message(arbitration_id=arb_id, data=data, is_extended_id=arb_id > 0x7FF))
 
     def shutdown(self):
         for b in self.bus.values():
@@ -86,8 +90,13 @@ class Buses:
 class Uds:
     """Minimal ISO-TP client: single- or multi-frame requests and responses."""
 
-    def __init__(self, buses, n=1, req=0x7E1, rsp=0x7E9):
-        self.b, self.n, self.req, self.rsp = buses, n, req, rsp
+    REQ, RSP = 0x7E1, 0x7E9         # --uds-ext: 29-bit 0x07E00000 / 0x07E80000 (images built before
+                                    # the MCR15 fix, 2026-10-17: their identifiers are shifted)
+
+    def __init__(self, buses, n=1, req=None, rsp=None):
+        self.b, self.n = buses, n
+        self.req = Uds.REQ if req is None else req
+        self.rsp = Uds.RSP if rsp is None else rsp
         self.lock = threading.Lock()
         self._tp = None
 
@@ -266,6 +275,7 @@ def cmd_log(b, args):
     if args.iface == "slcan" and not args.active:
         b.shutdown()
         teensy_passive([args.bus1, args.bus2])
+        args.teensy_mode = None             # keep listen-only when reopening
         b.__init__(args)
         print("listen-only, automatic bit rate")
     with open(args.file, "w", buffering=1) as f:          # line-buffered: live progress
@@ -604,6 +614,8 @@ def main():
     ap.add_argument("--iface", default="socketcan")
     ap.add_argument("--bus1", default="can0", help="interface/channel for TCU pins 5/6")
     ap.add_argument("--bus2", default="can1", help="interface/channel for TCU pins 3/4 ('' = none)")
+    ap.add_argument("--uds-ext", action="store_true",
+                    help="talk to images built before the MCR15 fix: UDS on 29-bit 0x07E00000/0x07E80000")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("monitor")
     p = sub.add_parser("log"); p.add_argument("file"); p.add_argument("--active", action="store_true")
@@ -624,6 +636,8 @@ def main():
     p = sub.add_parser("flash-selftest"); p.add_argument("image"); p.add_argument("--block", default="0x100000")
     sub.add_parser("flash-invalidate")
     args = ap.parse_args()
+    if args.uds_ext:
+        Uds.REQ, Uds.RSP = 0x07E00000, 0x07E80000
 
     b = Buses(args)
     try:

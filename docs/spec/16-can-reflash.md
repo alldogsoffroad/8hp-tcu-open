@@ -193,7 +193,12 @@ Implementation notes:
 
 ## 10. Open items
 
-1. FWE level (§8 step 1).
+1. **FWE level: LOW with the application running on the bench supply** (2026-10-17, `22 FD 03` →
+   `00`). P/E mode cannot be entered, so the flasher cannot write as things stand. No code in the
+   dumped flash reads FPMON; the flash driver is downloaded by the tool. [I] FWE is raised by
+   hardware the tool's driver controls (a port pin or the system chip) or by the ACDP-2 harness.
+   Next: dump the user boot MAT (FE20) and look for FPMON / port handling; check FD03 while the
+   TCU is powered through the ACDP-2 harness; locate the FWE pin on the board.
 2. Whether a CPU copy of the FCU firmware is accepted (§3).
 3. Whether the user boot MAT also checks the calibration markers before starting the application
    (affects only which block must be valid; the order in §5 covers both).

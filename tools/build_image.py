@@ -27,6 +27,7 @@ MARKER1, MARKER2, MARKER_LEN = 0x17FE00, 0x17FF00, 0x100
 CAL_HEADER = 0x180200
 FLASH_SIZE = 0x280000
 END_MAGIC = 0x12345678
+TAIL_START, TAIL_END = 0x17FB70, 0x17FBFC        # tail record (identification), before the end word
 
 
 def u32(b, o):
@@ -87,9 +88,14 @@ def main():
     ap.add_argument("--app", required=True, help="linked application (Intel HEX, load addresses)")
     ap.add_argument("--base", required=True, help="reference full flash read-out (_IFla.bin)")
     ap.add_argument("-o", "--output", required=True)
+    ap.add_argument("--stock-ident", action="store_true",
+                    help="copy the stock identification from the reference: tail record 0x17FB70-0x17FBFB "
+                         "(project code '0JIX...'), header +0x74 and the table it points to (bench test "
+                         "2026-10-17: does the boot side check them before starting the application?)")
     a = ap.parse_args()
 
     img = bytearray(open(a.base, "rb").read())
+    ref = bytes(img)
     if len(img) != FLASH_SIZE:
         fail(f"reference image is {len(img):#x} bytes, expected {FLASH_SIZE:#x}")
     app = read_ihex(a.app)
@@ -106,6 +112,17 @@ def main():
     img[APP_START:APP_START + len(app)] = app
     img[MARKER1:MARKER1 + MARKER_LEN] = b"\x00" * MARKER_LEN
     img[MARKER2:MARKER2 + MARKER_LEN] = b"\xff" * MARKER_LEN
+
+    if a.stock_ident:
+        ptr = u32(ref, APP_START + 0x74)
+        tab = ref[ptr:ptr + 0x30] if APP_START < ptr < MARKER1 else b""
+        if tab and img[ptr:ptr + 0x30] != b"\xff" * 0x30:
+            fail(f"application code overlaps the stock table at {ptr:#x}")
+        img[TAIL_START:TAIL_END] = ref[TAIL_START:TAIL_END]
+        struct.pack_into(">I", img, APP_START + 0x74, ptr)
+        if tab:
+            img[ptr:ptr + 0x30] = tab
+        print(f"stock identification copied: tail {ref[TAIL_START:TAIL_START + 8]!r}, +0x74 = {ptr:#x}")
 
     if u32(img, APP_START) != 0x876543C1:
         fail("application header magic missing (is --app the block starting at 0x40000?)")
