@@ -32,6 +32,9 @@ Commands:
                           the TCU leave blank (default 0x100000); spec 16 section 8 step 3
   flash-invalidate        erase the application marker block ON PURPOSE (safety-net check, spec 16
                           section 8 step 4); afterwards only the ACDP-2 can restore the TCU
+  plant-entry [--mode can|kcn]   send the user boot MAT plant entry (29-bit 0x1F0C3CFE,
+                          "PlantCan") at 666.667 kbit/s while the TCU is switched on; log replies
+                          (spec 17). Read-only; power-cycle the TCU afterwards.
   canstat [--send]        Teensy adapter error counters per bus (slcan only); --send first
                           transmits a tester-present frame on each bus to provoke ACK errors
 """
@@ -63,7 +66,7 @@ class Buses:
             if not chan:
                 continue
             kw = {"interface": args.iface, "channel": chan}
-            if args.iface == "slcan":
+            if args.iface == "slcan" and not getattr(args, "keep_rate", False):
                 kw["bitrate"] = 500000            # USB CDC: the serial baud rate is irrelevant
             self.bus[n] = can.Bus(**kw)
 
@@ -274,10 +277,17 @@ def cmd_log(b, args):
     n_frames = 0
     if args.iface == "slcan" and not args.active:
         b.shutdown()
-        teensy_passive([args.bus1, args.bus2])
+        if args.rate == "666k":
+            # fixed 666.667 kbit/s, listen-only: the user boot MAT's plant session (spec 17)
+            teensy_passive([args.bus1, args.bus2], b"P1")
+            teensy_passive([args.bus1, args.bus2], b"S9")
+            args.keep_rate = True
+            print("listen-only, fixed 666.667 kbit/s")
+        else:
+            teensy_passive([args.bus1, args.bus2])
+            print("listen-only, automatic bit rate")
         args.teensy_mode = None             # keep listen-only when reopening
         b.__init__(args)
-        print("listen-only, automatic bit rate")
     with open(args.file, "w", buffering=1) as f:          # line-buffered: live progress
         print(f"logging both buses to {args.file} (Ctrl-C to stop)")
         try:
@@ -609,6 +619,106 @@ def cmd_flash_invalidate(b, args):
         fl.reset()
 
 
+# ----------------------------------------------------------------------------- user boot MAT plant entry (spec 17)
+
+def cmd_plant_entry(b, args):
+    """Send the user boot MAT's plant entry frame at 666.667 kbit/s while the TCU is switched on,
+    and log every frame received (bus 1 only, Teensy). Read-only: the TCU stays in the boot MAT
+    session until it is power-cycled."""
+    import serial
+    b.shutdown()
+    payload = b"PlantCan" if args.mode == "can" else b"PlantKcn"
+    frame = b"T1F0C3CFE8" + payload.hex().upper().encode() + b"\r"
+    s = serial.Serial(args.bus1, 2000000, timeout=0)
+    for c in (b"C\r", b"P0\r", b"S6\r", b"O\r", b"C\r", b"S9\r", b"O\r"):   # O/C clears listen-only
+        s.write(c); time.sleep(0.05)
+    s.reset_input_buffer()
+    name = args.output or f"plant_entry_{time.strftime('%Y%m%d_%H%M%S')}.log"
+    out = open(name, "w", buffering=1)
+    print(f"sending {payload.decode()} on 0x1F0C3CFE at 666.667 kbit/s every {args.period_ms} ms;")
+    print(f"switch the TCU supply ON now (sending for {args.send_s} s, then listening). Log: {name}")
+    t0 = time.time(); buf = b""; seen = 0; sent = 0; stop_send = t0 + args.send_s
+    end = stop_send + args.listen_s
+    next_tx = t0
+    while time.time() < end:
+        now = time.time()
+        if now < stop_send and now >= next_tx:
+            s.write(frame); sent += 1; next_tx = now + args.period_ms / 1000.0
+        buf += s.read(4096)
+        while b"\r" in buf:
+            line, buf = buf.split(b"\r", 1)
+            line = line.decode(errors="replace")
+            if not line or line[0] not in "tT":
+                continue
+            ts = time.time() - t0
+            if line[0] == "T":
+                ident, dlc, data = line[1:9], int(line[9]), line[10:10 + 2 * int(line[9])]
+            else:
+                ident, dlc, data = line[1:4], int(line[4]), line[5:5 + 2 * int(line[4])]
+            out.write(f"{ts:9.4f} {ident}#{data}\n")
+            seen += 1
+            if seen <= 40:
+                print(f"  {ts:8.3f} s  {ident} [{dlc}] {data}")
+            if ident.upper() == "1FFFAFFE" and now < stop_send:
+                stop_send = now                     # boot MAT answered: stop sending the entry
+                end = now + args.listen_s
+        time.sleep(0.0005)
+    if args.probe and seen:
+        plant_probe(s, out, t0)
+    for c in (b"C\r", b"S6\r"):
+        s.write(c); time.sleep(0.05)
+    s.close()
+    print(f"sent {sent} entry frames, received {seen} frames. Power-cycle the TCU to leave the boot MAT.")
+
+
+def plant_probe(s, out, t0):
+    """Harmless requests (ISO-TP single frames) to learn the session's addressing and bit rate."""
+    def collect(t):
+        end = time.time() + t; buf = b""; got = []
+        while time.time() < end:
+            buf += s.read(4096)
+            while b"\r" in buf:
+                line, buf = buf.split(b"\r", 1)
+                if line[:1] in (b"t", b"T"):
+                    got.append(line.decode())
+                    out.write(f"{time.time() - t0:9.4f} {line.decode()}\n")
+            time.sleep(0.002)
+        return got
+    reqs = ["023E00", "022701", "021001", "0322F190", "0322F195"]
+    for rate, code in (("666.667k", b"S9"), ("500k", b"S6")):
+        for c in (b"C\r", code + b"\r", b"O\r"):
+            s.write(c); time.sleep(0.05)
+        s.reset_input_buffer()
+        for ident, ext in (("7E1", False), ("1F0C3CFE", True)):
+            for r in reqs:
+                data = (r + "AA" * 8)[:16]
+                frame = ("T" + ident + "8" if ext else "t" + ident + "8") + data + "\r"
+                out.write(f"{time.time() - t0:9.4f} TX {rate} {ident}#{data}\n")
+                s.write(frame.encode())
+                got = collect(0.3)
+                print(f"  {rate:9s} {ident:8s} {r:10s} -> {' '.join(got) if got else '-'}")
+
+
+def plant_buses(b, args):
+    """Reopen bus 1 at 666.667 kbit/s in normal mode (TCU already in the boot MAT session)."""
+    b.shutdown()
+    teensy_passive([args.bus1], b"P0")
+    teensy_passive([args.bus1], b"S9")
+    args.keep_rate = True
+    args.teensy_mode = None
+    args.bus2 = ""
+    b.__init__(args)
+
+
+def cmd_plant_uds(b, args):
+    plant_buses(b, args)
+    u = Uds(b, 1)
+    for req in " ".join(args.hex).split(","):
+        req = bytes.fromhex(req.replace(" ", ""))
+        r = u.request(req, timeout=args.timeout)
+        print(f"{req.hex(' ').upper():24s} -> {hexs(r)}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--iface", default="socketcan")
@@ -619,6 +729,8 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("monitor")
     p = sub.add_parser("log"); p.add_argument("file"); p.add_argument("--active", action="store_true")
+    p.add_argument("--rate", choices=["auto", "666k"], default="auto",
+                   help="Teensy only: 666k = fixed 666.667 kbit/s listen-only (plant session)")
     p = sub.add_parser("uds"); p.add_argument("--bus", type=int, default=1); p.add_argument("hex", nargs="+")
     p = sub.add_parser("info"); p.add_argument("--bus", type=int, default=1)
     p = sub.add_parser("meas-ident"); p.add_argument("--bus", type=int, default=2)
@@ -635,6 +747,12 @@ def main():
     p.add_argument("--yes", action="store_true")
     p = sub.add_parser("flash-selftest"); p.add_argument("image"); p.add_argument("--block", default="0x100000")
     sub.add_parser("flash-invalidate")
+    p = sub.add_parser("plant-uds"); p.add_argument("hex", nargs="+", help="requests, comma-separated")
+    p.add_argument("--timeout", type=float, default=1.0)
+    p = sub.add_parser("plant-entry"); p.add_argument("--mode", choices=["can", "kcn"], default="can")
+    p.add_argument("--period-ms", type=float, default=2.0); p.add_argument("--send-s", type=float, default=20.0)
+    p.add_argument("--listen-s", type=float, default=5.0); p.add_argument("-o", "--output")
+    p.add_argument("--probe", action="store_true", help="after the entry reply, send harmless requests")
     args = ap.parse_args()
     if args.uds_ext:
         Uds.REQ, Uds.RSP = 0x07E00000, 0x07E80000
@@ -645,7 +763,8 @@ def main():
          "meas-ident": cmd_meas_ident, "meas-read": cmd_meas_read, "item20": cmd_item20,
          "solenoid": cmd_solenoid, "canstat": cmd_canstat,
          "dump-userboot": cmd_dump_userboot, "flash": cmd_flash,
-         "flash-selftest": cmd_flash_selftest, "flash-invalidate": cmd_flash_invalidate}[args.cmd](b, args)
+         "flash-selftest": cmd_flash_selftest, "flash-invalidate": cmd_flash_invalidate,
+         "plant-entry": cmd_plant_entry, "plant-uds": cmd_plant_uds}[args.cmd](b, args)
     finally:
         b.shutdown()
 

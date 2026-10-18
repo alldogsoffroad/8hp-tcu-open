@@ -9,13 +9,13 @@
  *   sudo slcand -o -s6 -t hw -S 2000000 /dev/ttyACM0 can0 && sudo ip link set can0 up
  *   sudo slcand -o -s6 -t hw -S 2000000 /dev/ttyACM1 can1 && sudo ip link set can1 up
  *
- * Supported SLCAN commands: S0..S8 (bit rate), O (open), L (open listen-only), C (close), t/T (send standard / extended frame), r/R (remote frame),
+ * Supported SLCAN commands: S0..S8 (bit rate), S9 (666.667 kbit/s, project extension), O (open), L (open listen-only), C (close), t/T (send standard / extended frame), r/R (remote frame),
  * V (version), N (serial number), F (status flags), Z0/Z1 (timestamps), M/m (acceptance filter:
  * accepted, all frames are passed), E (project extension: error state,
  * reply "E<TEC 2 hex><REC 2 hex><ESR1 8 hex>", then ESR1 is read-cleared),
  * P0/P1/P2 (project extension, kept until reset: P1 = every later O opens LISTEN-ONLY, P2 =
  * listen-only plus automatic bit rate: after 200 ms with bus errors and no valid frame the
- * channel steps through 500k, 1M, 250k, 125k, 800k and reports each change as a marker frame
+ * channel steps through 500k, 666.667k, 1M, 250k, 125k, 800k and reports each change as a marker frame
  * with extended ID 0x1FFFFF00 and data = new rate in kbit/s, 2 bytes big-endian).
  * Listen-only nodes never acknowledge and never send error flags: use them for sniffing.
  * K (project extension, channel must be closed): internal loop-back self-test, nothing goes on
@@ -45,8 +45,10 @@ struct Channel {
 
 static Channel ch[2];
 
-static const uint32_t kRates[9] = { 10000, 20000, 50000, 100000, 125000, 250000, 500000,
-                                    800000, 1000000 };
+/* S9 = 666.667 kbit/s, the Bosch user boot MAT plant-entry rate (spec 17): 24 MHz / (2 x 18 tq).
+ * Given as 666666: FlexCAN_T4 searches divisors with integer division and rejects 666667. */
+static const uint32_t kRates[10] = { 10000, 20000, 50000, 100000, 125000, 250000, 500000,
+                                     800000, 1000000, 666666 };
 
 static void set_rate(int i) {
   const FLEXCAN_RXTX mode = ch[i].listen ? LISTEN_ONLY : TX;
@@ -57,7 +59,8 @@ static void set_rate(int i) {
   }
 }
 
-static const uint32_t kAutoRates[5] = { 500000, 1000000, 250000, 125000, 800000 };
+static const uint32_t kAutoRates[6] = { 500000, 666666, 1000000, 250000, 125000, 800000 };
+#define AUTO_RATES (sizeof kAutoRates / sizeof kAutoRates[0])
 
 static uint8_t rx_errors(int i) {
   return (uint8_t)(((i == 0 ? FLEXCAN1_ECR : FLEXCAN2_ECR) >> 8) & 0xFF);
@@ -175,7 +178,7 @@ static void handle_line(int i) {
 
   switch (s[0]) {
     case 'S':
-      if (ch[i].open || s[1] < '0' || s[1] > '8') { err(i); break; }
+      if (ch[i].open || s[1] < '0' || s[1] > '9') { err(i); break; }
       ch[i].bitrate = kRates[s[1] - '0'];
       set_rate(i);
       ok(i);
@@ -184,7 +187,7 @@ static void handle_line(int i) {
     case 'L':
       ch[i].listen = s[0] == 'L' || ch[i].passive != 0;
       ch[i].auto_idx = 0;
-      for (uint8_t k = 0; k < 5; k++) {
+      for (uint8_t k = 0; k < AUTO_RATES; k++) {
         if (kAutoRates[k] == ch[i].bitrate) ch[i].auto_idx = k;
       }
       set_rate(i);
@@ -271,7 +274,7 @@ static void auto_baud(int i) {
   ch[i].last_check_ms = millis();
   rec = rx_errors(i);
   if (ch[i].good_since_check == 0 && (bus_errors_seen(i) || rec != ch[i].last_rec)) {
-    ch[i].auto_idx = (uint8_t)((ch[i].auto_idx + 1) % 5);
+    ch[i].auto_idx = (uint8_t)((ch[i].auto_idx + 1) % AUTO_RATES);
     ch[i].bitrate = kAutoRates[ch[i].auto_idx];
     set_rate(i);
     m.id = 0x1FFFFF00;
