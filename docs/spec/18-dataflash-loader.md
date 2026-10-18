@@ -1,6 +1,6 @@
 # Spec 18 — Data-flash application loader (Teensy updates without the ACDP-2)
 
-Status: **running on the bench spare (2026-10-18): loader installed, application updated from the Teensy.** Markers: **[M]** manual (SH7254R HW
+Status: **in use on the bench spare (2026-10-18): all bench checks passed; the Teensy updates the application, the ACDP-2 remains the recovery tool.** Markers: **[M]** manual (SH7254R HW
 manual R01UH0480EJ0400 §26), **[O]** observed, **[B]** bench, **[I]** inference.
 
 ## 1. Why
@@ -105,7 +105,7 @@ Supervisor, watchdog and CAN polling run in the loader exactly as in the RAM fla
 - Simulator: the flash-controller model gains a data MAT (undefined erased content, 128-byte
   programming, block erase, EEPWE gating) and the power-cut sweep is rerun for the new write order.
 
-## 7. Bench sequence (steps 1–6 done 2026-10-18, see §7b; ACDP-2 read check open)
+## 7. Bench sequence (all steps done 2026-10-18, see §7b)
 
 1. Build loader + RAM application; host tests pass.
 2. Install the loader with the ACDP-2 (one write).
@@ -146,6 +146,11 @@ Supervisor, watchdog and CAN polling run in the loader exactly as in the RAM fla
 - **Power cut:** `app-flash --slow` (payload phase stretched to about 35 s); the supply was switched
   off while page 24 of 177 was being written (DB00 erased, header not yet written). At power-on
   the TCU came up in loader mode (`LD`); a normal `app-flash` then restored the application.
+- **ACDP-2 recovery path:** with the loader installed and the RAM application in data flash, the
+  ACDP-2 identified and read the TCU (Teensy disconnected). The flash read-out is byte-identical to
+  `build/m5_loader_IFla.bin`; the data-flash read-out holds our image in DB00–DB02 (valid by the
+  loader's own check) and DB03–DB15 are unchanged since the 2026-10-17 read — the application
+  needs only three blocks, so all three stock EEPROM sections (DB04, DB08, DB12) are intact.
 - The RAM application's idle-loop count (heartbeat bytes 4–7) is about 74 % of the code-flash
   build's (`0x242CA` vs `0x312BE` per 100 ms), so code runs somewhat slower from RAM than from code
   flash through the ROM cache. Not a problem at the current load; to be watched as the control
@@ -153,8 +158,8 @@ Supervisor, watchdog and CAN polling run in the loader exactly as in the RAM fla
 
 ## 8. Open items
 
-1. Whether the Bosch boot software depends on any record in DB00–DB07 (it reads the newest
-   sections; DB08–15 are kept).
+1. ~~Whether the Bosch boot depends on DB00–DB07~~ — the boot, the loader and the ACDP-2 all work
+   with our image in DB00–DB02 (bench 2026-10-18).
 5. The stay word at `0xFFF800D0` (boot-preserved RAM between the boot request record and the
    boot MAT's bytes at `0xEC`–`0xF8`): no Bosch use found, but not proven unused. It is only
    written immediately before a jump to the loader, which clears it first thing.
