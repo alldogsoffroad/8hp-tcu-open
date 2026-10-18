@@ -25,6 +25,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tcu_bench      # noqa: E402  (python-can not needed for this test)
 import tcu_flash      # noqa: E402
 
+_Uds = tcu_bench.Uds
+
+
+def Uds(*a, **k):
+    """The simulated link queues frames: no need to honour the flasher's 1 ms STmin."""
+    u = _Uds(*a, **k)
+    u.honor_stmin = False
+    return u
+
 SIM = sys.argv[1] if len(sys.argv) > 1 else "tcu_flasher_sim"
 N = tcu_flash.FLASH_LEN
 
@@ -111,7 +120,7 @@ def valid(rom, r):
 
 def run(rom_in, rom_out, img, cut=None):
     bus = SimBus(rom_in, rom_out, cut)
-    fl = tcu_flash.Flasher(tcu_bench.Uds(SimBuses(bus), 1))
+    fl = tcu_flash.Flasher(Uds(SimBuses(bus), 1))
     outcome = "done"
     try:
         info = fl.ident()
@@ -150,7 +159,7 @@ def make_df(seed=2):
 
 def run_df(df_in, df_out, img, cut=None):
     bus = SimBus(df_in, df_out, cut, df=True)
-    fl = tcu_flash.Flasher(tcu_bench.Uds(SimBuses(bus), 1))
+    fl = tcu_flash.Flasher(Uds(SimBuses(bus), 1))
     outcome = "done"
     try:
         info = fl.ident(kinds=("LD",))
@@ -223,7 +232,7 @@ def main():
 
         # second run: plan finds nothing
         bus = SimBus(p_out, p_out2)
-        todo = tcu_flash.plan(tcu_flash.Flasher(tcu_bench.Uds(SimBuses(bus), 1)), img)
+        todo = tcu_flash.plan(tcu_flash.Flasher(Uds(SimBuses(bus), 1)), img)
         bus.close()
         if todo:
             print(f"FAIL: second run wants to write {todo}")

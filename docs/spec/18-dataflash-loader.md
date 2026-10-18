@@ -1,6 +1,6 @@
 # Spec 18 — Data-flash application loader (Teensy updates without the ACDP-2)
 
-Status: **implemented and host-tested (2026-10-18); not yet run on hardware.** Markers: **[M]** manual (SH7254R HW
+Status: **running on the bench spare (2026-10-18): loader installed, application updated from the Teensy.** Markers: **[M]** manual (SH7254R HW
 manual R01UH0480EJ0400 §26), **[O]** observed, **[B]** bench, **[I]** inference.
 
 ## 1. Why
@@ -105,7 +105,7 @@ Supervisor, watchdog and CAN polling run in the loader exactly as in the RAM fla
 - Simulator: the flash-controller model gains a data MAT (undefined erased content, 128-byte
   programming, block erase, EEPWE gating) and the power-cut sweep is rerun for the new write order.
 
-## 7. Bench sequence
+## 7. Bench sequence (steps 1–5 done 2026-10-18, see §7b; power-cut and ACDP-2 checks open)
 
 1. Build loader + RAM application; host tests pass.
 2. Install the loader with the ACDP-2 (one write).
@@ -127,6 +127,24 @@ Supervisor, watchdog and CAN polling run in the loader exactly as in the RAM fla
 | Host tool | `tcu_bench.py app-flash [IMAGE]`, `app-selftest`; `tcu_flash.df_write` (DB00 erased first, payload, verify, header last) |
 | Tests | simulator data MAT (undefined erased content, EEPWE/EEPRE gates, 8/128-byte units, no FWE); `test_flasher` data-flash cases (run with FWE low); `test_loader` (header checks, CRC); `test_tcu_flash` data-flash write + power cut during each of 181 operations: a valid header always means the complete new image, DB08–DB15 never change, a rewrite completes the image |
 
+## 7b. Bench results (2026-10-18) [B]
+
+- Loader written with the ACDP-2 (`build/m5_loader_IFla.bin`). With no image it comes up in loader
+  mode: `22 F1 95` → `62 F1 95 4C 44 02 00 80 …` ("LD", FWE low, FCU ready).
+- `app-selftest` on DB07 passed: erase, program 1 KB, read back, erase — with FWE low.
+- `app-flash`: DB00–DB02 erased, 22 656-byte payload and header written and verified in 6.3 s.
+  After the reset the RAM application runs: frames `0x7F0`–`0x7F3`, supervisor replies correct,
+  `22 F1 95` → `8HPTCU-OPEN M1 RAM`.
+- **Frame loss:** back-to-back consecutive frames (about 230 µs apart) overrun the loader's single
+  receive mailbox: 40-byte requests always arrived, 70-byte about half the time, 130-byte (one
+  data-flash page) almost never. With 0.3–1 ms between consecutive frames, 8 of 8 arrived. The
+  tool now paces consecutive frames at 1 ms for flasher/loader sessions; the flasher core asks for
+  STmin 1 ms in its flow control (takes effect in the next loader install).
+- The RAM application's idle-loop count (heartbeat bytes 4–7) is about 74 % of the code-flash
+  build's (`0x242CA` vs `0x312BE` per 100 ms), so code runs somewhat slower from RAM than from code
+  flash through the ROM cache. Not a problem at the current load; to be watched as the control
+  software grows.
+
 ## 8. Open items
 
 1. Whether the Bosch boot software depends on any record in DB00–DB07 (it reads the newest
@@ -136,4 +154,4 @@ Supervisor, watchdog and CAN polling run in the loader exactly as in the RAM fla
    written immediately before a jump to the loader, which clears it first thing.
 2. Behaviour of EEPRE/EEPWE after the boot code's writes (re-enable with the keys).
 3. The 100 ms listen window adds to start-up time in a vehicle; FE30 avoids needing it.
-4. Execution speed from RAM versus code flash (expected equal or faster; measure heartbeat timing).
+4. ~~Execution speed from RAM~~ — measured about 74 % of code-flash speed (§7b).

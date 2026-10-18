@@ -104,6 +104,10 @@ class Uds:
         self.b, self.n = buses, n
         self.req = Uds.REQ if req is None else req
         self.rsp = Uds.RSP if rsp is None else rsp
+        # minimum gap between our consecutive frames, whatever the receiver's STmin says: the
+        # flasher / loader poll one receive mailbox and lose back-to-back frames (bench 2026-10-18)
+        self.cf_gap_s = 0.0
+        self.honor_stmin = True     # tests on the simulated link (no frame loss) switch it off
         self.lock = threading.Lock()
         self._tp = None
 
@@ -133,8 +137,10 @@ class Uds:
             chunk = payload[off:off + 7]
             self.b.send(self.n, self.req, bytes([0x20 | sn & 0x0F]) + chunk + b"\xAA" * (7 - len(chunk)))
             off, sn = off + 7, sn + 1
-            if stmin:
-                time.sleep(stmin / 1000.0 if stmin <= 0x7F else 0.001)
+            gap = stmin / 1000.0 if stmin <= 0x7F else (stmin - 0xF0) / 10000.0 if 0xF1 <= stmin <= 0xF9 else 0.001
+            gap = max(gap if stmin and self.honor_stmin else 0.0, self.cf_gap_s)
+            if gap:
+                time.sleep(gap)
             if bs and off < len(payload):
                 left -= 1
                 if left == 0:
@@ -512,6 +518,7 @@ def enter_flasher(b):
     """Return a tcu_flash.Flasher talking to the RAM flasher on bus 1 (starting it if needed)."""
     import tcu_flash
     u = Uds(b, 1)
+    u.cf_gap_s = 0.001
     fl = tcu_flash.Flasher(u)
     info = fl.ident()
     if info is None:
@@ -779,6 +786,7 @@ def enter_loader(b, args):
     import serial
     import tcu_flash
     u = Uds(b, 1)
+    u.cf_gap_s = 0.001
     fl = tcu_flash.Flasher(u)
     info = fl.ident(kinds=("LD",))
     if info is None and u.request(b"\x3E\x00", timeout=0.5):
@@ -808,6 +816,7 @@ def enter_loader(b, args):
             sys.exit("the loader did not answer the stay request (is the loader installed?)")
         b.__init__(args)
         u = Uds(b, 1)
+        u.cf_gap_s = 0.001
         fl = tcu_flash.Flasher(u)
         time.sleep(0.1)
         for _ in range(3):

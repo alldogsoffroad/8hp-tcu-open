@@ -526,7 +526,8 @@ void fl_core_rx(const uint8_t d[8], uint8_t dlc)
         }
     } else if (pci == 1u && dlc == 8u) {
         static const uint8_t ovfl[3] = { 0x32u, 0u, 0u };
-        static const uint8_t cts[3] = { 0x30u, 0u, 0u };
+        /* STmin 1 ms: one receive mailbox, polled; back-to-back frames would overwrite it */
+        static const uint8_t cts[3] = { 0x30u, 0u, 0x01u };
         s_rx_len = (uint16_t)((d[0] & 0x0Fu) << 8 | d[1]);
         if (s_rx_len < 8u || s_rx_len > BUF_LEN) {
             s_rx_active = false;
