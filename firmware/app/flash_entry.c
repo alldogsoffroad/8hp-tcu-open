@@ -1,5 +1,6 @@
 #include "app/flash_entry.h"
 #include "platform/platform.h"
+#include "bsw/sup/sup.h"
 
 #define NRC_SFNS   0x12
 #define NRC_IMLOIF 0x13
@@ -7,6 +8,12 @@
 #define NRC_ROOR   0x31
 
 static uint8_t s_countdown;     /* ms until the flasher starts; 0 = not requested */
+
+static void enable_lines(bool on)
+{
+    (void)plat_flash_enable(on);
+    sup_set_flash_mode(on);
+}
 
 static uint8_t fwe_byte(void)
 {
@@ -27,12 +34,13 @@ static int enable_test(uint8_t type, uint16_t n, uint8_t *out, uint16_t max, boo
         }
         out[0] = fwe_byte();
         out[2] = plat_flash_enable(true) ? 1u : 0u;
-        for (volatile uint32_t i = 0u; i < 20000u; i++) {   /* let the line settle (~1 ms) */
-        }
+        sup_set_flash_mode(true);       /* takes effect with the next 5 ms supervisor frame:
+                                           read FD03 afterwards */
         out[1] = fwe_byte();
         return 3;
     }
     if (type == 2u) {
+        sup_set_flash_mode(false);
         out[1] = plat_flash_enable(false) ? 1u : 0u;
         out[0] = fwe_byte();
         return 2;
@@ -59,11 +67,7 @@ int flash_entry_routine(uint8_t type, uint16_t rid, const uint8_t *in, uint16_t 
     if (!allowed) {
         return -NRC_CNC;
     }
-    (void)plat_flash_enable(true);          /* as the user boot MAT does; the flasher repeats it */
-    if (!plat_flash_fwe()) {
-        (void)plat_flash_enable(false);
-        return -NRC_CNC;
-    }
+    enable_lines(true);                     /* as the user boot MAT does; FWE checked at start */
     s_countdown = FLASH_START_DELAY_MS;     /* time for the positive response to go out */
     return 0;
 }
@@ -80,6 +84,10 @@ int flash_entry_did(uint8_t *out, uint16_t max)
 void flash_entry_tick_1ms(void)
 {
     if (s_countdown != 0u && --s_countdown == 0u) {
-        plat_flasher_start();
+        if (plat_flash_fwe()) {
+            plat_flasher_start();
+        } else {
+            enable_lines(false);            /* FWE did not follow: stay in the application */
+        }
     }
 }

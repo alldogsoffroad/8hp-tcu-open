@@ -121,7 +121,7 @@ else()
     # project flasher on the simulated flash controller (spec 16 section 7)
     set(FL_HOST_SOURCES flasher/fl_core.c flasher/fl_fcu.c tests/unit/fl_sim.c)
     add_executable(test_flasher tests/unit/test_flasher.c ${FL_HOST_SOURCES} app/flash_entry.c
-        tests/unit/stub_plat.c)
+        bsw/sup/sup.c tests/unit/stub_plat.c)
     target_compile_definitions(test_flasher PRIVATE FL_HOST)
     add_test(NAME flasher COMMAND test_flasher)
     add_executable(tcu_flasher_sim tests/unit/fl_sim_main.c ${FL_HOST_SOURCES})

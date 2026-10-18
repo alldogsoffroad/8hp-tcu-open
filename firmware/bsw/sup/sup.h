@@ -12,6 +12,8 @@
 #define SUP_CMD_CONTROL  0x8E00u
 #define SUP_BIT_ENABLE   0x01u
 #define SUP_BIT_TOGGLE   0x04u
+#define SUP_BIT_FL_TOGGLE 0x10u     /* user boot MAT programming loop (state 0x19): bit 4 toggles, */
+#define SUP_BIT_FL_MODE   0x80u     /* bit 7 held, bit 2 and the output enable off [I] FWE        */
 #define SUP_REPLY_MASK   0xF900u
 #define SUP_REPLY_OK     0xA800u
 
@@ -30,5 +32,8 @@ void sup_tick_5ms(void);
 /* Request the solenoid output enable (bit 0). Takes effect with the next frame. */
 void sup_set_output_enable(bool on);
 const sup_status_t *sup_status(void);
+/* Flash programming mode as the user boot MAT sends it (spec 16 section 10): word
+ * 0x8E80 | (bit 4 toggling), output enable forced off. Bench test 2026-10-17. */
+void sup_set_flash_mode(bool on);
 
 #endif

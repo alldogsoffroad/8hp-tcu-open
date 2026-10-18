@@ -1,9 +1,10 @@
 /* Entry into the project flasher (spec 16), BENCH USE.
  *
  * UDS RoutineControl FE30, extended session only:
- *   start   31 01 FE 30 -> 71 01 FE 30, then about 20 ms later the application hands the CPU to
- *           the RAM flasher (plat_flasher_start) and does not resume. Refused with NRC 0x22 while
- *           the engine runs, a bench output test is active, or the FWE pin is low.
+ *   start   31 01 FE 30 -> 71 01 FE 30; the flash enable lines (port C + supervisor programming
+ *           mode) are raised, and about 20 ms later the application hands the CPU to the RAM
+ *           flasher if FWE reads high (else the lines are dropped and the application continues).
+ *           Refused with NRC 0x22 while the engine runs or a bench output test is active.
  * Identifier 0xFD03 (ReadDataByIdentifier): 1 byte, bit 0 = FPMON.FWE (flash programming possible).
  */
 #ifndef TCU_FLASH_ENTRY_H

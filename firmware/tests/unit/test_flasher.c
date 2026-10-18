@@ -255,7 +255,6 @@ static void test_entry(void)
     stub.fwe = true;
     CHECK(flash_entry_routine(1u, FLASH_RID, NULL, 0u, out, 8u, false) == -0x22);
     stub.fwe = false;
-    CHECK(flash_entry_routine(1u, FLASH_RID, NULL, 0u, out, 8u, true) == -0x22);
     CHECK(flash_entry_did(out, 8u) == 1 && out[0] == 0u);
     stub.fwe = true;
     CHECK(flash_entry_did(out, 8u) == 1 && out[0] == 1u);
@@ -289,9 +288,18 @@ static void test_entry(void)
     CHECK(flash_entry_routine(2u, FLASH_EN_RID, NULL, 0u, out, 8u, true) == 2 && !stub.flash_enable);
     stub.fwe = false;
     CHECK(flash_entry_routine(1u, FLASH_RID, NULL, 0u, out, 8u, true) == 0 && stub.flash_enable);
+    for (unsigned i = 0u; i < FLASH_START_DELAY_MS; i++) {
+        flash_entry_tick_1ms();
+    }
+    CHECK(stub.flasher_starts == 2u);
+    /* FWE does not follow: no flasher start, lines dropped */
     stub.fwe = false;
     stub.fwe_follows_enable = false;
-    CHECK(flash_entry_routine(1u, FLASH_RID, NULL, 0u, out, 8u, true) == -0x22 && !stub.flash_enable);
+    CHECK(flash_entry_routine(1u, FLASH_RID, NULL, 0u, out, 8u, true) == 0 && stub.flash_enable);
+    for (unsigned i = 0u; i < FLASH_START_DELAY_MS; i++) {
+        flash_entry_tick_1ms();
+    }
+    CHECK(stub.flasher_starts == 2u && !stub.flash_enable);
 }
 
 int main(void)

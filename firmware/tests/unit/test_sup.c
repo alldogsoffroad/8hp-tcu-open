@@ -48,6 +48,19 @@ int main(void)
     sup_tick_5ms();
     CHECK(s->replies_bad == 1u);
 
+    /* flash programming mode: 0x8E80 with bit 4 toggling, no enable, no bit 2 */
+    sup_set_output_enable(true);
+    sup_set_flash_mode(true);
+    stub.sup_reply = 0xA804u;
+    sup_tick_5ms();
+    sup_tick_5ms();
+    CHECK((stub.sup_tx[10] & 0xFF85u) == 0x8E80u && (stub.sup_tx[11] & 0xFF85u) == 0x8E80u);
+    CHECK(((stub.sup_tx[10] ^ stub.sup_tx[11]) & 0x10u) != 0u && !s->enable);
+    sup_set_flash_mode(false);
+    sup_set_output_enable(false);
+    sup_tick_5ms();
+    CHECK((stub.sup_tx[12] & 0xFFF1u) == 0x8E00u);
+
     if (fails == 0) {
         printf("test_sup: ok\n");
     }

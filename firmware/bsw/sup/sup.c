@@ -5,18 +5,25 @@
 static sup_status_t s_st;
 static bool s_toggle;
 static bool s_enable_req;
+static bool s_flash_mode;
 
 void sup_init(void)
 {
     memset(&s_st, 0, sizeof s_st);
     s_toggle = false;
     s_enable_req = false;
+    s_flash_mode = false;
     plat_sup_init();
 }
 
 void sup_set_output_enable(bool on)
 {
     s_enable_req = on;
+}
+
+void sup_set_flash_mode(bool on)
+{
+    s_flash_mode = on;
 }
 
 void sup_tick_5ms(void)
@@ -26,8 +33,12 @@ void sup_tick_5ms(void)
     uint8_t r;
 
     s_toggle = !s_toggle;
-    tx = (uint16_t)(SUP_CMD_CONTROL | (s_toggle ? SUP_BIT_TOGGLE : 0u) |
-                    (s_enable_req ? SUP_BIT_ENABLE : 0u));
+    if (s_flash_mode) {
+        tx = (uint16_t)(SUP_CMD_CONTROL | SUP_BIT_FL_MODE | (s_toggle ? SUP_BIT_FL_TOGGLE : 0u));
+    } else {
+        tx = (uint16_t)(SUP_CMD_CONTROL | (s_toggle ? SUP_BIT_TOGGLE : 0u) |
+                        (s_enable_req ? SUP_BIT_ENABLE : 0u));
+    }
     r = plat_sup_exchange(tx, &rx);
     if ((r & 2u) != 0u) {
         s_st.last_rx = rx;

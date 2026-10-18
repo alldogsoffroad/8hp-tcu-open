@@ -197,8 +197,12 @@ Implementation notes:
    `00`). P/E mode cannot be entered, so the flasher cannot write as things stand. No code in the
    dumped flash reads FPMON; the flash driver is downloaded by the tool. [I] FWE is raised by
    hardware the tool's driver controls (a port pin or the system chip) or by the ACDP-2 harness.
-   Next: dump the user boot MAT (FE20) and look for FPMON / port handling; check FD03 while the
-   TCU is powered through the ACDP-2 harness; locate the FWE pin on the board.
+   User boot MAT dumped (FE20, 2026-10-17; private, not in the repository). It drives PC12 = PC13
+   = 1, PC15 = 0 at reset (PC14 read back) — **tested: FWE stays low with these lines driven** (m4d,
+   FE31). Ignition (pin 9) was already on. In its programming loop (state `0x19`, after the RAM
+   test) it sends the supervisor word `0x8E80 | (bit 4 toggling)` instead of the normal
+   `0x8E00 | (bit 2 toggling)`: [I] supervisor bit 7 enables FWE. m4e implements that mode for
+   FE31 / FE30 / the flasher; bench result pending.
 2. Whether a CPU copy of the FCU firmware is accepted (§3).
 3. Whether the user boot MAT also checks the calibration markers before starting the application
    (affects only which block must be valid; the order in §5 covers both).

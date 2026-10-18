@@ -13,8 +13,9 @@
 #define RSP_ID     0x7E9u
 #define TX_MASK    (((1u << (TX_LAST + 1u)) - 1u) & ~((1u << TX_FIRST) - 1u))
 
-#define SUP_CONTROL 0x8E00u         /* spec 03 4.4: bit 2 toggles, bit 0 output enable (kept 0) */
-#define SUP_TOGGLE  0x0004u
+#define SUP_CONTROL 0x8E80u         /* programming mode of the user boot MAT (spec 16 section 10):
+                                       bit 7 held, bit 4 toggles, output enable (bit 0) off */
+#define SUP_TOGGLE  0x0010u
 
 static uint32_t s_ms;
 static uint8_t s_sup_div;
