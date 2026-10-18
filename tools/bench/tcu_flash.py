@@ -14,6 +14,7 @@ Write order (spec 16 section 5):
 A power loss before step 4 completes leaves marker 1 erased: the Bosch boot software does not start
 the application and the ACDP-2 power-up path recovers the unit.
 """
+import time
 import zlib
 
 WIN_LO, WIN_HI = 0x040000, 0x200000
@@ -77,6 +78,7 @@ class Flasher:
     def __init__(self, uds, log=print):
         self.uds = uds
         self.log = log
+        self.page_delay_s = 0.0      # bench power-cut test only: stretch the write
 
     def req(self, payload, timeout=3.0, ok=None):
         r = self.uds.request(bytes(payload), timeout=timeout)
@@ -117,6 +119,8 @@ class Flasher:
         for i in range(0, len(data), page):
             ctr = (i // page + 1) & 0xFF
             self.req(bytes([0x36, ctr]) + data[i:i + page], ok=0x76)
+            if self.page_delay_s:
+                time.sleep(self.page_delay_s)
         self.req(b"\x37", ok=0x77)
 
     def reset(self):

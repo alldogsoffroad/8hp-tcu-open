@@ -839,6 +839,8 @@ def cmd_app_flash(b, args):
     ver = img[0x18:0x28].rstrip(b"\0").decode(errors="replace")
     print(f"image {args.image}: {len(img) - tcu_flash.DF_HDR} payload bytes, version '{ver}'")
     fl = enter_loader(b, args)
+    if getattr(args, "slow", False):
+        fl.page_delay_s = 0.2               # power-cut test: payload phase takes about 35 s
     try:
         cur = fl.crc(tcu_flash.DF_BASE, len(img))
         if cur == tcu_flash.crc(img):
@@ -904,6 +906,7 @@ def main():
     sub.add_parser("flash-invalidate")
     p = sub.add_parser("app-flash"); p.add_argument("image", nargs="?", default="build/sh2a/tcu_app_df.bin")
     p.add_argument("--yes", action="store_true"); p.add_argument("--send-s", type=float, default=60.0)
+    p.add_argument("--slow", action="store_true", help="power-cut test: stretch the write to about 35 s")
     p = sub.add_parser("app-selftest"); p.add_argument("--send-s", type=float, default=60.0)
     p = sub.add_parser("plant-uds"); p.add_argument("hex", nargs="+", help="requests, comma-separated")
     p.add_argument("--timeout", type=float, default=1.0)

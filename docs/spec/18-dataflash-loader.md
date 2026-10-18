@@ -105,7 +105,7 @@ Supervisor, watchdog and CAN polling run in the loader exactly as in the RAM fla
 - Simulator: the flash-controller model gains a data MAT (undefined erased content, 128-byte
   programming, block erase, EEPWE gating) and the power-cut sweep is rerun for the new write order.
 
-## 7. Bench sequence (steps 1–5 done 2026-10-18, see §7b; power-cut and ACDP-2 checks open)
+## 7. Bench sequence (steps 1–6 done 2026-10-18, see §7b; ACDP-2 read check open)
 
 1. Build loader + RAM application; host tests pass.
 2. Install the loader with the ACDP-2 (one write).
@@ -140,6 +140,12 @@ Supervisor, watchdog and CAN polling run in the loader exactly as in the RAM fla
   data-flash page) almost never. With 0.3–1 ms between consecutive frames, 8 of 8 arrived. The
   tool now paces consecutive frames at 1 ms for flasher/loader sessions; the flasher core asks for
   STmin 1 ms in its flow control (takes effect in the next loader install).
+- **Update while the application runs:** `app-flash` used FE30 — the running RAM application handed
+  over to the loader — and wrote a second image (6.2 s); a repeat run found the data flash already
+  holding it, wrote nothing and reset into the application. Done twice.
+- **Power cut:** `app-flash --slow` (payload phase stretched to about 35 s); the supply was switched
+  off while page 24 of 177 was being written (DB00 erased, header not yet written). At power-on
+  the TCU came up in loader mode (`LD`); a normal `app-flash` then restored the application.
 - The RAM application's idle-loop count (heartbeat bytes 4–7) is about 74 % of the code-flash
   build's (`0x242CA` vs `0x312BE` per 100 ms), so code runs somewhat slower from RAM than from code
   flash through the ROM cache. Not a problem at the current load; to be watched as the control
