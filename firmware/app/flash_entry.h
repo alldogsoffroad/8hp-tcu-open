@@ -17,6 +17,11 @@
 #define FLASH_EN_RID 0xFE31u    /* flash-enable line test (no flash access):
                                  *   31 01 FE 31 -> 71 01 FE 31 fpmon_before fpmon_after pc14
                                  *   31 02 FE 31 -> lines back to inputs; 71 02 FE 31 fpmon pc14 */
+#define SUP_PAT_RID 0xFE32u     /* supervisor word experiment (bench, no flash access):
+                                 *   31 01 FE 32 hh ll tm -> word hhll every 5 ms, bits tm toggled on
+                                 *        alternate frames (bit 0 output enable always cleared)
+                                 *   31 03 FE 32 -> 71 03 FE 32 tx_hi tx_lo rx_hi rx_lo fpmon
+                                 *   31 02 FE 32 -> normal supervisor word again */
 #define FLASH_START_DELAY_MS 20u
 
 /* allowed: the caller's interlock result (engine stopped, no bench output test active). */

@@ -6,6 +6,8 @@ static sup_status_t s_st;
 static bool s_toggle;
 static bool s_enable_req;
 static bool s_flash_mode;
+static bool s_pattern;
+static uint16_t s_pat_word, s_pat_toggle;
 
 void sup_init(void)
 {
@@ -13,6 +15,7 @@ void sup_init(void)
     s_toggle = false;
     s_enable_req = false;
     s_flash_mode = false;
+    s_pattern = false;
     plat_sup_init();
 }
 
@@ -26,6 +29,13 @@ void sup_set_flash_mode(bool on)
     s_flash_mode = on;
 }
 
+void sup_set_pattern(bool pattern_on, uint16_t word, uint16_t toggle)
+{
+    s_pat_word = (uint16_t)(word & ~SUP_BIT_ENABLE);
+    s_pat_toggle = (uint16_t)(toggle & ~SUP_BIT_ENABLE);
+    s_pattern = pattern_on;
+}
+
 void sup_tick_5ms(void)
 {
     uint16_t rx = 0u;
@@ -33,7 +43,9 @@ void sup_tick_5ms(void)
     uint8_t r;
 
     s_toggle = !s_toggle;
-    if (s_flash_mode) {
+    if (s_pattern) {
+        tx = (uint16_t)(s_pat_word ^ (s_toggle ? s_pat_toggle : 0u));
+    } else if (s_flash_mode) {
         tx = (uint16_t)(SUP_CMD_CONTROL | SUP_BIT_FL_MODE | (s_toggle ? SUP_BIT_FL_TOGGLE : 0u));
     } else {
         tx = (uint16_t)(SUP_CMD_CONTROL | (s_toggle ? SUP_BIT_TOGGLE : 0u) |

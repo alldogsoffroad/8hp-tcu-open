@@ -48,10 +48,45 @@ static int enable_test(uint8_t type, uint16_t n, uint8_t *out, uint16_t max, boo
     return -NRC_SFNS;
 }
 
+static int sup_pattern(uint8_t type, const uint8_t *in, uint16_t n, uint8_t *out, uint16_t max,
+                       bool allowed)
+{
+    const sup_status_t *st = sup_status();
+
+    if (type == 1u) {
+        if (n != 3u) {
+            return -NRC_IMLOIF;
+        }
+        if (!allowed) {
+            return -NRC_CNC;
+        }
+        sup_set_pattern(true, (uint16_t)(in[0] << 8 | in[1]), in[2]);
+        return 0;
+    }
+    if (n != 0u) {
+        return -NRC_IMLOIF;
+    }
+    if (type == 2u) {
+        sup_set_pattern(false, 0u, 0u);
+        return 0;
+    }
+    if (max < 5u) {
+        return -NRC_IMLOIF;
+    }
+    out[0] = (uint8_t)(st->last_tx >> 8);
+    out[1] = (uint8_t)st->last_tx;
+    out[2] = (uint8_t)(st->last_rx >> 8);
+    out[3] = (uint8_t)st->last_rx;
+    out[4] = fwe_byte();
+    return 5;
+}
+
 int flash_entry_routine(uint8_t type, uint16_t rid, const uint8_t *in, uint16_t n, uint8_t *out,
                         uint16_t max, bool allowed)
 {
-    (void)in;
+    if (rid == SUP_PAT_RID) {
+        return sup_pattern(type, in, n, out, max, allowed);
+    }
     if (rid == FLASH_EN_RID) {
         return enable_test(type, n, out, max, allowed);
     }

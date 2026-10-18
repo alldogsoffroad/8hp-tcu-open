@@ -260,7 +260,7 @@ static void test_entry(void)
     CHECK(flash_entry_did(out, 8u) == 1 && out[0] == 1u);
     CHECK(flash_entry_routine(2u, FLASH_RID, NULL, 0u, out, 8u, true) == -0x12);
     CHECK(flash_entry_routine(1u, FLASH_RID, out, 1u, out, 8u, true) == -0x13);
-    CHECK(flash_entry_routine(1u, 0xFE32u, NULL, 0u, out, 8u, true) == -0x31);
+    CHECK(flash_entry_routine(1u, 0xFE3Fu, NULL, 0u, out, 8u, true) == -0x31);
     for (unsigned i = 0u; i < 50u; i++) {
         flash_entry_tick_1ms();
     }
@@ -300,6 +300,16 @@ static void test_entry(void)
         flash_entry_tick_1ms();
     }
     CHECK(stub.flasher_starts == 2u && !stub.flash_enable);
+
+    /* FE32 supervisor pattern */
+    {
+        const uint8_t w[3] = { 0x84u, 0x01u, 0x00u };
+        CHECK(flash_entry_routine(1u, SUP_PAT_RID, w, 3u, out, 8u, false) == -0x22);
+        CHECK(flash_entry_routine(1u, SUP_PAT_RID, w, 2u, out, 8u, true) == -0x13);
+        CHECK(flash_entry_routine(1u, SUP_PAT_RID, w, 3u, out, 8u, true) == 0);
+        CHECK(flash_entry_routine(3u, SUP_PAT_RID, NULL, 0u, out, 8u, true) == 5);
+        CHECK(flash_entry_routine(2u, SUP_PAT_RID, NULL, 0u, out, 8u, true) == 0);
+    }
 }
 
 int main(void)

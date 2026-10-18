@@ -61,6 +61,19 @@ int main(void)
     sup_tick_5ms();
     CHECK((stub.sup_tx[12] & 0xFFF1u) == 0x8E00u);
 
+    /* bench pattern: word ^ toggle on alternate frames, enable bit always cleared */
+    sup_set_pattern(true, 0x8401u, 0x0001u);
+    sup_tick_5ms();
+    sup_tick_5ms();
+    CHECK(stub.sup_tx[13] == 0x8400u && stub.sup_tx[14] == 0x8400u);
+    sup_set_pattern(true, 0x8E81u, 0x0010u);
+    sup_tick_5ms();
+    sup_tick_5ms();
+    CHECK((stub.sup_tx[15] | stub.sup_tx[16]) == 0x8E90u && (stub.sup_tx[15] & stub.sup_tx[16]) == 0x8E80u);
+    sup_set_pattern(false, 0u, 0u);
+    sup_tick_5ms();
+    CHECK((stub.sup_tx[17] & 0xFFF1u) == 0x8E00u);
+
     if (fails == 0) {
         printf("test_sup: ok\n");
     }

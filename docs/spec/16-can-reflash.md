@@ -201,8 +201,14 @@ Implementation notes:
    = 1, PC15 = 0 at reset (PC14 read back) — **tested: FWE stays low with these lines driven** (m4d,
    FE31). Ignition (pin 9) was already on. In its programming loop (state `0x19`, after the RAM
    test) it sends the supervisor word `0x8E80 | (bit 4 toggling)` instead of the normal
-   `0x8E00 | (bit 2 toggling)`: [I] supervisor bit 7 enables FWE. m4e implements that mode for
-   FE31 / FE30 / the flasher; bench result pending.
+   `0x8E00 | (bit 2 toggling)`. **Tested (m4e): FWE stays low in that mode too.** The same
+   supervisor routine is shared by the boot MAT, bootloader (`0x1D0B4`) and boot manager
+   (`0x30E40`); states `0xE8` normal, `0x06` (`0x8E40`), `0x19` (bit 7, bit 4 toggling), `0x31`
+   (bit 4 toggling).
+   Manual table 3.2: FWE is a mode pin; normal operation is MCU single-chip mode (MD = 000, FWE =
+   0), in which the user boot MAT does not run; raising the FWE pin at runtime enters user program
+   mode. So a board signal must drive FWE. m4f adds routine FE32 (arbitrary supervisor word
+   pattern, reply read-back) to test supervisor commands interactively.
 2. Whether a CPU copy of the FCU firmware is accepted (§3).
 3. Whether the user boot MAT also checks the calibration markers before starting the application
    (affects only which block must be valid; the order in §5 covers both).
