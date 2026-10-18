@@ -37,6 +37,9 @@ void fl_hal_init(void)
     RCAN_MB_LAFMH(CANB, RX_MB) = 0u;
     RCAN_MB_LAFML(CANB, RX_MB) = 0u;
     RCAN_MB_CTRL1(CANB, RX_MB) = (uint16_t)(RCAN_MBC_RX | 8u);
+    /* flash enable lines as the user boot MAT drives them (spec 16 section 10) */
+    PCIORH = (uint8_t)(PCIORH | 0xB0u);
+    PCDRH = (uint8_t)((PCDRH & 0x4Fu) | 0x30u);
     WDT_WTCNT = 0x5ADBu;
 }
 

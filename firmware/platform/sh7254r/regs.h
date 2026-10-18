@@ -48,6 +48,10 @@
 #define PCPSR  REG16(0xFFFE3918u)
 #define PCIR   REG16(0xFFFE391Au)
 #define PCDSR  REG16(0xFFFE391Cu)
+#define PCPR   REG16(0xFFFE391Eu)       /* port C pin levels */
+#define PCDRH  REG8 (0xFFFE3902u)       /* high bytes (PC15..PC8) of PCDR / PCIOR / PCPR, byte */
+#define PCIORH REG8 (0xFFFE3906u)       /* access as in the user boot MAT                       */
+#define PCPRH  REG8 (0xFFFE391Eu)
 /* Ports D-L: block at 0xFFFFC800 (offsets per stock initialisation, spec 01 section 4) */
 #define PFC16(off) REG16(0xFFFFC800u + (off))
 #define PJDR   REG16(0xFFFFC860u)

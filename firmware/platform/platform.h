@@ -94,6 +94,11 @@ void plat_boot_handover(const uint8_t *rec, uint8_t len);
  * erasure of the flash are possible only while it is high. */
 bool plat_flash_fwe(void);
 
+/* Flash enable lines as the user boot MAT drives them at every reset (bench finding 2026-10-17,
+ * spec 16 section 10): on = PC12, PC13 outputs high and PC15 output low; off = PC12/13/15 back to
+ * inputs (the application's normal state, in which FWE reads low). Returns the PC14 level. */
+bool plat_flash_enable(bool on);
+
 /* Copy the project flasher (spec 16) to RAM and run it. Interrupts are masked first; the
  * application does not resume (the flasher ends with a reset). Does not return on the target. */
 void plat_flasher_start(void);

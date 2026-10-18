@@ -29,6 +29,8 @@ typedef struct {
     bool userboot_ok;
     bool fwe;                   /* FPMON.FWE */
     unsigned flasher_starts;
+    bool flash_enable;
+    bool fwe_follows_enable;
 } stub_plat_t;
 
 extern stub_plat_t stub;

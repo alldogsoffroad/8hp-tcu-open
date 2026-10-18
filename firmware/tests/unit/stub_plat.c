@@ -32,6 +32,15 @@ bool plat_flash_fwe(void)
     return stub.fwe;
 }
 
+bool plat_flash_enable(bool on)
+{
+    stub.flash_enable = on;
+    if (on && stub.fwe_follows_enable) {
+        stub.fwe = true;
+    }
+    return false;
+}
+
 void plat_flasher_start(void)
 {
     stub.flasher_starts++;

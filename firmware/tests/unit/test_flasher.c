@@ -261,7 +261,7 @@ static void test_entry(void)
     CHECK(flash_entry_did(out, 8u) == 1 && out[0] == 1u);
     CHECK(flash_entry_routine(2u, FLASH_RID, NULL, 0u, out, 8u, true) == -0x12);
     CHECK(flash_entry_routine(1u, FLASH_RID, out, 1u, out, 8u, true) == -0x13);
-    CHECK(flash_entry_routine(1u, 0xFE31u, NULL, 0u, out, 8u, true) == -0x31);
+    CHECK(flash_entry_routine(1u, 0xFE32u, NULL, 0u, out, 8u, true) == -0x31);
     for (unsigned i = 0u; i < 50u; i++) {
         flash_entry_tick_1ms();
     }
@@ -277,6 +277,21 @@ static void test_entry(void)
         flash_entry_tick_1ms();
     }
     CHECK(stub.flasher_starts == 1u);
+
+    /* FWE follows the enable lines: FE30 raises them first; FE31 reports before / after */
+    stub.fwe = false;
+    stub.flash_enable = false;
+    stub.fwe_follows_enable = true;
+    CHECK(flash_entry_routine(1u, FLASH_EN_RID, NULL, 0u, out, 8u, false) == -0x22);
+    CHECK(!stub.flash_enable);
+    CHECK(flash_entry_routine(1u, FLASH_EN_RID, NULL, 0u, out, 8u, true) == 3);
+    CHECK(out[0] == 0x00u && out[1] == 0x80u && stub.flash_enable);
+    CHECK(flash_entry_routine(2u, FLASH_EN_RID, NULL, 0u, out, 8u, true) == 2 && !stub.flash_enable);
+    stub.fwe = false;
+    CHECK(flash_entry_routine(1u, FLASH_RID, NULL, 0u, out, 8u, true) == 0 && stub.flash_enable);
+    stub.fwe = false;
+    stub.fwe_follows_enable = false;
+    CHECK(flash_entry_routine(1u, FLASH_RID, NULL, 0u, out, 8u, true) == -0x22 && !stub.flash_enable);
 }
 
 int main(void)

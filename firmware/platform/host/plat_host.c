@@ -196,6 +196,12 @@ bool plat_flash_fwe(void)
     return true;
 }
 
+bool plat_flash_enable(bool on)
+{
+    (void)on;
+    return false;
+}
+
 void plat_flasher_start(void)
 {
     printf("[%6u ms] FLASHER START (the RAM flasher is simulated by tcu_flasher_sim)\n", s_ticks);

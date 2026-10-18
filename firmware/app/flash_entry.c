@@ -8,12 +8,45 @@
 
 static uint8_t s_countdown;     /* ms until the flasher starts; 0 = not requested */
 
+static uint8_t fwe_byte(void)
+{
+    return plat_flash_fwe() ? 0x80u : 0x00u;
+}
+
+static int enable_test(uint8_t type, uint16_t n, uint8_t *out, uint16_t max, bool allowed)
+{
+    if (n != 0u) {
+        return -NRC_IMLOIF;
+    }
+    if (max < 3u) {
+        return -NRC_IMLOIF;
+    }
+    if (type == 1u) {
+        if (!allowed) {
+            return -NRC_CNC;
+        }
+        out[0] = fwe_byte();
+        out[2] = plat_flash_enable(true) ? 1u : 0u;
+        for (volatile uint32_t i = 0u; i < 20000u; i++) {   /* let the line settle (~1 ms) */
+        }
+        out[1] = fwe_byte();
+        return 3;
+    }
+    if (type == 2u) {
+        out[1] = plat_flash_enable(false) ? 1u : 0u;
+        out[0] = fwe_byte();
+        return 2;
+    }
+    return -NRC_SFNS;
+}
+
 int flash_entry_routine(uint8_t type, uint16_t rid, const uint8_t *in, uint16_t n, uint8_t *out,
                         uint16_t max, bool allowed)
 {
     (void)in;
-    (void)out;
-    (void)max;
+    if (rid == FLASH_EN_RID) {
+        return enable_test(type, n, out, max, allowed);
+    }
     if (rid != FLASH_RID) {
         return -NRC_ROOR;
     }
@@ -23,7 +56,12 @@ int flash_entry_routine(uint8_t type, uint16_t rid, const uint8_t *in, uint16_t 
     if (n != 0u) {
         return -NRC_IMLOIF;
     }
-    if (!allowed || !plat_flash_fwe()) {
+    if (!allowed) {
+        return -NRC_CNC;
+    }
+    (void)plat_flash_enable(true);          /* as the user boot MAT does; the flasher repeats it */
+    if (!plat_flash_fwe()) {
+        (void)plat_flash_enable(false);
         return -NRC_CNC;
     }
     s_countdown = FLASH_START_DELAY_MS;     /* time for the positive response to go out */

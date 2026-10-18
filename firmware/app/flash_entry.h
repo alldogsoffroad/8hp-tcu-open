@@ -13,6 +13,9 @@
 
 #define FLASH_RID 0xFE30u
 #define FLASH_DID 0xFD03u
+#define FLASH_EN_RID 0xFE31u    /* flash-enable line test (no flash access):
+                                 *   31 01 FE 31 -> 71 01 FE 31 fpmon_before fpmon_after pc14
+                                 *   31 02 FE 31 -> lines back to inputs; 71 02 FE 31 fpmon pc14 */
 #define FLASH_START_DELAY_MS 20u
 
 /* allowed: the caller's interlock result (engine stopped, no bench output test active). */

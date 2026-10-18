@@ -442,6 +442,17 @@ bool plat_flash_fwe(void)
     return (REG8(0xFFFFA800u) & 0x80u) != 0u;     /* FPMON.FWE */
 }
 
+bool plat_flash_enable(bool on)
+{
+    if (on) {
+        PCIORH = (uint8_t)(PCIORH | 0xB0u);             /* PC12, PC13, PC15 outputs */
+        PCDRH = (uint8_t)((PCDRH & 0x4Fu) | 0x30u);     /* PC12 = PC13 = 1, PC15 = 0 */
+    } else {
+        PCIORH = (uint8_t)(PCIORH & (uint8_t)~0xB0u);
+    }
+    return (PCPRH & 0x40u) != 0u;                       /* PC14 */
+}
+
 void plat_flasher_start(void)
 {
     const uint32_t len = (uint32_t)((uintptr_t)fl_blob_end - (uintptr_t)fl_blob);
