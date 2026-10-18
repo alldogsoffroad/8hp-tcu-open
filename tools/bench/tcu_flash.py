@@ -99,9 +99,13 @@ class Flasher:
         r = self.uds.request(b"\x22\xF1\x95", timeout=1.0)
         if not r or len(r) < 12 or r[:3] != b"\x62\xF1\x95" or r[3:5].decode("latin-1") not in kinds:
             return None
-        return {"kind": r[3:5].decode(), "version": r[5], "fpmon": r[6], "fstatr0": r[7],
+        info = {"kind": r[3:5].decode(), "version": r[5], "fpmon": r[6], "fstatr0": r[7],
                 "fstatr1": r[8], "fastat": r[9], "fpestat": r[10], "last_error": r[11],
                 "fwe": bool(r[6] & 0x80)}
+        if len(r) >= 13:                       # loader byte 12: FPMON latched at boot hand-over
+            info["fpmon_entry"] = r[12]
+            info["fwe_entry"] = bool(r[12] & 0x80)
+        return info
 
     def crc(self, a, n):
         r = self.req(b"\x31\x01\xFF\x01" + a.to_bytes(4, "big") + n.to_bytes(4, "big"), timeout=10.0, ok=0x71)

@@ -63,7 +63,13 @@ int main(void)
     ld_image_t img;
 
     LD_STAY_WORD = 0u;
-    plat_init();
+    plat_init();                               /* entry_snapshot() runs first, before port setup */
+    {
+        uint8_t snap0 = 0u;                    /* FPMON latched at boot hand-over */
+        (void)plat_entry_snapshot(&snap0, 1u);
+        fl_ident_aux = snap0;                  /* report it in the flasher ident, byte 12 */
+        fl_ident_aux_set = true;
+    }
     fl_hal_set_supervisor(0x8E00u, 0x0004u);   /* normal word, bit 2 toggles, outputs off */
     fl_hal_init();
     fl_fcu_df_enable(0xFFFFu, 0x00FFu);        /* read all blocks, write DB00-DB07 only */

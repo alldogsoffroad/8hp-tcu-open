@@ -21,6 +21,12 @@
 #define FC_WAIT_MS 1000u
 #define PENDING_MS 1000u
 
+/* Optional extra ident byte (reply byte 12): the loader sets this to the FPMON value latched at
+ * boot hand-over, before any port setup (spec 18 / FWE investigation). Default: not reported, so
+ * the reply stays 12 bytes for the spec-16 RAM flasher and the host test. */
+uint8_t fl_ident_aux;
+bool fl_ident_aux_set;
+
 /* ---- ISO-TP receive state ---- */
 static uint8_t s_rx[BUF_LEN];
 static uint16_t s_rx_len, s_rx_got;
@@ -251,7 +257,7 @@ static bool blank(uint32_t a, uint32_t n)
 /* ---- services ---- */
 static void svc_read_did(const uint8_t *q, uint16_t n)
 {
-    uint8_t r[12] = { 0x62u, 0xF1u, 0x95u, 0u, 0u, FL_VERSION };
+    uint8_t r[13] = { 0x62u, 0xF1u, 0x95u, 0u, 0u, FL_VERSION };
 
     if (n != 3u) {
         neg(0x22u, NRC_IMLOIF);
@@ -263,8 +269,13 @@ static void svc_read_did(const uint8_t *q, uint16_t n)
     }
     r[3] = (uint8_t)s_t->ident[0];
     r[4] = (uint8_t)s_t->ident[1];
-    fl_fcu_diag(&r[6]);
-    send(r, sizeof r);
+    fl_fcu_diag(&r[6]);                     /* r[6] = live FPMON, r[7..11] = FCU status */
+    if (fl_ident_aux_set) {
+        r[12] = fl_ident_aux;               /* FPMON latched at boot hand-over (loader only) */
+        send(r, 13u);
+    } else {
+        send(r, 12u);
+    }
 }
 
 static void routine_crc(uint32_t a, uint32_t len)

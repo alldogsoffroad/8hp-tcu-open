@@ -829,8 +829,11 @@ def enter_loader(b, args):
                 break
     if info is None:
         sys.exit("no answer from the data-flash loader")
+    entry = ("" if "fwe_entry" not in info
+             else f", FWE at boot hand-over {'HIGH' if info['fwe_entry'] else 'low'} "
+                  f"(FPMON {info['fpmon_entry']:02X})")
     print(f"loader v{info['version']}: FWE {'high' if info['fwe'] else 'low'} (not needed), "
-          f"FSTATR0 {info['fstatr0']:02X}, last error {info['last_error']}")
+          f"FSTATR0 {info['fstatr0']:02X}, last error {info['last_error']}{entry}")
     return fl
 
 

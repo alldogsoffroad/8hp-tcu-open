@@ -50,6 +50,11 @@ typedef struct {
 extern const fl_target_t fl_target_rom;    /* spec 16 */
 extern const fl_target_t fl_target_df;     /* spec 18 */
 
+/* Optional 13th ident byte: when fl_ident_aux_set is true, the ident reply (22 F1 95) appends
+ * fl_ident_aux as byte 12. The loader uses it to report the FPMON latched at boot hand-over. */
+extern uint8_t fl_ident_aux;
+extern bool fl_ident_aux_set;
+
 void fl_core_init(const fl_target_t *t);
 void fl_core_rx(const uint8_t d[8], uint8_t dlc);   /* one frame received on 0x7E1 */
 void fl_main_loop(void);                            /* never returns on the target */
