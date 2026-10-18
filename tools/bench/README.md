@@ -83,7 +83,7 @@ sudo apt install can-utils python3-can
 Either use the ports directly:
 
 ```
-python3 tools/bench/tcu_bench.py --iface slcan --bus1 /dev/ttyACM0 --bus2 /dev/ttyACM1 monitor
+python3 tools/bench/tcu_bench.py monitor          # Teensy on /dev/ttyACM0 + ACM1 is the default
 ```
 
 or make them SocketCAN interfaces (needed for `candump`):
@@ -91,7 +91,7 @@ or make them SocketCAN interfaces (needed for `candump`):
 ```
 sudo slcand -o -s6 /dev/ttyACM0 can0 && sudo ip link set can0 up
 sudo slcand -o -s6 /dev/ttyACM1 can1 && sudo ip link set can1 up
-python3 tools/bench/tcu_bench.py monitor
+python3 tools/bench/tcu_bench.py --iface socketcan monitor
 ```
 
 ## 6. Session plan

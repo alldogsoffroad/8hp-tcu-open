@@ -6,8 +6,8 @@ Which TCU pin pair is RCAN bus 1 in the firmware is bench item 18; `monitor` rep
 0x7F0 (sent on firmware bus 1 only) arrives.
 
 Interfaces:
+  default: the Teensy directly (--iface slcan --bus1 /dev/ttyACM0 --bus2 /dev/ttyACM1, no slcand / root)
   --iface socketcan --bus1 can0 --bus2 can1                 (after slcand, see tools/bench/README.md)
-  --iface slcan --bus1 /dev/ttyACM0 --bus2 /dev/ttyACM1     (direct, no slcand / root needed)
 
 Commands:
   monitor                 decode bench frames 0x7F0..0x7F3, detect resets, list IDs per bus
@@ -768,9 +768,9 @@ def cmd_plant_uds(b, args):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--iface", default="socketcan")
-    ap.add_argument("--bus1", default="can0", help="interface/channel for TCU pins 5/6")
-    ap.add_argument("--bus2", default="can1", help="interface/channel for TCU pins 3/4 ('' = none)")
+    ap.add_argument("--iface", default="slcan", help="slcan (Teensy, default) or socketcan")
+    ap.add_argument("--bus1", default=None, help="channel for TCU pins 5/6 (default /dev/ttyACM0, or can0)")
+    ap.add_argument("--bus2", default=None, help="channel for TCU pins 3/4 ('' = none; default /dev/ttyACM1, or can1)")
     ap.add_argument("--uds-ext", action="store_true",
                     help="talk to images built before the MCR15 fix: UDS on 29-bit 0x07E00000/0x07E80000")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -804,6 +804,11 @@ def main():
     p.add_argument("--listen-s", type=float, default=5.0); p.add_argument("-o", "--output")
     p.add_argument("--probe", action="store_true", help="after the entry reply, send harmless requests")
     args = ap.parse_args()
+    teensy = args.iface == "slcan"
+    if args.bus1 is None:
+        args.bus1 = "/dev/ttyACM0" if teensy else "can0"
+    if args.bus2 is None:
+        args.bus2 = "/dev/ttyACM1" if teensy else "can1"
     if args.uds_ext:
         Uds.REQ, Uds.RSP = 0x07E00000, 0x07E80000
 
