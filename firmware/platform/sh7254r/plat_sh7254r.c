@@ -533,6 +533,49 @@ uint16_t plat_entry_snapshot(uint8_t *out, uint16_t max)
     return n;
 }
 
+/* ---- CPU clock probe (spec 05 section 1.2) ------------------------------------------ */
+/* 16 x 64 dependent adds: the dual-issue core can complete only one per Iphi clock. */
+__attribute__((noinline)) static void add_chain(uint32_t n)
+{
+    __asm__ volatile (
+        "1:\n"
+        ".rept 64\n"
+        "    add   r0, r0\n"
+        ".endr\n"
+        "    dt    %0\n"
+        "    bf    1b\n"
+        : "+r"(n) : : "r0", "t");
+}
+
+uint16_t plat_clock_probe(uint8_t *out, uint16_t max)
+{
+    uint32_t adds = 0u, counts = 0u;
+    uint16_t prev, now;
+
+    if (max < 16u) {
+        return 0u;
+    }
+    put_be16(&out[0], REG16(0xFFFF1000u));
+    put_be16(&out[2], REG16(0xFFFF0812u));
+    put_be16(&out[4], REG16(0xFFFF0802u));
+    put_be16(&out[6], REG16(0xFFFF0842u));
+    plat_wdt_service();
+    prev = CMT_CMCNT0;
+    for (uint32_t k = 0u; k < 1500u; k++) {
+        add_chain(16u);                 /* ~1100 clocks, far below one CMT0 period (1 ms) */
+        adds += 16u * 64u;
+        now = CMT_CMCNT0;
+        counts += (uint32_t)(now >= prev ? (uint32_t)(now - prev) : (uint32_t)now + 2500u - prev);
+        prev = now;
+        plat_wdt_service();
+    }
+    put_be16(&out[8], (uint16_t)(adds >> 16));
+    put_be16(&out[10], (uint16_t)adds);
+    put_be16(&out[12], (uint16_t)(counts >> 16));
+    put_be16(&out[14], (uint16_t)counts);
+    return 16u;
+}
+
 /* ---- Start-up ----------------------------------------------------------------- */
 void plat_init(void)
 {

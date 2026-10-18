@@ -39,6 +39,13 @@ uint16_t plat_entry_snapshot(uint8_t *out, uint16_t max)
     return 0u;
 }
 
+uint16_t plat_clock_probe(uint8_t *out, uint16_t max)
+{
+    (void)out;
+    (void)max;
+    return 0u;
+}
+
 bool plat_flash_enable(bool on)
 {
     stub.flash_enable = on;

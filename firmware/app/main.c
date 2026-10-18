@@ -38,7 +38,8 @@
  *   byte 6     reason the last bench test ended, byte 7 chip 0 status byte
  *
  * Flash programming (spec 16): routine FE30 starts the RAM flasher; identifier FD03 = FWE pin;
- * FD04 = FWE and port registers as the boot software left them (captured at entry).
+ * FD04 = FWE and port registers as the boot software left them (captured at entry);
+ * FD05 = CPU clock probe (spec 05 section 1.2).
  *
  * Measurement protocol (spec 10, read-only): 0x361 -> 0x398 on either bus; project index list
  * in app/meas_table.c.
@@ -183,6 +184,10 @@ static int read_did(uint16_t did, uint8_t *out, uint16_t max)
     }
     if (did == FLASH_DID) {
         return flash_entry_did(out, max);
+    }
+    if (did == 0xFD05u) {                   /* CPU clock probe (spec 05 section 1.2) */
+        const uint16_t n = plat_clock_probe(out, max);
+        return n != 0u ? (int)n : -1;
     }
     if (did == 0xFD04u) {                   /* boot software's FWE / port state at entry */
         const uint16_t n = plat_entry_snapshot(out, max);

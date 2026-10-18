@@ -105,6 +105,15 @@ bool plat_flash_enable(bool on);
  * plat_sh7254r.c). Returns the number of bytes copied (0 on the host). Bench identifier FD04. */
 uint16_t plat_entry_snapshot(uint8_t *out, uint16_t max);
 
+/* CPU clock probe (spec 05 section 1.2), bench identifier FD05. Fills 16 bytes, big-endian:
+ *   0-1   word at 0xFFFF1000 (undocumented; the boot code branches on bits 2..0)
+ *   2-3   word at 0xFFFF0812 (on-chip RAM access-cycle setting, 0x7810 / 0x7821 in the boot code)
+ *   4-5   word at 0xFFFF0802 (RAM write enable)    6-7  word at 0xFFFF0842
+ *   8-11  additions executed in a chain of dependent adds (one per CPU clock)
+ *   12-15 CMT0 counts (Pphi/8 = 2.5 MHz) the chain took
+ * Blocks for about 10-20 ms (watchdog serviced). Returns 16, or 0 where not available. */
+uint16_t plat_clock_probe(uint8_t *out, uint16_t max);
+
 /* Copy the project flasher (spec 16) to RAM and run it. Interrupts are masked first; the
  * application does not resume (the flasher ends with a reset). Does not return on the target. */
 void plat_flasher_start(void);

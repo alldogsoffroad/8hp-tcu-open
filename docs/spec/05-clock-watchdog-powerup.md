@@ -1,6 +1,6 @@
 # Spec 05 — Clocks, watchdog and power-up
 
-Status: **draft.** Peripheral clock established; CPU clock open (measurable on first bring-up).
+Status: **draft.** Peripheral clock 20 MHz and CPU clock 120 MHz confirmed on the bench (2026-10-18).
 Markers: **[M]** manual, **[O]** observed in stock firmware, **[I]** inference, **[D]** derived by calculation.
 
 ## 1. Clock system
@@ -31,15 +31,29 @@ All three CAN channels are configured for **500 kbit/s** [O] (sample point 80 %,
 Because Pφ ∈ {1, 2} × EXTAL and EXTAL ∈ [16, 20] MHz, the only consistent combination is
 **EXTAL = 20 MHz, MD_CLKP = 0 (Pφ = EXTAL)** [D].
 
-### 1.2 CPU clock: **open**
+**Bench confirmation (2026-10-18) [B]:** the project firmware's 1 ms tick is CMT0 at Pφ/8 with
+compare 2499. Over 29.9 s of real time the 100 ms heartbeat (`0x7F0`) advanced 299 periods — one
+period = 99.99 ms — so CMT0 counts at 2.500 MHz and **Pφ = 20.00 MHz**, as derived above. (An
+earlier impression of ~14 heartbeats per second came from counting in short windows after opening
+the Teensy port: frames buffered in the adapter were delivered in a burst.)
 
-Iφ ∈ {80, 120, 160, 200} MHz. The boot code reads bits 1–0 of an undocumented register at
-`0xFFFF1000` and chooses the on-chip RAM access-cycle setting from it (`RAMACYC` = `0x7821` when
-the bits are 00, otherwise `0x7810`) [O]. [I] Those bits reflect the PLL strap setting, so the stock
-software adapts to the clock mode instead of assuming one.
+### 1.2 CPU clock: **Iφ = 120 MHz** (×6) [B]
 
-Recommended resolution: the first bring-up firmware should time a fixed CPU loop against a CMT
-channel running from Pφ (20 MHz) and report Iφ over CAN or SCI.
+Iφ ∈ {80, 120, 160, 200} MHz, set only by pins MD_CLK1/MD_CLK0 (manual table 4.2; there is no
+frequency register). The boot code reads bits 1–0 of an undocumented register at `0xFFFF1000` and
+chooses the on-chip RAM access-cycle setting from it (`RAMACYC` `0xFFFF0812` = `0x7821` when the
+bits are 00, otherwise `0x7810`) [O]; bit 2 selects its 20 / 40 MHz peripheral-clock variants
+(SPI divider 5 / 11, watchdog values) [O].
+
+Bench measurement (project identifier FD05, 2026-10-18):
+- `0xFFFF1000` = `0x0021`: **bit 2 = 0** (MD_CLKP = 0, Pφ = EXTAL — matches §1.1), **bits 1–0 = 01**
+  (MD_CLK1/0 = 01 → ×6 = **120 MHz**) [I: bit meaning from the boot code's use and table 4.2].
+  Bit 5 is set; meaning open. `RAMACYC` reads `0x0010`; `0xFFFF0802` = `0x00FF`.
+- A chain of 1 536 000 dependent additions (one per clock at most) took 14.925 ms by CMT0 (2.5 MHz),
+  i.e. ≥ 103 M/s: rules out 80 MHz; the effective 106 MHz is 120 MHz less the per-block overhead
+  (CMT read and watchdog write over the P bus every 1 024 adds).
+- Code runs at about 74 % of its code-flash speed when executed from on-chip RAM (spec 18 §7b);
+  [I] RAM fetch timing at this access-cycle setting versus the ROM cache.
 
 ### 1.3 Derived peripheral rates
 
