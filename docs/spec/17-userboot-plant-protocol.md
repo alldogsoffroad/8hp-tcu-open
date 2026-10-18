@@ -128,6 +128,32 @@ static RE of the `0x27 0x61/0x62` handler in the boot MAT (RAM dispatch table `0
 The 16-byte/666.667 kHz challenge does not match the 4-byte `D7656915` exchange seen at 500 kbit/s
 in the older captures (§5), which is a separate/older entry.
 
+
+## 5d. Key-algorithm RE: state and obstacles (2026-10-18)
+
+Attempted static recovery of `f(seed)` from the boot MAT dump. Established:
+
+- **No crypto primitives in the boot MAT.** No AES S-box / Te / Rcon and no SHA constants
+  anywhere in the dump; no XOR-heavy or table-lookup transform in any of the 108 decompiled
+  functions (`0x0`–`0x3A00`, SH-2A, Ghidra). So the key function is either a non-obvious custom
+  scramble or lives outside the statically-reached code.
+- **UDS dispatch is RAM-table-driven.** The service table is at `0xFFF83710` (= config base
+  `0xFFF83698` + 0x78; `0xFFF83710` is never a literal), 0x14-byte entries, main handler at +8,
+  periodic callback at +0xC, count at `*0xFFF8394B`. The dispatcher is `FUN_000012CC`, the periodic
+  walker `FUN_00001E0C`.
+- **The table builder was not located.** The region `0xFFF836xx`–`0xFFF839xx` is not a block-copy
+  destination (the only `.data` copies land at `0xFFF84000` and `0xFFF851D8`); it is written by
+  field-level accesses through base pointers. The code that stores the `0x27` handler pointer into
+  the table was not found among the 108 functions, so the handler address is not yet known. The
+  session may also stage code into `0xFFF82000` / `0xFFF88400` (memory-map download windows),
+  which needs mapping.
+
+So recovering the SecurityAccess key is a dedicated multi-session RE effort: map the boot MAT's
+RAM init precisely (including any `0xFFF82000` staging), find the dispatch-table builder, identify
+the `0x27 0x61/0x62` handler, then the transform and its embedded secret. There is **no bench
+shortcut** — the seed is random per request and the ACDP-2's key cannot be observed (the Teensy
+breaks the ACDP-2 session when both are on the bus).
+
 ## 6. Open items
 
 1. SecurityAccess: which sub-function requests the seed, and the key algorithm (boot MAT code at
