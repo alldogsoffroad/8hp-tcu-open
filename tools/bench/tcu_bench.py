@@ -64,6 +64,7 @@ class Buses:
             sys.exit("python-can is required: pip install python-can")
         self.names = {1: args.bus1, 2: args.bus2}
         self.bus = {}
+        self._lock = threading.Lock()
         if args.iface == "slcan" and getattr(args, "teensy_mode", b"P0"):
             # the Teensy keeps listen-only (P1/P2, set by `log`) until reset and then silently
             # drops every frame we send: return to normal mode unless the caller set a mode
@@ -83,7 +84,8 @@ class Buses:
 
     def send(self, n, arb_id, data):
         data = bytes(data)
-        self.get(n).send(can.Message(arbitration_id=arb_id, data=data, is_extended_id=arb_id > 0x7FF))
+        with self._lock:                  # park-check sends from a second thread
+                self.get(n).send(can.Message(arbitration_id=arb_id, data=data, is_extended_id=arb_id > 0x7FF))
 
     def shutdown(self):
         for b in self.bus.values():
@@ -944,6 +946,104 @@ def cmd_park(b, args):
         pass
 
 
+def crc8_j1850(data):
+    """SAE J1850 CRC-8 (spec 07 section 2): poly 0x1D, init 0xFF, final XOR 0xFF."""
+    c = 0xFF
+    for b in data:
+        c ^= b
+        for _ in range(8):
+            c = ((c << 1) ^ 0x1D) & 0xFF if c & 0x80 else (c << 1) & 0xFF
+    return c ^ 0xFF
+
+
+def lever_frames(code, ctr, bad_crc=False):
+    """(0x2EA data, 0x210 data) for lever code 1 P, 2 R, 3 N, 4 D (spec 14 section 5a): 0x2EA
+    with counter (byte 3 upper nibble) and CRC-8 (byte 4, variant 1); 0x210 unprotected."""
+    d = bytearray([code & 0x07, 0, 0, (ctr & 0x0F) << 4, 0])
+    d[4] = crc8_j1850(d[:4]) ^ (0x55 if bad_crc else 0)
+    return bytes(d), bytes([code & 0x07, 0, 0, 0, 0])
+
+
+class LeverSender(threading.Thread):
+    """Sends the shifter messages every 10 ms: 0x2EA on bus 1 and 0x210 on bus 2."""
+    def __init__(self, b):
+        super().__init__(daemon=True)
+        self.b = b
+        self.code, self.on_2ea, self.on_210, self.bad_crc = 1, False, False, False
+        self.stop = threading.Event()
+
+    def run(self):
+        ctr, t = 0, time.monotonic()
+        while not self.stop.is_set():
+            ctr = (ctr + 1) & 0x0F
+            d2ea, d210 = lever_frames(self.code, ctr, self.bad_crc)
+            try:
+                if self.on_2ea:
+                    self.b.send(1, 0x2EA, d2ea)
+                if self.on_210:
+                    self.b.send(2, 0x210, d210)
+            except Exception as e:                     # keep going; the step check will show it
+                print("  send error:", e)
+            t += 0.010
+            time.sleep(max(0.0, t - time.monotonic()))
+
+
+def cmd_park_check(b, args):
+    """Bench check of M4a (docs/firmware/01-m4-range-park.md): sends lever frames, reads the
+    lever decode and the park target from the measurement table and compares them with the
+    expected values. Module alone: no park contacts, so the sequencing ends in SAFE (outputs
+    are requests only and are never driven in M4a)."""
+    addr = meas_table_addr(args.elf, 54)
+    P, R, N, D = 1, 2, 3, 4
+    # (description, code, 0x2EA on, 0x210 on, bad CRC, lever expected or None, source expected,
+    #  kind: "P" engage by lever, "RND" lever R/N/D, "none" no valid lever)
+    steps = [
+        ("no shifter frames",              P, False, False, False, None, 2, "none"),
+        ("P on both buses",                P, True,  True,  False, 8,    0, "P"),
+        ("R on both buses",                R, True,  True,  False, 7,    0, "RND"),
+        ("N on both buses",                N, True,  True,  False, 6,    0, "RND"),
+        ("D on both buses",                D, True,  True,  False, 5,    0, "RND"),
+        ("code 0 (no change) after D",     0, True,  True,  False, 5,    0, "RND"),
+        ("0x2EA bad CRC, 0x210 R",         R, True,  True,  True,  7,    1, "RND"),
+        ("0x2EA missing, 0x210 N",         N, False, True,  False, 6,    1, "RND"),
+        ("0x2EA D, 0x210 missing",         D, True,  False, False, 5,    0, "RND"),
+        ("invalid code 7 on both",         7, True,  True,  False, None, 2, "none"),
+        ("both missing again",             D, False, False, False, None, 2, "none"),
+        ("P on both buses",                P, True,  True,  False, 8,    0, "P"),
+    ]
+    snd = LeverSender(b)
+    snd.start()
+    results, still = [], None
+    srcs = {0: "CAN-C", 1: "shifter bus", 2: "none"}
+    print(f"measurement table at 0x{addr:08X}; {args.settle:.1f} s per step")
+    try:
+        for desc, code, a, c, bad, lev, src, kind in steps:
+            snd.code, snd.on_2ea, snd.on_210, snd.bad_crc = code, a, c, bad
+            time.sleep(args.settle)
+            d = read_mem(b, args.bus, addr, 54)
+            if still is None:                          # first step: no lever -> Auto P or moving
+                still = d[49] == 5
+                print(f"  output speed {'valid and stationary' if still else 'not valid / moving'}"
+                      f" (reason {d[49]})")
+            want_t, want_r = {"P": (8, 1), "RND": (6, 4 if still else 2),
+                              "none": (8, 5) if still else (6, 2)}[kind]
+            ok = d[20] == src and (lev is None or d[19] == lev) and d[48] == want_t and d[49] == want_r
+            results.append(ok)
+            print(f"  {'PASS' if ok else 'FAIL'}  {desc:30s} lever {d[19]} ({srcs.get(d[20], d[20])})  "
+                  f"target {d[48]} reason {PARK_REASONS[d[49]] if d[49] < len(PARK_REASONS) else d[49]}"
+                  + ("" if ok else f"   expected lever {lev} src {src} target {want_t} reason {want_r}"))
+    finally:
+        snd.stop.set()
+        snd.join(1.0)
+    d = read_mem(b, args.bus, addr, 54)
+    st = PARK_STATES[d[50]] if d[50] < len(PARK_STATES) else d[50]
+    print(f"  sequencing: state {st}, requests release {'on' if d[51] & 1 else 'off'} / hold "
+          f"{'on' if d[51] & 2 else 'off'}, faults ctl 0x{d[52]:02X} mon 0x{d[53]:02X} (module alone: SAFE "
+          f"with ctl 0x02 engage timeout is expected, no contacts)")
+    print(f"{sum(results)}/{len(results)} steps passed")
+    return 0 if all(results) else 1
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--iface", default="slcan", help="slcan (Teensy, default) or socketcan")
@@ -978,6 +1078,8 @@ def main():
     p = sub.add_parser("park"); p.add_argument("--bus", type=int, default=2)
     p.add_argument("--elf", default="build/sh2a/tcu_app_ram.elf"); p.add_argument("--period", type=float, default=1.0)
     p.add_argument("--count", type=int, default=0)
+    p = sub.add_parser("park-check"); p.add_argument("--bus", type=int, default=2)
+    p.add_argument("--elf", default="build/sh2a/tcu_app_ram.elf"); p.add_argument("--settle", type=float, default=1.0)
     p = sub.add_parser("app-flash"); p.add_argument("image", nargs="?", default="build/sh2a/tcu_app_df.bin")
     p.add_argument("--yes", action="store_true"); p.add_argument("--send-s", type=float, default=60.0)
     p.add_argument("--slow", action="store_true", help="power-cut test: stretch the write to about 35 s")
@@ -1009,7 +1111,7 @@ def main():
          "flash-selftest": cmd_flash_selftest, "flash-invalidate": cmd_flash_invalidate,
          "plant-entry": cmd_plant_entry, "plant-uds": cmd_plant_uds,
          "plant-seedscan": cmd_plant_seedscan, "app-flash": cmd_app_flash,
-         "app-selftest": cmd_app_selftest, "sensors": cmd_sensors, "park": cmd_park}[args.cmd](b, args)
+         "app-selftest": cmd_app_selftest, "sensors": cmd_sensors, "park": cmd_park, "park-check": cmd_park_check}[args.cmd](b, args)
     finally:
         b.shutdown()
 

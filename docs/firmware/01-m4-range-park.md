@@ -120,6 +120,17 @@ measurement status; DTC mapping waits for the fault-memory work.
   monitor status and fault bits.
 - `tcu_bench.py`: a `park` view of those fields (usable on the bench without outputs).
 
+## 7a. Bench check 2026-10-18 (M4a, module alone) [M]
+
+RAM image `RAM 261018-0237` loaded with `app-flash` (6.8 s); `tcu_bench.py park-check` sends
+`0x2EA` (bus 1, CRC-8 + counter) and `0x210` (bus 2) every 10 ms and reads the measurement
+table. Output speed read valid and stationary. **12/12 steps passed:** P/R/N/D from CAN-C; code 0
+keeps the last range; bad CRC or missing `0x2EA` → `0x210` (shifter bus) and back; invalid
+code or both missing → Auto P. Without park contacts the sequencing goes to `SAFE` with
+`PC_F_ENGAGE_TIMEOUT` (0x02) after about 1 s, as designed; both output requests stayed off and
+the monitor recorded no fault. With no valid lever the measurement index 13 keeps the last
+decoded range (source 2 = none, quality invalid); the decision uses the quality.
+
 ## 8. Open for M4b
 
 Hardware sequencing times; ch 7 behaviour while holding; contact polarity (spec 04 §4.4 [I]);
