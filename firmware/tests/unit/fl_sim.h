@@ -6,7 +6,10 @@
  *   - commands need the FCU firmware copied to FCU RAM; FWE pin gate;
  *   - program only onto a fully erased page (stricter than the "no double programming" rule);
  *   - FRDY low for a simulated busy time; injectable time-out, PRGERR, ERSERR;
- *   - optional power cut after N program/erase commands (contents of the hit area undefined). */
+ *   - optional power cut after N program/erase commands (contents of the hit area undefined);
+ *   - data MAT (spec 18): FENTRYR 0x0080 with no FWE dependency, EEPRE/EEPWE per-block gates,
+ *     8- or 128-byte programming onto erased units only, erased content pseudo-random (not 0xFF),
+ *     reads only in read mode from read-enabled blocks. */
 #ifndef TCU_FL_SIM_H
 #define TCU_FL_SIM_H
 
@@ -14,10 +17,15 @@
 #include <stdint.h>
 
 #define SIM_ROM_SIZE 0x200000u
+#define SIM_DF_SIZE  0x20000u      /* data MAT, 16 x 8 KB at 0x80100000 */
 #define SIM_QLEN     4096u
 
 typedef struct {
     uint8_t rom[SIM_ROM_SIZE];
+    uint8_t df[SIM_DF_SIZE];
+    uint8_t df_erased[SIM_DF_SIZE / 8u];   /* 1 = this 8-byte unit is erased (may be programmed) */
+    uint16_t eepre, eepwe;                 /* per-block read / P/E enables, bit i = DBi */
+    unsigned df_erases, df_programs;
     bool fwe;
     /* registers */
     uint16_t fentryr;
@@ -26,7 +34,9 @@ typedef struct {
     bool fcurame, fw_loaded, freset;
     uint32_t fw_words_ok;
     /* command state */
-    int cmd;                    /* 0 idle, 1 got E8, 2 got 80 (data), 3 got 20 */
+    int cmd;                    /* 0 idle, 1 got E8, 2 got 80 (data), 3 got 20;
+                                   data flash: 11 got E8, 12 data, 13 got 20 */
+    unsigned prog_count;        /* words expected (data flash: 4 or 64) */
     uint32_t prog_base;
     unsigned prog_n;
     uint16_t prog_buf[128];

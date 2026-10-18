@@ -16,11 +16,18 @@
 #define FL_FRESETR   0xFFFFA906u    /* 16: key 0xCC, bit 0 FRESET                      */
 #define FL_FPESTAT   0xFFFFA91Cu    /* 16: P/E error source                            */
 #define FL_RCCR      0xFFFC1400u    /* 32: ROM cache control (section 27)              */
+#define FL_EEPRE0    0xFFFFA840u    /* 16: key 0x2D, data-flash read enable DB00-DB07  */
+#define FL_EEPRE1    0xFFFFA842u    /* 16: key 0xD2, read enable DB08-DB15             */
+#define FL_EEPWE0    0xFFFFA850u    /* 16: key 0x1E, data-flash P/E enable DB00-DB07   */
+#define FL_EEPWE1    0xFFFFA852u    /* 16: key 0xE1, P/E enable DB08-DB15              */
 
 #define FL_FCU_FW      0x00402000u  /* FCU firmware area (ROM read address)           */
 #define FL_FCU_RAM     0x80FF8000u  /* FCU RAM                                        */
 #define FL_FCU_FW_LEN  0x2000u
 #define FL_PE_BASE     0x80800000u  /* ROM program/erase address = FL_PE_BASE + ROM address */
+#define FL_DF_BASE     0x80100000u  /* data flash (data MAT): read and P/E address, 128 KB    */
+#define FL_DF_SIZE     0x20000u
+#define FL_DF_BLOCK    0x2000u      /* 16 blocks DB00-DB15 of 8 KB (manual 26.1)           */
 
 #define FL_FPMON_FWE      0x80u
 #define FL_FSTATR0_FRDY   0x80u

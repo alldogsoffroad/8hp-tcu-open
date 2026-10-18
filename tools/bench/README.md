@@ -132,3 +132,15 @@ flasher (built 2026-10-17 or later). Bus 1 only (TCU pins 5/6). Never with the e
 5. `flash IMAGE`: real write. Do not remove power until it reports done. If it fails, the
    flasher keeps running: rerun the same command. The flash is rated for 1000 erase cycles per
    block; only differing blocks are rewritten.
+
+**D. Data-flash loader (spec 18)**: replaces C as the way to update without the ACDP-2.
+1. Write `build/m5_loader_IFla.bin` with the ACDP-2 (the loader, with the stock identification).
+   Afterwards the TCU sits in loader mode (no application yet): `uds 22 F1 95` →
+   `62 F1 95 4C 44 …` ("LD").
+2. `app-selftest`: erase / program / verify / erase block DB07 (FWE stays low; not needed).
+3. `app-flash` writes `build/sh2a/tcu_app_df.bin`; the TCU resets into the RAM application:
+   heartbeat `0x7F0`, `uds 22 F1 95` → `8HPTCU-OPEN M1 RAM`.
+4. Later updates: `app-flash` again (it uses FE30 from the running application, or asks you to
+   switch the TCU on while it sends the loader's stay request).
+5. Power-cut test during `app-flash`: the TCU must come back in loader mode.
+6. Check the ACDP-2 can still read the TCU (Teensy disconnected).

@@ -30,7 +30,7 @@ void fl_cmain(void)
     }
     __asm__ volatile ("ldc %0, vbr" : : "r"(s_vectors));
     fl_hal_init();
-    fl_core_init();
+    fl_core_init(&fl_target_rom);
     fl_main_loop();
 }
 

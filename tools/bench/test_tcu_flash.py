@@ -14,6 +14,7 @@ Usage: test_tcu_flash.py PATH/TO/tcu_flasher_sim
 """
 import os
 import random
+import struct
 import select
 import subprocess
 import sys
@@ -35,8 +36,9 @@ class SimGone(Exception):
 class SimBus:
     """python-can-like bus on top of tcu_flasher_sim's stdin/stdout."""
 
-    def __init__(self, rom_in, rom_out, cut=None):
+    def __init__(self, rom_in, rom_out, cut=None, df=False):
         cmd = [SIM, rom_in, rom_out] + (["--cut", str(cut)] if cut is not None else [])
+        cmd += ["--df"] if df else []
         self.p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.PIPE, bufsize=0)
         self.buf = b""
@@ -131,8 +133,80 @@ def ops(stats):
     return int(parts[2].rstrip(",")) + int(parts[4].rstrip(","))
 
 
-def main():
+# ----------------------------------------------------------------------------- data-flash loader (spec 18)
+
+def make_df(seed=2):
+    """128 KB data MAT: stock EEPROM ring content everywhere (DB08-DB15 must survive), and an
+    application image of realistic size (22 KB) built like build_app_image.py does."""
+    rnd = random.Random(seed)
+    base = bytes(rnd.getrandbits(8) for _ in range(0x20000))
+    payload = bytes(rnd.getrandbits(8) for _ in range(0x5880))
+    entry = tcu_flash.DF_LOAD + 0x800
+    hdr = (tcu_flash.DF_MAGIC + struct.pack(">IIII", len(payload), tcu_flash.DF_LOAD, entry,
+                                            tcu_flash.crc(payload)) + b"RAM test".ljust(16, b"\0"))
+    img = hdr.ljust(tcu_flash.DF_HDR, b"\0") + payload
+    return base, img
+
+
+def run_df(df_in, df_out, img, cut=None):
+    bus = SimBus(df_in, df_out, cut, df=True)
+    fl = tcu_flash.Flasher(tcu_bench.Uds(SimBuses(bus), 1))
+    outcome = "done"
+    try:
+        info = fl.ident(kinds=("LD",))
+        assert info and not info["fwe"], info           # loader, FWE low
+        tcu_flash.df_write(fl, img)
+        fl.reset()
+    except (SimGone, tcu_flash.FlashError) as e:
+        outcome = f"stopped ({type(e).__name__})"
+    code, err = bus.close()
+    if code == 3:
+        raise AssertionError(f"flash controller rule broken: {err}")
+    return outcome, (err.strip().splitlines() or [""])[-1]
+
+
+def test_df():
     fails = 0
+    base, img = make_df()
+    assert not tcu_flash.df_image_check(img), tcu_flash.df_image_check(img)
+    with tempfile.TemporaryDirectory() as d:
+        p_in, p_out, p_out2 = (os.path.join(d, n) for n in ("df_in.bin", "df_out.bin", "df_out2.bin"))
+        open(p_in, "wb").write(base)
+        outcome, stats = run_df(p_in, p_out, img)
+        out = open(p_out, "rb").read()
+        print(f"data-flash write: {outcome}; {stats}")
+        if outcome != "done" or out[:len(img)] != img or not tcu_flash.df_image_valid(out):
+            print("FAIL: data flash does not hold the image")
+            fails += 1
+        if out[0x10000:] != base[0x10000:]:
+            print("FAIL: DB08-DB15 (stock EEPROM sections) changed")
+            fails += 1
+        total = ops(stats)
+        for k in range(1, total + 1):
+            outcome, _ = run_df(p_in, p_out, img, cut=k)
+            mem = open(p_out, "rb").read()
+            ok = tcu_flash.df_image_valid(mem)
+            if ok and mem[:len(img)] != img:
+                print(f"FAIL: cut during op {k}: loader would run a different image")
+                fails += 1
+            if mem[0x10000:] != base[0x10000:]:
+                print(f"FAIL: cut during op {k}: DB08-DB15 changed")
+                fails += 1
+            if k == total and ok:
+                print("FAIL: cut during the header program: image must not be valid")
+                fails += 1
+            if k % 7 == 0 or k == total:            # retry after the cut completes the image
+                outcome2, _ = run_df(p_out, p_out2, img)
+                mem2 = open(p_out2, "rb").read()
+                if outcome2 != "done" or not tcu_flash.df_image_valid(mem2) or mem2[:len(img)] != img:
+                    print(f"FAIL: rewrite after a cut at {k} did not complete the image")
+                    fails += 1
+            print(f"cut during op {k:3d}/{total}: image {'VALID' if ok else 'invalid (loader mode)'}")
+    return fails
+
+
+def main():
+    fails = test_df()
     base, img = make_roms()
     assert not tcu_flash.check_image(img + b"\xFF" * 0x80000), tcu_flash.check_image(img)
     with tempfile.TemporaryDirectory() as d:

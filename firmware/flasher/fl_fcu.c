@@ -15,6 +15,12 @@ void (*fl_fcu_busy_hook)(void);
 static bool s_fw_loaded;
 static uint8_t s_last_err;
 
+void fl_fcu_init(void)
+{
+    s_fw_loaded = false;
+    s_last_err = FL_OK;
+}
+
 bool fl_fcu_fwe(void)
 {
     return (fl_rd8(FL_FPMON) & FL_FPMON_FWE) != 0u;
@@ -104,16 +110,11 @@ static fl_err_t check(void)
     return FL_OK;
 }
 
-/* Figure 25.15: ROM P/E mode for the 1 MB area holding rom. */
-static fl_err_t enter(uint32_t rom)
+/* Figure 25.15: P/E mode for one area (bit = FENTRYR value), command address pe. */
+static fl_err_t enter_mode(uint16_t bit, uint32_t pe)
 {
-    const uint16_t bit = rom < 0x00100000u ? 0x0001u : 0x0002u;
     fl_err_t e;
 
-    if (!fl_fcu_fwe()) {
-        s_last_err = FL_E_FWE;
-        return FL_E_FWE;
-    }
     if (!s_fw_loaded) {
         fw_transfer();
     }
@@ -128,7 +129,7 @@ static fl_err_t enter(uint32_t rom)
     }
     e = check();
     if (e != FL_OK) {                   /* left over from an earlier failure */
-        (void)recover(FL_PE_BASE + rom, e);
+        (void)recover(pe, e);
         fl_wr16(FL_FENTRYR, (uint16_t)(0xAA00u | bit));
         if (fl_rd16(FL_FENTRYR) != bit || check() != FL_OK) {
             read_mode();
@@ -136,6 +137,16 @@ static fl_err_t enter(uint32_t rom)
         }
     }
     return FL_OK;
+}
+
+/* Code flash: FWE must be high (hardware protection, manual 25.8.1). */
+static fl_err_t enter(uint32_t rom)
+{
+    if (!fl_fcu_fwe()) {
+        s_last_err = FL_E_FWE;
+        return FL_E_FWE;
+    }
+    return enter_mode(rom < 0x00100000u ? 0x0001u : 0x0002u, FL_PE_BASE + rom);
 }
 
 static fl_err_t wait_ready(uint32_t pe, uint32_t timeout_ms)
@@ -186,6 +197,44 @@ fl_err_t fl_fcu_program(uint32_t rom, const uint8_t *p)
     }
     fl_wr8(pe, 0xD0u);
     return wait_ready(pe, FL_PROG_TIMEOUT_MS);
+}
+
+/* ---- Data flash (manual section 26.6.3): FENTRYD, no FWE dependency ---- */
+void fl_fcu_df_enable(uint16_t read_blocks, uint16_t write_blocks)
+{
+    fl_wr16(FL_EEPRE0, (uint16_t)(0x2D00u | (read_blocks & 0xFFu)));
+    fl_wr16(FL_EEPRE1, (uint16_t)(0xD200u | (read_blocks >> 8)));
+    fl_wr16(FL_EEPWE0, (uint16_t)(0x1E00u | (write_blocks & 0xFFu)));
+    fl_wr16(FL_EEPWE1, (uint16_t)(0xE100u | (write_blocks >> 8)));
+}
+
+fl_err_t fl_fcu_df_erase(uint32_t addr)
+{
+    const uint32_t ba = addr & ~(FL_DF_BLOCK - 1u);
+    fl_err_t e = enter_mode(0x0080u, ba);
+
+    if (e != FL_OK) {
+        return e;
+    }
+    fl_wr8(ba, 0x20u);
+    fl_wr8(ba, 0xD0u);
+    return wait_ready(ba, FL_DF_ERASE_TIMEOUT_MS);
+}
+
+fl_err_t fl_fcu_df_program(uint32_t addr, const uint8_t *p)
+{
+    fl_err_t e = enter_mode(0x0080u, addr);
+
+    if (e != FL_OK) {
+        return e;
+    }
+    fl_wr8(addr, 0xE8u);
+    fl_wr8(addr, 0x40u);                /* 64 words = 128 bytes */
+    for (uint32_t i = 0u; i < 128u; i += 2u) {
+        fl_wr16(addr + i, (uint16_t)((uint16_t)p[i] << 8 | p[i + 1u]));
+    }
+    fl_wr8(addr, 0xD0u);
+    return wait_ready(addr, FL_DF_PROG_TIMEOUT_MS);
 }
 
 void fl_fcu_read(uint32_t rom, uint8_t *dst, uint32_t n)

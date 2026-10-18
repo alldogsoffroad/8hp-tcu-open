@@ -25,6 +25,10 @@ Commands:
   dump-userboot [-o FILE] PROJECT firmware: copy the 32 KB user boot MAT to RAM (routine FE20),
                           download it with the measurement protocol, check the CRC-32
   meas-read ... --compare IMAGE   compare the read bytes with a full flash image (_IFla.bin)
+  app-flash [IMAGE]       spec 18: write the RAM application (build/sh2a/tcu_app_df.bin) to data
+                          flash through the loader (reached via FE30 from a running application,
+                          or switch the TCU on when asked). Header written last, power-loss safe.
+  app-selftest            spec 18: erase / program / verify / erase data-flash block DB07
   flash IMAGE [--dry-run] [--yes]   PROJECT firmware: rewrite the application / calibration blocks
                           that differ from IMAGE (_IFla.bin) over bus 1 with the RAM flasher
                           (spec 16). Power-loss safe order; --dry-run only compares.
@@ -766,6 +770,101 @@ def cmd_plant_uds(b, args):
         print(f"{req.hex(' ').upper():24s} -> {hexs(r)}")
 
 
+# ----------------------------------------------------------------------------- data-flash loader (spec 18)
+
+def enter_loader(b, args):
+    """Return a tcu_flash.Flasher talking to the data-flash loader on bus 1. Tries, in order: the
+    loader already running; FE30 from a running RAM application; the loader's stay request
+    (31 01 FE 40) sent while the TCU is switched on."""
+    import serial
+    import tcu_flash
+    u = Uds(b, 1)
+    fl = tcu_flash.Flasher(u)
+    info = fl.ident(kinds=("LD",))
+    if info is None and u.request(b"\x3E\x00", timeout=0.5):
+        r = u.extended()
+        if r and r[0] == 0x50:
+            r = u.request(b"\x31\x01\xFE\x30", timeout=1.0)
+            if r and r[0] == 0x71:
+                time.sleep(0.3)
+                info = fl.ident(kinds=("LD",))
+    if info is None:
+        b.shutdown()
+        raw = serial.Serial(args.bus1, 2000000, timeout=0)
+        for c in (b"C\r", b"P0\r", b"S6\r", b"O\r"):
+            raw.write(c); time.sleep(0.05)
+        raw.reset_input_buffer()
+        print(f"switch the TCU supply ON now (sending the loader stay request for up to {args.send_s:.0f} s)")
+        end = time.time() + args.send_s; got = b""; nxt = 0.0; seen = False
+        while time.time() < end and not seen:
+            now = time.time()
+            if now >= nxt:
+                raw.write(b"t7E18043101FE40AAAAAA\r"); nxt = now + 0.005
+            got += raw.read(512)
+            seen = b"t7E98047101FE40" in got.upper()
+            time.sleep(0.0005)
+        raw.write(b"C\r"); time.sleep(0.05); raw.close()
+        if not seen:
+            sys.exit("the loader did not answer the stay request (is the loader installed?)")
+        b.__init__(args)
+        u = Uds(b, 1)
+        fl = tcu_flash.Flasher(u)
+        time.sleep(0.1)
+        for _ in range(3):
+            info = fl.ident(kinds=("LD",))
+            if info:
+                break
+    if info is None:
+        sys.exit("no answer from the data-flash loader")
+    print(f"loader v{info['version']}: FWE {'high' if info['fwe'] else 'low'} (not needed), "
+          f"FSTATR0 {info['fstatr0']:02X}, last error {info['last_error']}")
+    return fl
+
+
+def cmd_app_flash(b, args):
+    import tcu_flash
+    img = open(args.image, "rb").read()
+    bad = tcu_flash.df_image_check(img)
+    if bad:
+        sys.exit("image refused:\n  " + "\n  ".join(bad))
+    ver = img[0x18:0x28].rstrip(b"\0").decode(errors="replace")
+    print(f"image {args.image}: {len(img) - tcu_flash.DF_HDR} payload bytes, version '{ver}'")
+    fl = enter_loader(b, args)
+    try:
+        cur = fl.crc(tcu_flash.DF_BASE, len(img))
+        if cur == tcu_flash.crc(img):
+            print("the data flash already holds this image")
+        else:
+            if not args.yes and input("write now? [yes/no] ").strip() != "yes":
+                print("nothing written"); fl.reset(); return
+            t0 = time.time()
+            tcu_flash.df_write(fl, img, progress=print)
+            print(f"done in {time.time() - t0:.1f} s")
+    except tcu_flash.FlashError as e:
+        sys.exit(f"APP-FLASH FAILED: {e}\nThe loader keeps running: rerun the same command. A power "
+                 "loss leaves no valid image; the loader then waits in loader mode (spec 18).")
+    print("resetting: the loader starts the application from data flash")
+    fl.reset()
+
+
+def cmd_app_selftest(b, args):
+    """Spec 18 section 7 step 4: erase / program / read back / erase data-flash block DB07."""
+    import tcu_flash
+    fl = enter_loader(b, args)
+    a = tcu_flash.DF_BASE + 7 * tcu_flash.DF_BLOCK
+    pattern = bytes((i * 7 + 3) & 0xFF for i in range(1024))
+    try:
+        print("erase DB07"); fl.erase(a, tcu_flash.DF_BLOCK)
+        print("program 1 KB"); fl.program(a, pattern)
+        ok = fl.crc(a, len(pattern)) == tcu_flash.crc(pattern)
+        print("read back:", "OK" if ok else "MISMATCH")
+        print("erase DB07 again"); fl.erase(a, tcu_flash.DF_BLOCK)
+        print("self-test", "PASSED" if ok else "FAILED")
+    except tcu_flash.FlashError as e:
+        sys.exit(f"self-test FAILED: {e}")
+    print("the loader stays in loader mode; `uds 11 01` or a power cycle leaves it")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--iface", default="slcan", help="slcan (Teensy, default) or socketcan")
@@ -794,6 +893,9 @@ def main():
     p.add_argument("--yes", action="store_true")
     p = sub.add_parser("flash-selftest"); p.add_argument("image"); p.add_argument("--block", default="0x100000")
     sub.add_parser("flash-invalidate")
+    p = sub.add_parser("app-flash"); p.add_argument("image", nargs="?", default="build/sh2a/tcu_app_df.bin")
+    p.add_argument("--yes", action="store_true"); p.add_argument("--send-s", type=float, default=60.0)
+    p = sub.add_parser("app-selftest"); p.add_argument("--send-s", type=float, default=60.0)
     p = sub.add_parser("plant-uds"); p.add_argument("hex", nargs="+", help="requests, comma-separated")
     p.add_argument("--timeout", type=float, default=1.0)
     p = sub.add_parser("plant-seedscan"); p.add_argument("--enter", action="store_true")
@@ -820,7 +922,8 @@ def main():
          "dump-userboot": cmd_dump_userboot, "flash": cmd_flash,
          "flash-selftest": cmd_flash_selftest, "flash-invalidate": cmd_flash_invalidate,
          "plant-entry": cmd_plant_entry, "plant-uds": cmd_plant_uds,
-         "plant-seedscan": cmd_plant_seedscan}[args.cmd](b, args)
+         "plant-seedscan": cmd_plant_seedscan, "app-flash": cmd_app_flash,
+         "app-selftest": cmd_app_selftest}[args.cmd](b, args)
     finally:
         b.shutdown()
 

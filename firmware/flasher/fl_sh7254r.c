@@ -20,6 +20,13 @@
 static uint32_t s_ms;
 static uint8_t s_sup_div;
 static bool s_toggle;
+static uint16_t s_sup_base = SUP_CONTROL, s_sup_toggle = SUP_TOGGLE;
+
+void fl_hal_set_supervisor(uint16_t base, uint16_t toggle)
+{
+    s_sup_base = (uint16_t)(base & ~0x0001u);
+    s_sup_toggle = (uint16_t)(toggle & ~0x0001u);
+}
 
 void fl_hal_init(void)
 {
@@ -56,7 +63,7 @@ static void sup_service(void)
     }
     if ((SPSRB & SPSR_SPTEF) != 0u) {
         s_toggle = !s_toggle;
-        SPDRB = (uint16_t)(SUP_CONTROL | (s_toggle ? SUP_TOGGLE : 0u));
+        SPDRB = (uint16_t)(s_sup_base | (s_toggle ? s_sup_toggle : 0u));
     }
 }
 

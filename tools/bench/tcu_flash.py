@@ -91,12 +91,15 @@ class Flasher:
             raise FlashError(f"unexpected response {r.hex(' ')}")
         return r
 
-    def ident(self):
+    def ident(self, kinds=("FL",)):
+        """Flasher identification; kinds: "FL" (code-flash RAM flasher, spec 16) and/or "LD"
+        (data-flash loader, spec 18). None if something else answered."""
         r = self.uds.request(b"\x22\xF1\x95", timeout=1.0)
-        if not r or len(r) < 12 or r[:5] != b"\x62\xF1\x95FL":
+        if not r or len(r) < 12 or r[:3] != b"\x62\xF1\x95" or r[3:5].decode("latin-1") not in kinds:
             return None
-        return {"version": r[5], "fpmon": r[6], "fstatr0": r[7], "fstatr1": r[8], "fastat": r[9],
-                "fpestat": r[10], "last_error": r[11], "fwe": bool(r[6] & 0x80)}
+        return {"kind": r[3:5].decode(), "version": r[5], "fpmon": r[6], "fstatr0": r[7],
+                "fstatr1": r[8], "fastat": r[9], "fpestat": r[10], "last_error": r[11],
+                "fwe": bool(r[6] & 0x80)}
 
     def crc(self, a, n):
         r = self.req(b"\x31\x01\xFF\x01" + a.to_bytes(4, "big") + n.to_bytes(4, "big"), timeout=10.0, ok=0x71)
@@ -106,11 +109,14 @@ class Flasher:
         self.req(b"\x31\x01\xFF\x00" + a.to_bytes(4, "big") + n.to_bytes(4, "big"), timeout=10.0, ok=0x71)
 
     def program(self, a, data):
-        assert a % PAGE == 0 and len(data) % PAGE == 0 and data
-        self.req(b"\x34\x00\x44" + a.to_bytes(4, "big") + len(data).to_bytes(4, "big"), ok=0x74)
-        for i in range(0, len(data), PAGE):
-            ctr = (i // PAGE + 1) & 0xFF
-            self.req(bytes([0x36, ctr]) + data[i:i + PAGE], ok=0x76)
+        """Download data at a; the page size comes from the 0x74 reply (max block length - 2):
+        256 for code flash, 128 for data flash."""
+        r = self.req(b"\x34\x00\x44" + a.to_bytes(4, "big") + len(data).to_bytes(4, "big"), ok=0x74)
+        page = (int.from_bytes(r[2:4], "big") - 2) if len(r) >= 4 and r[1] == 0x20 else PAGE
+        assert a % page == 0 and len(data) % page == 0 and data
+        for i in range(0, len(data), page):
+            ctr = (i // page + 1) & 0xFF
+            self.req(bytes([0x36, ctr]) + data[i:i + page], ok=0x76)
         self.req(b"\x37", ok=0x77)
 
     def reset(self):
@@ -188,3 +194,64 @@ def write(fl, img, todo=None, progress=None):
         if fl.crc(inv, block_size(inv)) != crc(img[inv:inv + block_size(inv)]):
             raise FlashError(f"verify failed after marker 1 of the {r['name']}")
     return pages
+
+
+# ----------------------------------------------------------------------------- data-flash image (spec 18)
+
+DF_BASE = 0x80100000
+DF_BLOCK = 0x2000
+DF_APP_LEN = 0x10000               # DB00-DB07; DB08-DB15 keep the stock EEPROM sections
+DF_HDR = 0x80
+DF_MAGIC = b"8HPAPP01"
+DF_LOAD = 0xFFF84100
+DF_RAM_LIMIT = 0xFFF9C000
+
+
+def df_image_check(img):
+    """Reasons a data-flash image (header + payload, from build_app_image.py) must not be written."""
+    if len(img) < DF_HDR + 0x80 or img[:8] != DF_MAGIC:
+        return ["not a data-flash application image (magic 8HPAPP01 missing)"]
+    ln, load, entry, c = (int.from_bytes(img[o:o + 4], "big") for o in (8, 12, 16, 20))
+    bad = []
+    if ln != len(img) - DF_HDR or ln % 128 or ln > DF_APP_LEN - DF_HDR:
+        bad.append(f"payload length {ln:#x} inconsistent or larger than {DF_APP_LEN - DF_HDR:#x}")
+    if load != DF_LOAD or load + ln > DF_RAM_LIMIT:
+        bad.append(f"load address {load:#x} is not {DF_LOAD:#x}")
+    if not load <= entry < load + ln:
+        bad.append(f"entry {entry:#x} outside the payload")
+    if crc(img[DF_HDR:]) != c:
+        bad.append("payload CRC does not match the header")
+    return bad
+
+
+def df_image_valid(mem):
+    """What the loader decides for a data-flash content (bytes from DF_BASE): True = it runs it.
+    Mirrors ld_image_parse() + the payload CRC (firmware/loader)."""
+    if mem[:8] != DF_MAGIC:
+        return False
+    ln, load, entry, c = (int.from_bytes(mem[o:o + 4], "big") for o in (8, 12, 16, 20))
+    if ln == 0 or ln > DF_APP_LEN - DF_HDR or ln % 128 or load != DF_LOAD or load + ln > DF_RAM_LIMIT:
+        return False
+    if not load <= entry < load + ln or entry & 1:
+        return False
+    return crc(mem[DF_HDR:DF_HDR + ln]) == c
+
+
+def df_write(fl, img, progress=None):
+    """Write an application image to data flash, power-loss safe (spec 18 section 4):
+    erase DB00 first (the old header goes), the other blocks, payload, verify, header last."""
+    say = progress or (lambda s: None)
+    nblk = -(-len(img) // DF_BLOCK)
+    for i in range(nblk):
+        a = DF_BASE + i * DF_BLOCK
+        say(f"erase DB{i:02d}")
+        fl.erase(a, DF_BLOCK)
+    say(f"program payload ({len(img) - DF_HDR} bytes)")
+    fl.program(DF_BASE + DF_HDR, img[DF_HDR:])
+    if fl.crc(DF_BASE + DF_HDR, len(img) - DF_HDR) != crc(img[DF_HDR:]):
+        raise FlashError("payload verify failed (header not written: the loader stays in loader mode)")
+    say("program header")
+    fl.program(DF_BASE, img[:DF_HDR])
+    if fl.crc(DF_BASE, len(img)) != crc(img):
+        raise FlashError("verify after the header failed")
+    return len(img)

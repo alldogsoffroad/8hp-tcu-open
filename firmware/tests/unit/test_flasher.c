@@ -2,6 +2,7 @@
  * entry routine FE30. */
 #include "flasher/fl_core.h"
 #include "flasher/fl_fcu.h"
+#include "flasher/fl_regs.h"
 #include "tests/unit/fl_sim.h"
 #include "app/flash_entry.h"
 #include "tests/unit/stub_plat.h"
@@ -131,7 +132,7 @@ static void test_flasher(void)
     uint8_t page[256], page2[256], ff[256], boot_before[0x40000];
 
     fl_sim_init();
-    fl_core_init();
+    fl_core_init(&fl_target_rom);
     for (uint32_t i = 0u; i < SIM_ROM_SIZE; i++) {
         sim.rom[i] = (uint8_t)(i * 13u + (i >> 9));
     }
@@ -248,6 +249,82 @@ static void test_flasher(void)
     CHECK(request((const uint8_t *)"\x11\x01", 2u) == 2u && rsp[0] == 0x51u && sim.hal_resets == 1u);
 }
 
+
+static unsigned transfer_df(uint8_t ctr, const uint8_t *page)
+{
+    uint8_t q[130] = { 0x36, ctr };
+    memcpy(&q[2], page, 128);
+    return request(q, 130u);
+}
+
+/* Data-flash target (spec 18): window DB00-DB07, 128-byte pages, undefined erased content,
+ * independent of FWE. */
+static void test_dataflash(void)
+{
+    uint8_t page[128], ff[128], stock[0x10000];
+    const uint32_t db00 = FL_DF_BASE, db02 = FL_DF_BASE + 0x4000u, db08 = FL_DF_BASE + 0x10000u;
+
+    fl_sim_init();
+    sim.fwe = false;                        /* the reason for spec 18: FWE low under applications */
+    fl_core_init(&fl_target_df);
+    fl_fcu_df_enable(0xFFFFu, 0x00FFu);     /* read all blocks, write DB00-DB07 only */
+    memcpy(stock, &sim.df[0x10000], sizeof stock);
+    for (unsigned i = 0u; i < 128u; i++) {
+        page[i] = (uint8_t)(i * 3u + 1u);
+    }
+    memset(ff, 0xFF, sizeof ff);
+
+    push_fc();
+    CHECK(request((const uint8_t *)"\x22\xF1\x95", 3u) == 12u);
+    CHECK(rsp[3] == 'L' && rsp[4] == 'D' && rsp[6] == 0x00u);   /* FPMON: FWE low */
+
+    /* window: DB00-DB07 only, whole 8 KB blocks */
+    routine(0xFF00u, db08, 0x2000u);               CHECK(is_neg(0x31u, 0x31u));
+    routine(0xFF00u, db00 - 0x2000u, 0x2000u);     CHECK(is_neg(0x31u, 0x31u));
+    routine(0xFF00u, db00 + 0x1000u, 0x2000u);     CHECK(is_neg(0x31u, 0x31u));
+    routine(0xFF00u, db00, 0x1000u);               CHECK(is_neg(0x31u, 0x31u));
+    routine(0xFF00u, FL_DF_BASE + 0xE000u, 0x4000u); CHECK(is_neg(0x31u, 0x31u)); /* into DB08 */
+    routine(0xFF00u, 0x00040000u, 0x10000u);       CHECK(is_neg(0x31u, 0x31u)); /* code flash */
+    CHECK(sim.df_erases == 0u && sim.erases == 0u);
+
+    /* erase DB00-DB01 with FWE low: allowed, content afterwards undefined (not 0xFF) */
+    CHECK(routine(0xFF00u, db00, 0x4000u) == 4u && rsp[0] == 0x71u);
+    CHECK(sim.df_erases == 2u);
+
+    /* download: max block length 2 + 128 */
+    download(db08, 0x80u);                          CHECK(is_neg(0x34u, 0x31u));
+    download(db00 + 0x40u, 0x80u);                  CHECK(is_neg(0x34u, 0x31u));
+    CHECK(download(db00, 0x180u) == 4u && rsp[1] == 0x20u && rsp[2] == 0x00u && rsp[3] == 0x82u);
+    CHECK(transfer_df(1u, page) == 2u && rsp[0] == 0x76u);
+    CHECK(memcmp(&sim.df[0], page, 128) == 0);
+    CHECK(transfer_df(2u, ff) == 2u && rsp[0] == 0x76u);   /* all-0xFF page IS programmed */
+    CHECK(memcmp(&sim.df[128], ff, 128) == 0 && sim.df_programs == 2u);
+    CHECK(transfer_df(3u, page) == 2u);
+    CHECK(request((const uint8_t *)"\x37", 1u) == 1u && rsp[0] == 0x77u);
+
+    /* CRC over what was written; reading the stock blocks is allowed */
+    CHECK(routine(0xFF01u, db00, 0x80u) == 8u &&
+          ((uint32_t)rsp[4] << 24 | (uint32_t)rsp[5] << 16 | (uint32_t)rsp[6] << 8 | rsp[7]) ==
+              crc32(page, 128));
+    CHECK(routine(0xFF01u, db08, 0x100u) == 8u && rsp[0] == 0x71u);
+
+    /* programming a block that was not erased: the FCU refuses, negative response */
+    CHECK(download(db02, 0x80u) == 4u);
+    transfer_df(1u, page);                          CHECK(is_neg(0x36u, 0x72u));
+    sim.violations--;                               /* deliberate: counted by the model */
+
+    /* P/E disabled for a block: erase refused by the FCU */
+    fl_fcu_df_enable(0xFFFFu, 0x0000u);
+    routine(0xFF00u, db02, 0x2000u);                CHECK(is_neg(0x31u, 0x72u));
+    fl_fcu_df_enable(0xFFFFu, 0x00FFu);
+    CHECK(routine(0xFF00u, db02, 0x2000u) == 4u && rsp[0] == 0x71u);
+
+    /* stock EEPROM blocks DB08-DB15 never touched; code flash never touched */
+    CHECK(memcmp(&sim.df[0x10000], stock, sizeof stock) == 0);
+    CHECK(sim.erases == 0u && sim.programs == 0u);
+    CHECK(sim.violations == 0u);
+}
+
 static void test_entry(void)
 {
     uint8_t out[8];
@@ -315,6 +392,7 @@ static void test_entry(void)
 int main(void)
 {
     test_flasher();
+    test_dataflash();
     test_entry();
     printf("%s (%d failures)\n", fails ? "FAILED" : "passed", fails);
     return fails ? 1 : 0;

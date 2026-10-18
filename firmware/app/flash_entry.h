@@ -5,6 +5,8 @@
  *           mode) are raised, and about 20 ms later the application hands the CPU to the RAM
  *           flasher if FWE reads high (else the lines are dropped and the application continues).
  *           Refused with NRC 0x22 while the engine runs or a bench output test is active.
+ *           RAM application (spec 18, TCU_RAM_APP): FE30 returns to the data-flash loader instead,
+ *           with no FWE dependency.
  * Identifier 0xFD03 (ReadDataByIdentifier): 1 byte, bit 0 = FPMON.FWE (flash programming possible).
  */
 #ifndef TCU_FLASH_ENTRY_H

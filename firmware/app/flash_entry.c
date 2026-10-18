@@ -9,11 +9,13 @@
 
 static uint8_t s_countdown;     /* ms until the flasher starts; 0 = not requested */
 
+#if !defined(TCU_RAM_APP)
 static void enable_lines(bool on)
 {
     (void)plat_flash_enable(on);
     sup_set_flash_mode(on);
 }
+#endif
 
 static uint8_t fwe_byte(void)
 {
@@ -102,7 +104,9 @@ int flash_entry_routine(uint8_t type, uint16_t rid, const uint8_t *in, uint16_t 
     if (!allowed) {
         return -NRC_CNC;
     }
+#if !defined(TCU_RAM_APP)
     enable_lines(true);                     /* as the user boot MAT does; FWE checked at start */
+#endif
     s_countdown = FLASH_START_DELAY_MS;     /* time for the positive response to go out */
     return 0;
 }
@@ -119,10 +123,14 @@ int flash_entry_did(uint8_t *out, uint16_t max)
 void flash_entry_tick_1ms(void)
 {
     if (s_countdown != 0u && --s_countdown == 0u) {
+#if defined(TCU_RAM_APP)
+        plat_flasher_start();               /* back to the data-flash loader (spec 18) */
+#else
         if (plat_flash_fwe()) {
             plat_flasher_start();
         } else {
             enable_lines(false);            /* FWE did not follow: stay in the application */
         }
+#endif
     }
 }

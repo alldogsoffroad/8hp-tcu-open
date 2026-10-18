@@ -433,8 +433,10 @@ void plat_boot_handover(const uint8_t *rec, uint8_t len)
 /* ---- Project flasher (spec 16) -------------------------------------------------- */
 #define FL_LOAD_ADDR 0xFFF90000u        /* must match firmware/flasher/fl_link.ld */
 
+#if !defined(TCU_RAM_APP) && !defined(TCU_LOADER)
 extern const uint32_t fl_blob[];
 extern const uint32_t fl_blob_end[];
+#endif
 void plat_jump_ram(const uint32_t *src, uint32_t dst, uint32_t len, uint32_t entry);
 
 bool plat_flash_fwe(void)
@@ -453,6 +455,23 @@ bool plat_flash_enable(bool on)
     return (PCPRH & 0x40u) != 0u;                       /* PC14 */
 }
 
+#if defined(TCU_RAM_APP)
+/* RAM application (spec 18): hand the CPU back to the data-flash loader in code flash, which then
+ * stays in loader mode (stay word in boot-preserved RAM, read and cleared by the loader). */
+#define LD_STAY_WORD  (*(volatile uint32_t *)0xFFF800D0u)
+#define LD_STAY_MAGIC 0x4C4F4144u
+#define LOADER_ENTRY  (*(const uint32_t *)0x0004007Cu)    /* code-flash header +0x7C */
+
+void plat_flasher_start(void)
+{
+    __asm__ volatile ("ldc %0, sr" : : "r"(0xF0u));
+    plat_wdt_service();
+    LD_STAY_WORD = LD_STAY_MAGIC;
+    ((void (*)(void))(uintptr_t)LOADER_ENTRY)();
+    for (;;) {
+    }
+}
+#elif !defined(TCU_LOADER)
 void plat_flasher_start(void)
 {
     const uint32_t len = (uint32_t)((uintptr_t)fl_blob_end - (uintptr_t)fl_blob);
@@ -461,6 +480,7 @@ void plat_flasher_start(void)
     plat_wdt_service();
     plat_jump_ram(fl_blob, FL_LOAD_ADDR, len, FL_LOAD_ADDR);
 }
+#endif
 
 /* ---- Idle counter ------------------------------------------------------------ */
 static volatile uint32_t s_idle;

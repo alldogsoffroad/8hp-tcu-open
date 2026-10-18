@@ -4,6 +4,7 @@
 #include "flasher/fl_core.h"
 #include "flasher/fl_fcu.h"
 #include "flasher/fl_hal.h"
+#include "flasher/fl_regs.h"
 
 #define NRC_SNS    0x11u
 #define NRC_SFNS   0x12u
@@ -16,7 +17,7 @@
 #define NRC_WBSC   0x73u
 #define NRC_RCRRP  0x78u
 
-#define BUF_LEN    (2u + FL_PAGE + 8u)
+#define BUF_LEN    (2u + FL_PAGE_MAX + 8u)
 #define FC_WAIT_MS 1000u
 #define PENDING_MS 1000u
 
@@ -40,7 +41,8 @@ static bool s_dl_any;               /* at least one page of this download writte
 static uint8_t s_busy_sid;
 static uint32_t s_busy_t;
 
-static uint8_t s_page[FL_PAGE];
+static uint8_t s_page[FL_PAGE_MAX];
+static const fl_target_t *s_t = &fl_target_rom;
 
 static void copy(uint8_t *d, const uint8_t *s, uint32_t n)
 {
@@ -72,6 +74,22 @@ uint32_t fl_block_size(uint32_t a)
     }
     return 0x20000u;
 }
+
+static uint32_t df_block_size(uint32_t a)
+{
+    (void)a;
+    return FL_DF_BLOCK;
+}
+
+const fl_target_t fl_target_rom = {
+    { 'F', 'L' }, FL_WIN_LO, FL_WIN_HI, 0u, FL_ROM_END, FL_PAGE, true,
+    fl_block_size, fl_fcu_erase, fl_fcu_program,
+};
+
+const fl_target_t fl_target_df = {
+    { 'L', 'D' }, FL_DF_WIN_LO, FL_DF_WIN_HI, FL_DF_BASE, FL_DF_BASE + FL_DF_SIZE, FL_DF_PAGE, false,
+    df_block_size, fl_fcu_df_erase, fl_fcu_df_program,
+};
 
 static void send_frame(const uint8_t *d, uint8_t n)
 {
@@ -193,7 +211,7 @@ static uint32_t crc32_rom(uint32_t a, uint32_t n)
     uint32_t c = 0xFFFFFFFFu;
 
     while (n != 0u) {
-        const uint32_t k = n > FL_PAGE ? FL_PAGE : n;
+        const uint32_t k = n > FL_PAGE_MAX ? FL_PAGE_MAX : n;
         fl_fcu_read(a, s_page, k);
         for (uint32_t i = 0u; i < k; i++) {
             c ^= s_page[i];
@@ -210,13 +228,13 @@ static uint32_t crc32_rom(uint32_t a, uint32_t n)
 
 static bool in_window(uint32_t a, uint32_t n)
 {
-    return n != 0u && a >= FL_WIN_LO && a < FL_WIN_HI && n <= FL_WIN_HI - a;
+    return n != 0u && a >= s_t->win_lo && a < s_t->win_hi && n <= s_t->win_hi - a;
 }
 
 static bool blank(uint32_t a, uint32_t n)
 {
     while (n != 0u) {
-        const uint32_t k = n > FL_PAGE ? FL_PAGE : n;
+        const uint32_t k = n > FL_PAGE_MAX ? FL_PAGE_MAX : n;
         fl_fcu_read(a, s_page, k);
         for (uint32_t i = 0u; i < k; i++) {
             if (s_page[i] != 0xFFu) {
@@ -233,7 +251,7 @@ static bool blank(uint32_t a, uint32_t n)
 /* ---- services ---- */
 static void svc_read_did(const uint8_t *q, uint16_t n)
 {
-    uint8_t r[12] = { 0x62u, 0xF1u, 0x95u, 'F', 'L', FL_VERSION };
+    uint8_t r[12] = { 0x62u, 0xF1u, 0x95u, 0u, 0u, FL_VERSION };
 
     if (n != 3u) {
         neg(0x22u, NRC_IMLOIF);
@@ -243,6 +261,8 @@ static void svc_read_did(const uint8_t *q, uint16_t n)
         neg(0x22u, NRC_ROOR);
         return;
     }
+    r[3] = (uint8_t)s_t->ident[0];
+    r[4] = (uint8_t)s_t->ident[1];
     fl_fcu_diag(&r[6]);
     send(r, sizeof r);
 }
@@ -251,7 +271,7 @@ static void routine_crc(uint32_t a, uint32_t len)
 {
     uint8_t r[8] = { 0x71u, 0x01u, 0xFFu, 0x01u };
 
-    if (len == 0u || a >= FL_ROM_END || len > FL_ROM_END - a) {
+    if (len == 0u || a < s_t->rd_lo || a >= s_t->rd_hi || len > s_t->rd_hi - a) {
         neg(0x31u, NRC_ROOR);
         return;
     }
@@ -273,13 +293,13 @@ static void routine_erase(uint32_t a, uint32_t len)
         return;
     }
     /* whole blocks only: a must start a block and a + len must end one */
-    for (b = FL_WIN_LO; b < a; b += fl_block_size(b)) {
+    for (b = s_t->win_lo; b < a; b += s_t->block_size(b)) {
     }
     if (b != a) {
         neg(0x31u, NRC_ROOR);
         return;
     }
-    for (b = a; b < a + len; b += fl_block_size(b)) {
+    for (b = a; b < a + len; b += s_t->block_size(b)) {
     }
     if (b != a + len) {
         neg(0x31u, NRC_ROOR);
@@ -287,8 +307,9 @@ static void routine_erase(uint32_t a, uint32_t len)
     }
     s_dl = false;
     busy_start(0x31u);
-    for (b = a; b < a + len; b += fl_block_size(b)) {
-        if (fl_fcu_erase(b) != FL_OK || !blank(b, fl_block_size(b))) {
+    for (b = a; b < a + len; b += s_t->block_size(b)) {
+        /* data flash: erased content is undefined, so only the FCU status is checked */
+        if (s_t->erase(b) != FL_OK || (s_t->erased_ff && !blank(b, s_t->block_size(b)))) {
             s_busy_sid = 0u;
             neg(0x31u, NRC_GPF);
             return;
@@ -328,7 +349,8 @@ static void svc_routine(const uint8_t *q, uint16_t n)
 
 static void svc_download(const uint8_t *q, uint16_t n)
 {
-    static const uint8_t ok[4] = { 0x74u, 0x20u, 0x01u, 0x02u };
+    const uint16_t blk = (uint16_t)(2u + s_t->page);
+    const uint8_t ok[4] = { 0x74u, 0x20u, (uint8_t)(blk >> 8), (uint8_t)blk };
     uint32_t a, len;
 
     if (n != 11u || q[1] != 0x00u || q[2] != 0x44u) {
@@ -337,7 +359,7 @@ static void svc_download(const uint8_t *q, uint16_t n)
     }
     a = get32(&q[3]);
     len = get32(&q[7]);
-    if (!in_window(a, len) || (a & (FL_PAGE - 1u)) != 0u || (len & (FL_PAGE - 1u)) != 0u) {
+    if (!in_window(a, len) || (a & (s_t->page - 1u)) != 0u || (len & (s_t->page - 1u)) != 0u) {
         neg(0x34u, NRC_ROOR);
         return;
     }
@@ -349,25 +371,30 @@ static void svc_download(const uint8_t *q, uint16_t n)
     send(ok, sizeof ok);
 }
 
-/* One page: blank check, program (pages of all 0xFF are only checked), read back. */
+/* One page, then read back. Code flash: blank check first, and a page of all 0xFF is only
+ * checked. Data flash: erased content is undefined, so every page is programmed (the FCU refuses
+ * a page that was not erased). */
 static uint8_t write_page(uint32_t a, const uint8_t *p)
 {
-    bool all_ff = true;
+    const uint16_t pg = s_t->page;
 
-    for (uint32_t i = 0u; i < FL_PAGE; i++) {
-        all_ff = all_ff && p[i] == 0xFFu;
+    if (s_t->erased_ff) {
+        bool all_ff = true;
+        for (uint32_t i = 0u; i < pg; i++) {
+            all_ff = all_ff && p[i] == 0xFFu;
+        }
+        if (!blank(a, pg)) {
+            return all_ff ? NRC_GPF : NRC_UDNA;
+        }
+        if (all_ff) {
+            return 0u;
+        }
     }
-    if (!blank(a, FL_PAGE)) {
-        return all_ff ? NRC_GPF : NRC_UDNA;
-    }
-    if (all_ff) {
-        return 0u;
-    }
-    if (fl_fcu_program(a, p) != FL_OK) {
+    if (s_t->program(a, p) != FL_OK) {
         return NRC_GPF;
     }
-    fl_fcu_read(a, s_page, FL_PAGE);
-    for (uint32_t i = 0u; i < FL_PAGE; i++) {
+    fl_fcu_read(a, s_page, pg);
+    for (uint32_t i = 0u; i < pg; i++) {
         if (s_page[i] != p[i]) {
             return NRC_GPF;
         }
@@ -389,7 +416,7 @@ static void svc_transfer(const uint8_t *q, uint16_t n)
         return;
     }
     r[1] = q[1];
-    if (q[1] == (uint8_t)(s_dl_ctr - 1u) && s_dl_any && n == 2u + FL_PAGE) {
+    if (q[1] == (uint8_t)(s_dl_ctr - 1u) && s_dl_any && n == 2u + s_t->page) {
         send(r, 2u);                    /* repeated request: already programmed */
         return;
     }
@@ -397,11 +424,11 @@ static void svc_transfer(const uint8_t *q, uint16_t n)
         neg(0x36u, NRC_WBSC);
         return;
     }
-    if (n != 2u + FL_PAGE || s_dl_next >= s_dl_end) {
+    if (n != 2u + s_t->page || s_dl_next >= s_dl_end) {
         neg(0x36u, NRC_IMLOIF);
         return;
     }
-    if (!in_window(s_dl_next, FL_PAGE)) {      /* cannot happen after 0x34; checked anyway */
+    if (!in_window(s_dl_next, s_t->page)) {    /* cannot happen after 0x34; checked anyway */
         neg(0x36u, NRC_ROOR);
         return;
     }
@@ -410,7 +437,7 @@ static void svc_transfer(const uint8_t *q, uint16_t n)
         neg(0x36u, nrc);
         return;
     }
-    s_dl_next += FL_PAGE;
+    s_dl_next += s_t->page;
     s_dl_ctr++;
     s_dl_any = true;
     send(r, 2u);
@@ -473,8 +500,10 @@ static void dispatch(const uint8_t *q, uint16_t n)
     }
 }
 
-void fl_core_init(void)
+void fl_core_init(const fl_target_t *t)
 {
+    s_t = t;
+    fl_fcu_init();
     s_rx_active = false;
     s_dl = false;
     s_busy_sid = 0u;

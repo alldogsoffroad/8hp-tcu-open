@@ -4,7 +4,11 @@
 
 #include <string.h>
 
+#if defined(TCU_RAM_APP)
+#define SW_IDENT    "8HPTCU-OPEN M1 RAM"   /* run from RAM by the data-flash loader (spec 18) */
+#else
 #define SW_IDENT    "8HPTCU-OPEN M1"
+#endif
 #define S3_MS       5000u       /* non-default session falls back after this without traffic */
 #define P2_MS       50u         /* reported in the session response */
 #define P2STAR_MS   5000u

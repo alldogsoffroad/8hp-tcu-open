@@ -82,6 +82,50 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         COMMAND ${CMAKE_OBJCOPY} -O ihex --remove-section=.bss tcu_app.elf tcu_app.hex
         COMMAND ${CMAKE_SIZE} tcu_app.elf
         COMMENT "Writing application block as Intel HEX (load addresses)")
+
+    # ---- Data-flash loader (spec 18): code flash at 0x40000, installed once with the ACDP-2 ----
+    set(LD_LDSCRIPT ${CMAKE_SOURCE_DIR}/loader/ld_link.ld)
+    add_executable(tcu_loader.elf
+        platform/sh7254r/start.S
+        platform/sh7254r/header.c
+        platform/sh7254r/plat_sh7254r.c
+        platform/sh7254r/libc_min.c
+        loader/ld_main.c
+        loader/ld_image.c
+        flasher/fl_core.c
+        flasher/fl_fcu.c
+        flasher/fl_sh7254r.c
+    )
+    target_compile_definitions(tcu_loader.elf PRIVATE TCU_LOADER)
+    target_include_directories(tcu_loader.elf PRIVATE ${CMAKE_SOURCE_DIR}/platform/sh7254r/include)
+    target_link_options(tcu_loader.elf PRIVATE -T ${LD_LDSCRIPT} -Wl,-Map=tcu_loader.map)
+    target_link_libraries(tcu_loader.elf PRIVATE gcc)
+    set_target_properties(tcu_loader.elf PROPERTIES LINK_DEPENDS ${LD_LDSCRIPT})
+    add_custom_command(TARGET tcu_loader.elf POST_BUILD
+        COMMAND ${CMAKE_OBJCOPY} -O ihex --remove-section=.bss tcu_loader.elf tcu_loader.hex
+        COMMAND ${CMAKE_SIZE} tcu_loader.elf
+        COMMENT "Loader block as Intel HEX (build the ACDP-2 image with build_image.py --stock-ident)")
+
+    # ---- RAM application (spec 18): stored in data flash, run from RAM ---------------------
+    set(RAM_LDSCRIPT ${CMAKE_SOURCE_DIR}/platform/sh7254r/linker_ram.ld)
+    add_executable(tcu_app_ram.elf
+        platform/sh7254r/start.S
+        platform/sh7254r/header.c
+        platform/sh7254r/plat_sh7254r.c
+        platform/sh7254r/libc_min.c
+        ${CORE_SOURCES}
+    )
+    target_compile_definitions(tcu_app_ram.elf PRIVATE TCU_RAM_APP)
+    target_include_directories(tcu_app_ram.elf PRIVATE ${CMAKE_SOURCE_DIR}/platform/sh7254r/include)
+    target_link_options(tcu_app_ram.elf PRIVATE -T ${RAM_LDSCRIPT} -Wl,-Map=tcu_app_ram.map)
+    target_link_libraries(tcu_app_ram.elf PRIVATE gcc)
+    set_target_properties(tcu_app_ram.elf PROPERTIES LINK_DEPENDS ${RAM_LDSCRIPT})
+    add_custom_command(TARGET tcu_app_ram.elf POST_BUILD
+        COMMAND ${CMAKE_OBJCOPY} -O binary --only-section=.image tcu_app_ram.elf tcu_app_ram.bin
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/../tools/build_app_image.py --elf tcu_app_ram.elf
+            --bin tcu_app_ram.bin -o tcu_app_df.bin
+        COMMAND ${CMAKE_SIZE} tcu_app_ram.elf
+        COMMENT "RAM application and its data-flash image tcu_app_df.bin")
 else()
     # ---- Host build: simulator and unit tests ------------------------------
     add_executable(tcu_sim platform/host/plat_host.c ${CORE_SOURCES})
@@ -124,6 +168,8 @@ else()
         bsw/sup/sup.c tests/unit/stub_plat.c)
     target_compile_definitions(test_flasher PRIVATE FL_HOST)
     add_test(NAME flasher COMMAND test_flasher)
+    add_executable(test_loader tests/unit/test_loader.c loader/ld_image.c)
+    add_test(NAME loader COMMAND test_loader)
     add_executable(tcu_flasher_sim tests/unit/fl_sim_main.c ${FL_HOST_SOURCES})
     target_compile_definitions(tcu_flasher_sim PRIVATE FL_HOST)
     add_test(NAME flash_tool

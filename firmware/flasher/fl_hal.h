@@ -8,6 +8,11 @@
 
 void fl_hal_init(void);
 
+/* Supervisor word sent every 5 ms: base | (toggle on alternate frames). Default (RAM flasher):
+ * 0x8E80 / 0x0010, the user boot MAT's programming mode; the loader uses 0x8E00 / 0x0004.
+ * Output enable (bit 0) is never set. */
+void fl_hal_set_supervisor(uint16_t base, uint16_t toggle);
+
 /* Advance the millisecond clock and service the internal watchdog (every ms) and the external
  * supervisor (every 5 ms, output enable off). Must be called at least every millisecond or so;
  * every wait loop in the flasher calls it. */
