@@ -209,6 +209,16 @@ Implementation notes:
    0), in which the user boot MAT does not run; raising the FWE pin at runtime enters user program
    mode. So a board signal must drive FWE. m4f adds routine FE32 (arbitrary supervisor word
    pattern, reply read-back) to test supervisor commands interactively.
+   **Boot hand-over (bench 2026-10-18):** the data-flash loader latches FPMON in
+   `entry_snapshot()`, the first statement of `plat_init()`, and reports it as flasher ident byte
+   12 (commit 28bc6c2, loader reflashed with the ACDP-2). Result: **FPMON `0x00`, FWE low at the
+   loader's first instruction**; `start.S` before it touches no port, supervisor or flash
+   register. So the Bosch boot drops FWE before handing over to any application; our own port
+   set-up is not the cause, and leaving pins as the boot left them cannot keep FWE high. With the
+   connector check (spec 01 §2.9: no case pin controls FWE), the route "raise or hold FWE from our
+   code" is closed. FWE is high only inside the boot MAT window (spec 17), which is gated by
+   SecurityAccess. Code-flash writes therefore stay with the ACDP-2; firmware updates use the
+   data-flash loader (spec 18).
 2. Whether a CPU copy of the FCU firmware is accepted (§3).
 3. Whether the user boot MAT also checks the calibration markers before starting the application
    (affects only which block must be valid; the order in §5 covers both).
