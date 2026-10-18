@@ -20,6 +20,16 @@ the stock flash image (2.5 MB, sha256 `b8a9a9b4…619d`). Each fact is marked
 
 CPU: SH-2A, big-endian, with FPU [M].
 
+**Platform family** [I]: the ZF 8HP TCU family (8HP45–95, across VW/Audi, BMW and Chrysler)
+uses this Renesas SH-2A part uniformly; only Gen3+ units (post-2020) moved to an Infineon
+TriCore. Independent corroboration from the VAG RE project
+[`dspl1236/vag-tcu-tools`](https://github.com/dspl1236/vag-tcu-tools) (MIT), whose
+`docs/PLATFORM_RESEARCH.md` also confirms the SH-2A boot mode exactly as in §2 below (SCI on
+PJ5/PJ6, MD2:MD0 = 110, key-code auth, full erase on a key match). That project is firmware
+*extraction/decryption* for VAG units (we already hold plaintext dumps of this unit); it has no
+flash-write, FWE, or write-protection method, and its VAG SA2 security does not apply to this
+unit's Bosch boot-MAT SecurityAccess.
+
 Programming: the project reads and writes the controller with an **ACDP-2 (module 19)**, which
 works with the stock Bosch software already on the chip (see the README). For reference only, the
 chip's own boot mode runs over SCI channel A (`PJ5/TxD_A`, `PJ6/RxD_A`), selected by MD4–MD0 and
@@ -157,6 +167,35 @@ solenoid lead frame (B) and the sensors / valve 9 (C).
 
 Case pins with known function (§2.8): 3, 4, 5, 6, 9, 13, 14, 15. Pins 1, 2, 7, 8, 10, 11, 12, 16
 are wired but their function is **open**.
+
+**Bench characterization of the eight open pins (2026-10-18, spare unit, electronics module
+alone, no mechatronic)** [B]. Supply 12.48 V at pin 13. Resistance measured unpowered, voltage
+measured powered and idle (application running), all referenced to pin 14 (ground):
+
+| Case pin | A-term | → GND (unpowered) | → B+ (unpowered) | Powered (→GND) | [I] type |
+|---|---|---|---|---|---|
+| 1  | A5  | OL | OL | 0.007 V | output, driven low |
+| 2  | A8  | OL | OL | 0.005 V | output, driven low |
+| 7  | A10 | OL | OL | 0.006 V | output, driven low |
+| 8  | A2  | 21.7 kΩ | ≈0.4 MΩ, rising (cap) | 0.000 V | filtered input, pull-down to GND |
+| 10 | A1  | 2.6 kΩ | ≈0.4 MΩ, rising (cap) | 0.000 V | filtered input, stiffer pull-down |
+| 11 | A18 | OL | OL | 0.022 V | output, driven low |
+| 12 | A9  | OL | OL | 0.010 V | output, driven low |
+| 16 | A16 | OL | OL | 0.105 V | output, driven low |
+
+Six pins (1, 2, 7, 11, 12, 16) are high-impedance unpowered and sit at ground when powered:
+[I] driver outputs held low by the running application (same idle behaviour as the TRS Park
+output on pin 15). Pins 8 (A2) and 10 (A1) each have a resistor to ground plus a capacitor (the
+rising B+ reading is the cap charging through the meter) and rest at ground when powered:
+[I] analog sense or filtered config inputs, reading 0 with no mechatronic attached. Their
+function is still open; a mechatronic would be needed to drive them.
+
+**FWE note** [B]: none of the eight open pins sits high when powered, so the code-flash write-
+enable pin (chip ball A11, §1; high at reset then dropped during start-up, spec 17 §1) is **not
+strapped or controllable from the case connector**. FWE is raised and dropped by circuitry
+inside the ceramic hybrid (supervisor die or discrete, under the silicone gel), so the external
+connector offers no hardware route to hold it high. Note the two unrelated "A11"s: the chip's
+FWE ball A11 versus mechatronic A-row terminal A11 (= case pin 9, ignition).
 
 **B row → 8 solenoids on the lead frame:** B2 … B9 = "Valve 8 … Valve 1, on/off signal" (one
 return line per solenoid); B10 – B13 = "Valves – 12 V" (shared supply); B1 not connected.
