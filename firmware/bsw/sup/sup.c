@@ -31,8 +31,10 @@ void sup_set_flash_mode(bool on)
 
 void sup_set_pattern(bool pattern_on, uint16_t word, uint16_t toggle)
 {
-    s_pat_word = (uint16_t)(word & ~SUP_BIT_ENABLE);
-    s_pat_toggle = (uint16_t)(toggle & ~SUP_BIT_ENABLE);
+    /* bit 0 is the output enable only in register 0x8E words: cleared there */
+    const bool reg8e = (word & 0xFF00u) == SUP_CMD_CONTROL;
+    s_pat_word = reg8e ? (uint16_t)(word & ~SUP_BIT_ENABLE) : word;
+    s_pat_toggle = reg8e ? (uint16_t)(toggle & ~SUP_BIT_ENABLE) : toggle;
     s_pattern = pattern_on;
 }
 
@@ -45,6 +47,9 @@ void sup_tick_5ms(void)
     s_toggle = !s_toggle;
     if (s_pattern) {
         tx = (uint16_t)(s_pat_word ^ (s_toggle ? s_pat_toggle : 0u));
+        if ((tx & 0xFF00u) == SUP_CMD_CONTROL) {
+            tx = (uint16_t)(tx & ~SUP_BIT_ENABLE);
+        }
     } else if (s_flash_mode) {
         tx = (uint16_t)(SUP_CMD_CONTROL | SUP_BIT_FL_MODE | (s_toggle ? SUP_BIT_FL_TOGGLE : 0u));
     } else {

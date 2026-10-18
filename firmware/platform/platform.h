@@ -99,6 +99,12 @@ bool plat_flash_fwe(void);
  * inputs (the application's normal state, in which FWE reads low). Returns the PC14 level. */
 bool plat_flash_enable(bool on);
 
+/* State left by the boot software, captured as the first action of plat_init (before the
+ * watchdog and port set-up): FPMON, then big-endian 16-bit PAIOR PADR PBIOR PBDR PCIOR PCDR PCPR,
+ * then the port D-L registers written by the stock initialisation (offsets from 0xFFFFC800, see
+ * plat_sh7254r.c). Returns the number of bytes copied (0 on the host). Bench identifier FD04. */
+uint16_t plat_entry_snapshot(uint8_t *out, uint16_t max);
+
 /* Copy the project flasher (spec 16) to RAM and run it. Interrupts are masked first; the
  * application does not resume (the flasher ends with a reset). Does not return on the target. */
 void plat_flasher_start(void);

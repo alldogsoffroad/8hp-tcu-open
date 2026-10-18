@@ -196,6 +196,13 @@ bool plat_flash_fwe(void)
     return true;
 }
 
+uint16_t plat_entry_snapshot(uint8_t *out, uint16_t max)
+{
+    (void)out;
+    (void)max;
+    return 0u;
+}
+
 bool plat_flash_enable(bool on)
 {
     (void)on;

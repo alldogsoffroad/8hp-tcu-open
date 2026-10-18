@@ -36,7 +36,7 @@ const sup_status_t *sup_status(void);
  * 0x8E80 | (bit 4 toggling), output enable forced off. Bench test 2026-10-17. */
 void sup_set_flash_mode(bool on);
 /* Bench experiment (routine FE32): send word ^ (toggle on alternate frames) every 5 ms instead of
- * the normal word; the output enable bit 0 is always cleared. pattern_on = false: normal word. */
+ * the normal word; in register 0x8E words the output enable bit 0 is always cleared. */
 void sup_set_pattern(bool pattern_on, uint16_t word, uint16_t toggle);
 
 #endif

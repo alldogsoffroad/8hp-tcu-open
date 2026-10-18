@@ -65,8 +65,8 @@ int main(void)
     sup_set_pattern(true, 0x8401u, 0x0001u);
     sup_tick_5ms();
     sup_tick_5ms();
-    CHECK(stub.sup_tx[13] == 0x8400u && stub.sup_tx[14] == 0x8400u);
-    sup_set_pattern(true, 0x8E81u, 0x0010u);
+    CHECK(stub.sup_tx[13] == 0x8401u && stub.sup_tx[14] == 0x8400u);
+    sup_set_pattern(true, 0x8E81u, 0x0011u);
     sup_tick_5ms();
     sup_tick_5ms();
     CHECK((stub.sup_tx[15] | stub.sup_tx[16]) == 0x8E90u && (stub.sup_tx[15] & stub.sup_tx[16]) == 0x8E80u);

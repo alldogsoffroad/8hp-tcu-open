@@ -474,9 +474,49 @@ uint32_t plat_idle_take(void)
     return v;
 }
 
+/* ---- Entry snapshot (bench: how the boot software leaves FWE and the ports) ------- */
+static const uint8_t s_snap_pfc[] = {
+    0x00, 0x04, 0x08, 0x0C, 0x0E, 0x10, 0x14, 0x16, 0x18, 0x1C, 0x1E, 0x20, 0x24, 0x26, 0x28,
+    0x2A, 0x2C, 0x2E, 0x30, 0x34, 0x36, 0x3C, 0x40, 0x42, 0x44, 0x50, 0x54, 0x58, 0x60, 0x64,
+    0x66, 0x68, 0x6C, 0x70, 0x72, 0x74, 0x80, 0x84, 0x86, 0x88, 0x8C, 0x90, 0x92, 0xA0, 0xA4,
+    0xA8, 0xAC, 0xAE,
+};
+static uint8_t s_snap[1u + 2u * (7u + sizeof s_snap_pfc)];
+
+static void put_be16(uint8_t *p, uint16_t v)
+{
+    p[0] = (uint8_t)(v >> 8);
+    p[1] = (uint8_t)v;
+}
+
+static void entry_snapshot(void)
+{
+    const uint16_t abc[7] = { PAIOR, PADR, PBIOR, PBDR, PCIOR, PCDR, PCPR };
+    uint8_t *p = &s_snap[1];
+
+    s_snap[0] = REG8(0xFFFFA800u);                          /* FPMON */
+    for (uint32_t i = 0u; i < 7u; i++, p += 2) {
+        put_be16(p, abc[i]);
+    }
+    for (uint32_t i = 0u; i < sizeof s_snap_pfc; i++, p += 2) {
+        put_be16(p, PFC16(s_snap_pfc[i]));
+    }
+}
+
+uint16_t plat_entry_snapshot(uint8_t *out, uint16_t max)
+{
+    const uint16_t n = (uint16_t)(sizeof s_snap < max ? sizeof s_snap : max);
+
+    for (uint16_t i = 0u; i < n; i++) {
+        out[i] = s_snap[i];
+    }
+    return n;
+}
+
 /* ---- Start-up ----------------------------------------------------------------- */
 void plat_init(void)
 {
+    entry_snapshot();       /* before anything changes the boot software's settings */
     wdt_init();             /* first, so the boot side's watchdog setting is replaced early */
     port_init();
     tick_init();
