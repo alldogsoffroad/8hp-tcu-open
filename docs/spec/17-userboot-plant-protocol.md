@@ -119,6 +119,15 @@ Run it while powering the TCU on (`--enter` sends `PlantCan` during power-up, th
 send-key sub-functions (even) already return NRC `0x24` (seed-first), so a seed level exists;
 this finds it. The key algorithm then needs static RE of that specific handler.
 
+**Result (bench 2026-10-17):** session `0x60`, seed sub-function **`0x27 0x61`** returns a
+**16-byte seed** (`67 61 <16>`); the key is sent as `0x27 0x62 <16>`. The seed is **random on
+every request** (five requests gave five unrelated 16-byte values), so the key is a keyed
+transform of the seed, not a constant. Sessions `0x61`/`0x6B` are not enterable here (`10` → NRC
+`0x12`); send-key before a seed → NRC `0x24`. Extracting `f(seed)` is the remaining blocker:
+static RE of the `0x27 0x61/0x62` handler in the boot MAT (RAM dispatch table `0xFFF83710`).
+The 16-byte/666.667 kHz challenge does not match the 4-byte `D7656915` exchange seen at 500 kbit/s
+in the older captures (§5), which is a separate/older entry.
+
 ## 6. Open items
 
 1. SecurityAccess: which sub-function requests the seed, and the key algorithm (boot MAT code at
