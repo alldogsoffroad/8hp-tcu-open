@@ -223,6 +223,15 @@ fail; sniffing must be listen-only.
 - **"Full backup data":** an 8 KB block followed by the flash and EEPROM transfers on the bus;
   the saved `_Full.bin` (2 818 064 bytes) is an encrypted container (no plain image inside). It does
   not contain a readable user boot MAT.
+- **Flash write of an identical image** (three captures): wake-up frame and challenge, an 8 KB
+  block from the TCU (0.4 s), ~50–130 s of file preparation on the ACDP-2 with no bus traffic, then
+  the "writing" progress bar: 62 request/response pairs, one every ~230 ms, 496 bytes each way.
+  No image data was transferred. [I] The ACDP-2 asks the boot code for a checksum per flash region
+  (≈ 230 ms each to compute), compares it with the file (the 8 KB block is probably the reference
+  table) and rewrites only regions that differ; with an identical image nothing is written and
+  the tool still reports success. A real write capture needs an image that differs.
+- Captures were made with a listen-only adapter accepting 11- and 29-bit identifiers; no
+  extended frames and no bit-rate change were seen.
 - Flash and maps read on 2026-10-17 are byte-identical to the September read-outs (same unit).
 
 ## 6. Links that bind the application to other data

@@ -14,10 +14,12 @@
  * accepted, all frames are passed), E (project extension: error state,
  * reply "E<TEC 2 hex><REC 2 hex><ESR1 8 hex>", then ESR1 is read-cleared),
  * P0/P1/P2 (project extension, kept until reset: P1 = every later O opens LISTEN-ONLY, P2 =
- * listen-only plus automatic bit rate: after 200 ms with receive errors and no valid frame the
+ * listen-only plus automatic bit rate: after 200 ms with bus errors and no valid frame the
  * channel steps through 500k, 1M, 250k, 125k, 800k and reports each change as a marker frame
  * with extended ID 0x1FFFFF00 and data = new rate in kbit/s, 2 bytes big-endian).
- * Listen-only nodes never acknowledge and never send error flags: use them for sniffing. Received frames: "tIIILDD..[TTTT]\r" / "TIIIIIIIILDD..\r".
+ * Listen-only nodes never acknowledge and never send error flags: use them for sniffing.
+ * K (project extension, channel must be closed): internal loop-back self-test, nothing goes on
+ * the bus; sends one 11-bit and one 29-bit frame to itself, reply "K<std ok><ext ok>" (1/0). Received frames: "tIIILDD..[TTTT]\r" / "TIIIIIIIILDD..\r".
  *
  * Library: FlexCAN_T4 (included with Teensyduino).
  */
@@ -59,6 +61,14 @@ static const uint32_t kAutoRates[5] = { 500000, 1000000, 250000, 125000, 800000 
 
 static uint8_t rx_errors(int i) {
   return (uint8_t)(((i == 0 ? FLEXCAN1_ECR : FLEXCAN2_ECR) >> 8) & 0xFF);
+}
+
+/* Bus errors since the last call. In listen-only mode FlexCAN does not change the error counters,
+ * but it still sets the error flags in ESR1 (bit1/bit0/ack/CRC/form/stuff, bits 15..10), which are
+ * cleared by reading ESR1. */
+static bool bus_errors_seen(int i) {
+  const uint32_t esr = i == 0 ? FLEXCAN1_ESR1 : FLEXCAN2_ESR1;
+  return (esr & 0x0000FC00u) != 0u;
 }
 
 static bool write_frame(int i, const CAN_message_t &m) {
@@ -131,6 +141,34 @@ static void cmd_send(int i, const char *s, bool ext, bool rtr) {
   }
 }
 
+/* K: loop-back self-test of standard and extended reception (no bus traffic) */
+static void cmd_selftest(int i) {
+  CAN_message_t t, r;
+  bool got_std = false, got_ext = false;
+  char buf[8];
+
+  if (ch[i].open) { err(i); return; }
+  if (i == 0) can_a.enableLoopBack(true); else can_b.enableLoopBack(true);
+  for (int k = 0; k < 2; k++) {
+    t = CAN_message_t();
+    t.id = k == 0 ? 0x123 : 0x18DAF110;
+    t.flags.extended = k == 1;
+    t.len = 2;
+    t.buf[0] = 0x5A;
+    t.buf[1] = (uint8_t)k;
+    if (i == 0) can_a.write(t); else can_b.write(t);
+  }
+  for (uint32_t start = millis(); millis() - start < 50u;) {
+    if ((i == 0 ? can_a.read(r) : can_b.read(r)) && r.buf[0] == 0x5A) {
+      if (r.flags.extended && r.id == 0x18DAF110) got_ext = true;
+      if (!r.flags.extended && r.id == 0x123) got_std = true;
+    }
+  }
+  if (i == 0) can_a.enableLoopBack(false); else can_b.enableLoopBack(false);
+  snprintf(buf, sizeof buf, "K%d%d\r", got_std ? 1 : 0, got_ext ? 1 : 0);
+  reply(i, buf);
+}
+
 static void handle_line(int i) {
   const char *s = ch[i].line;
   char buf[16];
@@ -174,6 +212,7 @@ static void handle_line(int i) {
     case 'N': snprintf(buf, sizeof buf, "N%04X\r", i == 0 ? 0xA001 : 0xA002); reply(i, buf); break;
     case 'F': reply(i, "F00\r"); break;
     case 'E': cmd_error_state(i); break;
+    case 'K': cmd_selftest(i); break;
     case 'Z': ch[i].timestamps = s[1] == '1'; ok(i); break;
     case 'M':
     case 'm':
@@ -231,7 +270,7 @@ static void auto_baud(int i) {
   if (!ch[i].open || ch[i].passive != 2 || millis() - ch[i].last_check_ms < 200u) return;
   ch[i].last_check_ms = millis();
   rec = rx_errors(i);
-  if (ch[i].good_since_check == 0 && rec != ch[i].last_rec) {
+  if (ch[i].good_since_check == 0 && (bus_errors_seen(i) || rec != ch[i].last_rec)) {
     ch[i].auto_idx = (uint8_t)((ch[i].auto_idx + 1) % 5);
     ch[i].bitrate = kAutoRates[ch[i].auto_idx];
     set_rate(i);
@@ -242,10 +281,25 @@ static void auto_baud(int i) {
     m.buf[0] = (uint8_t)((ch[i].bitrate / 1000) >> 8);
     m.buf[1] = (uint8_t)(ch[i].bitrate / 1000);
     forward(i, m);
+    (void)bus_errors_seen(i);           /* discard flags raised before the switch */
     rec = rx_errors(i);
   }
   ch[i].last_rec = rec;
   ch[i].good_since_check = 0;
+}
+
+/* Accept standard AND extended frames in the RX FIFO. With CTRL2.EACEN = 0 (reset value) the
+ * FlexCAN filters always compare the IDE bit, so the "accept all" filter passed only 11-bit
+ * frames and every 29-bit frame was dropped silently. Setting EACEN lets the zero masks ignore
+ * IDE/RTR as well. CTRL2 may only be written in freeze mode. */
+static void accept_all_ids(uint32_t mcr_addr) {
+  volatile uint32_t &mcr = *(volatile uint32_t *)mcr_addr;
+  volatile uint32_t &ctrl2 = *(volatile uint32_t *)(mcr_addr + 0x34);
+  mcr |= 0x40000000u | 0x10000000u;                      /* FRZ + HALT */
+  for (uint32_t g = 0; g < 100000u && !(mcr & 0x01000000u); g++) { }   /* FRZ_ACK */
+  ctrl2 |= (1u << 16);                                   /* EACEN */
+  mcr &= ~0x10000000u;                                   /* leave HALT */
+  for (uint32_t g = 0; g < 100000u && (mcr & 0x01000000u); g++) { }
 }
 
 void setup() {
@@ -265,10 +319,14 @@ void setup() {
   can_a.setBaudRate(500000);
   can_a.setMaxMB(16);
   can_a.enableFIFO();
+  can_a.setFIFOFilter(ACCEPT_ALL);
+  accept_all_ids(IMXRT_FLEXCAN1_ADDRESS);
   can_b.begin();
   can_b.setBaudRate(500000);
   can_b.setMaxMB(16);
   can_b.enableFIFO();
+  can_b.setFIFOFilter(ACCEPT_ALL);
+  accept_all_ids(IMXRT_FLEXCAN2_ADDRESS);
   pinMode(LED_BUILTIN, OUTPUT);
 }
 
