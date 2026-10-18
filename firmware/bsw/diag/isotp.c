@@ -5,7 +5,9 @@
 #define N_CR_MS   1000u     /* wait for next consecutive frame */
 #define N_BS_MS   1000u     /* wait for flow control           */
 #define FC_BS     0u        /* our flow control: no block limit */
-#define FC_STMIN  0u        /* ... and no separation time       */
+#define FC_STMIN  1u        /* ... and 1 ms between consecutive frames: the receive path
+                             * polls a single mailbox per ID every 1 ms and loses frames
+                             * sent back to back (bench 2026-10-18, as for the loader) */
 
 enum { TX_IDLE = 0, TX_WAIT_FC, TX_CF };
 
