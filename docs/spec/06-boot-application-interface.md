@@ -247,6 +247,32 @@ fail; sniffing must be listen-only.
   application passes it — or whether the ACDP-2 takes care of it — is **open** and must be
   answered before relying on a self-built image.
 
+### 6.0a Block 0 = Bosch software-authentication module (2026-10-17) [O]
+
+The lowest block `0x0000–0x3FFF` has a block header at `0x200` (ident `bhie0101`, service table
+`0x25C…0x280`: `0x2540`, `0x1F18`, `0x2060`, `0x1F30`, `0x2144`, `0x20E4`, `0x23F0`, `0x243E`,
+`0x24C8`, `0x2570`), referenced by the bootloader (`0x1E294`), the boot manager (`0x21DDC…`), the
+protection block (`0x3EF14`) and the boot data block (`0x6208`). It contains the SHA-1 routine
+(`0x345A`), a RAM-download address check (`0x1A80`: `0xFFF80100–0xFFF81FFF`,
+`0xFFF88400–0xFFF8FFFF`), a CAN parameter block (`0x1B00`: IDs `0x7E1`/`0x7E1`/`0x7E9`, mask `0x7FF`,
+timeouts 25 / 75 / 150 ms and 1 s) and **no CAN register access**. Its name, stored bit-inverted at
+`0x288`, is **`Bosch.common.Auth_TSW.TCU2.V001`**, followed by key material.
+
+Matching bit-inverted identifiers, each followed by key data (not reproduced here), at `0x41D4`
+(boot data) and `0x2112C` (boot manager): `GS_003_0001.Auth_TSW`, `GS_003_0001.Auth_Calibration`,
+`GS_003_0002.Auth_Calibration`; at `0x5498` / `0x21A31`: `TC_003_0001.TSW`, `TC_003_0001.Project`
+(two versions), `GS_003_0001.Auth_Prog`.
+
+[I] This is Bosch's secured flashing (the `TPROT` question of §6): the application ("TSW") and the
+calibration are authenticated against keys in the boot area, and programming needs an
+authorisation (`Auth_Prog`). The ACDP-2's encrypted power-up session (§5b) writes modified images,
+so it bypasses or satisfies this path. **Whether anything checks the application at every
+start-up** (rather than only during Bosch reprogramming) is the deciding question for the project
+firmware: bench item 12 answers it.
+
+The power-up handler that answers `7E1#D7 65 69 15` is **not** in the dumped flash (the constant
+does not occur in any byte order; block 0 does not drive CAN). [I] It is in the user boot MAT.
+
 ## 6.1 Programming-tool support (as of 2026-10-14)
 
 The ACDP-2 produces three files per read [O]:
