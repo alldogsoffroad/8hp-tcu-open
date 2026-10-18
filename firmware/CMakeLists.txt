@@ -23,6 +23,10 @@ set(CORE_SOURCES
     io/sensors/sensors.c
     io/actuators/sol_drv.c
     app/bench_out.c
+    app/range.c
+    app/park_ctl.c
+    app/park.c
+    safety/park_mon.c
     app/bench_dump.c
     app/flash_entry.c
     io/vehicle/profile_fca.c
@@ -160,6 +164,11 @@ else()
         io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
         tests/unit/stub_plat.c)
     add_test(NAME bench COMMAND test_bench)
+    add_executable(test_park tests/unit/test_park.c app/range.c app/park_ctl.c app/park.c
+        safety/park_mon.c io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c
+        bsw/com/crc8.c tests/unit/stub_plat.c)
+    target_compile_definitions(test_park PRIVATE PARK_TEST_HOOKS)
+    add_test(NAME park COMMAND test_park)
     add_executable(test_dump tests/unit/test_dump.c app/bench_dump.c tests/unit/stub_plat.c)
     add_test(NAME dump COMMAND test_dump)
     # project flasher on the simulated flash controller (spec 16 section 7)

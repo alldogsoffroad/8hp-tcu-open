@@ -878,15 +878,20 @@ def cmd_app_selftest(b, args):
     print("the loader stays in loader mode; `uds 11 01` or a power cycle leaves it")
 
 
+def meas_table_addr(elf, min_len):
+    """RAM address of the project measurement table _s_m (app/meas_table.c) from the ELF."""
+    import subprocess
+    out = subprocess.run(["sh-elf-nm", "-S", elf], capture_output=True, text=True, check=True).stdout
+    sym = [l.split() for l in out.splitlines() if l.split()[-1:] == ["_s_m"]]
+    if not sym or int(sym[0][1], 16) < min_len:
+        sys.exit(f"measurement table _s_m (at least {min_len} bytes) not found in {elf} - rebuild?")
+    return int(sym[0][0], 16)
+
+
 def cmd_sensors(b, args):
     """Live sensor values of the PROJECT firmware (bench items 22/23): reads the measurement table
     (app/meas_table.c, 48 bytes) from RAM with the measurement protocol every --period seconds."""
-    import subprocess
-    out = subprocess.run(["sh-elf-nm", "-S", args.elf], capture_output=True, text=True, check=True).stdout
-    sym = [l.split() for l in out.splitlines() if l.split()[-1:] == ["_s_m"]]
-    if not sym or int(sym[0][1], 16) != 48:
-        sys.exit(f"measurement table _s_m (48 bytes) not found in {args.elf} - rebuild?")
-    addr = int(sym[0][0], 16)
+    addr = meas_table_addr(args.elf, 48)
     u16 = lambda d, o: int.from_bytes(d[o:o + 2], "big")
     s16 = lambda d, o: int.from_bytes(d[o:o + 2], "big", signed=True)
     park_names = {0: "unknown", 1: "in P", 2: "not in P"}
@@ -901,6 +906,38 @@ def cmd_sensors(b, args):
             print(f"  {u16(d, 24):5d} s  {u16(d, 40) / 1000:6.2f} V  {s16(d, 36) / 10:7.1f} C  {an8:6d}  {an1:6d}  "
                   f"{ratio:6.3f}  0x{d[38]:02X}    {park_names.get(d[42], d[42]):9s} (0x{d[43]:02X})  "
                   f"{u16(d, 30)}/{u16(d, 32)}/{u16(d, 34)}")
+            n += 1
+            time.sleep(args.period)
+    except KeyboardInterrupt:
+        pass
+
+
+PARK_STATES = ["init", "in P", "releasing", "holding", "engaging", "SAFE"]
+PARK_REASONS = ["-", "lever P", "moving", "park request", "lever R/N/D", "auto P"]
+
+
+def cmd_park(b, args):
+    """Range / park control of the PROJECT firmware (M4a, docs/firmware/01-m4-range-park.md):
+    lever, park target and reason, sequencing state, the requested (not driven) outputs and the
+    fault bits, from the measurement table every --period seconds."""
+    addr = meas_table_addr(args.elf, 54)
+    u16 = lambda d, o: int.from_bytes(d[o:o + 2], "big")
+    levers = {0: "-", 5: "D", 6: "N", 7: "R", 8: "P"}
+    srcs = {0: "CAN-C", 1: "shifter bus", 2: "none"}
+    park_names = {0: "unknown", 1: "in P", 2: "not in P"}
+    print(f"measurement table at 0x{addr:08X} ({args.elf}); outputs are requests only (M4a); Ctrl-C to stop")
+    print("  uptime  engine  lever (source)      contacts   target   reason        state      release hold  faults ctl/mon")
+    n = 0
+    try:
+        while args.count == 0 or n < args.count:
+            d = read_mem(b, args.bus, addr, 54)
+            tgt = {8: "engage", 6: "release"}.get(d[48], f"?{d[48]}")
+            rsn = PARK_REASONS[d[49]] if d[49] < len(PARK_REASONS) else f"?{d[49]}"
+            st = PARK_STATES[d[50]] if d[50] < len(PARK_STATES) else f"?{d[50]}"
+            lev = f"{levers.get(d[19], d[19])} ({srcs.get(d[20], d[20])})"
+            print(f"  {u16(d, 24):5d} s  {u16(d, 0):5d}   {lev:18s}  {park_names.get(d[42], d[42]):9s}  {tgt:7s}  "
+                  f"{rsn:12s}  {st:9s}  {'on' if d[51] & 1 else 'off':7s} {'on' if d[51] & 2 else 'off':4s}  "
+                  f"0x{d[52]:02X}/0x{d[53]:02X}")
             n += 1
             time.sleep(args.period)
     except KeyboardInterrupt:
@@ -938,6 +975,9 @@ def main():
     p = sub.add_parser("sensors"); p.add_argument("--bus", type=int, default=2)
     p.add_argument("--elf", default="build/sh2a/tcu_app_ram.elf"); p.add_argument("--period", type=float, default=1.0)
     p.add_argument("--count", type=int, default=0)
+    p = sub.add_parser("park"); p.add_argument("--bus", type=int, default=2)
+    p.add_argument("--elf", default="build/sh2a/tcu_app_ram.elf"); p.add_argument("--period", type=float, default=1.0)
+    p.add_argument("--count", type=int, default=0)
     p = sub.add_parser("app-flash"); p.add_argument("image", nargs="?", default="build/sh2a/tcu_app_df.bin")
     p.add_argument("--yes", action="store_true"); p.add_argument("--send-s", type=float, default=60.0)
     p.add_argument("--slow", action="store_true", help="power-cut test: stretch the write to about 35 s")
@@ -969,7 +1009,7 @@ def main():
          "flash-selftest": cmd_flash_selftest, "flash-invalidate": cmd_flash_invalidate,
          "plant-entry": cmd_plant_entry, "plant-uds": cmd_plant_uds,
          "plant-seedscan": cmd_plant_seedscan, "app-flash": cmd_app_flash,
-         "app-selftest": cmd_app_selftest, "sensors": cmd_sensors}[args.cmd](b, args)
+         "app-selftest": cmd_app_selftest, "sensors": cmd_sensors, "park": cmd_park}[args.cmd](b, args)
     finally:
         b.shutdown()
 

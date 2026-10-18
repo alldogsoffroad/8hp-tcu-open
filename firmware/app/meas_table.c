@@ -30,6 +30,12 @@
  *  26     1    park contact bands (contact 0 in bits 3..0, contact 1 in bits 7..4)
  *  27     2    AN8 (fluid temperature node), mV
  *  28     2    AN1 (fluid temperature sense return), mV
+ *  29     1    park target (8 engage, 6 release; app/range.h)
+ *  30     1    park target reason (range_reason_t)
+ *  31     1    park sequencing state (park_state_t)
+ *  32     1    park output requests: bit0 release (ch 7), bit1 hold (ch 11); M4a drives neither
+ *  33     1    park sequencing faults (PC_F_*)
+ *  34     1    park monitor faults (MON_F_*)
  */
 #include "app/meas_table.h"
 #include "bsw/meas/meas.h"
@@ -37,6 +43,7 @@
 #include "bsw/diag/uds.h"
 #include "io/vehicle/vehicle.h"
 #include "io/sensors/sensors.h"
+#include "app/park.h"
 
 static struct {
     uint16_t engine_speed;
@@ -54,6 +61,7 @@ static struct {
     uint16_t battery;
     uint8_t  park, park_bands;
     uint16_t an8_mv, an1_mv;
+    uint8_t  park_target, park_reason, park_state, park_req, park_ctl_f, park_mon_f;
 } s_m;
 
 #define IDX(field) { &s_m.field, (uint8_t)sizeof s_m.field }
@@ -64,6 +72,8 @@ static const meas_index_t s_index[] = {
     IDX(park_request), IDX(lever), IDX(lever_src), IDX(quality), IDX(uptime_s), IDX(missed),
     IDX(session), IDX(speed0), IDX(speed1), IDX(speed2), IDX(fluid_temp), IDX(tft_faults),
     IDX(battery), IDX(park), IDX(park_bands), IDX(an8_mv), IDX(an1_mv),
+    IDX(park_target), IDX(park_reason), IDX(park_state), IDX(park_req), IDX(park_ctl_f),
+    IDX(park_mon_f),
 };
 
 static const meas_cfg_t s_cfg = {
@@ -113,5 +123,14 @@ void meas_table_update(void)
         if (!adc_mv(1u, &s_m.an1_mv)) {
             s_m.an1_mv = 0xFFFFu;
         }
+    }
+    {
+        const park_status_t *p = park_status();
+        s_m.park_target = (uint8_t)p->target;
+        s_m.park_reason = (uint8_t)p->reason;
+        s_m.park_state = (uint8_t)p->state;
+        s_m.park_req = (uint8_t)((p->req.release ? 1u : 0u) | (p->req.hold ? 2u : 0u));
+        s_m.park_ctl_f = p->ctl_faults;
+        s_m.park_mon_f = p->mon_faults;
     }
 }

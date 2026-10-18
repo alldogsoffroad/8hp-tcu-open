@@ -1,6 +1,7 @@
 /* M3 application (bench):  boots, serves the watchdog, receives and decodes the vehicle bus, reads the
  * transmission sensors (speeds, fluid temperature, supply, park contacts) and sends bench status
  * frames on CAN bus 1. Solenoid outputs only through the bench test routine (app/bench_out.h).
+ * Range / park control (M4a, app/park.h) runs and publishes its decisions; it drives nothing.
  *
  * Heartbeat (BENCH USE ONLY, identifier not cleared for any vehicle bus):
  *   ID 0x7F0, DLC 8, every 100 ms
@@ -54,6 +55,7 @@
 #include "io/sensors/sensors.h"
 #include "io/actuators/sol_drv.h"
 #include "app/bench_out.h"
+#include "app/park.h"
 #include "app/bench_dump.h"
 #include "app/flash_entry.h"
 #include "io/vehicle/fca_tx.h"
@@ -91,6 +93,7 @@ static void task_10ms(void)
 {
     vehicle_update_10ms();
     sensors_update_10ms();
+    park_tick_10ms();       /* M4a: decisions only, no outputs */
     bench_tick_10ms();      /* safety interlocks first, then the driver job */
     sol_tick_10ms();
     meas_table_update();
@@ -253,6 +256,7 @@ int main(void)
     sol_init();             /* identification + configuration; all channels off */
     bench_init();
     vehicle_init();
+    park_init();
     sensors_init(&s_sensors_cfg);
     fca_tx_init();
     uds_init(&s_uds_app);
