@@ -64,6 +64,10 @@ addresses of §1. `0x10 0x02` answers `0x7F 0x10 0x78`, writes the record of spe
 resets; the Bosch boot software then sends the positive response. Allowed only while the
 engine is not running.
 
+Bench additions (extended session): `0x31` routines FE10 (solenoid test, M3), FE20 (user boot MAT
+copy), FE30 (start the project flasher, spec 16); `0x22` identifiers FD00–FD02 (status) and FD03
+(FWE pin level, spec 16).
+
 ## 4a. Bench observations (stock firmware, 2026-10-17)
 
 - Physical requests on `0x7E1` are answered on `0x7E9` on **both** buses; single frames are

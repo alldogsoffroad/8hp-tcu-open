@@ -90,6 +90,14 @@ void plat_reset(void);
  * boot software takes over the pending diagnostic request. Does not return on the target. */
 void plat_boot_handover(const uint8_t *rec, uint8_t len);
 
+/* FWE pin level as seen by the flash controller (FPMON bit 7, manual 25.3.1): programming and
+ * erasure of the flash are possible only while it is high. */
+bool plat_flash_fwe(void);
+
+/* Copy the project flasher (spec 16) to RAM and run it. Interrupts are masked first; the
+ * application does not resume (the flasher ends with a reset). Does not return on the target. */
+void plat_flasher_start(void);
+
 /* Busy-loop counter used to estimate the CPU clock during bring-up (spec 05 section 1.2). */
 void plat_idle_count(void);
 uint32_t plat_idle_take(void);   /* returns and clears the count */

@@ -120,3 +120,15 @@ reaches the TCU only over CAN, so the hand-over must work):
 3. Hand-over test: ACDP-2 writes the stock image back (bench item 21). If this works, the way
    back is proven.
 4. M3: `solenoid` with a dummy load (procedure in `firmware/README.md`).
+
+**C. Project reflash without the ACDP-2 (spec 16)**, after B.1 with an image that contains the
+flasher (built 2026-10-17 or later). Bus 1 only (TCU pins 5/6). Never with the engine running.
+1. `uds 22 FD 03` → `62 FD 03 01` (FWE high). `01` is required; `00` = stop.
+2. `flash IMAGE --dry-run`: starts the flasher, compares every block, prints the plan, resets.
+3. `flash-selftest IMAGE`: erase / program / verify / erase one block that neither the image nor
+   the TCU uses (default 0x100000). The markers are not touched.
+4. Safety net, once: `flash-invalidate`, power-cycle (TCU must stay silent), restore with the
+   ACDP-2 power-up write, check `0x7F0` returns.
+5. `flash IMAGE`: real write. Do not remove power until it reports done. If it fails, the
+   flasher keeps running: rerun the same command. The flash is rated for 1000 erase cycles per
+   block; only differing blocks are rewritten.

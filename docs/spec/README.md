@@ -52,6 +52,7 @@ the stock firmware. Markers in each document: **[M]** manual, **[O]** observed i
 | [13](13-fault-reporting.md) | Fault memory: event table, reporting API, fault-group identification, decoded monitors (P1B14) | draft |
 | [14](14-park-range.md) | Park/range module: input struct, park-target arbiter, lever request object, redundant safety-layer check | draft; range-code names and several inputs inferred |
 | [15](15-diagnostic-services.md) | UDS addressing, service table, sessions; hand-over to the boot software | draft; transport parameters and tool sequence open |
+| [16](16-can-reflash.md) | Project CAN reflash: RAM flasher, FCU driver, protocol, power-loss-safe write order | implemented, host-tested; untested on hardware |
 
 Related project data (project root): CAN message list (`1034420267_can_messages.csv`), fault-code
 list with status (`1034420267_dtc_list.csv`), EEPROM block map (`1034420267_eeprom_records.csv`).
@@ -87,6 +88,8 @@ Items that static analysis could not resolve, to be answered on the bench:
 | 21 | Project hand-over works | 06, 15 | on the spare running the project application: the ACDP-2 must reach the bootloader and be able to write the stock image back |
 | 22 | Fluid temperature conversion: AN8/AN1 against a reference thermometer at 3+ temperatures (room, hot water, oven/oil bath) | 04 | read AN8/AN1 mV via the measurement protocol (project firmware indices 27/28); replace the provisional table |
 | 23 | Supply and switched-supply channels (AN21, AN19, AN20) | 04 | vary B+ and ignition on the bench; watch `0x7F2` byte 5 / measurement index 24 |
+| 24 | FWE pin high (flash programming possible from the application) | 16 | project firmware: `uds 22 FD 03` → `62 FD 03 01` |
+| 25 | Project flasher: read path, scratch-block write, safety net, first reflash | 16 | spec 16 §8 steps 2–5 (`flash --dry-run`, `flash-selftest`, `flash-invalidate` + ACDP-2 restore, `flash`) |
 
 **Ram capture plan (item 15).** 2014–2017 Ram 1500 (DS) has no security gateway: OBD pins 6/14
 reach CAN-C (500 kbit/s) directly, so passive logging works; from model year 2018 a gateway is

@@ -27,6 +27,8 @@ typedef struct {
     uint16_t drv_last_tx[45];
     unsigned drv_jobs;
     bool userboot_ok;
+    bool fwe;                   /* FPMON.FWE */
+    unsigned flasher_starts;
 } stub_plat_t;
 
 extern stub_plat_t stub;

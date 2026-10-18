@@ -24,6 +24,7 @@ set(CORE_SOURCES
     io/actuators/sol_drv.c
     app/bench_out.c
     app/bench_dump.c
+    app/flash_entry.c
     io/vehicle/profile_fca.c
     bsw/meas/meas.c
     app/meas_table.c
@@ -36,8 +37,34 @@ set(CORE_SOURCES
 if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     # ---- Target image for the SH7254R --------------------------------------
     set(LDSCRIPT ${CMAKE_SOURCE_DIR}/platform/sh7254r/linker.ld)
+
+    # Project flasher (spec 16): its own program, linked for RAM 0xFFF90000 without libc or
+    # libgcc, so it cannot reach into the application or the flash it rewrites.
+    set(FL_LDSCRIPT ${CMAKE_SOURCE_DIR}/flasher/fl_link.ld)
+    add_executable(tcu_flasher.elf
+        flasher/fl_start.S
+        flasher/fl_entry.c
+        flasher/fl_sh7254r.c
+        flasher/fl_core.c
+        flasher/fl_fcu.c
+    )
+    set_source_files_properties(flasher/fl_entry.c PROPERTIES
+        COMPILE_OPTIONS -fno-tree-loop-distribute-patterns)
+    target_link_options(tcu_flasher.elf PRIVATE -T ${FL_LDSCRIPT} -Wl,-Map=tcu_flasher.map)
+    set_target_properties(tcu_flasher.elf PROPERTIES LINK_DEPENDS ${FL_LDSCRIPT})
+    add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/tcu_flasher.bin
+        COMMAND ${CMAKE_OBJCOPY} -O binary --remove-section=.bss tcu_flasher.elf tcu_flasher.bin
+        COMMAND ${CMAKE_SIZE} tcu_flasher.elf
+        DEPENDS tcu_flasher.elf
+        COMMENT "Flasher RAM image")
+    add_custom_target(tcu_flasher_bin DEPENDS ${CMAKE_BINARY_DIR}/tcu_flasher.bin)
+    set_source_files_properties(platform/sh7254r/fl_blob.S PROPERTIES
+        OBJECT_DEPENDS ${CMAKE_BINARY_DIR}/tcu_flasher.bin
+        COMPILE_OPTIONS "-Wa,-I${CMAKE_BINARY_DIR}")
+
     add_executable(tcu_app.elf
         platform/sh7254r/start.S
+        platform/sh7254r/fl_blob.S
         platform/sh7254r/header.c
         platform/sh7254r/plat_sh7254r.c
         platform/sh7254r/libc_min.c
@@ -49,6 +76,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     target_include_directories(tcu_app.elf PRIVATE ${CMAKE_SOURCE_DIR}/platform/sh7254r/include)
     target_link_options(tcu_app.elf PRIVATE -T ${LDSCRIPT} -Wl,-Map=tcu_app.map)
     target_link_libraries(tcu_app.elf PRIVATE gcc)
+    add_dependencies(tcu_app.elf tcu_flasher_bin)
     set_target_properties(tcu_app.elf PROPERTIES LINK_DEPENDS ${LDSCRIPT})
     add_custom_command(TARGET tcu_app.elf POST_BUILD
         COMMAND ${CMAKE_OBJCOPY} -O ihex --remove-section=.bss tcu_app.elf tcu_app.hex
@@ -90,6 +118,17 @@ else()
     add_test(NAME bench COMMAND test_bench)
     add_executable(test_dump tests/unit/test_dump.c app/bench_dump.c tests/unit/stub_plat.c)
     add_test(NAME dump COMMAND test_dump)
+    # project flasher on the simulated flash controller (spec 16 section 7)
+    set(FL_HOST_SOURCES flasher/fl_core.c flasher/fl_fcu.c tests/unit/fl_sim.c)
+    add_executable(test_flasher tests/unit/test_flasher.c ${FL_HOST_SOURCES} app/flash_entry.c
+        tests/unit/stub_plat.c)
+    target_compile_definitions(test_flasher PRIVATE FL_HOST)
+    add_test(NAME flasher COMMAND test_flasher)
+    add_executable(tcu_flasher_sim tests/unit/fl_sim_main.c ${FL_HOST_SOURCES})
+    target_compile_definitions(tcu_flasher_sim PRIVATE FL_HOST)
+    add_test(NAME flash_tool
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/../tools/bench/test_tcu_flash.py
+            $<TARGET_FILE:tcu_flasher_sim>)
     add_test(NAME tft_table_current
         COMMAND python3 ${CMAKE_SOURCE_DIR}/../tools/gen_tft_table.py ${CMAKE_BINARY_DIR}/tft_table.h)
     add_test(NAME tft_table_diff

@@ -53,3 +53,18 @@ L_data_end:   .long   __data_end
 L_bss_start:  .long   __bss_start
 L_bss_end:    .long   __bss_end
 L_main:       .long   _main
+
+! plat_jump_ram(src r4, dst r5, len r6, entry r7): copy len bytes (multiple of 4, > 0) and jump to
+! entry. Uses registers only: the destination may overlap the application's stack (spec 16).
+        .section .text, "ax"
+        .global _plat_jump_ram
+        .align  2
+_plat_jump_ram:
+1:      mov.l   @r4+, r0
+        mov.l   r0, @r5
+        add     #-4, r6
+        cmp/pl  r6
+        bt/s    1b
+        add     #4, r5
+        jmp     @r7
+        nop

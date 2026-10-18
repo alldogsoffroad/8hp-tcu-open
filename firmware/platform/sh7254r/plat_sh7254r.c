@@ -430,6 +430,27 @@ void plat_boot_handover(const uint8_t *rec, uint8_t len)
     plat_reset();
 }
 
+/* ---- Project flasher (spec 16) -------------------------------------------------- */
+#define FL_LOAD_ADDR 0xFFF90000u        /* must match firmware/flasher/fl_link.ld */
+
+extern const uint32_t fl_blob[];
+extern const uint32_t fl_blob_end[];
+void plat_jump_ram(const uint32_t *src, uint32_t dst, uint32_t len, uint32_t entry);
+
+bool plat_flash_fwe(void)
+{
+    return (REG8(0xFFFFA800u) & 0x80u) != 0u;     /* FPMON.FWE */
+}
+
+void plat_flasher_start(void)
+{
+    const uint32_t len = (uint32_t)((uintptr_t)fl_blob_end - (uintptr_t)fl_blob);
+
+    __asm__ volatile ("ldc %0, sr" : : "r"(0xF0u));
+    plat_wdt_service();
+    plat_jump_ram(fl_blob, FL_LOAD_ADDR, len, FL_LOAD_ADDR);
+}
+
 /* ---- Idle counter ------------------------------------------------------------ */
 static volatile uint32_t s_idle;
 

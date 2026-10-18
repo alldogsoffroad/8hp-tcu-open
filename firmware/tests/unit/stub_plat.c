@@ -27,6 +27,16 @@ void plat_reset(void)
     stub.resets++;
 }
 
+bool plat_flash_fwe(void)
+{
+    return stub.fwe;
+}
+
+void plat_flasher_start(void)
+{
+    stub.flasher_starts++;
+}
+
 void plat_boot_handover(const uint8_t *rec, uint8_t len)
 {
     memcpy(stub.rec, rec, len);

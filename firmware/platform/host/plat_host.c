@@ -191,6 +191,17 @@ void plat_reset(void)
     exit(0);
 }
 
+bool plat_flash_fwe(void)
+{
+    return true;
+}
+
+void plat_flasher_start(void)
+{
+    printf("[%6u ms] FLASHER START (the RAM flasher is simulated by tcu_flasher_sim)\n", s_ticks);
+    exit(0);
+}
+
 void plat_boot_handover(const uint8_t *rec, uint8_t len)
 {
     printf("[%6u ms] BOOT HANDOVER record:", s_ticks);

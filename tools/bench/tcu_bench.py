@@ -25,6 +25,13 @@ Commands:
   dump-userboot [-o FILE] PROJECT firmware: copy the 32 KB user boot MAT to RAM (routine FE20),
                           download it with the measurement protocol, check the CRC-32
   meas-read ... --compare IMAGE   compare the read bytes with a full flash image (_IFla.bin)
+  flash IMAGE [--dry-run] [--yes]   PROJECT firmware: rewrite the application / calibration blocks
+                          that differ from IMAGE (_IFla.bin) over bus 1 with the RAM flasher
+                          (spec 16). Power-loss safe order; --dry-run only compares.
+  flash-selftest IMAGE [--block ADDR]   erase / program / verify / erase one block that IMAGE and
+                          the TCU leave blank (default 0x100000); spec 16 section 8 step 3
+  flash-invalidate        erase the application marker block ON PURPOSE (safety-net check, spec 16
+                          section 8 step 4); afterwards only the ACDP-2 can restore the TCU
   canstat [--send]        Teensy adapter error counters per bus (slcan only); --send first
                           transmits a tester-present frame on each bus to provoke ACK errors
 """
@@ -37,13 +44,15 @@ import time
 try:
     import can
 except ImportError:
-    sys.exit("python-can is required: pip install python-can")
+    can = None                  # checked when a bus is opened (tests import this module without it)
 
 
 # ----------------------------------------------------------------------------- buses
 
 class Buses:
     def __init__(self, args):
+        if can is None:
+            sys.exit("python-can is required: pip install python-can")
         self.names = {1: args.bus1, 2: args.bus2}
         self.bus = {}
         for n, chan in self.names.items():
@@ -75,22 +84,58 @@ class Buses:
 # ----------------------------------------------------------------------------- ISO-TP / UDS
 
 class Uds:
-    """Minimal ISO-TP client: single-frame requests, single- or multi-frame responses."""
+    """Minimal ISO-TP client: single- or multi-frame requests and responses."""
 
     def __init__(self, buses, n=1, req=0x7E1, rsp=0x7E9):
         self.b, self.n, self.req, self.rsp = buses, n, req, rsp
         self.lock = threading.Lock()
         self._tp = None
 
+    def _wait_fc(self, bus, timeout=1.0):
+        end = time.time() + timeout
+        while time.time() < end:
+            m = bus.recv(0.05)
+            if m is not None and m.arbitration_id == self.rsp and m.data[0] >> 4 == 3:
+                if m.data[0] & 0x0F == 0:
+                    return m.data[1], m.data[2]
+                if m.data[0] & 0x0F == 2:
+                    return None
+                end = time.time() + timeout          # wait
+        return None
+
+    def _send(self, bus, payload):
+        if len(payload) <= 7:
+            self.b.send(self.n, self.req, bytes([len(payload)]) + payload + b"\xAA" * (7 - len(payload)))
+            return True
+        self.b.send(self.n, self.req, bytes([0x10 | len(payload) >> 8, len(payload) & 0xFF]) + payload[:6])
+        fc = self._wait_fc(bus)
+        if fc is None:
+            return False
+        bs, stmin = fc
+        off, sn, left = 6, 1, bs
+        while off < len(payload):
+            chunk = payload[off:off + 7]
+            self.b.send(self.n, self.req, bytes([0x20 | sn & 0x0F]) + chunk + b"\xAA" * (7 - len(chunk)))
+            off, sn = off + 7, sn + 1
+            if stmin:
+                time.sleep(stmin / 1000.0 if stmin <= 0x7F else 0.001)
+            if bs and off < len(payload):
+                left -= 1
+                if left == 0:
+                    fc = self._wait_fc(bus)
+                    if fc is None:
+                        return False
+                    left = fc[0]
+        return True
+
     def request(self, payload, timeout=1.0):
         payload = bytes(payload)
-        if len(payload) > 7:
-            raise ValueError("only single-frame requests are supported")
         with self.lock:
             bus = self.b.get(self.n)
             while bus.recv(0) is not None:      # drop stale frames
                 pass
-            self.b.send(self.n, self.req, bytes([len(payload)]) + payload + b"\xAA" * (7 - len(payload)))
+            if not self._send(bus, payload):
+                return None
             end = time.time() + timeout
             data, need = b"", None
             while time.time() < end:
@@ -437,6 +482,123 @@ def cmd_canstat(b, args):
           "not 'synchronised' = the controller sees no bus activity at all.")
 
 
+# ----------------------------------------------------------------------------- project reflash (spec 16)
+
+def enter_flasher(b):
+    """Return a tcu_flash.Flasher talking to the RAM flasher on bus 1 (starting it if needed)."""
+    import tcu_flash
+    u = Uds(b, 1)
+    fl = tcu_flash.Flasher(u)
+    info = fl.ident()
+    if info is None:
+        r = u.extended()
+        if not r or r[0] != 0x50:
+            sys.exit(f"extended session failed: {hexs(r)}")
+        r = u.request(b"\x31\x01\xFE\x30", timeout=1.0)
+        if not r or r[0] != 0x71:
+            sys.exit(f"routine FE30 refused: {hexs(r)} (project firmware only; engine off, no output "
+                     "test running; 0x22 also means the FWE pin is low)")
+        time.sleep(0.3)
+        info = fl.ident()
+        if info is None:
+            sys.exit("the flasher does not answer after FE30")
+    print(f"flasher v{info['version']}: FWE {'high' if info['fwe'] else 'LOW'}, FSTATR0 {info['fstatr0']:02X}, "
+          f"FSTATR1 {info['fstatr1']:02X}, FASTAT {info['fastat']:02X}, last error {info['last_error']}")
+    if not info["fwe"]:
+        fl.reset()
+        sys.exit("FWE is low: the flash cannot be programmed (spec 16 section 8 step 1)")
+    return fl
+
+
+def load_image(path):
+    import tcu_flash
+    img = open(path, "rb").read()
+    bad = tcu_flash.check_image(img)
+    if bad:
+        sys.exit("image refused:\n  " + "\n  ".join(bad))
+    return img[:tcu_flash.FLASH_LEN]
+
+
+def cmd_flash(b, args):
+    import tcu_flash
+    img = load_image(args.image)
+    fl = enter_flasher(b)
+    # The TCU is reset only when nothing was written or the write completed. After a failure the
+    # flasher keeps running so the same command can retry; a reset there could leave the
+    # application invalid (recoverable only with the ACDP-2).
+    try:
+        if fl.crc(0, tcu_flash.WIN_LO) != tcu_flash.crc(img[:tcu_flash.WIN_LO]):
+            print("note: the boot area 0x000000-0x03FFFF differs from the image (it is never written)")
+        todo = tcu_flash.plan(fl, img)
+        if not todo:
+            print("the TCU already holds this image: nothing to write")
+            fl.reset()
+            return
+        for name, blks in todo.items():
+            print(f"{name}: {len(blks)} block(s) to rewrite: " + " ".join(f"{x:#08x}" for x in blks))
+        if args.dry_run or (not args.yes and input(
+                "write now? Do not remove power until it says done. [yes/no] ").strip() != "yes"):
+            print("nothing written")
+            fl.reset()
+            return
+        t0 = time.time()
+        pages = tcu_flash.write(fl, img, todo, progress=print)
+    except tcu_flash.FlashError as e:
+        sys.exit(f"FLASH FAILED: {e}\nThe flasher is still running: rerun the same command to retry. "
+                 "If the TCU was reset or lost power, recover with the ACDP-2.")
+    print(f"done: {pages} pages in {time.time() - t0:.0f} s; resetting into the new image")
+    fl.reset()
+
+
+def cmd_flash_selftest(b, args):
+    """Spec 16 section 8 step 3: erase / program / verify / erase one block the image leaves blank."""
+    import tcu_flash
+    img = load_image(args.image)
+    blk = int(args.block, 0)
+    n = tcu_flash.block_size(blk)
+    if blk != tcu_flash.block_of(blk) or not tcu_flash.WIN_LO <= blk < tcu_flash.WIN_HI:
+        sys.exit("block must be the start of an erase block inside 0x040000-0x1FFFFF")
+    if any(blk <= r["marker1"] < blk + n for r in tcu_flash.REGIONS):
+        sys.exit("that block holds a validity marker; choose another one")
+    if img[blk:blk + n] != b"\xFF" * n:
+        sys.exit("the image is not blank in that block; choose a block the image does not use")
+    fl = enter_flasher(b)
+    try:
+        if fl.crc(blk, n) != tcu_flash.crc(b"\xFF" * n):
+            sys.exit("that block is not blank on the TCU either; it is in use, choose another one")
+        pattern = bytes((i * 7 + 1) & 0xFF for i in range(16 * tcu_flash.PAGE))
+        print(f"erase {blk:#08x}"); fl.erase(blk, n)
+        print(f"program 16 pages at {blk:#08x}"); fl.program(blk, pattern)
+        ok = fl.crc(blk, len(pattern)) == tcu_flash.crc(pattern)
+        print("read back:", "OK" if ok else "MISMATCH")
+        print(f"erase {blk:#08x} again"); fl.erase(blk, n)
+        blank = fl.crc(blk, n) == tcu_flash.crc(b"\xFF" * n)
+        print("blank afterwards:", "OK" if blank else "NO")
+        print("self-test", "PASSED" if ok and blank else "FAILED")
+    except tcu_flash.FlashError as e:
+        sys.exit(f"self-test FAILED: {e}")
+    finally:
+        fl.reset()
+
+
+def cmd_flash_invalidate(b, args):
+    """Spec 16 section 8 step 4: make the application invalid on purpose (safety-net check)."""
+    import tcu_flash
+    print("This erases block 0x160000 (application markers): the TCU will NOT start the application")
+    print("until it is rewritten, and only the ACDP-2 can do that. Use only for the safety-net check.")
+    if input("type INVALIDATE to continue: ").strip() != "INVALIDATE":
+        return
+    fl = enter_flasher(b)
+    try:
+        fl.erase(0x160000, tcu_flash.block_size(0x160000))
+        print("application invalidated. Power-cycle the TCU, check it stays silent, then write the")
+        print("project image with the ACDP-2 and check the heartbeat 0x7F0 comes back.")
+    except tcu_flash.FlashError as e:
+        sys.exit(f"FAILED: {e}")
+    finally:
+        fl.reset()
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--iface", default="socketcan")
@@ -457,6 +619,10 @@ def main():
     p = sub.add_parser("solenoid"); p.add_argument("--bus", type=int, default=1)
     p.add_argument("--csv", default="m3_solenoid_results.csv")
     p = sub.add_parser("canstat"); p.add_argument("--send", action="store_true")
+    p = sub.add_parser("flash"); p.add_argument("image"); p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--yes", action="store_true")
+    p = sub.add_parser("flash-selftest"); p.add_argument("image"); p.add_argument("--block", default="0x100000")
+    sub.add_parser("flash-invalidate")
     args = ap.parse_args()
 
     b = Buses(args)
@@ -464,7 +630,8 @@ def main():
         {"monitor": cmd_monitor, "log": cmd_log, "uds": cmd_uds, "info": cmd_info,
          "meas-ident": cmd_meas_ident, "meas-read": cmd_meas_read, "item20": cmd_item20,
          "solenoid": cmd_solenoid, "canstat": cmd_canstat,
-         "dump-userboot": cmd_dump_userboot}[args.cmd](b, args)
+         "dump-userboot": cmd_dump_userboot, "flash": cmd_flash,
+         "flash-selftest": cmd_flash_selftest, "flash-invalidate": cmd_flash_invalidate}[args.cmd](b, args)
     finally:
         b.shutdown()
 

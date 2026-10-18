@@ -37,6 +37,8 @@
  *   byte 2     bench channel, bytes 3-4 bench current mA, byte 5 remaining time 0.1 s,
  *   byte 6     reason the last bench test ended, byte 7 chip 0 status byte
  *
+ * Flash programming (spec 16): routine FE30 starts the RAM flasher; identifier FD03 = FWE pin.
+ *
  * Measurement protocol (spec 10, read-only): 0x361 -> 0x398 on either bus; project index list
  * in app/meas_table.c.
  */
@@ -51,6 +53,7 @@
 #include "io/actuators/sol_drv.h"
 #include "app/bench_out.h"
 #include "app/bench_dump.h"
+#include "app/flash_entry.h"
 #include "io/vehicle/fca_tx.h"
 #include "app/meas_table.h"
 
@@ -79,6 +82,7 @@ static void task_1ms(void)
     }
     uds_tick_1ms();
     fca_tx_tick_1ms();      /* stock transmit messages: all disabled */
+    flash_entry_tick_1ms(); /* hands over to the RAM flasher after routine FE30 */
 }
 
 static void task_10ms(void)
@@ -176,6 +180,9 @@ static int read_did(uint16_t did, uint8_t *out, uint16_t max)
         outputs_status(out);
         return 8;
     }
+    if (did == FLASH_DID) {
+        return flash_entry_did(out, max);
+    }
     return -1;
 }
 
@@ -184,6 +191,9 @@ static int app_routine(uint8_t type, uint16_t rid, const uint8_t *in, uint16_t n
 {
     if (rid == DUMP_RID) {
         return bench_active() ? -0x22 : dump_routine(type, rid, in, n, out, max);
+    }
+    if (rid == FLASH_RID) {
+        return flash_entry_routine(type, rid, in, n, out, max, leave_allowed());
     }
     return bench_routine(type, rid, in, n, out, max);
 }

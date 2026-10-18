@@ -69,6 +69,7 @@
 #define RCAN_IRR(b)    REG16((b) + 0x008u)
 #define RCAN_IMR(b)    REG16((b) + 0x00Au)
 #define RCAN_TXPR(b)   REG32((b) + 0x020u)  /* TXPR1:TXPR0, must be written as 32 bits */
+#define RCAN_TXCR(b)   REG32((b) + 0x028u)  /* TXCR1:TXCR0, write 1 to cancel a pending transmission */
 #define RCAN_TXACK0(b) REG16((b) + 0x032u)
 #define RCAN_RXPR(b)   REG32((b) + 0x040u)  /* RXPR1:RXPR0, bit n = mailbox n; write 1 to clear */
 #define RCAN_MB_CTRL0H(b, n) REG16((b) + 0x100u + 32u * (n))          /* IDE RTR 0 STDID[10:0] EXTID[17:16] */
