@@ -91,6 +91,34 @@ The Teensy (no ACDP-2 on the bus) reproduced the entry and holds the session:
 `27`/`34`/`36`/`37` are present. Programming flash now needs the SecurityAccess algorithm and the
 download/transfer format, which the boot MAT code (and the ACDP-2 write captures) should yield.
 
+
+## 5b. Feasibility: no asymmetric signature on this path [I]
+
+Block 0 (Auth_TSW, spec 06 §6.0a) is an image-authentication engine: it accumulates data in
+≤0x80-byte chunks and verifies it against stored constants (`0x0A`, `0x75`), bit-inverted key
+bytes and a checksum (functions `0x2060`/`0x20E4`/`0x1F30`/`0x24C8`/`0x2570` in the application
+MAT). That is the **signature-protected in-vehicle reflash** path (`Auth_Prog`).
+
+The plant session is **not** gated by it: the ACDP-2, a third-party tool, wrote seven arbitrary
+modified images through this session during this bench session (m4…m4g). A Bosch private-key
+signature would make that impossible. So the only gate on the plant write path is SecurityAccess
+(`0x27`) — a reproducible symmetric seed/key, which the ACDP-2 satisfies. Extracting that
+algorithm is the remaining blocker; it is feasible in principle (symmetric, in the dumped code).
+
+## 5c. Next experiment: locate the seed level [B]
+
+The `0x27` handler is built into a RAM dispatch table at `0xFFF83710` (0x14-byte entries, main
+handler at +8, periodic callback at +0xC; `FUN_00001E0C`), so it is not a static table in the
+dump. Rather than chase the builder blind, sweep `0x27` on the bench to find which sub-function
+returns a seed (`0x67`) and in which session:
+
+    tools/bench/tcu_bench.py plant-seedscan --enter --sessions 60,61,6b
+
+Run it while powering the TCU on (`--enter` sends `PlantCan` during power-up, then sweeps odd
+`0x27` sub-functions across the default session and each listed session). In session `0x60`,
+send-key sub-functions (even) already return NRC `0x24` (seed-first), so a seed level exists;
+this finds it. The key algorithm then needs static RE of that specific handler.
+
 ## 6. Open items
 
 1. SecurityAccess: which sub-function requests the seed, and the key algorithm (boot MAT code at

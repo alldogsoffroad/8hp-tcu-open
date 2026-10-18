@@ -633,6 +633,7 @@ def cmd_plant_entry(b, args):
     for c in (b"C\r", b"P0\r", b"S6\r", b"O\r", b"C\r", b"S9\r", b"O\r"):   # O/C clears listen-only
         s.write(c); time.sleep(0.05)
     s.reset_input_buffer()
+    args._out_default = "plant_entry"
     name = args.output or f"plant_entry_{time.strftime('%Y%m%d_%H%M%S')}.log"
     out = open(name, "w", buffering=1)
     print(f"sending {payload.decode()} on 0x1F0C3CFE at 666.667 kbit/s every {args.period_ms} ms;")
@@ -710,6 +711,52 @@ def plant_buses(b, args):
     b.__init__(args)
 
 
+def cmd_plant_seedscan(b, args):
+    """In the boot MAT plant session, sweep SecurityAccess (0x27) seed sub-functions across the
+    reachable sessions, to find which level returns a seed (0x67) and how long it is. Read-only.
+    The TCU must already be in the session (run `plant-entry` during power-up first, or pass
+    --enter here to send the entry while you power the TCU on)."""
+    import time
+    import serial
+    if args.enter:
+        b.shutdown()
+        payload = b"PlantCan" if args.mode == "can" else b"PlantKcn"
+        frame = b"T1F0C3CFE8" + payload.hex().upper().encode() + b"\r"
+        raw = serial.Serial(args.bus1, 2000000, timeout=0)
+        for c in (b"C\r", b"P0\r", b"S6\r", b"O\r", b"C\r", b"S9\r", b"O\r"):
+            raw.write(c); time.sleep(0.05)
+        raw.reset_input_buffer()
+        print("power the TCU ON now; sending", payload.decode(), "for up to", args.send_s, "s")
+        t_end = time.time() + args.send_s; nxt = 0.0; got = b""
+        while time.time() < t_end:
+            now = time.time()
+            if now >= nxt:
+                raw.write(frame); nxt = now + 0.002
+            got += raw.read(256)
+            if b"1FFFAFFE" in got.upper():
+                print("boot MAT answered the entry"); break
+            time.sleep(0.0005)
+        for c in (b"C\r",):
+            raw.write(c); time.sleep(0.05)
+        raw.close()
+    plant_buses(b, args)                       # bus 1 at 666.667 kbit/s, normal mode
+    u = Uds(b, 1)
+    for ses in [None] + [int(x, 16) for x in args.sessions.split(",") if x.strip()]:
+        if ses is not None:
+            r = u.request(bytes([0x10, ses]), timeout=0.5)
+            tag = f"session {ses:02X}: {hexs(r)}"
+            if not r or r[0] != 0x50:
+                print(tag, "(not entered, skipping)"); continue
+            print(tag)
+        else:
+            print("default session")
+        for sub in range(1, 0x80, 2):          # odd = request-seed levels
+            r = u.request(bytes([0x27, sub]), timeout=0.3)
+            if r and r[0] == 0x67:
+                print(f"  27 {sub:02X} -> SEED {hexs(r)}")
+            elif r and not (r[0] == 0x7F and len(r) > 2 and r[2] in (0x12, 0x7F)):
+                print(f"  27 {sub:02X} -> {hexs(r)}")
+
 def cmd_plant_uds(b, args):
     plant_buses(b, args)
     u = Uds(b, 1)
@@ -749,6 +796,9 @@ def main():
     sub.add_parser("flash-invalidate")
     p = sub.add_parser("plant-uds"); p.add_argument("hex", nargs="+", help="requests, comma-separated")
     p.add_argument("--timeout", type=float, default=1.0)
+    p = sub.add_parser("plant-seedscan"); p.add_argument("--enter", action="store_true")
+    p.add_argument("--sessions", default="60"); p.add_argument("--send-s", type=float, default=60.0)
+    p.add_argument("--mode", choices=["can", "kcn"], default="can")
     p = sub.add_parser("plant-entry"); p.add_argument("--mode", choices=["can", "kcn"], default="can")
     p.add_argument("--period-ms", type=float, default=2.0); p.add_argument("--send-s", type=float, default=20.0)
     p.add_argument("--listen-s", type=float, default=5.0); p.add_argument("-o", "--output")
@@ -764,7 +814,8 @@ def main():
          "solenoid": cmd_solenoid, "canstat": cmd_canstat,
          "dump-userboot": cmd_dump_userboot, "flash": cmd_flash,
          "flash-selftest": cmd_flash_selftest, "flash-invalidate": cmd_flash_invalidate,
-         "plant-entry": cmd_plant_entry, "plant-uds": cmd_plant_uds}[args.cmd](b, args)
+         "plant-entry": cmd_plant_entry, "plant-uds": cmd_plant_uds,
+         "plant-seedscan": cmd_plant_seedscan}[args.cmd](b, args)
     finally:
         b.shutdown()
 
