@@ -51,7 +51,8 @@ const sensors_in_t *sensors_in(void);
 
 /* ---- internal building blocks, exposed for unit tests ---- */
 
-/* Averaged voltage at the module connector (divider-corrected), mV; false if not sampled. */
+/* Averaged voltage at the module connector (divider-corrected), mV; false if not sampled.
+ * The supply (sensors_in_t.battery) additionally carries the bench calibration of spec 04 3a. */
 bool adc_mv(uint8_t an, mv_t *mv);
 void adc_reset(void);
 void adc_sample(void);              /* one sample of every channel (1 ms) */

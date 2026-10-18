@@ -45,7 +45,8 @@ int main(void)
     /* ---- supply, divider ratio 5 ---- */
     set_mv(21u, 13500u, 50u);
     run_ms(10u);
-    CHECK(s->q_battery == Q_OK && NEAR(s->battery, 13500, 5));
+    /* bench calibration: 13 500 mV stock-scale reading -> 1.0553 x 13 500 - 89 = 14 157 mV */
+    CHECK(s->q_battery == Q_OK && NEAR(s->battery, 14157, 6));
 
     /* ---- wake inputs with hysteresis ---- */
     set_mv(19u, 3500u, 50u);

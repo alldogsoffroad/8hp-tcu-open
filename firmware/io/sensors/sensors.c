@@ -15,6 +15,14 @@ static const uint8_t AN_PARK[2] = { 5u, 6u };   /* park contacts        [I] spec
 #define BATTERY_MIN_MV 6000u    /* below this the resistor-coded inputs are not evaluated */
 #define TFT_HOLD_MS   1000u     /* hold the last valid temperature this long, then invalid */
 
+/* Supply calibration (bench 2026-10-18, spec 04 section 3a): with the stock divider ratio 5,
+ * AN21 reads 5.2 % low against a multimeter at pins 13/14 (10.0 / 12.5 / 14.0 V reported as
+ * 9.56 / 11.93 / 13.35 V; linear, residuals < 2 mV): true = 1.0553 x reading - 89 mV. Only the
+ * reported supply is corrected; the park-contact bands keep the stock-scale reading their
+ * thresholds were set with. */
+#define BATT_GAIN_X10000  10553u
+#define BATT_OFFSET_MV    89u
+
 /* Resistor-coded switch bands, ratio input/supply in 0.01 % (spec 04 4.4). Valid levels are
  * bands 1 (contact closed) and 3 (open). PROVISIONAL: band edges as observed in the stock
  * software; re-derive from the measured contact levels on the bench. */
@@ -115,7 +123,13 @@ static void update_supply_and_park(void)
     mv_t v;
     uint8_t band[2];
 
-    s_in.q_battery = adc_mv(AN_BATTERY, &s_in.battery) ? Q_OK : Q_INVALID;
+    mv_t raw = 0u;
+
+    s_in.q_battery = adc_mv(AN_BATTERY, &raw) ? Q_OK : Q_INVALID;
+    if (s_in.q_battery == Q_OK) {
+        const uint32_t c = (uint32_t)raw * BATT_GAIN_X10000 / 10000u;
+        s_in.battery = (mv_t)(c > BATT_OFFSET_MV ? c - BATT_OFFSET_MV : 0u);
+    }
     if (adc_mv(AN_WAKE1, &v)) {
         s_in.wake1 = v >= WAKE_ON_MV ? true : (v < WAKE_OFF_MV ? false : s_in.wake1);
     }
@@ -124,7 +138,7 @@ static void update_supply_and_park(void)
     }
 
     for (uint8_t i = 0u; i < 2u; i++) {
-        band[i] = s_in.q_battery == Q_OK && adc_mv(AN_PARK[i], &v) ? park_band(v, s_in.battery) : 0xFFu;
+        band[i] = s_in.q_battery == Q_OK && adc_mv(AN_PARK[i], &v) ? park_band(v, raw) : 0xFFu;
         s_in.park_band[i] = band[i];
     }
     /* [I] contact 0 closed (band 1) and contact 1 open (band 3) = in Park, and the reverse =
