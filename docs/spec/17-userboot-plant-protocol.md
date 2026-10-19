@@ -69,6 +69,11 @@ Earlier 500 kbit/s captures (2026-10-17) show silence of 47 s / 184 s, then `7E1
 (invisible to a 500k listener). For our purpose only the Bosch part (entry, services, download
 and start of a RAM routine) is needed; our own routine replaces the ACDP-2's.
 
+**Re-interpreted 2026-10-19 (§5g):** the timeline analysis shows the `D7656915` exchange happens
+after the ACDP-2 power-cycles the unit (app traffic ends, 47 s silence, boot side answers in
+350 µs, the application never restarts). It is a boot-side power-up session of its own — the
+ACDP-2's flash-write path at 500 kbit/s — not the plant session's downloaded routine.
+
 ## 5a. Bench results (2026-10-17) [B]
 
 The Teensy (no ACDP-2 on the bus) reproduced the entry and holds the session:
@@ -221,6 +226,37 @@ RAM layout are now mapped [O]:
   termination, 666.667 kbit/s — should expose the ACDP-2's own `27 61 / 27 62` exchange (real
   seed/key pairs) and its 34/36/37 usage. One capture would identify or validate f(seed) and
   settle open items 1 and 2.
+
+## 5g. Offline analysis of the existing 500 kbit/s captures (2026-10-19)
+
+Read directly from the 2026-10-17 ACDP-2 captures already in `bench_captures/` — no bench time.
+Findings [B]:
+
+- **Session architecture.** The ACDP-2 first talks plain app UDS (`3E`, `22 F1 90` — the VIN),
+  then power-cycles the unit (47 s / 76 s silences), then sends `7E1#D7656915` at 500 kbit/s and
+  the boot side answers within 350 µs; the application never runs again during the session.
+  Three such sessions in one capture (re-authentication per operation). The write captures are
+  this session writing flash: **the D7656915 path is itself a flash-write path**, independent of
+  the 666.667 kbit/s plant session — a second route to code-flash independence, with a 4-byte
+  seed instead of 16.
+- **Challenge protocol.** `D7656915` → 4-byte random seed → tester 8-byte response → TCU 8-byte
+  reply → everything after is 8-byte frames in both directions, encrypted (301k frames in the
+  data phase, no repeats). Eight complete (seed, response) pairs were collected, e.g.
+  `B1A461B7→0D5270DF44529494`, `C96E5817→91878AF764E9AD06`, `2EDEEBB7→550C8F2E0CAB0F77`.
+- **Excluded.** XOR/add with constant (byte- and word-wise), byte swaps, CRC32 chains,
+  byte-local S-boxes, TEA with structured keys (zero / seed-padded), checksum-dispatch of the
+  magic (CRC32/16 of `D7656915` appears in no dump). The post-auth stream is not ECB (no
+  duplicate ciphertext blocks over huge known-plaintext regions) and shows no aligned LFSR
+  structure (Berlekamp-Massey at full linear complexity) — a real cipher or a counter-mode
+  stream with a per-session key.
+- **The magic is stored nowhere**: `D7656915` (any endianness, whole or as 16-bit halves) is in
+  none of the stock application, bootloader, boot-manager, user-boot-MAT or EEPROM images. The
+  handler is runtime code, like the plant session block (§5e).
+
+So both ACDP-2 paths hide their handlers the same way. Offline cryptanalysis is exhausted;
+progress needs either the runtime-code install mechanism (§5e open lead: DMAC audit, user-MAT
+blocks as a data source, the install-descriptor consumer) or the hot-tap (§5f). The eight pairs
+above are ready to validate any candidate transform immediately.
 
 ## 6. Open items
 
