@@ -292,6 +292,12 @@ transmissions (the auto-step markers are USB reports only, `teensy_slcan.ino`). 
 - The tester response arrives ~1.7 ms after the seed: the ACDP-2 **box** computes it (no phone
   round-trip fits). The algorithm therefore exists in readable form in the ACDP-2's own firmware
   — the natural next target, since the TCU side is runtime-constructed (§5e).
+- The PC software (PC-ACDP 2.0.16) does **not** contain it: the whole 266 MB package (CEF web
+  shell + mixed-mode C++/CLI DLLs with PDBs) was searched for the magic (raw / ASCII / UTF-16),
+  SecurityAccess vocabulary and crypto-bearing device code — nothing. The box firmware is
+  downloaded at runtime from Autel's cloud (API `112.124.26.243:8090` dispenses Aliyun-OSS URLs;
+  no endpoints are baked into the binaries). The firmware must come from the box itself (SWD
+  dump of its MCU) or from a captured update download.
 
 ## 6. Open items
 
