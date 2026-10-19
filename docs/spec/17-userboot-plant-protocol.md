@@ -206,7 +206,16 @@ RAM layout are now mapped [O]:
   descriptor `{0x498, 0xFFF83A60, 0xFFF82000}` sits in the UNTD image header (ROM 0x3716); its
   consumer is runtime code. `D7656915` (§5) also appears in no static dump — that handler is
   runtime code as well. A sibling project (vag-tcu-tools, SH72549 ZF 8HP) has no plant-session or
-  UDS-27 work to borrow.
+  UDS-27 work to borrow. Further eliminations (2026-10-19, second pass): the boot MAT only
+  **resets** the DMAC (0x2DDC writes the DMAOR key 0x5555 and zeroes the channels — no transfer
+  is programmed), so the install is not a DMA copy; the remaining unread start-up functions
+  (0xFAC entry-state machine, 0x26DA supervisor SPI handshake, 0x0D00 thunk) are not installers;
+  the application's own `0x27` handler (0x81490, spec 15) also dispatches through RAM-built
+  tables — no pointer tables into the diagnostic module exist anywhere in the app image; and
+  both user-MAT boot trampolines (0x210 → 0x2540 EEPROM staging, 0x6010 marker machinery) carry
+  no code callback. Conclusion: the service/security layer of this firmware family is constructed
+  at runtime from non-obvious sources; static analysis of the available images cannot reach it.
+  Progress needs the bench (hot-tap, §5f) or the runtime block itself.
 
 ## 5f. Bench: the download is security-gated; dumper tooling (2026-10-19)
 
