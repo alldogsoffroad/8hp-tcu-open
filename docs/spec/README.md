@@ -58,7 +58,7 @@ the stock firmware. Markers in each document: **[M]** manual, **[O]** observed i
 | [14](14-park-range.md) | Park/range module: input struct, park-target arbiter, lever request object, redundant safety-layer check | draft; range-code names and several inputs inferred |
 | [15](15-diagnostic-services.md) | UDS addressing, service table, sessions; hand-over to the boot software | draft; transport parameters and tool sequence open |
 | [16](16-can-reflash.md) | Project CAN reflash: RAM flasher, FCU driver, protocol, power-loss-safe write order | implemented, host-tested; **not usable on this unit**: FWE is low at boot hand-over (§10, bench 2026-10-18) |
-| [17](17-userboot-plant-protocol.md) | User boot MAT plant (production) protocol: "PlantCan" entry at 666.667 kbit/s, UDS services, the ACDP-2 write path | plant entry reproduced with the Teensy; SecurityAccess locked, not pursued |
+| [17](17-userboot-plant-protocol.md) | User boot MAT plant (production) protocol: "PlantCan" entry at 666.667 kbit/s, UDS services, the ACDP-2 write path | entry reproduced; session architecture mapped and download confirmed security-gated (§5e/§5f); key RE active, next: ACDP-2 hot-tap |
 | [18](18-dataflash-loader.md) | Data-flash application loader: loader in code flash, RAM application in data flash, Teensy updates (`app-flash`) | in use on the bench; all bench checks passed |
 
 Related project data (project root): CAN message list (`1034420267_can_messages.csv`), fault-code

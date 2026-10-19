@@ -1,6 +1,7 @@
 # Spec 17 — User boot MAT: plant (production) programming protocol
 
-Status: **plant entry reproduced on the bench with the Teensy (2026-10-17).** Source: the unit's own user boot MAT, read out with
+Status: **plant entry reproduced on the bench with the Teensy (2026-10-17). Session architecture
+mapped from the dump and the download path confirmed security-gated (2026-10-19, §5e/§5f).** Source: the unit's own user boot MAT, read out with
 routine FE20 (spec 06 §8). The dump is private and is not in the repository; this spec describes
 behaviour, not code. Markers: **[O]** observed in the code, **[B]** bench, **[I]** inference.
 
@@ -52,7 +53,8 @@ Bit-rate table: 500k, 1M, 250k, 666.667k, 125k (20 MHz CAN clock).
 - ISO-TP framing (single / first / consecutive / flow control) and a UDS-style server
   (positive response = SID + 0x40, negative `7F sid nrc`, `0x78` pending).
 - Service table in RAM at `0xFFF83710` (20-byte entries: SID, sub-function, session mask,
-  security mask, handler); initialisation source still to be traced.
+  security mask, handler); initialisation source still to be traced. (Layout corrected 2026-10-19:
+  these entries are the 0x1C-byte connection descriptors of §5e.)
 - Memory-access map at `0x240` (area, rights): RAM `0xFFF80000–0xFFF800FF`, download windows
   `0xFFF80100–0xFFF81FFF` and **`0xFFF88400–0xFFF8FFFF`**, `0xFFF90000–0xFFF9FFFF`, flash
   `0x000000–0x1FFFFF`, FCU firmware area, data flash, FCU RAM.
@@ -154,14 +156,81 @@ the `0x27 0x61/0x62` handler, then the transform and its embedded secret. There 
 shortcut** — the seed is random per request and the ACDP-2's key cannot be observed (the Teensy
 breaks the ACDP-2 session when both are on the bus).
 
+## 5e. Session architecture from the dump (2026-10-19)
+
+Static analysis extended over the whole 32 KB dump: all functions, the previously unanalyzed code
+gaps (0x3CD–0x53A, 0x8F4–0xADB, 0x2293–0x2442), the code tail (0x3696–0x36D6), and both copied
+images. Decompilations live outside the repository, as before. The start-up path and the session's
+RAM layout are now mapped [O]:
+
+- **Reset path** (vector at +4 → `0x53C`): stack switched to `0xFFF88000` (thunk `0x2DD4`,
+  `rts; mov r4,r15`); peripheral/CAN/watchdog init (`0x2DDC`, `0x2C04`, `0x2EA8`); RAM march-tests
+  over 0xFFF87400, 0xFFF8F000, 0xFFF84000, 0xFFF88000, 0xFFF8C000 (`FUN_00000E94`); init chain
+  `FUN_00000680` (CMT 0x2C60/0x2CC2, loader 0x0E2C, timers 0x2626/0x2598, deadline 0x2570); the
+  ROM 0x200 config block copied to `0xFFF850CC`.
+- **Scatter loader** `FUN_00000E2C`: zero-fills `0xFFF84000`+0x3400 (`FUN_00001F04`), then walks a
+  table at ROM 0x384 (entries src/end/dst, 0xC stride, null-terminated): ROM 0x3E70–0x3EFC → RAM
+  `0xFFF851D8` (event/notification block: nine function pointers into 0x8F4–0xA5E, a bit-flag
+  event system) and ROM 0x36D8–0x3A50 → RAM `0xFFF84000` (888-byte module, ident `bhie0101UNTD`).
+- **The UNTD module is the ROMMAT manager** (at RAM 0xFFF84000): maps/unmaps the boot MAT
+  (`0xFFFFA820` ← 0x3B01/0x3B00), checks the marker areas 0x5E00/0x7E00, verifies the ROM 0x200
+  config signature — and runs the **boot trampoline**: with the user MAT made visible it reads the
+  descriptor pointer at user-MAT 0x210 (→ descriptor at 0x258: a ten-entry Auth_TSW function
+  table, high-entropy key data at 0x288+), calls its +4 entry (user-MAT `FUN_00002540`), then maps
+  the boot MAT back. `FUN_00002540` stages 16 device-unique bytes from the EEPROM
+  (0x8010003A/59/32) into the hand-over area `0xFFF80040–0xFFF80063`. The rest of block 0 is the
+  asymmetric Auth_Prog engine (SHA-1 at 0x345A, bignum arithmetic) — §5b's conclusion stands.
+- **Plant session start** `FUN_00000714` (modes 5/6): RAM-tests the download windows, sends the
+  53-report (`FUN_00000FE8`, mailbox 3), sets supervisor state 0x19, runs the session state init
+  (`FUN_00000C0C`: 0x0CD2 installs the 0xFFF851D8 pointer, 0x0AF8 installs 0xFFF8493C ← 0xFFF83698
+  gated on the count byte at 0xFFF83946, 0x0B4C resets ISO-TP), then jumps to RAM code at
+  **0xFFF82000** and **0xFFF8394C** and enters the main loop.
+- **Corrected session-block layout** (supersedes the 0x14-byte-entry reading of §4/§5c/§5d): the
+  dispatcher `FUN_00002144` walks **0x1C-byte connection descriptors at 0xFFF83698** — SID at
+  +0xC, handler-array pointer at +0x10 (its +4 a timeout word), reply CAN ID at +0x18, reply
+  buffer at +8; the count is the byte at `0xFFF83946`; handler code follows at `0xFFF8394C`+.
+  ISO-TP receive is `FUN_000010C4`, flow control `FUN_00001674`.
+- **Run hook for downloaded code**: when the byte at **0xFFF836A3** is 1, the main loop
+  (`FUN_0000105A`) tail-calls `*(*(0xFFF88410) + 8)` with (0xFFF84A6C, [0x10BC]). A downloaded
+  image at 0xFFF88400 therefore carries a slot pointer at +0x10 to a descriptor whose +8 is the
+  entry. The transfer engine (`FUN_00002308`/`0x22E0`, swap16/swap32 backends at ROM
+  0x3698/0x36B0) moves segment lists through the session-block functions 0xFFF8394C/0xFFF8397A.
+- **The session block is installed at runtime and no static builder exists**: every boot-MAT
+  function (≈130), the UNTD image, the user-MAT block 0 and the EEPROM (data records only) were
+  checked — no SID tables, no 27/0x61/0x62 constants, no seed/key scramble anywhere. The install
+  descriptor `{0x498, 0xFFF83A60, 0xFFF82000}` sits in the UNTD image header (ROM 0x3716); its
+  consumer is runtime code. `D7656915` (§5) also appears in no static dump — that handler is
+  runtime code as well. A sibling project (vag-tcu-tools, SH72549 ZF 8HP) has no plant-session or
+  UDS-27 work to borrow.
+
+## 5f. Bench: the download is security-gated; dumper tooling (2026-10-19)
+
+- `tcu_bench.py plant-probe34` (read-only, RAM windows only): in session 0x60, both
+  `34 00 44 <addr4> <len4>` and the classic `34 00 33 <addr3> <len3>` → **NRC 0x33**
+  (securityAccessDenied); malformed requests → 0x13, so format parsing precedes the security
+  check. The RAM-routine path sits behind the same SecurityAccess as the flash write: **one key
+  opens both** (open item 2's formats must come from the ACDP-2's traffic or from after the key).
+- `firmware/plantdump/` builds a 604-byte SH-2A RAM dumper and a 180-byte canary, laid out for
+  the run hook (slot at +0x10 → descriptor, entry at +8; watchdog and supervisor serviced; output
+  on mailbox 2, ID 0x7EA); `tcu_bench.py plant-dump-session` downloads them through 34/36/37,
+  reassembles the regions and checks the transfer endianness. Ready for when a read path exists;
+  nothing in it writes flash. Not usable today: 34 is security-gated.
+- **Next experiment — ACDP-2 hot-tap.** §5d's "no bench shortcut" holds only for the entry
+  window: the recorded failure was the Teensy disturbing the ACDP-2's power-up. Attaching the
+  Teensy **after** the session is established — listen-only, high-impedance, no additional
+  termination, 666.667 kbit/s — should expose the ACDP-2's own `27 61 / 27 62` exchange (real
+  seed/key pairs) and its 34/36/37 usage. One capture would identify or validate f(seed) and
+  settle open items 1 and 2.
+
 ## 6. Open items
 
-1. SecurityAccess: which sub-function requests the seed, and the key algorithm (boot MAT code at
-   the `0x27` handler; cross-check against the ACDP-2 challenge `D7656915`/4-byte reply in the
-   500 kbit/s captures, which may be this exchange seen from the tester side). Passive capture of a
-   live ACDP-2 session is not possible — the Teensy on the bus breaks the ACDP-2's power-up (bench
-   2026-10-17), so this is from the dumped code.
+1. SecurityAccess: which sub-function requests the seed (answered: `0x61`/`0x62`, §5c), and the
+   key algorithm. The handler is runtime-installed session-block code (§5e), so the practical
+   route is the ACDP-2 hot-tap (§5f): the recorded passive-capture failure applies only to the
+   power-up entry window; a mid-session listen-only tap may still observe the ACDP-2's own
+   `27 61/27 62` exchange and its download usage.
 2. Download (`34`) / transfer (`36`) / exit (`37`) parameters and whether the transfer is
-   encrypted or plain once security is open.
+   encrypted or plain once security is open. Both formats parse (§5f) but are gated by 0x27;
+   the ACDP-2 capture of item 1 would show them in use.
 3. Whether the downloaded routine must be authenticated (block 0 Auth / SHA-1, spec 06 §6.0a).
 4. Which start-up step drops FWE (only relevant for understanding; the session avoids it).

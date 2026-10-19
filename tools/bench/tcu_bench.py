@@ -41,6 +41,11 @@ Commands:
   plant-entry [--mode can|kcn]   send the user boot MAT plant entry (29-bit 0x1F0C3CFE,
                           "PlantCan") at 666.667 kbit/s while the TCU is switched on; log replies
                           (spec 17). Read-only; power-cycle the TCU afterwards.
+  plant-probe34 [--session 60]  probe RequestDownload (34) formats against a RAM window of the
+                          plant session; read-only, no 36 is sent (spec 17 follow-up)
+  plant-dump-session      download the dumper (firmware/plantdump) through 34/36/37 and read the
+                          session RAM out over CAN 0x7EA: the service nodes and handlers incl.
+                          the 27 seed/key transform (spec 17 follow-up). RAM only, no flash writes
   canstat [--send]        Teensy adapter error counters per bus (slcan only); --send first
                           transmits a tester-present frame on each bus to provoke ACK errors
 """
@@ -781,6 +786,194 @@ def cmd_plant_uds(b, args):
         print(f"{req.hex(' ').upper():24s} -> {hexs(r)}")
 
 
+# ----------------------------------------------------------------------------- plant session code download (spec 17 follow-up)
+
+PD_WINDOW = 0xFFF88400        # download window whose slot at +0x10 the session's run hook reads
+PD_DUMP_ID = 0x7EA            # dumper output (UDS replies stay on 0x7E9)
+# region table of firmware/plantdump/pd.c (order matters: the dumper numbers regions by it)
+PD_REGIONS = [
+    (0xFFF83600, 0x0E00),     # session block: conn table, service nodes, handlers
+    (0xFFF82000, 0x2000),     # second session window (install-descriptor target)
+    (0xFFF84900, 0x0200),     # session descriptor globals (incl. the 0xFFF84A6C buffer)
+    (0xFFF88400, 0x0040),     # downloaded image itself: endianness / integrity check
+]
+
+PLANT_NRC = {0x11: "serviceNotSupported", 0x12: "subFunctionNotSupported", 0x13: "incorrectLength",
+             0x22: "conditionsNotCorrect", 0x24: "requestSequenceError", 0x31: "requestOutOfRange",
+             0x33: "securityAccessDenied", 0x36: "exceedNumAttempts", 0x37: "requiredTimeDelay",
+             0x70: "uploadDownloadNotAccepted", 0x71: "transferDataSuspended",
+             0x72: "generalProgrammingFailure", 0x78: "responsePending"}
+
+
+def plant_verdict(r):
+    if r is None:
+        return "no response"
+    if r[0] == 0x7F and len(r) >= 3:
+        return f"NRC {r[2]:02X} ({PLANT_NRC.get(r[2], '?')})"
+    if r[0] == 0x74:
+        bs = int.from_bytes(r[1:3], "big") if len(r) >= 3 else None
+        return f"POSITIVE maxBlockLength {bs} ({hexs(r)})"
+    return hexs(r)
+
+
+def cmd_plant_probe34(b, args):
+    """Probe RequestDownload (34) request formats against a RAM window of the boot MAT plant
+    session. Read-only: no 36 follows, nothing is written. RAM addresses only — the memory map
+    also lists code flash, and a 36 against it would write flash."""
+    plant_buses(b, args)
+    u = Uds(b, 1)
+    u.cf_gap_s = 0.001
+    if args.session:
+        r = u.request(bytes([0x10, args.session]), timeout=0.5)
+        print(f"10 {args.session:02X} -> {hexs(r)}")
+    addr, ln = args.addr, args.length
+    fmts = [
+        ("44 addr4 len4  (project flasher)", bytes([0x34, 0x00, 0x44]) + addr.to_bytes(4, "big") + ln.to_bytes(4, "big")),
+        ("33 addr3 len3  (classic UDS)", bytes([0x34, 0x00, 0x33]) + (addr & 0xFFFFFF).to_bytes(3, "big") + ln.to_bytes(3, "big")),
+        ("44 addr4 len2", bytes([0x34, 0x00, 0x44]) + addr.to_bytes(4, "big") + ln.to_bytes(2, "big")),
+        ("bare 34 00", bytes([0x34, 0x00])),
+    ]
+    for name, req in fmts:
+        r = u.request(req, timeout=1.0)
+        print(f"{name:36s} -> {plant_verdict(r)}")
+        if r and r[0] == 0x74:
+            print("  (format accepted; stopping, no 36 sent)")
+            break
+
+
+def plant_download(u, image, watch_s):
+    """34/36/37 an image into PD_WINDOW in the plant session; return the frames seen
+    afterwards (the run hook may fire on 37)."""
+    r = u.request(bytes([0x34, 0x00, 0x44]) + PD_WINDOW.to_bytes(4, "big") + len(image).to_bytes(4, "big"),
+                  timeout=1.0)
+    print(f"34 (window {PD_WINDOW:#x}, {len(image)} bytes) -> {plant_verdict(r)}")
+    if not r or r[0] != 0x74:
+        sys.exit("download not accepted (probe formats first: plant-probe34)")
+    block = int.from_bytes(r[1:3], "big") or 0x100
+    block = min(block - 1, 0x100)            # first byte of each 36 payload is the block counter
+    seq = 1
+    for off in range(0, len(image), block):
+        chunk = image[off:off + block]
+        rr = u.request(bytes([0x36, seq & 0xFF]) + chunk, timeout=1.0)
+        if not rr or rr[0] != 0x76:
+            sys.exit(f"36 block {seq} -> {plant_verdict(rr)}")
+        seq = (seq + 1) & 0xFF
+    r = u.request(b"\x37", timeout=1.0)
+    print(f"36 x {seq - 1} blocks, 37 -> {plant_verdict(r)}")
+    end = time.time() + watch_s
+    frames = []
+    while time.time() < end:
+        m = u.b.get(1).recv(0.1)
+        if m is None:
+            continue
+        frames.append((m.arbitration_id, bytes(m.data)))
+        if bytes(m.data)[:3] in (b"PDE", b"PDA"):
+            break
+    return frames
+
+
+def plant_reassemble(frames):
+    """Rebuild the dumper's regions from 0x7EA frames; returns (buffers, problems)."""
+    out = [bytearray() for _ in PD_REGIONS]
+    problems, cur = [], None
+    for aid, d in frames:
+        if aid != PD_DUMP_ID or len(d) < 3:
+            continue
+        if d[:3] == b"PDR":
+            idx, base = d[3], int.from_bytes(d[4:8], "big")
+            if idx >= len(PD_REGIONS) or base != PD_REGIONS[idx][0]:
+                problems.append(f"region header {idx} at {base:#x} unexpected")
+                cur = None
+            else:
+                cur = idx
+        elif d[:3] in (b"PDE", b"PDA", b"PDC"):
+            cur = None
+        elif cur is not None:
+            seq = ((d[0] & 0x0F) << 8) | d[1]
+            off = seq * 6
+            buf = out[cur]
+            if off != len(buf):
+                problems.append(f"region {cur}: sequence jump {len(buf) // 6} -> {seq}")
+                if off > len(buf):
+                    buf += b"\x00" * (off - len(buf))
+                else:
+                    problems.append(f"region {cur}: data overwritten at offset {off}")
+            out[cur][off:off + 6] = d[2:8]
+    return out, problems
+
+
+def cmd_plant_dump_session(b, args):
+    """Download the dumper (firmware/plantdump) into the boot MAT plant session and read its RAM
+    out: the session block (service nodes + handlers, incl. the 27 seed/key transform), the
+    second window, the descriptor globals, and the image itself as an integrity check. The TCU
+    must already be in the plant session (plant-entry during power-up). RAM only: no flash
+    writes, no 27 62 key attempts."""
+    import struct
+    plant_buses(b, args)
+    u = Uds(b, 1)
+    u.cf_gap_s = 0.001
+    r = u.request(bytes([0x10, args.session]), timeout=0.5)
+    if not r or r[0] != 0x50:
+        sys.exit(f"session {args.session:02X} not entered ({hexs(r)}); is the TCU in the plant session?")
+    print(f"session {args.session:02X} entered")
+
+    def swap32(img):
+        return b"".join(struct.pack("<I", *struct.unpack(">I", img[i:i + 4])) for i in range(0, len(img) - 3, 4))
+
+    canary = open(args.canary, "rb").read()
+    if args.swap32:
+        canary = swap32(canary)
+    print(f"-- canary ({len(canary)} bytes): probe the download and run path")
+    frames = plant_download(u, canary, args.watch_s)
+    for aid, d in frames:
+        print(f"  {aid:03X} #{d.hex(' ').upper()}")
+    pdc = [d for aid, d in frames if d[:3] == b"PDC"]
+    if not pdc:
+        print("no canary frame: the run flag did not fire (or the image landed wrong). Nothing was")
+        print("harmed; power-cycle and re-probe (plant-probe34, other trigger guesses).")
+        return
+    count, arg1 = pdc[-1][3], int.from_bytes(pdc[-1][4:8], "big")
+    print(f"canary ran: invocation count {count}, hook arg1 {arg1:#010x}"
+          f"{'' if arg1 == 0xFFF84A6C else '  (expected 0xFFF84A6C)'}")
+
+    image = open(args.image, "rb").read()
+    if args.swap32:
+        image = swap32(image)
+    print(f"-- dumper ({len(image)} bytes)")
+    frames = plant_download(u, image, max(args.watch_s, 8.0))
+    bufs, problems = plant_reassemble(frames)
+    for p in problems:
+        print("  problem:", p)
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    for idx, ((base, ln), buf) in enumerate(zip(PD_REGIONS, bufs)):
+        if len(buf) < ln:
+            print(f"  region {idx} ({base:#x}): only {len(buf)} of {ln} bytes received")
+        name = f"bench_captures/reads/session_r{idx}_{base:08X}_{ts}.bin"
+        with open(name, "wb") as f:
+            f.write(bytes(buf[:ln]))
+        print(f"  region {idx} {base:#010x} +{ln:#06x} -> {name}")
+    self_img = bytes(bufs[3][:0x40])
+    if self_img[:16] == image[:16]:
+        print("image self-echo: byte-exact (no endianness swap by the transfer)")
+    elif self_img == swap32(image)[:len(self_img)]:
+        print("image self-echo: WORD-SWAPPED by the transfer (rerun with --swap32)")
+    else:
+        print(f"image self-echo mismatch (got {self_img[:8].hex(' ')})")
+    blk = bytes(bufs[0])
+    if len(blk) >= 0x460:
+        print("service nodes (SID at +1, handler-array pointer at +4, 0x18 stride):")
+        off = 0x36F8 - 0x3600
+        while off + 8 <= len(blk):
+            sid = blk[off + 1]
+            if sid == 0:
+                break
+            ptr = int.from_bytes(blk[off + 4:off + 8], "big")
+            mark = "   <-- SecurityAccess" if sid == 0x27 else ""
+            print(f"  SID {sid:02X}  handlers {ptr:#010x}{mark}")
+            off += 0x18
+    print("done. Power-cycle the TCU to leave the session.")
+
+
 # ----------------------------------------------------------------------------- data-flash loader (spec 18)
 
 def enter_loader(b, args):
@@ -1092,6 +1285,15 @@ def main():
     p = sub.add_parser("plant-seedscan"); p.add_argument("--enter", action="store_true")
     p.add_argument("--sessions", default="60"); p.add_argument("--send-s", type=float, default=60.0)
     p.add_argument("--mode", choices=["can", "kcn"], default="can")
+    p = sub.add_parser("plant-probe34"); p.add_argument("--session", type=lambda x: int(x, 0), default=0x60)
+    p.add_argument("--addr", type=lambda x: int(x, 0), default=PD_WINDOW)
+    p.add_argument("--length", type=lambda x: int(x, 0), default=0x40)
+    p = sub.add_parser("plant-dump-session")
+    p.add_argument("--session", type=lambda x: int(x, 0), default=0x60)
+    p.add_argument("--image", default="build/plantdump.bin")
+    p.add_argument("--canary", default="build/plantcanary.bin")
+    p.add_argument("--swap32", action="store_true", help="pre-swap image words if the transfer swaps")
+    p.add_argument("--watch-s", type=float, default=3.0, help="how long to listen after each 37")
     p = sub.add_parser("plant-entry"); p.add_argument("--mode", choices=["can", "kcn"], default="can")
     p.add_argument("--period-ms", type=float, default=2.0); p.add_argument("--send-s", type=float, default=20.0)
     p.add_argument("--listen-s", type=float, default=5.0); p.add_argument("-o", "--output")
@@ -1114,6 +1316,7 @@ def main():
          "flash-selftest": cmd_flash_selftest, "flash-invalidate": cmd_flash_invalidate,
          "plant-entry": cmd_plant_entry, "plant-uds": cmd_plant_uds,
          "plant-seedscan": cmd_plant_seedscan, "app-flash": cmd_app_flash,
+         "plant-probe34": cmd_plant_probe34, "plant-dump-session": cmd_plant_dump_session,
          "app-selftest": cmd_app_selftest, "sensors": cmd_sensors, "park": cmd_park, "park-check": cmd_park_check}[args.cmd](b, args)
     finally:
         b.shutdown()
