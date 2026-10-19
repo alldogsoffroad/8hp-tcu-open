@@ -29,7 +29,9 @@ the stock firmware. Markers in each document: **[M]** manual, **[O]** observed i
   from sensor datasheets or measurement) before being used in the open-source implementation, to
   protect and respect the original developers.
 - **Reading and writing the controller:** done with an **ACDP-2 with module 19**, which reads and
-  writes the flash and EEPROM images without opening the module. Chip boot-mode programming
+  writes the flash and EEPROM images without opening the module. Since 2026-10-18 the project
+  application is updated with a **Teensy 4.1 through the data-flash loader** (spec 18); the
+  ACDP-2 is needed only for code-flash writes (the loader itself) and recovery. Chip boot-mode programming
   (spec 01 §1, which erases all flash, the user boot area and the EEPROM) is **not** part of the
   plan unless a specific need arises.
 
@@ -37,22 +39,24 @@ the stock firmware. Markers in each document: **[M]** manual, **[O]** observed i
 
 | Spec | Topic | Status |
 |---|---|---|
-| [01](01-hardware-io.md) | Memory map, pin functions, safe start-up state | draft |
+| [01](01-hardware-io.md) | Memory map, pin functions, safe start-up state; case-pin measurements; overview diagram [`../diagrams/tcu-hardware.svg`](../diagrams/tcu-hardware.svg) | draft |
 | [02](02-timers.md) | ATU-III clock tree, 1 ms tick, PWM groups, speed inputs, timer G triggers | draft |
 | [03](03-spi-devices.md) | SPI buses, chip selects, framing, job schedule | draft; chip identities open |
 | [04](04-analog-inputs.md) | ADC setup, scaling, temperature sensor, multiplexed AN0, switch inputs | draft |
-| [05](05-clock-watchdog-powerup.md) | Clocks, watchdog, power-up order | draft; CPU clock open |
+| [05](05-clock-watchdog-powerup.md) | Clocks, watchdog, power-up order | draft; Pφ 20 MHz and Iφ 120 MHz confirmed on the bench |
 | [06](06-boot-application-interface.md) | Flash partitioning, block headers, CRC-32, validity markers, application entry contract | draft; boot selection and protection check open |
 | [07](07-can-receive.md) | CAN receive: message objects, CRC-8/counter protection, timing, 241 signal layouts | draft; signal meanings open |
 | [08](08-can-transmit.md) | CAN transmit: 8 periodic messages, packers, CRC-8/counter, 83 field layouts | draft; field meanings open |
 | [09](09-shift-and-lockup.md) | Calibration access, shift maps and gear decision, driver-type blending, converter lockup | draft; input signals and program meanings open |
-| [10](10-measurement-protocol.md) | Measurement protocol on CAN 0x361/0x398: RAM read by address or index, periodic lists, 470-entry index | draft; untested on hardware |
+| [10](10-measurement-protocol.md) | Measurement protocol on CAN 0x361/0x398: RAM read by address or index, periodic lists, 470-entry index | draft; project implementation in daily bench use, stock behaviour untested |
 | [11](11-shift-execution.md) | Shift execution: element matrix A–E, pressure parameter families, phase engine | draft; map roles and solenoid path open |
 | [12](12-solenoid-outputs.md) | Solenoid output chain: pressure request → current (curves, temperature correction) → SPI driver channel; channel table (EDS A–E, WK, Sys, MV Pos) | draft; channel table confirmed in code, bench check pending |
 | [13](13-fault-reporting.md) | Fault memory: event table, reporting API, fault-group identification, decoded monitors (P1B14) | draft |
 | [14](14-park-range.md) | Park/range module: input struct, park-target arbiter, lever request object, redundant safety-layer check | draft; range-code names and several inputs inferred |
 | [15](15-diagnostic-services.md) | UDS addressing, service table, sessions; hand-over to the boot software | draft; transport parameters and tool sequence open |
-| [16](16-can-reflash.md) | Project CAN reflash: RAM flasher, FCU driver, protocol, power-loss-safe write order | implemented, host-tested; untested on hardware |
+| [16](16-can-reflash.md) | Project CAN reflash: RAM flasher, FCU driver, protocol, power-loss-safe write order | implemented, host-tested; **not usable on this unit**: FWE is low at boot hand-over (§10, bench 2026-10-18) |
+| [17](17-userboot-plant-protocol.md) | User boot MAT plant (production) protocol: "PlantCan" entry at 666.667 kbit/s, UDS services, the ACDP-2 write path | plant entry reproduced with the Teensy; SecurityAccess locked, not pursued |
+| [18](18-dataflash-loader.md) | Data-flash application loader: loader in code flash, RAM application in data flash, Teensy updates (`app-flash`) | in use on the bench; all bench checks passed |
 
 Related project data (project root): CAN message list (`1034420267_can_messages.csv`), fault-code
 list with status (`1034420267_dtc_list.csv`), EEPROM block map (`1034420267_eeprom_records.csv`).
@@ -65,7 +69,7 @@ Items that static analysis could not resolve, to be answered on the bench:
 
 | # | Question | Spec | Suggested measurement |
 |---|---|---|---|
-| 1 | CPU clock (80/120/160/200 MHz) | 05 | bring-up firmware times a loop against a 20 MHz timer |
+| 1 | ~~CPU clock (80/120/160/200 MHz)~~ — **done 2026-10-18**: Pφ 20 MHz, Iφ 120 MHz (FD05 probe, spec 05 §1.2) | 05 | |
 | 2 | Identity and register meaning of the 8 SPI devices | 03 | capture SPI-A/SPI-B traffic on a running stock unit during shifts |
 | 3 | Confirm the solenoid channel table (spec 12 §1: ch 0 A, 1 D, 2 B, 3 E, 4 C, 5 WK, 6 Sys, 7 MV Pos; supported by FCA documentation, low risk) | 03, 11, 12 | correlate SPI setpoint writes (`0xE8`/`0xF0` per chip) with solenoid currents |
 | 4 | Roles of PWM groups A and B and the 11 unassigned TOE outputs | 02 | probe TOE pins on a running unit |
@@ -81,15 +85,15 @@ Items that static analysis could not resolve, to be answered on the bench:
 | 14 | EEPROM reaction to a changed application/calibration CRC | 06 | read the EEPROM before and after item 12; compare with `eeprom_diff.py` |
 | 15 | Meaning and scaling of the CAN signals (torque, pedal, speeds) | 07, 08, 09 | full CAN-C capture from a stock Ram (below); also log the dedicated shifter bus (TCM pins 3/4) |
 | 16 | Confirm **park hold = TOE31 (PL6)** (safety-relevant) and identify TOE30 / TOE32 (one likely the TRS Park output, pin 15) | 01, 02, 12 | measure TOE30–32, internal terminal C7 (park hold return) and case pin 15 with engine running out of P vs in P |
-| 19 | Function of case pins 1, 2, 7, 8, 10, 11, 12, 16 (wired, function unknown) | 01 | trace from internal A terminals (spec 01 §2.9) to MCU pins; candidates include the TOE30/TOE32 outputs |
+| 19 | Function of case pins 1, 2, 7, 8, 10, 11, 12, 16 (wired, function unknown) — **partly characterised 2026-10-18** (spec 01 §2.9): 1, 2, 7, 11, 12, 16 open unpowered and ~0 V powered ([I] outputs held low); 8, 10 resistor + capacitor to ground ([I] filtered inputs); none controls FWE | 01 | next: diode test, then a current-limited test signal into 8 / 10 while watching the firmware's inputs; trace from internal A terminals to MCU pins; candidates include the TOE30/TOE32 outputs |
 | 17 | Park position sensor inputs (Park / Not Park) | 01, 04 | toggle park state; watch AN5/AN6 and port inputs |
 | 18 | ~~Which TCM connector pin pair is bus 1 / bus 2~~ — **done 2026-10-17**: pins 5/6 = bus 1, pins 3/4 = bus 2 (spec 01 §2.8) | 01, 07 | |
 | 20 | Stock hand-over to the boot software: the ACDP-2 request sequence and the record contents | 06, 15 | with the **stock** application: log both buses while the ACDP-2 starts a write; before that, read RAM `0xFFF80080–0xFFF800C7` with the measurement protocol (spec 10) in the default and extended sessions |
-| 21 | Project hand-over works | 06, 15 | on the spare running the project application: the ACDP-2 must reach the bootloader and be able to write the stock image back |
-| 22 | Fluid temperature conversion: AN8/AN1 against a reference thermometer at 3+ temperatures (room, hot water, oven/oil bath) | 04 | read AN8/AN1 mV via the measurement protocol (project firmware indices 27/28); replace the provisional table |
-| 23 | Supply and switched-supply channels (AN21, AN19, AN20) | 04 | vary B+ and ignition on the bench; watch `0x7F2` byte 5 / measurement index 24 |
-| 24 | FWE pin high (flash programming possible from the application) | 16 | project firmware: `uds 22 FD 03` → `62 FD 03 01` |
-| 25 | Project flasher: read path, scratch-block write, safety net, first reflash | 16 | spec 16 §8 steps 2–5 (`flash --dry-run`, `flash-selftest`, `flash-invalidate` + ACDP-2 restore, `flash`) |
+| 21 | Project hand-over works — **largely done 2026-10-18**: with the project loader installed the ACDP-2 still reads the unit and wrote a full image (loader reflash, spec 16 §10); writing the stock image back not yet repeated | 06, 15 | on the spare running the project application: the ACDP-2 must reach the bootloader and be able to write the stock image back |
+| 22 | Fluid temperature conversion: AN8/AN1 against a reference thermometer at 3+ temperatures (room, hot water, oven/oil bath) — **partial 2026-10-18**: two points near room temperature, TCU about 2 °C low; provisional table kept (spec 04 §4.1) | 04 | remaining: a soaked point at ≥ 60 °C, or a scan-tool comparison in a vehicle |
+| 23 | Supply and switched-supply channels (AN21, AN19, AN20) — **AN21 done 2026-10-18**: supply calibrated, true = 1.0553 × reading − 89 mV (spec 04 §3a); AN19/AN20 scaling still open | 04 | vary B+ and ignition on the bench; watch `0x7F2` byte 5 / measurement index 24 |
+| 24 | ~~FWE pin high (flash programming possible from the application)~~ — **answered 2026-10-18: no.** FWE is already low at boot hand-over (loader-entry FPMON `0x00`) and no case pin controls it (spec 16 §10, spec 01 §2.9) | 16 | |
+| 25 | ~~Project flasher: read path, scratch-block write, safety net, first reflash~~ — **superseded**: not usable while FWE is low (item 24); application updates use the data-flash loader (spec 18, all bench checks passed) | 16 | |
 
 **Ram capture plan (item 15).** 2014–2017 Ram 1500 (DS) has no security gateway: OBD pins 6/14
 reach CAN-C (500 kbit/s) directly, so passive logging works; from model year 2018 a gateway is
