@@ -8,6 +8,9 @@ Sources: Renesas SH7254R Group hardware manual Rev. 4.00 (R01UH0480EJ0400), and 
 the stock flash image (2.5 MB, sha256 `b8a9a9b4…619d`). Each fact is marked
 **[M]** (from the manual), **[O]** (observed in the stock firmware) or **[I]** (inference).
 
+Overview diagram: [`docs/diagrams/tcu-hardware.svg`](../diagrams/tcu-hardware.svg) (connector, hybrid
+dies, MCU memory and peripherals, mechatronic terminals, bench tools).
+
 ## 1. Device and memory map
 
 | Region | Address range | Size | Notes |
