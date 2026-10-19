@@ -28,12 +28,15 @@ the stock firmware. Markers in each document: **[M]** manual, **[O]** observed i
   product of Bosch and ZF quoted in these documents should be **changed or re-derived** (e.g.
   from sensor datasheets or measurement) before being used in the open-source implementation, to
   protect and respect the original developers.
-- **Reading and writing the controller:** done with an **ACDP-2 with module 19**, which reads and
-  writes the flash and EEPROM images without opening the module. Since 2026-10-18 the project
-  application is updated with a **Teensy 4.1 through the data-flash loader** (spec 18); the
-  ACDP-2 is needed only for code-flash writes (the loader itself) and recovery. Chip boot-mode programming
-  (spec 01 §1, which erases all flash, the user boot area and the EEPROM) is **not** part of the
-  plan unless a specific need arises.
+- **Code-flash and recovery tool — goal: Teensy 4.1.** The project aims to make the Teensy 4.1
+  the only tool needed for code-flash writes and recovery, so that no proprietary hardware is
+  required. **Current state (2026-10-19):** the Teensy updates and recovers the project
+  application in data flash (spec 18). Code-flash writes, including installing or replacing the
+  loader, and recovery of the loader or stock code flash still need the **ACDP-2 with module 19**,
+  which reads and writes the flash and EEPROM images without opening the module: FWE is low at
+  boot hand-over (spec 16 §10), and the plant session requires SecurityAccess (spec 17). Chip
+  boot-mode programming (spec 01 §1, which erases all flash, the user boot area and the EEPROM)
+  is **not** part of the plan unless a specific need arises.
 
 ## Documents
 

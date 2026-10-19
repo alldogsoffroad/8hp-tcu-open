@@ -32,6 +32,10 @@ unit (read with ACDP-2, module 19).
   **[I]** inference, **[D]** derived.
 - Calibration values are Bosch/ZF work product. Where the specs quote stock values, it is to
   show structure and to validate behaviour; the project firmware must change or re-derive them.
+- Code-flash and recovery tool — goal: **Teensy 4.1**, so no proprietary hardware is needed.
+  Today the Teensy updates and recovers the project application (data-flash loader, spec 18);
+  code-flash writes and recovery of the loader or stock code flash still need the ACDP-2
+  (module 19). See `docs/spec/README.md`.
 
 ## Status
 
