@@ -267,6 +267,32 @@ progress needs either the runtime-code install mechanism (§5e open lead: DMAC a
 blocks as a data source, the install-descriptor consumer) or the hot-tap (§5f). The eight pairs
 above are ready to validate any candidate transform immediately.
 
+## 5h. Live tap of an ACDP-2 session (bench 2026-10-19)
+
+The Teensy attached to the ACDP-2 harness bus (60 Ω measured at its transceiver = a correctly
+terminated bus) in listen-only with automatic bit-rate tracking — fully passive, no ACKs, no
+transmissions (the auto-step markers are USB reports only, `teensy_slcan.ino`). Results:
+
+- **The ACDP-2 tolerates the tap completely**: a full flash read ran to completion with the
+  Teensy on the bus. Passive listening is safe even during the entry phase — the earlier
+  "Teensy breaks the ACDP-2" failure must have been an active/termination artifact, not the
+  listener itself.
+- The read flow against the installed project loader: no app phase (the identify operation
+  aborts on the loader's missing `22 F1 90` VIN DID — NRC 0x31), then a power cycle straight
+  into the boot-side session: `D7656915` → 4-byte seed → 8-byte tester response → 8-byte reply →
+  encrypted transfer (792 commands at ~12 ms cadence, 8.9k data frames, 56 s). No 666.667 kbit/s
+  phase and no rate change at any point: **the ACDP-2's only entry is the 500 kbit/s D7656915
+  exchange; it never uses the plant session** (§5's original [I] was wrong, and the hot-tap idea
+  of §5f cannot yield `27 61/27 62` pairs — that session is ours alone).
+- Ninth (seed, response) pair captured live: `928908FF → C7D556074BAA936B` (reply
+  `7EF7F7AC80220917`). Also excluded offline: AES-128-ECB/DES under the 16 EEPROM "device" bytes
+  of the boot trampoline (§5e) in four key forms, six paddings, both directions — those EEPROM
+  bytes are an `MMSBLANK` placeholder pattern anyway, and the loader's data-flash writes have
+  since zeroed them.
+- The tester response arrives ~1.7 ms after the seed: the ACDP-2 **box** computes it (no phone
+  round-trip fits). The algorithm therefore exists in readable form in the ACDP-2's own firmware
+  — the natural next target, since the TCU side is runtime-constructed (§5e).
+
 ## 6. Open items
 
 1. SecurityAccess: which sub-function requests the seed (answered: `0x61`/`0x62`, §5c), and the
