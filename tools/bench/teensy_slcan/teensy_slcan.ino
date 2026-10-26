@@ -45,6 +45,28 @@ struct Channel {
 
 static Channel ch[2];
 
+/* H: saturation hail (project extension, round 41): H<sec> sends 7E1 # 54 FF 3D 22
+ * (the ACDP-2 boot-session magic, post-2026-10 rotation) every ~110 us for <sec> seconds.
+ * The boot rom seeds within sub-ms of power-up; a USB-paced loop is too slow (round 41
+ * addendum 3). ~110 us keeps ~35% of bus slots free so higher-ID replies (7E9) still win
+ * arbitration. 'h' or C stops it early. Channel must be open and not listen-only. */
+static uint32_t hail_until_ms[2];
+static uint32_t hail_last_us[2];
+static bool hail_pulse[2];     /* G mode: 300 ms storm / 300 ms silence so starved
+                                * higher-ID replies (7E9 seed, 7Fx telemetry) get air;
+                                * continuous saturation provably jams them (round 41) */
+
+/* A: power-feed monitor (round 41). 'A1' samples the box 12V feed through a divider
+ * on pin 14 (A0) every loop pass (~30-50 kS/s) and emits "P<feed millivolts>" on the
+ * FIRST port whenever the value moves > threshold or every 50 ms heartbeat — the same
+ * timeline as CAN frames, so feed dips/pulses correlate with the boot-session opening.
+ * Divider: 33k (feed->pin) + 10k (pin->GND), ratio 4.3. 'A0' stops it. */
+static bool power_mon = false;
+static const float    PWR_RATIO = 4.3f;
+static const uint16_t PWR_DELTA = 250;    /* emit when feed moves > 250 mV */
+static uint32_t       pwr_last_emit_ms;
+static uint16_t       pwr_last_mv;
+
 /* S9 = 666.667 kbit/s, the Bosch user boot MAT plant-entry rate (spec 17): 24 MHz / (2 x 18 tq).
  * Given as 666666: FlexCAN_T4 searches divisors with integer division and rejects 666667. */
 static const uint32_t kRates[10] = { 10000, 20000, 50000, 100000, 125000, 250000, 500000,
@@ -206,7 +228,46 @@ static void handle_line(int i) {
       ch[i].open = false;
       ok(i);
       break;
+    case 'A':
+      power_mon = s[1] == '1';
+      pwr_last_emit_ms = 0;                 /* force a heartbeat line immediately */
+      ok(i);
+      break;
     case 't': cmd_send(i, s, false, false); break;
+    case 'H': {
+      uint32_t secs = 0;
+      bool bad = false;
+      for (const char *p = s + 1; *p; p++) {
+        if (*p < '0' || *p > '9') { bad = true; break; }
+        secs = secs * 10u + (uint32_t)(*p - '0');
+      }
+      if (bad || secs == 0u || secs > 60u || !ch[i].open || ch[i].listen) { err(i); break; }
+      hail_until_ms[i] = millis() + secs * 1000u;
+      ok(i);
+      break;
+    }
+    case 'h':
+      hail_until_ms[i] = 0;
+      ok(i);
+      break;
+    case 'G': {
+      uint32_t secs = 0;
+      bool bad = false;
+      for (const char *p = s + 1; *p; p++) {
+        if (*p < '0' || *p > '9') { bad = true; break; }
+        secs = secs * 10u + (uint32_t)(*p - '0');
+      }
+      if (bad || secs == 0u || secs > 60u || !ch[i].open || ch[i].listen) { err(i); break; }
+      hail_until_ms[i] = millis() + secs * 1000u;
+      hail_pulse[i] = true;
+      ok(i);
+      break;
+    }
+    case 'g':
+      hail_until_ms[i] = 0;
+      hail_pulse[i] = false;
+      ok(i);
+      break;
     case 'T': cmd_send(i, s, true, false); break;
     case 'r': cmd_send(i, s, false, true); break;
     case 'R': cmd_send(i, s, true, true); break;
@@ -343,6 +404,37 @@ void loop() {
   while (can_b.read(m)) forward(1, m);
   auto_baud(0);
   auto_baud(1);
+  for (int i = 0; i < 2; i++) {
+    if (hail_until_ms[i] == 0u) continue;
+    if (millis() >= hail_until_ms[i] || !ch[i].open || ch[i].listen) {
+      hail_until_ms[i] = 0u;
+      reply(i, "hDone\r");
+      continue;
+    }
+    uint32_t now = micros();
+    bool storm_on = !hail_pulse[i] || ((millis() % 600u) < 300u);
+    if (storm_on && now - hail_last_us[i] >= 110u) {
+      CAN_message_t h;
+      h.id = 0x7E1;
+      h.len = 4;
+      h.buf[0] = 0x54; h.buf[1] = 0xFF; h.buf[2] = 0x3D; h.buf[3] = 0x22;
+      if (i == 0) can_a.write(h); else can_b.write(h);
+      hail_last_us[i] = now;
+    }
+  }
+  if (power_mon) {
+    const uint16_t mv = (uint16_t)((analogRead(14) * 3300.0f / 1023.0f) * PWR_RATIO);
+    const uint32_t now = millis();
+    if (pwr_last_emit_ms == 0u ||
+        (mv > pwr_last_mv + PWR_DELTA || mv + PWR_DELTA < pwr_last_mv) ||
+        now - pwr_last_emit_ms >= 50u) {
+      char pbuf[12];
+      int n = snprintf(pbuf, sizeof pbuf, "P%u\r", mv);
+      ch[0].port->write(pbuf, n);
+      pwr_last_mv = mv;
+      pwr_last_emit_ms = now;
+    }
+  }
   if (millis() - led_ms > 500u) {     /* heartbeat LED: fast blink when a channel is open */
     led_ms = millis();
     digitalWriteFast(LED_BUILTIN, (ch[0].open || ch[1].open) ? !digitalReadFast(LED_BUILTIN) : LOW);
