@@ -1,7 +1,9 @@
 # Spec 17 — User boot MAT: plant (production) programming protocol
 
-Status: **plant entry reproduced on the bench with the Teensy (2026-10-17). Session architecture
-mapped from the dump and the download path confirmed security-gated (2026-10-19, §5e/§5f).** Source: the unit's own user boot MAT, read out with
+Status: **SecurityAccess BROKEN (2026-10-25): the seed digest is RIPEMD-160, the "signature" is
+RSA-1024 e=3 PKCS#1 v1.5 — and the ACDP-2 satisfies it with an integer cube root, so no private
+key exists anywhere. A forged key was accepted on the bench (`67 62`) and RequestDownload now
+answers positive (`74`). Entry + session + services were reproduced earlier (2026-10-17, §5a).** Source: the unit's own user boot MAT, read out with
 routine FE20 (spec 06 §8). The dump is private and is not in the repository; this spec describes
 behaviour, not code. Markers: **[O]** observed in the code, **[B]** bench, **[I]** inference.
 
@@ -299,15 +301,106 @@ transmissions (the auto-step markers are USB reports only, `teensy_slcan.ino`). 
   no endpoints are baked into the binaries). The firmware must come from the box itself (SWD
   dump of its MCU) or from a captured update download.
 
+**Superseded 2026-10-25 (§5i): the "no 666.667 kbit/s phase" conclusion above was a measurement
+artifact.** The automatic-bit-rate listener steps only on bus *errors*; the quiet period before
+the plant phase is silence, not errors, so the tap stayed at 500 kbit/s and the 666.667 kbit/s
+phase passed unseen. A fixed-666.667 kbit/s listen-only tap caught the ACDP-2's full plant
+session (§5i): `PlantCan` entry, `10 60`, DID reads, `27 61` ×3, `27 62` (accepted), then a
+`34`/`36` download of ~0x2AA0 bytes — after which the bus switches to 500 kbit/s and the
+`D7656915` session begins. The downloaded routine of §5e's run hook and the `D7656915` handler
+are therefore the same thing: the ACDP-2 downloads its 500 kbit/s protocol handler through the
+plant session at every operation, which is why that handler exists in no static dump (§5g).
+
+## 5i. The session block found: a plain copy from application flash (2026-10-25) [O][B]
+
+Supersedes §5e's conclusion that the service/security layer "is constructed at runtime from
+non-obvious sources; static analysis of the available images cannot reach it". The install
+descriptor's consumer was found: an **installer at `0xFFF84058` inside the UNTD image** (the
+region Ghidra had marked as bad instruction data; `0xFFF84054` is a u16 count = 2, not code).
+Called from the plant-session start (`FUN_00000714` loads it from literal pool `0x8A8`), it
+
+1. maps the **application user MAT** at 0 (`0xFFFFA820` ← 0x3B00; marker checks 0x5E00/0x7E00,
+   `bhie0101` at its 0x224 — none of which exist in the boot-MAT dump, which is why §5e's
+   mapping hunt failed),
+2. **copies 0x1A60 bytes from app-MAT offset 0x498 to `0xFFF82000`** (descriptor table at
+   0xFFF8403C = ROM 0x3714; plain word copy, no decryption), and
+3. maps the boot MAT back (0x3B01) and returns into the session loop.
+
+So the plant session's service code is **block-0 application flash**, present in every IFLa
+dump: service nodes at image offset 0x1710 (= RAM 0xFFF83710) serve `3E 10 27 31 34 36 37 22
+2E`, of which `27/34/36/37/2E` carry security bit 1. The `27` handler (image 0x2460) is a state
+machine over a context at 0xFFF83928: level table `{sub 0x61, level 1, seedgen/verify arrays at
+MAT 0x458/0x45C, seed length 16, attempt limit 0x0A, lockout delay 10 s}`. Seed generation and
+verification live in the **boot MAT** as trampolines (0x22E0/0x229C) that call through wrappers
+(session 0xFFF8394C–0xFFF83A57) into the **application MAT's Auth_TSW engine** (descriptor at
+IFla 0x258 → functions 0x1F18–0x215E, crypto core 0x268C–0x306C, hash 0x314E–0x3D3A).
+
+The same capture (fixed-666.667 kbit/s listen-only tap of a real ACDP-2 operation) confirmed the
+whole flow on the wire — entry frame, `10 60`, three `27 61` draws, accepted `27 62` **5.6 ms**
+after the third seed (no server, no phone round-trip), then `34`→`74` and a plaintext `36`-block
+download — and §5h's supersession note above.
+
+## 5j. SecurityAccess broken: RIPEMD-160 + PKCS#1 v1.5 with e=3 — signed by integer cube root (2026-10-25) [O][B]
+
+**The verification chain** (all from the extracted session image + app MAT, validated against
+the ACDP-2's own accepted signature):
+
+- `27 61` → 16-byte seed = `RIPEMD160(state20 || timer32)[0..15]`, where `state20` starts as the
+  EEPROM-staged device bytes (§5e) and evolves through the hash. The hash engine (reset 0x3C9A,
+  update 0x3CD2, final 0x3CF6, compress 0x3218) is **textbook RIPEMD-160**: dual 80-step
+  pipelines, the permutation/rotation/constant tables at 0x217C+, all-little-endian. It
+  masqueraded as SHA-1 because **RIPEMD-160 shares SHA-1's initial values** — every earlier
+  reading (including spec 06's "SHA-1 at 0x345A") stopped at the IVs.
+- `27 62` must carry a **128-byte** key S. The engine computes `m = S³ mod n` with a **hardcoded
+  e = 3** and a **fixed 1024-bit n** at IFLa 0x2A8 (byte-identical in every image examined,
+  including m5; two further unused moduli live in the key blob at 0x328/0x3A8), then parses
+  PKCS#1 v1.5: `m = 00 01 FF×8 00 || payload[117]`, and accepts iff
+  **`payload[97..116] == RIPEMD160(seed)`**. Payload bytes 0–96 are never checked.
+- Lockout (from the handler): wrong key → NRC 0x35; ten attempts → NRC 0x36; a 10 s delay after
+  every second failure; an aged seed → NRC 0x37 (re-requesting seeds is always allowed).
+
+**There is no private key.** The ACDP-2's accepted signature satisfies `S³ == m` **exactly over
+the integers** — no modular reduction ever happens (S ≈ 2³³⁷ < n^(1/3)). The box does not sign;
+it **builds a perfect cube** whose bytes meet the format: prefix, ~97 free bytes, and the digest
+as the low 160 bits, with the cube root's residue class mod 2¹⁶⁰ fixed by the digest. Its three
+`27 61` requests are a redraw lottery — a digest is cube-constructible only when its 2-adic
+valuation is a multiple of three (~55 % of draws).
+
+**The forge** (bench-proven): `a₀ = digest^(3⁻¹ mod 2¹⁵⁸) mod 2¹⁶⁰`, then
+`a = a₀ + t·2¹⁶⁰ ≥ ∛lo`; the 117-byte free span makes solutions plentiful (~2¹⁰⁴ per digest).
+Validated 50/50 on random seeds, then **accepted by the TCU live** — `27 61` → forge →
+`27 62` → **`67 62` on the first seed** (2026-10-25, no ACDP-2 on the bus). §5b's "reproducible
+symmetric seed/key" was wrong in an interesting way: the gate is asymmetric *in form* and
+forgeable *in fact*.
+
+Delivery notes that cost two debug rounds: the session's ISO-TP receiver **loses back-to-back
+consecutive frames** — pace CFs ~4 ms (the ACDP-2 paces at ~6 ms); and reassemble multi-frame
+requests by the declared length, not the final CF's padded frame.
+
+## 5k. The download gate is open (2026-10-25) [B]
+
+With security level 1 open, `34` answers positive. Exact wire form (the ACDP-2's, 10 bytes —
+mind §5j's padding note when reassembling captures):
+
+    34 00 34 FF F8 84 00 | 00 2A A0      →  74 20 02 01
+
+`36 <seq> <data>` blocks (~0x123 bytes each, ~4 ms CF pacing) are acked `76 <seq>`; `37` ends
+the transfer (observed `7F 31 78` pending → `71 01 FF 01 …` on the ACDP-2 flow). The §5f
+plantdump tooling is unblocked: download → run hook (`0xFFF836A3` = 1, slot pointer at image
++0x10, §5e) → execute. The ACDP-2's own download is its 500 kbit/s `D7656915` handler (§5i
+supersession note) — replacing it with our own routine is exactly the architecture §5b
+envisioned.
+
 ## 6. Open items
 
-1. SecurityAccess: which sub-function requests the seed (answered: `0x61`/`0x62`, §5c), and the
-   key algorithm. The handler is runtime-installed session-block code (§5e), so the practical
-   route is the ACDP-2 hot-tap (§5f): the recorded passive-capture failure applies only to the
-   power-up entry window; a mid-session listen-only tap may still observe the ACDP-2's own
-   `27 61/27 62` exchange and its download usage.
-2. Download (`34`) / transfer (`36`) / exit (`37`) parameters and whether the transfer is
-   encrypted or plain once security is open. Both formats parse (§5f) but are gated by 0x27;
-   the ACDP-2 capture of item 1 would show them in use.
-3. Whether the downloaded routine must be authenticated (block 0 Auth / SHA-1, spec 06 §6.0a).
+1. ~~SecurityAccess algorithm~~ **Solved and bench-proven (2026-10-25, §5j): RIPEMD-160 digest +
+   integer-cube forged key; `67 62` live.**
+2. ~~Download/transfer formats~~ **Answered (§5k): `74` positive, block format captured;
+   remaining work is *using* them — the run-hook routine that writes flash (spec 19 path).**
+3. Whether the downloaded routine must be authenticated: effectively answered — the ACDP-2's
+   unencrypted routine downloads and runs through the same path we now hold; no authentication
+   intervenes between `37` and the run hook.
 4. Which start-up step drops FWE (only relevant for understanding; the session avoids it).
+5. The 500 kbit/s `D7656915` stream cipher (§5g) — now optional, not blocking: our own routine
+   replaces that path entirely. The captured (seed, response) pairs remain available to validate
+   any candidate transform.
