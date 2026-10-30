@@ -64,3 +64,13 @@ This repository — the specifications, the project firmware, and the tools — 
 the **GNU General Public License v3**; see [LICENSE](LICENSE). Firmware, calibration and EEPROM
 dumps remain excluded (see above): they are Bosch / FCA work product and are not covered by
 this license because they are not part of this repository.
+
+## Acknowledgements
+
+Findings built on public SH7254R documentation, the reference material listed in
+[`docs/spec/README.md`](docs/spec/README.md), and the author's own bench captures. Inspired by
+the wider community of open ECU tools; the sibling project
+[dspl1236/vag-tcu-tools](https://github.com/dspl1236/vag-tcu-tools) corroborated the platform
+family (spec 01 §1).
+
+This project was produced by a human/AI pair: see [CONTRIBUTORS.md](CONTRIBUTORS.md).
