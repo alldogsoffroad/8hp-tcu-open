@@ -51,6 +51,17 @@ static Channel ch[2];
  * addendum 3). ~110 us keeps ~35% of bus slots free so higher-ID replies (7E9) still win
  * arbitration. 'h' or C stops it early. Channel must be open and not listen-only. */
 static uint32_t hail_until_ms[2];
+/* Y/y/B: auto-reply rules (round 47) - the ACDP 500k handshake needs sub-ms
+ * answers a USB-paced host cannot deliver. Rules act on the receiving channel.
+ * Y<8hex>  : arm hail-answer: rx 7E1 # 54 FF 3D 22 -> tx 7E9 # <seed4B>
+ * Y0       : disarm hail-answer
+ * y<16hex><16hex> : arm byte-match: rx 7E1 # <match8B> -> tx 7E9 # <reply8B>
+ * y0       : disarm byte-match
+ * B<16hex> : arm challenge-answer: rx 7E9 # <any 4B seed> -> tx 7E1 # <chal8B>
+ * B0       : disarm challenge-answer */
+static uint8_t auto_seed[2][4];  static bool auto_hail[2];
+static uint8_t auto_match[2][8]; static uint8_t auto_resp[2][8]; static bool auto_chal[2];
+static uint8_t auto_zchal[2][8]; static bool auto_zseed[2];   /* armed by B<16hex> */
 static uint32_t hail_last_us[2];
 static bool hail_pulse[2];     /* G mode: 300 ms storm / 300 ms silence so starved
                                 * higher-ID replies (7E9 seed, 7Fx telemetry) get air;
@@ -269,6 +280,32 @@ static void handle_line(int i) {
       ok(i);
       break;
     case 'T': cmd_send(i, s, true, false); break;
+    case 'Y': {
+      uint32_t v;
+      if (s[1] == '0' && !s[2]) { auto_hail[i] = false; ok(i); break; }
+      if (strlen(s) != 9 || !parse_hex(s + 1, 8, &v)) { err(i); break; }
+      auto_seed[i][0] = v >> 24; auto_seed[i][1] = v >> 16; auto_seed[i][2] = v >> 8; auto_seed[i][3] = v;
+      auto_hail[i] = true; ok(i); break;
+    }
+    case 'B': {
+      uint32_t a, b;
+      if (s[1] == '0' && !s[2]) { auto_zseed[i] = false; ok(i); break; }
+      if (strlen(s) != 17 || !parse_hex(s + 1, 8, &a) || !parse_hex(s + 9, 8, &b)) { err(i); break; }
+      auto_zchal[i][0] = a >> 24; auto_zchal[i][1] = a >> 16; auto_zchal[i][2] = a >> 8; auto_zchal[i][3] = a;
+      auto_zchal[i][4] = b >> 24; auto_zchal[i][5] = b >> 16; auto_zchal[i][6] = b >> 8; auto_zchal[i][7] = b;
+      auto_zseed[i] = true; ok(i); break;
+    }
+    case 'y': {
+      uint32_t a, b;
+      if (s[1] == '0' && !s[2]) { auto_chal[i] = false; ok(i); break; }
+      if (strlen(s) != 33 || !parse_hex(s + 1, 8, &a) || !parse_hex(s + 9, 8, &b)) { err(i); break; }
+      auto_match[i][0] = a >> 24; auto_match[i][1] = a >> 16; auto_match[i][2] = a >> 8; auto_match[i][3] = a;
+      auto_match[i][4] = b >> 24; auto_match[i][5] = b >> 16; auto_match[i][6] = b >> 8; auto_match[i][7] = b;
+      if (!parse_hex(s + 17, 8, &a) || !parse_hex(s + 25, 8, &b)) { err(i); break; }
+      auto_resp[i][0] = a >> 24; auto_resp[i][1] = a >> 16; auto_resp[i][2] = a >> 8; auto_resp[i][3] = a;
+      auto_resp[i][4] = b >> 24; auto_resp[i][5] = b >> 16; auto_resp[i][6] = b >> 8; auto_resp[i][7] = b;
+      auto_chal[i] = true; ok(i); break;
+    }
     case 'r': cmd_send(i, s, false, true); break;
     case 'R': cmd_send(i, s, true, true); break;
     case 'V': reply(i, "V0101\r"); break;
@@ -305,6 +342,27 @@ static void forward(int i, const CAN_message_t &m) {
   int n;
 
   if (!ch[i].open) return;
+  if (!ch[i].listen && !m.flags.extended && m.id == 0x7E1) {
+    if (auto_hail[i] && m.len == 4 &&
+        m.buf[0] == 0x54 && m.buf[1] == 0xFF && m.buf[2] == 0x3D && m.buf[3] == 0x22) {
+      CAN_message_t a;
+      a.id = 0x7E9; a.flags.extended = false; a.flags.remote = false; a.len = 4;
+      memcpy(a.buf, auto_seed[i], 4);
+      write_frame(i, a);
+    } else if (auto_chal[i] && m.len == 8 && memcmp(m.buf, auto_match[i], 8) == 0) {
+      CAN_message_t a;
+      a.id = 0x7E9; a.flags.extended = false; a.flags.remote = false; a.len = 8;
+      memcpy(a.buf, auto_resp[i], 8);
+      write_frame(i, a);
+    }
+  } else if (!ch[i].listen && !m.flags.extended && m.id == 0x7E9) {
+    if (auto_zseed[i] && m.len == 4) {
+      CAN_message_t a;
+      a.id = 0x7E1; a.flags.extended = false; a.flags.remote = false; a.len = 8;
+      memcpy(a.buf, auto_zchal[i], 8);
+      write_frame(i, a);
+    }
+  }
   ch[i].rx_count++;
   ch[i].good_since_check++;
   if (m.flags.extended) {

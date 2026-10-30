@@ -205,7 +205,9 @@ static int app_routine(uint8_t type, uint16_t rid, const uint8_t *in, uint16_t n
     if (rid == DUMP_RID) {
         return bench_active() ? -0x22 : dump_routine(type, rid, in, n, out, max);
     }
-    if (rid == FLASH_RID || rid == FLASH_EN_RID || rid == SUP_PAT_RID) {
+    if (rid == FLASH_RID || rid == FLASH_EN_RID || rid == SUP_PAT_RID || rid == SUP_RAW_RID ||
+        rid == SUP_AUTH_RID || rid == SUP_MISR_RID || rid == SUP_BURST_RID ||
+        rid == SUP_FOLD_RID) {
         return flash_entry_routine(type, rid, in, n, out, max, leave_allowed());
     }
     return bench_routine(type, rid, in, n, out, max);

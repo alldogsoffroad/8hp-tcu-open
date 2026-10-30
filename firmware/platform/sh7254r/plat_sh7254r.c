@@ -258,8 +258,26 @@ bool plat_speed_read(uint8_t ch, speed_raw_t *r)
     return false;
 }
 
-/* ---- External supervisor (RSPI-B, SSLB1), CPU-driven as in stock 0x9210C / 0x1D430 ------ */
-void plat_sup_init(void)
+/* ---- External supervisor (RSPI-B, SSLB1), CPU-driven as in stock 0x9210C / 0x1D430 ------
+ * Bench 2026-10-27: keeping the RSPI enabled across frames wedges the CPU path after the
+ * FIRST frame (tick counters sent=345 / ok=1: SPRF never sets again). The stock 5 ms
+ * keep-alive task instead re-runs the FULL setup before every frame (boot ROM 0x1D430 each
+ * tick from 0x1D0B4) and writes SPSR=0 after the SPDR write; the app's live-reply path is
+ * A-DMAC only. So every frame here is stateless: setup -> SPDR -> poll SPRF -> read reply
+ * (full duplex: the reply to THIS frame clocks in during its own transfer) -> SPSR=0. */
+
+static void sup_pfc_mux(void)
+{
+    /* pin mux the engine proved necessary (pf.c rspi_pfc); idempotent OR-masking */
+    (*(volatile uint16_t *)0xFFFFC840u) =
+        (uint16_t)((*(volatile uint16_t *)0xFFFFC840u & 0x0FFFu) | 0xA000u);
+    (*(volatile uint16_t *)0xFFFE3890u) =
+        (uint16_t)((*(volatile uint16_t *)0xFFFE3890u & 0x3FFFu) | 0xC000u);
+    (*(volatile uint16_t *)0xFFFE3896u) =
+        (uint16_t)((*(volatile uint16_t *)0xFFFE3896u & 0x3FFFu) | 0xC000u);
+}
+
+static void sup_frame_setup(void)
 {
     RSPIB_DMA_REQ0 = 0u;
     RSPIB_DMA_REQ1 = 0u;
@@ -271,27 +289,31 @@ void plat_sup_init(void)
     SSLNDB = 0u;
     SPNDB = 1u;
     SPCMDB0 = 0xAF11u;                  /* SSLB1, 16 bit, MSB first, mode 1 */
-    SPCRB = 0x48u;                      /* enable, master */
+    SPCRB = 0x48u;                      /* enable, master; SPTEF=1 after init */
+}
+
+void plat_sup_init(void)
+{
+    sup_pfc_mux();
+    sup_frame_setup();
 }
 
 uint8_t plat_sup_exchange(uint16_t tx, uint16_t *rx)
 {
-    uint8_t r = 0u;
-    const uint8_t st = SPSRB;
+    uint32_t guard;
+    uint8_t r = 1u;
 
-    if ((st & SPSR_SPRF) != 0u) {
+    sup_frame_setup();
+    if ((SPSRB & SPSR_SPTEF) == 0u) {
+        return 0u;                      /* not possible after a fresh setup */
+    }
+    SPDRB = tx;
+    for (guard = 20000u; guard != 0u && (SPSRB & SPSR_SPRF) == 0u; guard--) { }
+    if ((SPSRB & SPSR_SPRF) != 0u) {
         *rx = SPDRB;
         r |= 2u;
     }
-    if ((st & (uint8_t)~SPSR_SPTEF) != 0u) {
-        /* clear receive / error flags (write 0 after reading 1); writing 1 to SPTEF is ignored,
-         * so it keeps its state */
-        SPSRB = (uint8_t)(st & SPSR_SPTEF);
-    }
-    if ((SPSRB & SPSR_SPTEF) != 0u) {
-        SPDRB = tx;
-        r |= 1u;
-    }
+    SPSRB = 0u;
     return r;
 }
 

@@ -24,6 +24,24 @@
                                  *        alternate frames (bit 0 output enable always cleared)
                                  *   31 03 FE 32 -> 71 03 FE 32 tx_hi tx_lo rx_hi rx_lo fpmon
                                  *   31 02 FE 32 -> normal supervisor word again */
+#define SUP_RAW_RID 0xFE33u     /* raw supervisor exchange (lab): send one word ONCE,
+                                 * no bit-0 clearing, returns tx/rx/fpmon.
+                                 *   31 01 FE 33 hh ll -> 71 01 FE 33 tx_hi tx_lo rx_hi rx_lo fpmon */
+#define SUP_AUTH_RID 0xFE34u    /* supervisor authenticator (blocking, may WDT-reset).
+                                 * DANGER: sends the INIT SEQUENCE starting with [8E,01],
+                                 * which RESETS the TCU — never use mid-run (bench 2026-10-26) */
+#define SUP_MISR_RID 0xFE35u    /* read the MISR (instant, non-blocking):
+                                 *   31 01 FE 35 -> 71 01 FE 35 <MISR BE32> */
+#define SUP_BURST_RID 0xFE36u   /* vendor-discipline burst (lab, per-frame RSPI re-init):
+                                 *   31 01 FE 36              -> INIT SEQ [8E,01][84,01]x11[8E,04]
+                                 *   31 01 FE 36 b3 b2 b1 b0  -> [88]x4 authenticator burst
+                                 *   31 01 FE 36 <level>      -> [84,level] burst
+                                 * Reply: 71 01 FE 36 <last_rx_hi> <last_rx_lo> <fwe>
+                                 * DANGER: type 1 starts with [8E,01], which RESETS the
+                                 * TCU — never use mid-run (bench 2026-10-26) */
+#define SUP_FOLD_RID 0xFE37u    /* MISR fold self-test (lab): the stock init check
+                                 * fold(0x7650E321, 8 words @0x40F1C) == 0xEDF9FBBE.
+                                 *   31 01 FE 37 -> 71 01 FE 37 <fold BE32> <match 01/00> */
 #define FLASH_START_DELAY_MS 20u
 
 /* allowed: the caller's interlock result (engine stopped, no bench output test active). */

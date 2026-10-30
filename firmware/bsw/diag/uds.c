@@ -173,13 +173,18 @@ static int svc_routine(const uint8_t *req, uint16_t len)
     const uint8_t type = (uint8_t)(req[1] & 0x7Fu);
     int r;
 
+#if defined(TCU_RAM_APP)
+    /* lab build: routines available in any session (the default session is the
+     * only one reachable; 10 03 gets NRC 0x11 from the app's session handler) */
+#else
     if (s_session != SES_EXT) {
         return -NRC_SNSIAS;
     }
+#endif
     if (len < 4u) {
         return -NRC_IMLOIF;
     }
-    if (type < 1u || type > 3u) {
+    if (type < 1u || type > 4u) {
         return -NRC_SFNS;
     }
     if (s_app == NULL || s_app->routine == NULL) {

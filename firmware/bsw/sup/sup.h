@@ -38,5 +38,7 @@ void sup_set_flash_mode(bool on);
 /* Bench experiment (routine FE32): send word ^ (toggle on alternate frames) every 5 ms instead of
  * the normal word; in register 0x8E words the output enable bit 0 is always cleared. */
 void sup_set_pattern(bool pattern_on, uint16_t word, uint16_t toggle);
+void sup_set_pattern_raw(bool pattern_on, uint16_t word, uint16_t toggle); /* lab: no bit-0 clear */
+void sup_suspend(bool on);            /* lab: suspend the 5ms tick (raw exchange) */
 
 #endif
