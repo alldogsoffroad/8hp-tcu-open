@@ -115,8 +115,8 @@
   <g class="s">
     <text x="492" y="575">FWE (ball A11) high at reset, low</text>
     <text x="492" y="590">before hand-over (spec 16 §10).</text>
-    <text x="492" y="608">Code flash: ACDP-2 via the boot</text>
-    <text x="492" y="623">MAT plant session (spec 17).</text>
+    <text x="492" y="608">Code flash: Teensy 4.1 via the</text>
+    <text x="492" y="623">boot MAT plant session (spec 17).</text>
     <text x="492" y="641">Data flash: project loader +</text>
     <text x="492" y="656">Teensy 4.1 (spec 18).</text>
   </g>
@@ -212,10 +212,10 @@
 
   <!-- ===== tools ===== -->
   <rect x="20" y="790" width="1200" height="90" rx="8" class="box" fill="#eef6f6"/>
-  <text x="35" y="812" class="h">Bench tools (on pins 5/6, never both at once)</text>
+  <text x="35" y="812" class="h">Bench tools (on pins 5/6)</text>
   <g class="s">
-    <text x="35" y="832">ACDP-2 (module 19): reads everything; writes code flash through the boot MAT plant session; installs the project loader once; recovery path.</text>
+    <text x="35" y="832">Teensy 4.1 + 8hp-teensy-flasher: full code-flash read / erase / program / verify through the boot MAT plant session (spec 17); recovery path.</text>
     <text x="35" y="850">Teensy 4.1 (SLCAN, 2 buses): measurement protocol, UDS, bench tests; updates the RAM application in data flash through the project loader (app-flash).</text>
-    <text x="35" y="868">Teensy and ACDP-2 must not share the bus: the Teensy breaks the ACDP-2 power-up even when listen-only.</text>
+    <text x="35" y="868">Historical: a real ACDP-2 must not share the bus with the Teensy — the Teensy breaks its power-up even when listen-only.</text>
   </g>
 </svg>

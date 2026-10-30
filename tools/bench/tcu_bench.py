@@ -37,7 +37,8 @@ Commands:
   flash-selftest IMAGE [--block ADDR]   erase / program / verify / erase one block that IMAGE and
                           the TCU leave blank (default 0x100000); spec 16 section 8 step 3
   flash-invalidate        erase the application marker block ON PURPOSE (safety-net check, spec 16
-                          section 8 step 4); afterwards only the ACDP-2 can restore the TCU
+                          section 8 step 4); restore afterwards with the Teensy flasher
+                          (8hp-teensy-flasher, spec 17 path)
   plant-entry [--mode can|kcn]   send the user boot MAT plant entry (29-bit 0x1F0C3CFE,
                           "PlantCan") at 666.667 kbit/s while the TCU is switched on; log replies
                           (spec 17). Read-only; power-cycle the TCU afterwards.
@@ -565,7 +566,7 @@ def cmd_flash(b, args):
     fl = enter_flasher(b)
     # The TCU is reset only when nothing was written or the write completed. After a failure the
     # flasher keeps running so the same command can retry; a reset there could leave the
-    # application invalid (recoverable only with the ACDP-2).
+    # application invalid (recoverable with the Teensy flasher, spec 17 path).
     try:
         if fl.crc(0, tcu_flash.WIN_LO) != tcu_flash.crc(img[:tcu_flash.WIN_LO]):
             print("note: the boot area 0x000000-0x03FFFF differs from the image (it is never written)")
@@ -585,7 +586,7 @@ def cmd_flash(b, args):
         pages = tcu_flash.write(fl, img, todo, progress=print)
     except tcu_flash.FlashError as e:
         sys.exit(f"FLASH FAILED: {e}\nThe flasher is still running: rerun the same command to retry. "
-                 "If the TCU was reset or lost power, recover with the ACDP-2.")
+                 "If the TCU was reset or lost power, recover with the Teensy flasher (spec 17 path).")
     print(f"done: {pages} pages in {time.time() - t0:.0f} s; resetting into the new image")
     fl.reset()
 
@@ -625,14 +626,14 @@ def cmd_flash_invalidate(b, args):
     """Spec 16 section 8 step 4: make the application invalid on purpose (safety-net check)."""
     import tcu_flash
     print("This erases block 0x160000 (application markers): the TCU will NOT start the application")
-    print("until it is rewritten, and only the ACDP-2 can do that. Use only for the safety-net check.")
+    print("until it is rewritten (Teensy flasher, spec 17 path). Use only for the safety-net check.")
     if input("type INVALIDATE to continue: ").strip() != "INVALIDATE":
         return
     fl = enter_flasher(b)
     try:
         fl.erase(0x160000, tcu_flash.block_size(0x160000))
         print("application invalidated. Power-cycle the TCU, check it stays silent, then write the")
-        print("project image with the ACDP-2 and check the heartbeat 0x7F0 comes back.")
+        print("project image with the Teensy flasher and check the heartbeat 0x7F0 comes back.")
     except tcu_flash.FlashError as e:
         sys.exit(f"FAILED: {e}")
     finally:

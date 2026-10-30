@@ -3,6 +3,11 @@
 Spare controller only — never the vehicle's unit. Keep the spare's full read-out (flash +
 EEPROM) before writing anything to it.
 
+> **Recovery tool note (2026-10-30).** Older procedures below reference the YanHua ACDP-2 as the
+> installer / recovery path; those steps are kept as the historical bench record. Every such
+> operation is now done with the Teensy alone via the boot MAT plant path (spec 17) with
+> [8hp-teensy-flasher](https://github.com/alldogsoffroad/8hp-teensy-flasher).
+
 ## 1. Hardware
 
 | Item | Notes |
@@ -127,14 +132,18 @@ flasher (built 2026-10-17 or later). Bus 1 only (TCU pins 5/6). Never with the e
 2. `flash IMAGE --dry-run`: starts the flasher, compares every block, prints the plan, resets.
 3. `flash-selftest IMAGE`: erase / program / verify / erase one block that neither the image nor
    the TCU uses (default 0x100000). The markers are not touched.
-4. Safety net, once: `flash-invalidate`, power-cycle (TCU must stay silent), restore with the
-   ACDP-2 power-up write, check `0x7F0` returns.
+4. Safety net, once: `flash-invalidate`, power-cycle (TCU must stay silent), restore with a
+   full-image write (boot MAT plant path — Teensy flasher, spec 17), check `0x7F0` returns.
 5. `flash IMAGE`: real write. Do not remove power until it reports done. If it fails, the
    flasher keeps running: rerun the same command. The flash is rated for 1000 erase cycles per
    block; only differing blocks are rewritten.
 
-**D. Data-flash loader (spec 18)**: replaces C as the way to update without the ACDP-2.
-1. Write `build/m5_loader_IFla.bin` with the ACDP-2 (the loader, with the stock identification).
+**D. Data-flash loader (spec 18)**: replaces C as the way to update without a power-cycle
+programming dance.
+1. Write `build/m5_loader_IFLa.bin` (the loader, with the stock identification) — historically
+   done with the ACDP-2; today the Teensy flasher
+   ([8hp-teensy-flasher](https://github.com/alldogsoffroad/8hp-teensy-flasher), spec 17 path)
+   does it with no proprietary tool.
    Afterwards the TCU sits in loader mode (no application yet): `uds 22 F1 95` →
    `62 F1 95 4C 44 …` ("LD").
 2. `app-selftest`: erase / program / verify / erase block DB07 (FWE stays low; not needed).
@@ -143,4 +152,5 @@ flasher (built 2026-10-17 or later). Bus 1 only (TCU pins 5/6). Never with the e
 4. Later updates: `app-flash` again (it uses FE30 from the running application, or asks you to
    switch the TCU on while it sends the loader's stay request).
 5. Power-cut test during `app-flash`: the TCU must come back in loader mode.
-6. Check the ACDP-2 can still read the TCU (Teensy disconnected).
+6. Check an external tool can still read the TCU (Teensy disconnected); with the Teensy
+   flasher this is the same path, so it needs no separate check.

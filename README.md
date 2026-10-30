@@ -24,7 +24,17 @@ Frontier / 2005–2015 Xterra). Nissan-side work has not started.
 Firmware, calibration and EEPROM dumps, and anything built from them (ELF images, disassembler
 projects), are excluded (`.gitignore`). They are Bosch / FCA work product, and an EEPROM
 read-out contains vehicle-specific data. To reproduce the analysis, use a read-out of your own
-unit (read with ACDP-2, module 19).
+unit (read it with [8hp-teensy-flasher](https://github.com/alldogsoffroad/8hp-teensy-flasher),
+the project's Teensy 4.1 flasher, or any tool you have).
+
+## Related repository
+
+**[8hp-teensy-flasher](https://github.com/alldogsoffroad/8hp-teensy-flasher)** — the Teensy 4.1
+code-flash reader/writer built from this project's findings (specs 16–18). Wake, plant
+SecurityAccess, encrypted session, erase/program/verify: everything needed to read and write the
+TCU with a ~$30 Teensy and no proprietary hardware. The earlier work in these specs was oriented
+around the YanHua ACDP-2 diagnostic tool; it is now only of historical interest — every read and
+write operation it performed is reproduced (and documented) by the open flasher.
 
 ## Conventions
 
@@ -32,10 +42,12 @@ unit (read with ACDP-2, module 19).
   **[I]** inference, **[D]** derived.
 - Calibration values are Bosch/ZF work product. Where the specs quote stock values, it is to
   show structure and to validate behaviour; the project firmware must change or re-derive them.
-- Code-flash and recovery tool — goal: **Teensy 4.1**, so no proprietary hardware is needed.
-  Today the Teensy updates and recovers the project application (data-flash loader, spec 18);
-  code-flash writes and recovery of the loader or stock code flash still need the ACDP-2
-  (module 19). See `docs/spec/README.md`.
+- Code-flash and recovery tool: **Teensy 4.1 — done.** The goal was "no proprietary hardware
+  needed"; as of 2026-10-30 the Teensy, running
+  [8hp-teensy-flasher](https://github.com/alldogsoffroad/8hp-teensy-flasher), does the full job
+  on its own: code-flash read, erase, program, verify and recovery (specs 17–18), plus the
+  routine data-flash application updates. The proprietary ACDP-2 tool is no longer needed for
+  anything.
 
 ## Status
 

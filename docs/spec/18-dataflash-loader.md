@@ -1,22 +1,25 @@
 # Spec 18 — Data-flash application loader (Teensy updates without the ACDP-2)
 
-Status: **in use on the bench spare (2026-10-18): all bench checks passed; the Teensy updates the application, the ACDP-2 remains the recovery tool.** Markers: **[M]** manual (SH7254R HW
+Status: **in use on the bench spare (2026-10-18): all bench checks passed; the Teensy updates the application — and, since 2026-10-30, recovery is Teensy-only too (code-flash read/write through spec 17, [8hp-teensy-flasher](https://github.com/alldogsoffroad/8hp-teensy-flasher)).** Markers: **[M]** manual (SH7254R HW
 manual R01UH0480EJ0400 §26), **[O]** observed, **[B]** bench, **[I]** inference.
 
 ## 1. Why
 
 - FWE is low whenever an application runs, so code flash cannot be programmed from our firmware
-  (spec 16 §10). Writing code flash through the boot MAT's plant session needs its SecurityAccess
-  algorithm, which this project does not pursue (spec 17).
+  (spec 16 §10). ~~Writing code flash through the boot MAT's plant session needs its
+  SecurityAccess algorithm, which this project does not pursue (spec 17).~~ **Superseded
+  (2026-10-30): spec 17's path is now fully open and Teensy-driven — but the data-flash loader
+  remains the routine update path, because it needs no wake-window power-cycle dance.**
 - FWE protects **code flash only** [M §25.8.1]. The **data flash** (data MAT, 128 KB) can be
   programmed with FWE low; it needs on-chip ROM enabled, FRDY = 1, the FENTRYR key and the
   per-block enables EEPWE0/1, all set by software [M §26.3]. It is rated for **50 000** P/E cycles
   (code flash: 1 000) [M §32].
 - Data flash cannot execute code (instruction fetch is blocked) [M §26.1].
 
-So: a small permanent **loader** in code flash (installed once with the ACDP-2) keeps the
+So: a small permanent **loader** in code flash keeps the
 **application in data flash**, copies it to RAM at power-up and runs it there. The Teensy updates
-the application through the loader, with our own protocol.
+the application through the loader, with our own protocol. (Historically the loader was
+installed once with the ACDP-2; any reinstall is now a Teensy flasher job, spec 17.)
 
 ## 2. Data flash facts [M §26]
 

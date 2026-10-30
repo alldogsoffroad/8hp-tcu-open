@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Build a 2.5 MB flash image for the ACDP-2 from the project application block.
+"""Build a full 2.5 MB flash image from the project application block.
+
+Originally built for writing with the ACDP-2; any full-image writer accepts it, and the
+Teensy flasher (8hp-teensy-flasher, spec 17 path) consumes the same block layout.
 
 The boot blocks (0x000000-0x03FFFF) and the calibration block (0x180000-0x1FFFFF) are taken
 from a reference read-out of the user's own controller (not part of the repository). The

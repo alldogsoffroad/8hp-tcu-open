@@ -33,8 +33,11 @@ PJ5/PJ6, MD2:MD0 = 110, key-code auth, full erase on a key match). That project 
 flash-write, FWE, or write-protection method, and its VAG SA2 security does not apply to this
 unit's Bosch boot-MAT SecurityAccess.
 
-Programming: the project reads and writes the controller with an **ACDP-2 (module 19)**, which
-works with the stock Bosch software already on the chip (see the README). For reference only, the
+Programming: the project reads and writes the controller with the **Teensy 4.1 flasher**
+([8hp-teensy-flasher](https://github.com/alldogsoffroad/8hp-teensy-flasher)), which drives the
+stock Bosch plant programming path on the same pins (spec 17) — no proprietary tool is involved.
+(Earlier bench work used a YanHua ACDP-2, module 19; references to it elsewhere in the specs are
+historical.) For reference only, the
 chip's own boot mode runs over SCI channel A (`PJ5/TxD_A`, `PJ6/RxD_A`), selected by MD4–MD0 and
 FWE; a matching key code causes the chip to **erase the user MAT, user boot MAT and data MAT**
 before programming is accepted [M §25.5]. Boot mode is not part of the plan.

@@ -28,15 +28,16 @@ the stock firmware. Markers in each document: **[M]** manual, **[O]** observed i
   product of Bosch and ZF quoted in these documents should be **changed or re-derived** (e.g.
   from sensor datasheets or measurement) before being used in the open-source implementation, to
   protect and respect the original developers.
-- **Code-flash and recovery tool — goal: Teensy 4.1.** The project aims to make the Teensy 4.1
+- **Code-flash and recovery tool — Teensy 4.1: done.** The project set out to make the Teensy
   the only tool needed for code-flash writes and recovery, so that no proprietary hardware is
-  required. **Current state (2026-10-19):** the Teensy updates and recovers the project
-  application in data flash (spec 18). Code-flash writes, including installing or replacing the
-  loader, and recovery of the loader or stock code flash still need the **ACDP-2 with module 19**,
-  which reads and writes the flash and EEPROM images without opening the module: FWE is low at
-  boot hand-over (spec 16 §10), and the plant session requires SecurityAccess (spec 17). Chip
-  boot-mode programming (spec 01 §1, which erases all flash, the user boot area and the EEPROM)
-  is **not** part of the plan unless a specific need arises.
+  required. **Current state (2026-10-30): achieved.** The Teensy reads, erases, programs and
+  verifies code flash end-to-end through the boot MAT plant path (spec 17) with the companion
+  tool [8hp-teensy-flasher](https://github.com/alldogsoffroad/8hp-teensy-flasher); it also
+  updates the project application in data flash (spec 18). The proprietary ACDP-2 (module 19)
+  that this work started around is retired from the toolchain — remaining references to it in
+  the specs are historical bench records. Chip boot-mode programming (spec 01 §1, which erases
+  all flash, the user boot area and the EEPROM) is **not** part of the plan unless a specific
+  need arises.
 
 ## Documents
 
@@ -57,8 +58,8 @@ the stock firmware. Markers in each document: **[M]** manual, **[O]** observed i
 | [13](13-fault-reporting.md) | Fault memory: event table, reporting API, fault-group identification, decoded monitors (P1B14) | draft |
 | [14](14-park-range.md) | Park/range module: input struct, park-target arbiter, lever request object, redundant safety-layer check | draft; range-code names and several inputs inferred |
 | [15](15-diagnostic-services.md) | UDS addressing, service table, sessions; hand-over to the boot software | draft; transport parameters and tool sequence open |
-| [16](16-can-reflash.md) | Project CAN reflash: RAM flasher, FCU driver, protocol, power-loss-safe write order | implemented, host-tested; **not usable on this unit**: FWE is low at boot hand-over (§10, bench 2026-10-18) |
-| [17](17-userboot-plant-protocol.md) | User boot MAT plant (production) protocol: "PlantCan" entry at 666.667 kbit/s, UDS services, the ACDP-2 write path | **SecurityAccess broken (2026-10-25): RIPEMD-160 digest, RSA-1024 e=3 PKCS#1 v1.5 satisfied by integer-cube forgery — no private key exists; forged key accepted live (`67 62`), RequestDownload positive (`74`, §5i–§5k)**; next: run-hook routine = flash write |
+| [16](16-can-reflash.md) | Project CAN reflash: RAM flasher, FCU driver, protocol, power-loss-safe write order | implemented, host-tested; **not usable on this unit**: FWE is low at boot hand-over (§10, bench 2026-10-18); code-flash duty taken over by the plant path (spec 17) and [8hp-teensy-flasher](https://github.com/alldogsoffroad/8hp-teensy-flasher) |
+| [17](17-userboot-plant-protocol.md) | User boot MAT plant (production) protocol: "PlantCan" entry at 666.667 kbit/s, UDS services, the plant programming path | **SecurityAccess broken (2026-10-25): RIPEMD-160 digest, RSA-1024 e=3 PKCS#1 v1.5 satisfied by integer-cube forgery — no private key exists; forged key accepted live (`67 62`), RequestDownload positive (`74`, §5i–§5k). Code-flash write proven (2026-10-30): the session engine's encrypted 500 kbit/s session erases/programs/verifies code flash, executed Teensy-only — tool: [8hp-teensy-flasher](https://github.com/alldogsoffroad/8hp-teensy-flasher)** |
 | [18](18-dataflash-loader.md) | Data-flash application loader: loader in code flash, RAM application in data flash, Teensy updates (`app-flash`) | in use on the bench; all bench checks passed |
 
 Related project data (project root): CAN message list (`1034420267_can_messages.csv`), fault-code
@@ -96,7 +97,7 @@ Items that static analysis could not resolve, to be answered on the bench:
 | 22 | Fluid temperature conversion: AN8/AN1 against a reference thermometer at 3+ temperatures (room, hot water, oven/oil bath) — **partial 2026-10-18**: two points near room temperature, TCU about 2 °C low; provisional table kept (spec 04 §4.1) | 04 | remaining: a soaked point at ≥ 60 °C, or a scan-tool comparison in a vehicle |
 | 23 | Supply and switched-supply channels (AN21, AN19, AN20) — **AN21 done 2026-10-18**: supply calibrated, true = 1.0553 × reading − 89 mV (spec 04 §3a); AN19/AN20 scaling still open | 04 | vary B+ and ignition on the bench; watch `0x7F2` byte 5 / measurement index 24 |
 | 24 | ~~FWE pin high (flash programming possible from the application)~~ — **answered 2026-10-18: no.** FWE is already low at boot hand-over (loader-entry FPMON `0x00`) and no case pin controls it (spec 16 §10, spec 01 §2.9) | 16 | |
-| 25 | ~~Project flasher: read path, scratch-block write, safety net, first reflash~~ — **superseded**: not usable while FWE is low (item 24); application updates use the data-flash loader (spec 18, all bench checks passed) | 16 | |
+| 25 | ~~Project flasher: read path, scratch-block write, safety net, first reflash~~ — **superseded**: not usable while FWE is low (item 24); application updates use the data-flash loader (spec 18, all bench checks passed). **The code-flash goal itself was later achieved on the boot MAT path (spec 17): Teensy-only erase/program/verify, 2026-10-30, [8hp-teensy-flasher](https://github.com/alldogsoffroad/8hp-teensy-flasher)** | 16 | |
 
 **Ram capture plan (item 15).** 2014–2017 Ram 1500 (DS) has no security gateway: OBD pins 6/14
 reach CAN-C (500 kbit/s) directly, so passive logging works; from model year 2018 a gateway is

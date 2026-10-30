@@ -1,5 +1,5 @@
 /* Data-flash application loader (spec 18 section 5). Lives in code flash at 0x40000 with the
- * stock identification fields; installed once with the ACDP-2.
+ * stock identification fields; written with the Teensy flasher (spec 17 path).
  *
  * Start-up:
  *   1. stay request from a running application (RAM word, see LD_STAY_WORD) -> loader mode;

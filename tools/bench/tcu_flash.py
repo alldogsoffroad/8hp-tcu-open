@@ -12,7 +12,7 @@ Write order (spec 16 section 5):
   4. program the marker block except marker 1, verify; then marker 1 last (calibration first,
      application last), verify
 A power loss before step 4 completes leaves marker 1 erased: the Bosch boot software does not start
-the application and the ACDP-2 power-up path recovers the unit.
+the application and the boot-MAT power-up path (Teensy flasher, spec 17) recovers the unit.
 """
 import time
 import zlib

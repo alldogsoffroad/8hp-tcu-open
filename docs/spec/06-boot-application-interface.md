@@ -6,9 +6,12 @@ application) runs from the 32 KB user boot MAT, which is **not in the available 
 exact start conditions are partly inferred.
 Markers: **[M]** manual, **[O]** observed in stock firmware, **[I]** inference, **[D]** derived.
 
-Context: the project writes the controller with an ACDP-2 (module 19) through the stock Bosch
-software, so the Bosch boot blocks stay in place and the project replaces the **application**
-and **calibration** blocks only.
+Context: the project writes the controller with its own Teensy 4.1 flasher
+([8hp-teensy-flasher](https://github.com/alldogsoffroad/8hp-teensy-flasher)) through the stock
+Bosch plant software (spec 17), so the Bosch boot blocks stay in place and the project replaces
+the **application** and **calibration** blocks only. (§5b's bench observations below were
+recorded with the proprietary ACDP-2 that the work started around; it is retired from the
+toolchain.)
 
 ## 1. Flash partitioning
 

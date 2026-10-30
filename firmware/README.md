@@ -10,17 +10,21 @@ the stock application, serves the watchdog,
 receives and checks the vehicle bus (CRC-8, rolling counter, timeouts; spec 07), decodes the
 traced signals into project units (`io/vehicle/profile_fca.c`), answers diagnostics on
 `0x7E1`/`0x7DF` → `0x7E9`, offers a read-only measurement protocol on `0x361` → `0x398`
-(spec 10 §6a), and has the stock periodic transmit messages ready but **disabled** (spec 08 §4a) and hands over to the Bosch boot software on `0x10 0x02` so the
-ACDP-2 can still reprogram the unit (spec 06 §5a, spec 15). It drives **no outputs**: all
+(spec 10 §6a), and has the stock periodic transmit messages ready but **disabled** (spec 08 §4a) and hands over to the Bosch boot software on `0x10 0x02` (spec 06 §5a, spec 15) — historically used so the
+ACDP-2 could still reprogram the unit. It drives **no outputs**: all
 solenoid, PWM and switch outputs stay in the safe state set up by `port_init()` (same pin state
 as the stock firmware before its drivers start).
 
-**Before any bench write of a project image, confirm the way back.** The hand-over (bench item 21
+**Before any bench write of a project image, confirm the way back.** ~~The hand-over (bench item 21
 in `docs/spec/README.md`) is unverified. If it fails, recovery depends on how ACDP-2 module 19
 reaches the controller: a connection that needs the running application's cooperation (CAN
 diagnostics) would be blocked, while a bench / boot-mode connection would not. Whether the
 Bosch boot manager offers a programming window at power-up independent of the application is
-not known (spec 06 §8). Find this out before the first write, and keep the spare's full read-out.
+not known (spec 06 §8).~~ **Superseded (2026-10-30): the boot MAT opens a programming window at
+every power-up (spec 17), and the Teensy flasher
+([8hp-teensy-flasher](https://github.com/alldogsoffroad/8hp-teensy-flasher)) reads and writes
+the unit through it regardless of the application's state — recovery is guaranteed and needs
+no proprietary tool. Still keep the spare's full read-out before writing.**
 
 ## Build
 
@@ -148,7 +152,10 @@ how bench item 20 reads the stock boot request record: `2A 00 FF F8 00 80`, `…
 
 1. Make and keep a full read-out (flash + EEPROM) of the spare before writing anything.
 2. Build the image from **that spare's** read-out (`--base`).
-3. Write with the ACDP-2 (module 19). Note whether the tool writes the markers itself.
+3. Write with the Teensy flasher
+   ([8hp-teensy-flasher](https://github.com/alldogsoffroad/8hp-teensy-flasher), spec 17 path;
+   historically done with the ACDP-2, module 19). Note whether the tool writes the markers
+   itself.
 4. Power the controller on the bench (B+, ignition, ground; spec 01 §2.8) with a CAN interface
    on pins 5/6 and 120 Ω termination.
 5. Expected: `0x7F0` and `0x7F1` frames every 100 ms, the counter rising and no restarts.
@@ -159,5 +166,6 @@ how bench item 20 reads the stock boot request record: `2A 00 FF F8 00 80`, `…
    never comes on, the supervisor link is not working and resets are expected. If nothing is sent: the boot side did not start the application
    (TPROT / marker / CRC question, spec 06 §8); [I] the boot side should then stay in the
    bootloader, but this is unconfirmed.
-7. Write the stock read-out back with the ACDP-2: this exercises the `10 02` hand-over
-   (bench item 21) and confirms the unit recovers.
+7. Write the stock read-out back with the Teensy flasher: this exercises the write path
+   and confirms the unit recovers. (Historically the `10 02` hand-over + ACDP-2 write served
+   as this check, bench item 21.)

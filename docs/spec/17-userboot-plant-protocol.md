@@ -3,7 +3,11 @@
 Status: **SecurityAccess BROKEN (2026-10-25): the seed digest is RIPEMD-160, the "signature" is
 RSA-1024 e=3 PKCS#1 v1.5 — and the ACDP-2 satisfies it with an integer cube root, so no private
 key exists anywhere. A forged key was accepted on the bench (`67 62`) and RequestDownload now
-answers positive (`74`). Entry + session + services were reproduced earlier (2026-10-17, §5a).** Source: the unit's own user boot MAT, read out with
+answers positive (`74`). Entry + session + services were reproduced earlier (2026-10-17, §5a).**
+**END TO END (2026-10-30): the Teensy alone completes this path and WRITES code flash — the
+plant session's downloaded engine serves an encrypted 500 kbit/s session (stock ChaCha8, key
+fully wire-derived) whose flash-op grammar erases, programs and verifies code flash. Tool:
+[8hp-teensy-flasher](https://github.com/alldogsoffroad/8hp-teensy-flasher); full write-up §5l.** Source: the unit's own user boot MAT, read out with
 routine FE20 (spec 06 §8). The dump is private and is not in the repository; this spec describes
 behaviour, not code. Markers: **[O]** observed in the code, **[B]** bench, **[I]** inference.
 
@@ -15,7 +19,9 @@ only when FWE (and MD2) are high at reset (manual table 3.2). The ACDP-2 and the
 TCU through the same pins (5, 6, 9, 13, 14), and the ACDP-2 always enters through the user boot
 MAT, so the board starts in user boot mode at every power-up and something drops FWE during
 start-up [I]. A tester that completes the user boot MAT's own session programs flash with FWE
-high: this is the route to replace the ACDP-2 with the Teensy.
+high: ~~this is the route to replace the ACDP-2 with the Teensy~~ **this route is proven — the
+Teensy replaces the ACDP-2 entirely (2026-10-30, §5l / [8hp-teensy-flasher](
+https://github.com/alldogsoffroad/8hp-teensy-flasher))**.
 
 ## 2. Start-up [O]
 
@@ -96,9 +102,11 @@ The Teensy (no ACDP-2 on the bus) reproduced the entry and holds the session:
   the seed-request sub-functions are not those odd numbers. The seed/key sub-function layout and
   the algorithm are the next unknown.
 
-**So the FWE problem is bypassed:** this session runs in the power-up window with FWE high, and
-`27`/`34`/`36`/`37` are present. Programming flash now needs the SecurityAccess algorithm and the
-download/transfer format, which the boot MAT code (and the ACDP-2 write captures) should yield.
+**~~So the FWE problem is bypassed: this session runs in the power-up window with FWE high~~**
+**SUPERSEDED (bench 2026-10-26, spec 16 §10): FWE reads low for the session's entire life; the
+FCU refuses P/E entry even with the FPMON check skipped. This session can READ and download
+(proven end-to-end with our own signed engine) but can never write code flash.** `27`/`34`/`36`/`37`
+are present.
 
 
 ## 5b. Feasibility: no asymmetric signature on this path [I]
@@ -358,6 +366,10 @@ the ACDP-2's own accepted signature):
   **`payload[97..116] == RIPEMD160(seed)`**. Payload bytes 0–96 are never checked.
 - Lockout (from the handler): wrong key → NRC 0x35; ten attempts → NRC 0x36; a 10 s delay after
   every second failure; an aged seed → NRC 0x37 (re-requesting seeds is always allowed).
+- **Refined 2026-10-30 (§5l):** "payload bytes 0–96 are never checked" holds for the mode-6
+  (PlantKcn) server, but the mode-5 (PlantCan) server additionally checks the payload head —
+  every banked accepted tool key carries the ASCII domain `PCMFLASHMEDB` at payload[0..11]
+  (6/6 pairs); the §5l forge includes it.
 
 **There is no private key.** The ACDP-2's accepted signature satisfies `S³ == m` **exactly over
 the integers** — no modular reduction ever happens (S ≈ 2³³⁷ < n^(1/3)). The box does not sign;
@@ -391,16 +403,158 @@ plantdump tooling is unblocked: download → run hook (`0xFFF836A3` = 1, slot po
 supersession note) — replacing it with our own routine is exactly the architecture §5b
 envisioned.
 
+## 5l. The run hook is the vendor session engine — cipher cracked, code flash written (2026-10-26 – 2026-10-30) [O][B]
+
+§5k opened the download gate for our own routines. Capturing what the ACDP-2 itself downloads
+at every operation (a two-channel Teensy bridged between box and TCU) answered the §5g/§5h
+riddle: the ~10,912-byte (0x2AA0) image the tool pulls through `34/36/37` into `0xFFF88400` is
+not a flash driver — it is the **session engine**, and once the run hook launches it, the
+engine *is* the 500 kbit/s server. It re-arms mailboxes 0/1 (`0x7E1`/`0x7E9`) at 500 kbit/s,
+answers the hail, and serves the entire encrypted session; the boot MAT's 666.667 kbit/s UDS
+server is parked from that moment (§5e's run hook has no return). Everything below is [O] from
+the decrypted engine image and [B] from decrypted tool captures plus the bench.
+
+**The engine image and its launch gate [O].** Layout: header/table `[0x00,0xB0)` with absolute
+pointers (the §5e slot pointer at +0x10), an encrypted body `[0xB0,0x2A20)`, and a 128-byte
+cube signature as the last block. `31 01 FF 01` verifies `m = S³ mod n` (e = 3, the §5j modulus
+at IFLa 0x2A8) with `m = 00 01 FF×8 00 || RIPEMD-160(image[:-128])` — **over the encrypted
+form** — then decrypts the body in place and jumps through the slot. The body cipher is a CFB
+word chain over `f` (the same multiplier used for the session seed, below): s₀ = 0, and per
+32-bit word `ks = f(s + 0x554E5444)` ("UNTD"), `pt = ct ⊕ ks`,
+`s' = (ks + pt) ⊕ 0xC34186A3`, all mod 2³². A live engine replies `71 01 FF 01 4D 4D 53`
+("MMS"); an older tool build without the session server replies `… 01 01` and never answers
+the 500 kbit/s hail. The current build is byte-stable across weeks (identical image bytes in
+every capture since 2026-10-28). Our own images — header + encrypted body + a forged cube over
+the result — launch identically (bench-proven; the project's reader engines were built this
+way), so the engine is replaceable, not just replayable.
+
+**The handshake [B].** After the MMS reply the tester switches to 500 kbit/s (~143 ms later)
+and sends a 4-byte plaintext hail on `0x7E1` — `54FF3D22` in the current tool generation
+(`D7656915` in the 2026-10-17 captures of §5g; the magic changed between tool releases, not
+between units). The engine replies a 4-byte plaintext seed, the tester an 8-byte challenge,
+the engine an 8-byte reply; every frame after is 8 bytes, encrypted, both directions, ~6.3 ms
+cadence with the tester acking every ~65 TCU frames. The seed is `f(timer)` with
+`f(x) = (x|1)·(0x8C5E4D76 ⊕ (x|1)) mod 2³²` over the free-running timer at `0xFFFFF220`
+(fallbacks: timer equal to the previous seed's source, 0 or −1 → the hail word is used
+instead). Re-hailing on the same boot draws a fresh seed — unlimited handshakes without a
+power cycle. Challenge and reply are **fixed plaintexts**: `30 00 00 00 00 00 00 85` and
+`70 04 4D 4D 53 14 xx xx` (the last two bytes vary; a retry draws `… 58 22`).
+
+**The cipher: stock ChaCha8 with a wire-derived key [O][B].** The engine's transform is
+ChaCha with **8 rounds** (4 double rounds), stock quarter-round rotations 16/12/8/7,
+column-then-diagonal, feed-forward addition — and a byte-swap of each output word (the SH-2A
+is big-endian; ChaCha is specified little-endian). State, 16 words at engine RAM `0xFFF80908`:
+
+- words 0–11: twelve constants byte-swapped from the engine image header (current build:
+  `2084f8ff 3e433e3c 50352025 2054524f 4484f8ff 4c455645 444550f4 4e49f8ff 5254f8ff 43414e49
+  0041a952 48548957`);
+- words 12/13: a 64-bit block counter, +1 per transform call;
+- word 14: **the hail word**; word 15: **the wire seed**.
+
+Each 8-byte frame burns one full 64-byte keystream block and uses only its first 8 bytes, and
+the counter advances in **wire order across both directions** (challenge = 0, reply = 1, then
+every frame in transmission order). So the session key is exactly `[12 header constants,
+counter, hail, seed]` — **everything on the wire**. A passive listener who sees the hail and
+the seed decrypts the whole session; this also explains every §5g negative (a table-free ARX
+cipher leaves no constants to find and maximal Berlekamp-Massey complexity). A flag byte at
+`0xFFF80900` gates the transform (0 → the driver zero-fills instead of encrypting).
+
+**The plaintext dialect [B].** Above the cipher sits an ISO-TP-like message framing with a
+message checksum: `ck = (sum of all message bytes except ck + 0x55) & 0xFF`, carried on the
+last frame of each message. Single frame `[op][0X len][≤5 data][pad][ck]`; first frame
+`[op][1X hi][lo][data][ck]` plus consecutive frames. Observed vocabulary (decrypted tool
+captures, 163k+ frames):
+
+- identify: read-arm `11 10 08 <addr> <ck>` then `13 02 02 00 00 00 00 6c` per next block;
+  DIDs and data return as `53 <type>` block headers with 512-byte blocks riding CFs — the
+  data frames themselves are raw 8-byte chunks, no per-frame wrapper;
+- `70 04 4D 4D 53 …` confirm, `51 01 …` ack/status, `[c0][class][code]` error grammar;
+- `08` verify: a region checksum (64-bit) per request, CF = region start BE32 + size BE32;
+  the tool ladders ~31 regions (~100–240 ms each) before and after every write;
+- `01` / `02`: **attestation rituals** — constant tool bytes, session-varying TCU tails
+  (`41 01 00 …` / `42 00 …`); no register or pointer semantics, but the engine expects them
+  in the write flow;
+- write ops `20` (erase), `11` (ARM), `12` (program), `21` (data-flash erase
+  `21 04 <addr BE32> 00 ck`);
+- the tool is a **diff-writer**: a same-content file produces only the verify ladder, no
+  writes.
+
+**The write grammar (composed, byte-exact) [B].** Proven tool frames and their general forms
+(CRC-16 = CCITT-FALSE throughout; FCU addresses are `0x80800000 + <flash offset>`):
+
+    erase 20:  20 10 06 00 27 69 00 1b   (FF: op, PCI, 00, CRC16 BE, 00, ck)
+               80 8e 00 00 00 01 00 00   (CF: FCU addr 0x808E0000, 00 01, pad 00 00)
+               → 60 00 (nothing changed) | 60 80 (content changed — real erase)
+    ARM   11:  11 10 08 00 f1 40 00 af
+               80 8e 10 00 00 01 e8 01   (e8 = FCU program block type, 01 = key)
+               → 51 01 …
+    prog  12:  12 11 00 00 <CRC16(256B payload) BE> 00 <ck>
+               + 32 raw 8-byte data frames (no per-frame checksum) = one 256-byte FCU unit
+               → 52 00 …
+
+The FF checksum field is CRC-16 over the continuation frame's unpadded data (erase: the 6
+bytes `FCU addr + 00 01`; ARM: all 8 bytes including `e8 01`); the trailing byte is the +0x55
+message checksum. A real erase (`60 80`) keeps the FCU busy ~1.75–2.5 s — wait before the ARM;
+verify after a real erase needs a retry loop. These forms were composed for arbitrary
+addresses (not replayed) and proven on the bench.
+
+**FWE, resolved at the process level [B].** The plant session *alone* does not latch FWE
+(spec 16 §10's 2026-10-26 measurement — our minimal session, no engine flow). In the full
+engine session code-flash P/E succeeds: FWE is high from at latest the `01` attestation
+exchange onward, and the erase/program/verify results prove the flash contents really change.
+Which supervisor reaction latches it stays open (§6 item 4); for flashing it does not matter —
+the process is deterministic.
+
+**The complete chain, Teensy-only [B]** — implemented in
+[8hp-teensy-flasher](https://github.com/alldogsoffroad/8hp-teensy-flasher) (`tools/flasher.py`):
+
+1. `PlantCan` entry storm at 666.667 kbit/s during power-up (§2; 30 s supply bleed-down
+   between attempts, probabilistic catch);
+2. plant session: `10 60`, `27 61`, `27 62` with the §5j cube forge carrying the domain
+   payload — every accepted tool key has `PCMFLASHMEDB` at payload bytes 0–11 (6/6 banked
+   pairs); the mode-5 (PlantCan) server checks it, the mode-6 server does not → `67 62`;
+3. `34/36/37` download of the engine image (the tool's own captured bytes replay verbatim;
+   the engine is vendor code — capture it from your own unit) → `31 01 FF 01` → MMS;
+4. switch to 500 kbit/s, hail → seed → challenge → MMS reply: session up, key on the wire;
+5. prime the session: identify reads, the `08` verify ladder, the `01`/`02` attestations;
+6. composed ops: erase → busy wait → ARM → program (≥4 ms inter-frame pacing — faster bursts
+   drop frames) → `08` verify;
+7. safety rails: the flasher refuses addresses outside code flash (0x4000–0x27E000) and never
+   touches the boot region.
+
+**Result (2026-10-29/30):** a 256-byte payload written at 0xE1000, verified by an independent
+fresh session (region checksum `42c38b5cf2dafbe9`; blank `14b603cca7a12f57`, the tool's marker
+`59552884f4395537`), then the block erased again — the TCU restored byte-identical to its
+original dump. No proprietary tool anywhere in the loop.
+
+**Delivery notes [B].** One engine download per boot: a failed launch keeps the download door
+open (~4 attempts, then `7F 34 22`); a successful launch closes it, and a stale partial RAM
+image answers MMS then garbage — power-cycle between attempts. Once the 500 kbit/s session
+starts, the 666.667 kbit/s door is closed (POR only). The vendor tool's phone app accepts
+byte-modified copies of its own read files (no content check) — that is how the write capture
+was made. Supervisor danger words stand (spec 03/16 history): `[8E,01]` resets, `[8E,50]`
+latches reset, and `[8E,80]` in mode 6 kills the TCU until a bench POR.
+
 ## 6. Open items
 
 1. ~~SecurityAccess algorithm~~ **Solved and bench-proven (2026-10-25, §5j): RIPEMD-160 digest +
    integer-cube forged key; `67 62` live.**
-2. ~~Download/transfer formats~~ **Answered (§5k): `74` positive, block format captured;
-   remaining work is *using* them — the run-hook routine that writes flash (spec 19 path).**
+2. ~~Download/transfer formats~~ **Answered (§5k): `74` positive, block format captured.**
+   ~~remaining work is *using* them — the run-hook routine that writes flash (spec 19 path)~~
+   **Solved (2026-10-30, §5l): the run hook is the vendor *session engine*, whose encrypted
+   500 kbit/s session performs the code-flash write. Teensy-only erase/program/verify proven;
+   tool: [8hp-teensy-flasher](https://github.com/alldogsoffroad/8hp-teensy-flasher).**
 3. Whether the downloaded routine must be authenticated: effectively answered — the ACDP-2's
    unencrypted routine downloads and runs through the same path we now hold; no authentication
    intervenes between `37` and the run hook.
 4. Which start-up step drops FWE (only relevant for understanding; the session avoids it).
-5. The 500 kbit/s `D7656915` stream cipher (§5g) — now optional, not blocking: our own routine
-   replaces that path entirely. The captured (seed, response) pairs remain available to validate
-   any candidate transform.
+   Partially answered (2026-10-30, §5l): FWE is *latched* during the encrypted engine session —
+   our own minimal plant session measured it low (spec 16 §10 supersession), the full
+   engine session latches it high. The latch source is the supervisor's reaction to the
+   engine session flow, exact word still open.
+5. ~~The 500 kbit/s `D7656915` stream cipher (§5g)~~ **Solved: stock ChaCha8 (8 rounds, stock
+   quarter-rounds, per-word byte-swap at output), keyed by 12 constants from the engine image
+   header + a 64-bit wire-order block counter + the hail word `54FF3D22` + the wire seed — the
+   key is fully wire-derived. Implemented in [8hp-teensy-flasher](
+   https://github.com/alldogsoffroad/8hp-teensy-flasher) (`tools/protocol.py`); the banked
+   (seed, response) pairs and full session captures decrypt byte-exact.**

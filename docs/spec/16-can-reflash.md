@@ -1,13 +1,17 @@
-# Spec 16 — Project CAN reflash (replaces the ACDP-2 for routine writes)
+# Spec 16 — Project CAN reflash (application reflash over the project UDS session)
 
-Status: **implemented and host-tested (2026-10-17); not yet run on hardware.** Markers: **[M]** manual (SH7254R HW manual
+Status: **implemented and host-tested (2026-10-17); not usable on this unit — FWE is low at boot
+hand-over (§10). Code-flash duty is handled by the boot MAT plant path (spec 17) and the
+[8hp-teensy-flasher](https://github.com/alldogsoffroad/8hp-teensy-flasher).** Markers: **[M]** manual (SH7254R HW manual
 R01UH0480EJ0400 §25, §32), **[O]** observed, **[I]** inference, **[D]** derived.
 
 ## 1. Goal and boundaries
 
 The project application carries its own flasher. The Teensy (or any SocketCAN tool) rewrites the
-application and calibration blocks over CAN bus 1 with a plain UDS-style protocol. The ACDP-2 is
-needed once, to install the first project image, and stays the recovery path.
+application and calibration blocks over CAN bus 1 with a plain UDS-style protocol. ~~The ACDP-2 is
+needed once, to install the first project image, and stays the recovery path.~~ **Superseded
+(2026-10-30): the Teensy flasher installs project images and is the recovery path on its own
+(spec 17); no proprietary tool is needed.**
 
 - **Writable window: `0x040000–0x1FFFFF` only** (application + calibration, spec 06 §1). The
   flasher refuses any address below `0x40000` or above `0x1FFFFF` (erase blocks EB00–EB10 hold block 0 /
@@ -15,7 +19,8 @@ needed once, to install the first project image, and stays the recovery path.
 - The user boot MAT is never selected (FENTRYD never set). Lock-bit commands (`0x71`/`0x77`) are
   never issued and FPROTR is left alone.
 - So the Bosch power-up path (user boot MAT + bootloader, spec 06 §5b) is never modified. Whatever
-  happens to the application, the ACDP-2 power-up entry still works.
+  happens to the application, the boot-MAT power-up entry still works — and the Teensy flasher
+  drives that entry directly (spec 17), so recovery needs no other tool.
 
 ## 2. Facts the design rests on
 
@@ -156,6 +161,11 @@ anything that matters.
 
 ## 8. Bench sequence
 
+> Historical plan (2026-10-17), written while the ACDP-2 was still the installer/recovery tool
+> and before §10's FWE verdict closed this path. Never executed. The roles it assigns to the
+> ACDP-2 now belong to the Teensy flasher ([8hp-teensy-flasher](
+> https://github.com/alldogsoffroad/8hp-teensy-flasher), spec 17 path).
+
 1. Install the project image with the ACDP-2 (with `FD03`, a read-only DID reporting FPMON).
    Confirm FWE = 1. If FWE = 0, stop: plan #3 is not possible without hardware changes.
 2. Enter the flasher and read `F195`. Run `FF01` CRCs and compare them with the image (read path
@@ -217,8 +227,30 @@ Implementation notes:
    set-up is not the cause, and leaving pins as the boot left them cannot keep FWE high. With the
    connector check (spec 01 §2.9: no case pin controls FWE), the route "raise or hold FWE from our
    code" is closed. FWE is high only inside the boot MAT window (spec 17), which is gated by
-   SecurityAccess. Code-flash writes therefore stay with the ACDP-2; firmware updates use the
-   data-flash loader (spec 18).
+   SecurityAccess. ~~Code-flash writes therefore stay with the ACDP-2; firmware updates use the
+   data-flash loader (spec 18).~~ (Void — see the 2026-10-30 supersession note at the end of
+   this item.)
+   **Bench 2026-10-26 (plant-session engine, spec 17 §5k): FWE is low for the plant session's
+   entire life** — FPMON bit 7 = 0 at ~4 min after arming and across 12 samples spanning the
+   first 35 s of a second fresh session. The boot MAT's supervisor service (0x244C) never fires
+   its body in this session: its 5 ms gate reads the FRC at 0xFFFFF220, **which does not run in
+   this context** (state 0x19, port 0xFFFE3902 = 0x7F with bits 4–5 set, 120000-fire counter
+   still 0 after minutes — and bits 4/5 set exclude that port as the FWE gate). No timer we can
+   find runs there (CMT0 and FRC both dead — any flasher timing loop would hang). Forcing P/E
+   entry anyway (engine-side skip of the FPMON check) is **refused by the FCU itself**: the
+   FENTRYR 0xAA0x write does not stick, synchronous failure. FWE is therefore a hard hardware
+   gate on user-MAT program/erase, and **the armed plant session can read but never write code
+   flash**. The ACDP-2's code-flash writes must happen in an earlier window (its D7656915
+   500 kbit/s responder answers in 350 µs — plausibly while FWE is still at its reset level).
+   **Superseded (bench 2026-10-30): the plant path writes code flash after all — the verdict
+   above was measured on our own minimal plant session.** The full plant flow downloads the
+   vendor's *session engine* (the "run hook", spec 17 §5e) which then serves an encrypted
+   500 kbit/s session; in that session FWE is latched (high from at latest the session's
+   attestation exchange onward) and the engine's flash-op grammar — erase / ARM / program /
+   verify, CRC-16/CCITT-FALSE framed — writes code flash. Proven end-to-end by the Teensy alone
+   with no proprietary tool: [8hp-teensy-flasher](
+   https://github.com/alldogsoffroad/8hp-teensy-flasher) (full write-up in spec 17 §5l). "Code-flash writes therefore stay with the ACDP-2" above is void: nothing
+   stays with the ACDP-2.
 2. Whether a CPU copy of the FCU firmware is accepted (§3).
 3. Whether the user boot MAT also checks the calibration markers before starting the application
    (affects only which block must be valid; the order in §5 covers both).

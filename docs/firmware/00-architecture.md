@@ -6,8 +6,9 @@ Status: **agreed 2026-10-14** (decisions in §9; licence deferred). Implementati
 
 ## 1. Goals and constraints
 
-- **Runs on the stock controller**, written with the ACDP-2 into the **application** and
-  **calibration** blocks only; the Bosch boot blocks stay (spec 06).
+- **Runs on the stock controller**, written with the project's Teensy flasher
+  ([8hp-teensy-flasher](https://github.com/alldogsoffroad/8hp-teensy-flasher), spec 17 path)
+  into the **application** and **calibration** blocks only; the Bosch boot blocks stay (spec 06).
 - **Vehicle-independent core.** The transmission logic works on normalised vehicle signals
   (engine speed, torque, pedal, brake, lever …). Stock FCA CAN is one "vehicle profile"; the
   Nissan Frontier/Xterra profile is added later without touching the core.

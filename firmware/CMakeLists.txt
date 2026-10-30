@@ -87,7 +87,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         COMMAND ${CMAKE_SIZE} tcu_app.elf
         COMMENT "Writing application block as Intel HEX (load addresses)")
 
-    # ---- Data-flash loader (spec 18): code flash at 0x40000, installed once with the ACDP-2 ----
+    # ---- Data-flash loader (spec 18): code flash at 0x40000, written with the Teensy flasher ----
     set(LD_LDSCRIPT ${CMAKE_SOURCE_DIR}/loader/ld_link.ld)
     add_executable(tcu_loader.elf
         platform/sh7254r/start.S
@@ -108,7 +108,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     add_custom_command(TARGET tcu_loader.elf POST_BUILD
         COMMAND ${CMAKE_OBJCOPY} -O ihex --remove-section=.bss tcu_loader.elf tcu_loader.hex
         COMMAND ${CMAKE_SIZE} tcu_loader.elf
-        COMMENT "Loader block as Intel HEX (build the ACDP-2 image with build_image.py --stock-ident)")
+        COMMENT "Loader block as Intel HEX (build the full flash image with build_image.py --stock-ident)")
 
     # ---- RAM application (spec 18): stored in data flash, run from RAM ---------------------
     set(RAM_LDSCRIPT ${CMAKE_SOURCE_DIR}/platform/sh7254r/linker_ram.ld)
