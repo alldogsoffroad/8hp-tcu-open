@@ -2,8 +2,13 @@
 
 Open C firmware for the Bosch ZF 8HP TCU (SH7254R). Architecture: `docs/firmware/00-architecture.md`.
 
-Current milestone: **M3** — solenoid driver chips (`io/actuators/sol_drv.c`, spec 12 §2b) and a
-bench-only solenoid test (`app/bench_out.c`); outputs are off unless a bench test is running.
+Current milestone: **M4b** — the park outputs (channel 7 park release, TOE31 park hold) driven
+under the park module and the FE11 commissioning routine (`docs/firmware/01-m4-range-park.md`
+§8); outputs are off unless a bench test is running or the park sequence requests them, and the
+compile gate `TCU_M4B_OUTPUTS` (on for the RAM bench application only) keeps the code-flash
+application output-free until the M4b bench check passes. M4a: range / park decisions, sequencing,
+independent monitor. M3: solenoid driver chips (`io/actuators/sol_drv.c`, spec 12 §2b) and a
+bench-only solenoid test (`app/bench_out.c`).
 M2: the transmission's own sensors (speeds, fluid temperature, supply, park contacts;
 `io/sensors`, specs 02 §4.1a and 04 §4.1). M1 summary: boots in place of
 the stock application, serves the watchdog,
@@ -106,6 +111,28 @@ Safety design (agreed 2026-10-15), enforced in `app/bench_out.c`:
 | `31 02 FE 10` | stop |
 | `31 03 FE 10` | results: state, channel, mA, remaining 0.1 s, end reason, driver faults |
 | `22 FD 02` | output status (as `0x7F3`) |
+
+## Park outputs (M4b) — E-SHIFT MECHATRONIC, ENGINE OFF, SHORT BURSTS
+
+The two park actuators are driven only by the park module (`app/park.c`, gated by
+`TCU_M4B_OUTPUTS` — set on the RAM bench application) or by the FE11 commissioning routine;
+never by any other path. Park release = driver channel 7 (full on); park hold = TOE31 / PL6,
+a 1 kHz PWM output to terminal C7 (spec 12 §1.1–1.2; both coils ~25 Ω, ~0.5 A). The supervisor
+output enable is requested per source (`SUP_EN_PARK` / `SUP_EN_BENCH`) and sent while any
+source needs it. Ownership: the park module owns channel 7 and TOE31 whenever no bench test is
+active; the M3 bench idle forcing covers channels 0–6 only; while a bench test runs, the park
+module suspends its outputs. Coils are designed to run in oil — keep bursts to seconds.
+
+| Request | Meaning |
+|---|---|
+| `31 01 FE 11 out s [d%]` | commissioning: `out` 0 = park release (ch 7), 1 = park hold (TOE31), `s` seconds, optional duty 1–100 % (default 100) |
+| `31 02 FE 11` | stop |
+| `31 03 FE 11` | results: state, out, duty, remaining 0.1 s, end reason, driver faults |
+
+Bench flow (`tools/bench/tcu_bench.py`): `solenoid` (the M3 checklist) → `park-out` (FE11
+commissioning with ammeter prompts, settles the TOE31 polarity and the full-on chip field) →
+`park-check --hw` (the lever scenario with outputs live; a dry mechatronic has no line
+pressure, so RELEASING may time out — that fault path is expected without hydraulics).
 
 ## User boot MAT read-out (routine FE20)
 

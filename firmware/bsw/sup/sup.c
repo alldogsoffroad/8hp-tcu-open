@@ -4,7 +4,7 @@
 
 static sup_status_t s_st;
 static bool s_toggle;
-static bool s_enable_req;
+static uint8_t s_enable_req;             /* SUP_EN_* source bits currently requesting */
 static bool s_flash_mode;
 static bool s_pattern;
 static bool s_pat_raw;                /* lab: raw pattern — bit 0 NOT cleared for 0x8E words */
@@ -15,7 +15,7 @@ void sup_init(void)
 {
     memset(&s_st, 0, sizeof s_st);
     s_toggle = false;
-    s_enable_req = false;
+    s_enable_req = 0u;
     s_flash_mode = false;
     s_pattern = false;
     s_pat_raw = false;
@@ -28,9 +28,14 @@ void sup_suspend(bool on)
     s_suspended = on;
 }
 
-void sup_set_output_enable(bool on)
+void sup_enable_set(uint8_t sources)
 {
-    s_enable_req = on;
+    s_enable_req |= (uint8_t)(sources & (SUP_EN_BENCH | SUP_EN_PARK));
+}
+
+void sup_enable_clear(uint8_t sources)
+{
+    s_enable_req = (uint8_t)(s_enable_req & ~sources);
 }
 
 void sup_set_flash_mode(bool on)
@@ -76,7 +81,7 @@ void sup_tick_5ms(void)
         tx = (uint16_t)(SUP_CMD_CONTROL | SUP_BIT_FL_MODE | (s_toggle ? SUP_BIT_FL_TOGGLE : 0u));
     } else {
         tx = (uint16_t)(SUP_CMD_CONTROL | (s_toggle ? SUP_BIT_TOGGLE : 0u) |
-                        (s_enable_req ? SUP_BIT_ENABLE : 0u));
+                        (s_enable_req != 0u ? SUP_BIT_ENABLE : 0u));
     }
     r = plat_sup_exchange(tx, &rx);
     if ((r & 2u) != 0u) {

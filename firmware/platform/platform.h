@@ -76,6 +76,15 @@ uint8_t plat_sup_exchange(uint16_t tx, uint16_t *rx);
 void plat_drv_init(void);
 bool plat_drv_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n);
 
+/* ---- Park hold PWM output: TOE31 on PL6 (spec 02 section 3.1, spec 12 section 1.1) ----
+ * A 1 kHz PWM switch output for the park hold magnet (low-side driver, terminal C7).
+ * plat_toe_out_init() configures the timer channel with duty 0 and switches the pin to its
+ * timer function last, so the pin stays low (output off) throughout; call it once after
+ * plat_init(). plat_toe_out_set() sets the energisation in per mille (1000 = fully on,
+ * 0 = off); the duty takes effect through the reload buffer at the next cycle match. */
+void plat_toe_out_init(void);
+void plat_toe_out_set(uint16_t permil);
+
 /* ---- User boot MAT read-out (SH7254R manual 25.9.1) ----
  * Copy the 32 KB user boot MAT into dst (4-byte aligned, at least len bytes) by switching the
  * flash MAT from RAM-resident code with interrupts masked. Returns false if not available. */

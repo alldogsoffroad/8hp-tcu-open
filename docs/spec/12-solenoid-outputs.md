@@ -386,15 +386,19 @@ are still open.
 
 **ID job** (template `0x40A84`, 10 frames): `0x06`, `0x00` per chip; reply high byte `0xA2`.
 
-### 2c. Project implementation (M3)
+### 2c. Project implementation (M3, extended in M4b)
 
 `firmware/io/actuators/sol_drv.c` reproduces the four bus-0 jobs with the stock frame layouts and
 reply checks; RSPI-A is driven by the CPU with the five-command sequence of the stock job start
 (`0x96468`). Configuration bytes `0x8E` = 0x00 [I], `0x90` = 0x21, `0x96` = 0x55, mode bit 4 set;
 dither amplitude 0 (dither not used). Any reply or read-back fault latches and forces all
-channels off. Channels are only driven by the bench test `firmware/app/bench_out.c` (safety
-design in `firmware/README.md`), which also sets the supervisor output enable (spec 03 §4.4)
-only while a test is active.
+channels off. Channels 0–6 are only driven by the bench test `firmware/app/bench_out.c` (safety
+design in `firmware/README.md`), which requests the supervisor output enable (spec 03 §4.4)
+while a test is active. M4b (2026-10-30): channel 7 is driven full-on by the park module
+(`app/park.c`, compile gate `TCU_M4B_OUTPUTS`) or the FE11 commissioning routine; the park hold
+(§1.2, TOE31) is driven by a new timer-E platform output; the supervisor enable is a per-source
+request OR (`SUP_EN_BENCH` | `SUP_EN_PARK`). The full-on chip mode field and the TOE31 polarity
+are verified by FE11 on the bench (bench items 1/16).
 
 ## 3. Solenoid characteristics [O]
 

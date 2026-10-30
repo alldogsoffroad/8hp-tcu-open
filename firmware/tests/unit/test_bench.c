@@ -67,6 +67,15 @@ static bool start(uint8_t ch, uint16_t ma, uint8_t s)
     return last_rsp()[1] == 0x71u;
 }
 
+static bool start_park(uint8_t out, uint8_t s, uint8_t duty_pct)
+{
+    const uint8_t r[7] = { 0x31, 0x01, 0xFE, 0x11, out, s, duty_pct };
+    const uint8_t n = duty_pct != 0u ? 7u : 6u;
+    stub.n_tx = 0u;
+    uds_req(r, n);
+    return last_rsp()[1] == 0x71u;
+}
+
 static uint8_t last_nrc(void) { return last_rsp()[1] == 0x7Fu ? last_rsp()[3] : 0u; }
 
 int main(void)
@@ -150,6 +159,51 @@ int main(void)
     CHECK(!start(1u, 300u, 5u) && last_nrc() == 0x22u);     /* latched until re-init */
     sol_init();
     run_10ms(1u);
+
+    /* ---- FE11: park output commissioning (M4b) ---- */
+    uds_req((const uint8_t[]){ 0x10, 0x03 }, 2u);
+    run_10ms(2u);
+
+    /* limits: output selector, duration, duty */
+    CHECK(!start_park(2u, 2u, 0u) && last_nrc() == 0x31u);
+    CHECK(!start_park(0u, 6u, 0u) && last_nrc() == 0x31u);
+    CHECK(!start_park(0u, 2u, 101u) && last_nrc() == 0x31u);
+
+    /* park release (out 0): channel 7 full on, TOE31 off, enable requested */
+    CHECK(start_park(0u, 2u, 0u));
+    run_10ms(1u);
+    CHECK(bench_active() && sup->enable);
+    CHECK(sol->mode[7] == SOL_MODE_FULL_ON && stub.toe_duty == 0u);
+    for (unsigned c = 0u; c < SOL_CH_PARK_RELEASE; c++) {
+        CHECK(sol->mode[c] == SOL_MODE_OFF);
+    }
+    run_10ms(210u);                     /* 2 s timeout */
+    CHECK(!bench_active() && !sup->enable && sol->mode[7] == SOL_MODE_OFF && stub.toe_duty == 0u);
+    {
+        uint8_t res[7];
+        CHECK(bench_routine(3u, BENCH_PARK_RID, NULL, 0u, res, 7u) == 7 && res[5] == BENCH_END_TIMEOUT);
+    }
+
+    /* park hold (out 1): TOE31 duty 1000 default, channel 7 off */
+    CHECK(start_park(1u, 1u, 0u));
+    run_10ms(1u);
+    CHECK(sol->mode[7] == SOL_MODE_OFF && stub.toe_duty == 1000u && sup->enable);
+    /* explicit duty honoured */
+    uds_req((const uint8_t[]){ 0x31, 0x02, 0xFE, 0x11 }, 4u);
+    run_10ms(1u);
+    CHECK(!bench_active() && stub.toe_duty == 0u);
+    CHECK(start_park(1u, 1u, 50u));     /* 50 % duty */
+    run_10ms(1u);
+    CHECK(stub.toe_duty == 500u);
+
+    /* one test at a time across the two routines */
+    CHECK(!start(0u, 300u, 1u) && last_nrc() == 0x22u);
+    /* engine running stops a park test and clears both outputs */
+    engine_rpm(800u);
+    run_10ms(2u);
+    CHECK(!bench_active() && sol->mode[7] == SOL_MODE_OFF && stub.toe_duty == 0u);
+    engine_rpm(0u);
+    run_10ms(2u);
 
     /* session ends (S3 timeout without tester present) */
     CHECK(start(4u, 300u, 5u));

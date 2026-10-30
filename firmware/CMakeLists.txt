@@ -120,6 +120,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         ${CORE_SOURCES}
     )
     target_compile_definitions(tcu_app_ram.elf PRIVATE TCU_RAM_APP)
+    # M4b park outputs (docs/firmware/01-m4-range-park.md): the bench application drives
+    # the park actuators; the code-flash application stays output-gated until the M4b
+    # bench check passes. Overridable: -DM4B_OUTPUTS=OFF builds the RAM app gated too.
+    option(M4B_OUTPUTS "Enable the M4b park outputs on the RAM application" ON)
+    if(M4B_OUTPUTS)
+        target_compile_definitions(tcu_app_ram.elf PRIVATE TCU_M4B_OUTPUTS)
+    endif()
     target_include_directories(tcu_app_ram.elf PRIVATE ${CMAKE_SOURCE_DIR}/platform/sh7254r/include)
     target_link_options(tcu_app_ram.elf PRIVATE -T ${RAM_LDSCRIPT} -Wl,-Map=tcu_app_ram.map)
     target_link_libraries(tcu_app_ram.elf PRIVATE gcc)
@@ -163,11 +170,13 @@ else()
         bsw/sup/sup.c bsw/diag/uds.c bsw/diag/isotp.c bsw/diag/boot_record.c
         io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
         tests/unit/stub_plat.c)
+    target_compile_definitions(test_bench PRIVATE TCU_M4B_OUTPUTS)
     add_test(NAME bench COMMAND test_bench)
     add_executable(test_park tests/unit/test_park.c app/range.c app/park_ctl.c app/park.c
+        app/bench_out.c bsw/diag/uds.c bsw/diag/isotp.c bsw/diag/boot_record.c
         safety/park_mon.c io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c
-        bsw/com/crc8.c tests/unit/stub_plat.c)
-    target_compile_definitions(test_park PRIVATE PARK_TEST_HOOKS)
+        bsw/com/crc8.c io/actuators/sol_drv.c bsw/sup/sup.c tests/unit/stub_plat.c)
+    target_compile_definitions(test_park PRIVATE PARK_TEST_HOOKS TCU_M4B_OUTPUTS)
     add_test(NAME park COMMAND test_park)
     add_executable(test_dump tests/unit/test_dump.c app/bench_dump.c tests/unit/stub_plat.c)
     add_test(NAME dump COMMAND test_dump)

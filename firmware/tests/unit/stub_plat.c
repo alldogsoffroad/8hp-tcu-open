@@ -130,6 +130,17 @@ static uint16_t drv_read(uint8_t chip, uint8_t cmd)
 
 void plat_drv_init(void) { }
 
+/* Park hold PWM output: the stub records the requested duty so tests can assert it. */
+void plat_toe_out_init(void)
+{
+    stub.toe_duty = 0u;
+}
+
+void plat_toe_out_set(uint16_t permil)
+{
+    stub.toe_duty = (permil > 1000u) ? 1000u : permil;
+}
+
 bool plat_drv_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n)
 {
     if (stub.drv_fail) {

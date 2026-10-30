@@ -1,11 +1,17 @@
 #include "app/park.h"
 
 #if defined(TCU_M4B_OUTPUTS)
-#error "M4b park outputs are not implemented (docs/firmware/01-m4-range-park.md section 1)"
+#include "app/bench_out.h"
+#include "bsw/sup/sup.h"
+#include "io/actuators/sol_drv.h"
 #endif
 
 /* Project values, to be measured in M4b. */
 static const park_ctl_cfg_t s_cfg = { 500u, 1000u, true };
+
+/* Park hold energisation (permille). First cut: fully on — stock battery-compensates the
+ * duty (spec 12 section 1.2); refine from the FE11 / bench measurements. */
+#define PARK_HOLD_DUTY 1000u
 
 static park_status_t s_st;
 
@@ -21,13 +27,37 @@ void park_init(void)
     s_st.req.hold = false;
     s_st.ctl_faults = 0u;
     s_st.mon_faults = 0u;
+#if defined(TCU_M4B_OUTPUTS)
+    plat_toe_out_set(0u);
+    sol_set(SOL_CH_PARK_RELEASE, SOL_MODE_OFF, 0u);
+    sup_enable_clear(SUP_EN_PARK);
+#endif
 }
 
-/* Output gate. M4a: the requests are only published (measurement table); nothing reaches
- * channel 7 or channel 11. */
+/* Output gate (M4b, docs/firmware/01-m4-range-park.md section 4/5): the requests reach
+ * channel 7 (park release, full on) and TOE31 (park hold, duty in permille) only while
+ * the independent monitor's enable is set and no bench test owns the outputs. park_tick
+ * has already forced both requests off when the enable is missing, so this never has to
+ * second-guess the requests — only the bench suspension is checked here. */
 static void apply(const park_out_t *out)
 {
-    (void)out;
+#if defined(TCU_M4B_OUTPUTS)
+    if (bench_active()) {                /* commissioning test owns the outputs */
+        sol_set(SOL_CH_PARK_RELEASE, SOL_MODE_OFF, 0u);
+        plat_toe_out_set(0u);
+        sup_enable_clear(SUP_EN_PARK);
+        return;
+    }
+    sol_set(SOL_CH_PARK_RELEASE, out->release ? SOL_MODE_FULL_ON : SOL_MODE_OFF, 0u);
+    plat_toe_out_set(out->hold ? PARK_HOLD_DUTY : 0u);
+    if (out->release || out->hold) {
+        sup_enable_set(SUP_EN_PARK);
+    } else {
+        sup_enable_clear(SUP_EN_PARK);
+    }
+#else
+    (void)out;                           /* M4a: requests are published only */
+#endif
 }
 
 void park_tick_10ms(void)

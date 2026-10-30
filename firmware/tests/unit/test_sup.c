@@ -35,13 +35,17 @@ int main(void)
     CHECK(stub.sup_n == 7u && s->busy == 1u);
     CHECK(((stub.sup_tx[6] ^ stub.sup_tx[5]) & 0x04u) != 0u);
 
-    /* output enable request */
-    sup_set_output_enable(true);
+    /* output enable request mask: several sources, each clears only its own bit */
+    sup_enable_set(SUP_EN_BENCH);
     sup_tick_5ms();
     CHECK((stub.sup_tx[7] & 0x01u) == 1u && s->enable);
-    sup_set_output_enable(false);
+    sup_enable_set(SUP_EN_PARK);
+    sup_enable_clear(SUP_EN_BENCH);     /* bench done, park still needs it */
     sup_tick_5ms();
-    CHECK((stub.sup_tx[8] & 0x01u) == 0u && !s->enable);
+    CHECK((stub.sup_tx[8] & 0x01u) == 1u && s->enable);
+    sup_enable_clear(SUP_EN_PARK);
+    sup_tick_5ms();
+    CHECK((stub.sup_tx[9] & 0x01u) == 0u && !s->enable);
 
     /* wrong reply header counted */
     stub.sup_reply = 0x0000u;
@@ -49,30 +53,32 @@ int main(void)
     CHECK(s->replies_bad == 1u);
 
     /* flash programming mode: 0x8E80 with bit 4 toggling, no enable, no bit 2 */
-    sup_set_output_enable(true);
+    sup_enable_set(SUP_EN_BENCH);
     sup_set_flash_mode(true);
     stub.sup_reply = 0xA804u;
     sup_tick_5ms();
     sup_tick_5ms();
-    CHECK((stub.sup_tx[10] & 0xFF85u) == 0x8E80u && (stub.sup_tx[11] & 0xFF85u) == 0x8E80u);
-    CHECK(((stub.sup_tx[10] ^ stub.sup_tx[11]) & 0x10u) != 0u && !s->enable);
+    CHECK((stub.sup_tx[11] & 0xFF85u) == 0x8E80u && (stub.sup_tx[12] & 0xFF85u) == 0x8E80u);
+    CHECK(((stub.sup_tx[11] ^ stub.sup_tx[12]) & 0x10u) != 0u && !s->enable);
     sup_set_flash_mode(false);
-    sup_set_output_enable(false);
+    sup_enable_clear(SUP_EN_BENCH);
     sup_tick_5ms();
-    CHECK((stub.sup_tx[12] & 0xFFF1u) == 0x8E00u);
+    CHECK((stub.sup_tx[13] & 0xFFF1u) == 0x8E00u);
 
-    /* bench pattern: word ^ toggle on alternate frames, enable bit always cleared */
+    /* bench pattern: word ^ toggle on alternate frames, enable bit always cleared
+     * (phase-agnostic: the toggle phase depends on the ticks before this point) */
     sup_set_pattern(true, 0x8401u, 0x0001u);
     sup_tick_5ms();
     sup_tick_5ms();
-    CHECK(stub.sup_tx[13] == 0x8401u && stub.sup_tx[14] == 0x8400u);
+    CHECK((stub.sup_tx[14] | stub.sup_tx[15]) == 0x8401u &&
+          (stub.sup_tx[14] & stub.sup_tx[15]) == 0x8400u);
     sup_set_pattern(true, 0x8E81u, 0x0011u);
     sup_tick_5ms();
     sup_tick_5ms();
-    CHECK((stub.sup_tx[15] | stub.sup_tx[16]) == 0x8E90u && (stub.sup_tx[15] & stub.sup_tx[16]) == 0x8E80u);
+    CHECK((stub.sup_tx[16] | stub.sup_tx[17]) == 0x8E90u && (stub.sup_tx[16] & stub.sup_tx[17]) == 0x8E80u);
     sup_set_pattern(false, 0u, 0u);
     sup_tick_5ms();
-    CHECK((stub.sup_tx[17] & 0xFFF1u) == 0x8E00u);
+    CHECK((stub.sup_tx[18] & 0xFFF1u) == 0x8E00u);
 
     if (fails == 0) {
         printf("test_sup: ok\n");

@@ -192,7 +192,7 @@ void sol_init(void)
 void sol_set(uint8_t ch, sol_mode_t mode, ma10_t current)
 {
     if (ch < SOL_CHANNELS) {
-        s_req_mode[ch] = (uint8_t)(mode == SOL_MODE_CURRENT ? SOL_MODE_CURRENT : SOL_MODE_OFF);
+        s_req_mode[ch] = (uint8_t)mode;     /* staged verbatim: OFF, CURRENT or FULL_ON */
         s_req_cur[ch] = current > SOL_MAX_MA10 ? SOL_MAX_MA10 : current;
     }
 }

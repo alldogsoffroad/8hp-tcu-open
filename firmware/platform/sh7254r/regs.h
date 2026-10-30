@@ -147,6 +147,30 @@
 #define ATU_PSCR(n) REG16(0xFFFFF100u + 2u * (n))
 #define ATUENR_PSCE 0x0001u
 #define ATUENR_TFE  0x0040u
+#define ATUENR_TEE  0x0020u             /* timer E enable                     */
+
+/* ---- Timer E sub-block 3, channel 1 = TOE31 / PL6 (sections 13.22, 22.1.22) ----
+ * Used for the park hold output (spec 02 section 3.1, spec 12 section 1.1). */
+#define TSTRE    REG8(0xFFFFF700u)      /* bits 5..0 STRE5..STRE0             */
+#define TCRE3    REG8(0xFFFFF8C0u)      /* bits 2..0 CKSELE3 clock-bus line   */
+#define TOCRE3   REG8(0xFFFFF8C2u)      /* bits 3..0 TONEE3 output inversion  */
+#define RLDCRE3  REG8(0xFFFFF8C6u)      /* bits 3..0 RLDENE3 reload enable    */
+#define PSCRE3   REG8(0xFFFFF8C8u)      /* bits 2..0 PSCE3 prescaler division */
+#define SSTRE3   REG8(0xFFFFF8CCu)      /* bits 3..0 SSTR counter start       */
+#define CYLRE31  REG16(0xFFFFF8D2u)     /* cycle (period-1 ticks)             */
+#define DTRE31   REG16(0xFFFFF8DAu)     /* duty                               */
+#define CRLDE31  REG16(0xFFFFF8E2u)     /* cycle reload buffer                */
+#define DRLDE31  REG16(0xFFFFF8EAu)     /* duty reload buffer                 */
+#define TCNTE31  REG16(0xFFFFF8F2u)     /* counter                            */
+#define TSTRE_STRE3 0x08u
+#define SSTRE3_SSTR1 0x02u
+#define RLDCRE3_RLD1 0x02u
+
+/* ---- Port L control (section 22.1.22; I/O register PLIOR via PFC16(0x28)) ---- */
+#define PLCR2    REG16(0xFFFFC8ACu)
+#define PLCR1    REG16(0xFFFFC8AEu)     /* PLnMD pairs: 01 = TOE function     */
+#define PLCR1_PL6MD_TOE31 ((uint16_t)1u << 12)
+
 #define TSTRF    REG32(0xFFFFFA00u)
 #define NCCRF    REG32(0xFFFFFA04u)
 #define NCRFA(n) REG8(0xFFFFFA11u + 2u * (n))

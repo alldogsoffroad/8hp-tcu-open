@@ -1,12 +1,20 @@
-/* Unit and closed-loop test: range / park control (milestone M4a,
- * docs/firmware/01-m4-range-park.md sections 3-6).
+/* Unit and closed-loop test: range / park control (milestones M4a/M4b,
+ * docs/firmware/01-m4-range-park.md sections 3-6 and 8).
  *
  * The loop: CAN frames (0x108 engine speed, 0x2EA / 0x210 lever, real CRC and counter) ->
  * FCA profile -> park_tick_10ms() -> park mechanism model -> park contacts. sensors_in() is
  * provided here (speeds, supply and contacts come from the scenario and the model).
+ * With TCU_M4B_OUTPUTS the output path is live: the park hold duty lands in the platform
+ * stub (stub.toe_duty) and the park release request in the driver layer (channel 7), so
+ * every scenario also checks what the actuators would physically see.
  */
 #include "app/park.h"
+#include "app/bench_out.h"
 #include "bsw/com/crc8.h"
+#include "bsw/diag/uds.h"
+#include "bsw/sup/sup.h"
+#include "io/actuators/sol_drv.h"
+#include "tests/unit/stub_plat.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -95,6 +103,10 @@ static void reset_all(void)
     s_prev_release = false;
     s_violations = 0u;
     vehicle_init();
+    sol_init();
+    sup_init();
+    plat_toe_out_init();
+    bench_init();
     park_init();
 }
 
@@ -124,6 +136,8 @@ static void step(void)
     s_z.q_park = Q_OK;
 
     park_tick_10ms();
+    bench_tick_10ms();                   /* production order: park requests, then bench force */
+    sol_tick_10ms();                     /* applies the staged channel requests               */
 
     /* pass criteria (section 6): no release out of P unless stationary with the engine running;
      * the pawl never starts to drop while moving except in SAFE */
@@ -198,6 +212,8 @@ static void test_standstill_cycle(void)
     sc.engine = 800;                    /* engine starts: release, then hold */
     run(20u);
     CHECK(ps->state == PC_HOLDING && ps->req.hold && ps->req.release && m.pawl == 100);
+    CHECK(stub.toe_duty == 1000u);                          /* park hold energised      */
+    CHECK(sol_status()->mode[7] == SOL_MODE_FULL_ON);       /* release kept on while holding */
     sc.lever_code = 3u;
     run(10u);
     sc.lever_code = 4u;
@@ -207,6 +223,7 @@ static void test_standstill_cycle(void)
     sc.lever_code = 1u;                 /* P: engage */
     run(20u);
     CHECK(ps->state == PC_IN_P && !ps->req.hold && !ps->req.release && m.pawl == 0);
+    CHECK(stub.toe_duty == 0u && sol_status()->mode[7] == SOL_MODE_OFF);
     CHECK(ps->ctl_faults == 0u && ps->mon_faults == 0u && s_violations == 0u);
 }
 
@@ -223,9 +240,55 @@ static void test_car_wash(void)
     sc.engine = 0;
     run(100u);
     CHECK(ps->state == PC_HOLDING && ps->req.hold && m.pawl == 100);
+    CHECK(stub.toe_duty == 1000u);      /* the hold magnet stays energised with the engine off */
     sc.lever_code = 1u;
     run(20u);
     CHECK(ps->state == PC_IN_P && m.pawl == 0);
+    CHECK(ps->mon_faults == 0u && s_violations == 0u);
+}
+
+/* A bench commissioning test (FE11) owns the park outputs while it runs: the park module
+ * suspends its own outputs and resumes afterwards (car-wash state, engine off). */
+static void test_bench_suspension(void)
+{
+    static const uds_app_t app = { NULL, NULL, bench_routine };
+    const park_status_t *ps = park_status();
+    const uint8_t start_in[2] = { 0u, 2u };          /* FE11 out 0 = park release, 2 s */
+    uint8_t out[7];
+
+    reset_all();
+    uds_init(&app);                                  /* extended session for the bench test */
+    {
+        const uint8_t s[] = { 0x10, 0x03 };
+        can_frame_t f = { .id = 0x7E1u, .dlc = 8u };
+        memset(f.data, 0, 8u);
+        f.data[0] = sizeof s;
+        memcpy(&f.data[1], s, sizeof s);
+        (void)uds_rx(CAN_BUS1, &f);
+        uds_tick_1ms();
+    }
+    sc.engine = 800;
+    sc.lever_code = 3u;                              /* reach HOLDING, then engine off */
+    run(30u);
+    sc.engine = 0;
+    run(20u);
+    CHECK(ps->state == PC_HOLDING && stub.toe_duty == 1000u);
+
+    /* healthy supervisor so the bench start conditions pass */
+    stub.sup_reply = 0xA800u;
+    sup_tick_5ms();
+    sup_tick_5ms();
+    CHECK(bench_routine(1u, BENCH_PARK_RID, start_in, 2u, out, sizeof out) == 0);
+    step();
+    CHECK(bench_active());
+    CHECK(stub.toe_duty == 0u);                      /* park hold suspended          */
+    CHECK(sol_status()->mode[7] == SOL_MODE_FULL_ON);/* bench drives the release     */
+    CHECK(ps->state == PC_HOLDING && ps->req.hold);  /* requests keep being computed */
+
+    CHECK(bench_routine(2u, BENCH_PARK_RID, NULL, 0u, out, sizeof out) == 0);
+    step();
+    CHECK(!bench_active());
+    CHECK(stub.toe_duty == 1000u && sol_status()->mode[7] == SOL_MODE_FULL_ON);
     CHECK(ps->mon_faults == 0u && s_violations == 0u);
 }
 
@@ -384,6 +447,7 @@ static void test_contacts_disagree(void)
     sc.lever_code = 4u;
     run(50u);
     CHECK(ps->state == PC_SAFE && !ps->req.release && !ps->req.hold);
+    CHECK(stub.toe_duty == 0u && sol_status()->mode[7] == SOL_MODE_OFF);   /* outputs dead in SAFE */
 }
 
 /* Engage times out (contacts never reach P): SAFE. */
@@ -513,6 +577,7 @@ int main(void)
     test_decide();
     test_standstill_cycle();
     test_car_wash();
+    test_bench_suspension();
     test_p_at_speed();
     test_lever_lost_moving();
     test_lever_lost_still();

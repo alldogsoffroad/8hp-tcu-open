@@ -366,6 +366,55 @@ bool plat_drv_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n)
     return true;
 }
 
+/* ---- Park hold output: timer E sub-block 3 channel 1 = TOE31 on PL6 ----------------
+ * (spec 02 section 3.1, manual 13.22 / 22.1.22). 2 MHz count clock (clock-bus line 1,
+ * PSCR1 = 4 -> 4 MHz, PSCRE3 = 1 -> divide by 2), cycle 2000 ticks = 1 kHz, counter
+ * offset 1452 as stock (staggered start). Duty: the output is high from cycle start and
+ * falls at the DTR match, so with TONE = 0 (no inversion) the pin-high fraction is
+ * DTR/CYLR and DTR = 0 keeps the pin low — the same level as the port-mode safe state,
+ * which is why the pin function is switched last.
+ * Stock drives this output with inversion (polarity 1) and a battery-compensated duty;
+ * the project starts with the non-inverted mapping (energisation permille -> pin-high
+ * permille) and the FE11 commissioning step measures the actual magnet current in both
+ * states before any change (docs/firmware/01-m4-range-park.md section 8). */
+#define TOE31_CYCLE_TICKS 2000u
+#define TOE31_COUNTER_OFFSET 1452u
+
+void plat_toe_out_init(void)
+{
+    /* Everything is configured while PL6 is still a port pin driven low (port_init). */
+    ATU_PSCR(1) = 4u;                   /* clock-bus line 1: P/(4+1) = 4 MHz          */
+    TCRE3   = 0x01u;                    /* CKSELE3 = 001: counter from line 1         */
+    PSCRE3  = 0x01u;                    /* PSCE3 = 1: divide by 2 -> 2 MHz            */
+    TOCRE3  = 0x00u;                    /* TONEE3 = 0: not inverted (see above)       */
+    RLDCRE3 = RLDCRE3_RLD1;             /* reload DTR/CYLR from buffers at cycle match */
+    CYLRE31 = TOE31_CYCLE_TICKS;
+    CRLDE31 = TOE31_CYCLE_TICKS;
+    DTRE31  = 0u;                       /* duty 0: pin low = output off               */
+    DRLDE31 = 0u;
+    TCNTE31 = TOE31_COUNTER_OFFSET;
+    SSTRE3 |= SSTRE3_SSTR1;             /* start channel 1 counting                   */
+    TSTRE  |= TSTRE_STRE3;              /* start sub-block 3                          */
+    ATUENR |= ATUENR_PSCE | ATUENR_TEE; /* prescalers and timer E running             */
+    /* Switch the pin to its timer function only now: the PWM is already outputting
+     * "low", so the level never changes. */
+    PLCR1 = (uint16_t)((PLCR1 & ~PLCR1_PL6MD_TOE31) | PLCR1_PL6MD_TOE31);
+}
+
+void plat_toe_out_set(uint16_t permil)
+{
+    uint32_t d;
+
+    if (permil > 1000u) {
+        permil = 1000u;
+    }
+    d = ((uint32_t)permil * TOE31_CYCLE_TICKS) / 1000u;
+    if (d >= TOE31_CYCLE_TICKS) {
+        d = TOE31_CYCLE_TICKS - 1u;     /* DTR must stay below CYLR */
+    }
+    DRLDE31 = (uint16_t)d;              /* takes effect at the next cycle match */
+}
+
 /* ---- Memory read for the measurement protocol ---------------------------------- */
 static bool readable(uint32_t a, uint16_t n)
 {
@@ -609,6 +658,7 @@ void plat_init(void)
     speed_init();
     plat_sup_init();
     plat_drv_init();
+    plat_toe_out_init();    /* park hold PWM, duty 0 (pin stays low) */
     (void)can_init(RCAN_A_BASE);
     (void)can_init(RCAN_C_BASE);
     plat_wdt_service();

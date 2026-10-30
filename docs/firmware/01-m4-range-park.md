@@ -17,12 +17,12 @@ So M4 is delivered as:
 
 | Part | Content | Test |
 |---|---|---|
-| **M4a** (now) | range decision, park actuator sequencing, independent monitor, park mechanism model | host unit tests and closed-loop simulation |
-| **M4b** (later) | park release (ch 7) and park hold (ch 11 → TOE31) driven on hardware | needs M3 confirmed with loads and an E-Shift mechatronic |
+| **M4a** (2026-10-18) | range decision, park actuator sequencing, independent monitor, park mechanism model | host unit tests, closed-loop simulation, bench check 12/12 (§7a) |
+| **M4b** (2026-10-30) | park release (ch 7) and park hold (ch 11 → TOE31) driven on hardware | host tests incl. output-path assertions; bench session §8 (E-Shift mechatronic) |
 
-In M4a the actuator requests are computed and published (measurement protocol), but **no code
-path drives channel 7 or 11**: the output gate refuses them in every build until M4b is enabled
-explicitly (compile option `TCU_M4B_OUTPUTS`, off, not set by any target).
+In builds without `TCU_M4B_OUTPUTS` the actuator requests are computed and published
+(measurement protocol) but **no code path drives channel 7 or 11** (the output gate is a
+no-op). With the option set (the RAM bench application) the outputs are driven as §8.
 
 ## 2. Inputs (existing interfaces)
 
@@ -131,7 +131,50 @@ code or both missing → Auto P. Without park contacts the sequencing goes to `S
 the monitor recorded no fault. With no valid lever the measurement index 13 keeps the last
 decoded range (source 2 = none, quality invalid); the decision uses the quality.
 
-## 8. Open for M4b
+## 8. M4b — hardware outputs (design, 2026-10-30)
 
-Hardware sequencing times; ch 7 behaviour while holding; contact polarity (spec 04 §4.4 [I]);
-behaviour of `0x112` byte 0 (spec 14 §8.4) and of `D5F8`; DTC mapping (P1B13 / P1B14).
+The output path, compiled in when `TCU_M4B_OUTPUTS` is defined (the RAM bench application;
+the code-flash application stays gated until the bench check passes):
+
+- **Platform, park hold (TOE31 / PL6)**: `plat_toe_out_init()` / `plat_toe_out_set(permil)` —
+  timer E sub-block 3 channel 1 (spec 02 §3.1): clock-bus line 1 with PSCR1 = 4 (4 MHz) and
+  PSCRE3 = 1 (2 MHz count clock), cycle 2000 ticks = 1 kHz, counter offset 1452 as stock, duty
+  through the reload buffer. **Polarity decision:** the output is high from cycle start and
+  falls at the DTR match; the project drives it non-inverted (TONE = 0), so DTR = energisation
+  and 0 keeps the pin low — the same level as the port-mode safe state, and the pin function is
+  switched last so the level never glitches. Stock instead inverts (polarity 1) with a
+  battery-compensated duty; the FE11 commissioning step measures the actual magnet current in
+  both states and settles the mapping (flip `TOCRE3` and the DTR inversion if the driver stage
+  turns out active-low). First-cut hold duty: 1000 permille (fully on).
+- **Park release (channel 7)**: `SOL_MODE_FULL_ON` through the existing driver layer. The
+  staging previously collapsed every non-CURRENT mode to OFF — fixed; the chip mode field for
+  full-on is verified by FE11 before the valve is trusted (spec 12 §2b).
+- **Enable arbitration**: `sup_enable_set/clear(SUP_EN_BENCH | SUP_EN_PARK)` — the supervisor
+  output-enable bit is the OR of the live source requests, so the bench idle path can no longer
+  remove the park module's enable, and an enable still never outlives its requester's 5 ms tick.
+- **Ownership**: the park module owns channel 7 and TOE31 whenever no bench test is active; the
+  bench idle forcing covers channels 0–6 only. While a bench test runs (`bench_active()`), the
+  park module suspends its outputs (requests keep being computed and published).
+- **FE11 commissioning routine** (`31 01 FE 11 out seconds [duty_%]`, out 0 = ch 7 full on,
+  out 1 = TOE31 duty): same interlocks as FE10 (extended session, engine off, drivers and
+  supervisor healthy, re-checked every 10 ms), one output at a time, 1–5 s. The duty is one
+  byte in percent so the request fits a single ISO-TP frame.
+
+Bench sequence (E-Shift mechatronic, rig at standstill): (A) the M3 solenoid checklist on the
+real coils (channels 0–6 — the prerequisite, previously unrecorded); (B) FE11 commissioning —
+park hold current at C7 (~0.5 A expected, scope the 1 kHz PWM), park release current and
+click, settle the TOE31 polarity and the full-on chip field; (C) read the AN5/AN6 bands and
+fix the park-contact polarity in `io/sensors/sensors.c` if inverted (bench items 16/17);
+(D) `park-check --hw`: the lever scenario with outputs live. **Physics caveat:** a bare
+mechatronic has no pump, and the park release is hydraulic — the release piston may not move
+dry, so the contacts may stay "in P" and RELEASING can hit its 500 ms timeout (a valid
+exercise of the fault path). Full pawl engagement against a driveline needs a bench
+transmission or vehicle; M4b-mechatronic level proves the complete electrical chain with the
+real actuators and the real position sensor.
+
+## 9. Open after the M4b bench session
+
+Hardware sequencing times (replace the 500 ms / 1 s project values); ch 7 behaviour while
+holding (the `keep_release` flag); the TOE31 polarity and full-on chip field (settled by FE11);
+contact polarity (spec 04 §4.4 [I]); behaviour of `0x112` byte 0 (spec 14 §8.4) and of `D5F8`;
+the battery-compensated hold duty; DTC mapping (P1B13 / P1B14).

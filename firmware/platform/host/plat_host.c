@@ -170,6 +170,18 @@ bool plat_drv_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n)
     return false;           /* no driver chips on the host: the driver layer reports a fault */
 }
 
+static uint16_t s_toe_duty;
+
+void plat_toe_out_init(void)
+{
+    s_toe_duty = 0u;
+}
+
+void plat_toe_out_set(uint16_t permil)
+{
+    s_toe_duty = (permil > 1000u) ? 1000u : permil;
+}
+
 bool plat_mem_read(uint32_t addr, uint8_t *out, uint16_t n)
 {
     (void)addr;

@@ -29,8 +29,14 @@ typedef struct {
 
 void sup_init(void);
 void sup_tick_5ms(void);
-/* Request the solenoid output enable (bit 0). Takes effect with the next frame. */
-void sup_set_output_enable(bool on);
+/* Request the solenoid output enable (register 0x8E bit 0). Several owners may need the
+ * enable at the same time (a bench test, the park module): each sets and clears only its
+ * own source bit, and the enable is sent while any source requests it. Takes effect with
+ * the next 5 ms frame, so an enable can never outlive its requester's tick. */
+#define SUP_EN_BENCH 0x01u
+#define SUP_EN_PARK  0x02u
+void sup_enable_set(uint8_t sources);
+void sup_enable_clear(uint8_t sources);
 const sup_status_t *sup_status(void);
 /* Flash programming mode as the user boot MAT sends it (spec 16 section 10): word
  * 0x8E80 | (bit 4 toggling), output enable forced off. Bench test 2026-10-17. */

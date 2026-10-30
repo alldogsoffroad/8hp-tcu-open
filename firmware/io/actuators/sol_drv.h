@@ -17,12 +17,15 @@
 #define SOL_CHIPS      5u
 #define SOL_CHANNELS   10u
 #define SOL_MAX_MA10   12282u   /* driver maximum, 0.1 mA [I] (spec 12 section 2b) */
+#define SOL_CH_PARK_RELEASE 7u  /* MV Pos: park release valve, on/off (spec 12 section 1) */
 
 typedef enum {
     SOL_MODE_DISABLED = 0,
     SOL_MODE_OFF      = 1,
     SOL_MODE_CURRENT  = 2,
-    SOL_MODE_FULL_ON  = 3       /* not used by the project firmware */
+    SOL_MODE_FULL_ON  = 3       /* on/off channels (ch 7); first driven in M4b — the FE11
+                                 * commissioning routine verifies the chip mode field (spec 12
+                                 * section 2b) before the park release valve is trusted with it */
 } sol_mode_t;
 
 /* fault bits */

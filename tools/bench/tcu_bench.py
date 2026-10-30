@@ -1116,15 +1116,16 @@ PARK_REASONS = ["-", "lever P", "moving", "park request", "lever R/N/D", "auto P
 
 
 def cmd_park(b, args):
-    """Range / park control of the PROJECT firmware (M4a, docs/firmware/01-m4-range-park.md):
-    lever, park target and reason, sequencing state, the requested (not driven) outputs and the
-    fault bits, from the measurement table every --period seconds."""
+    """Range / park control of the PROJECT firmware (M4, docs/firmware/01-m4-range-park.md):
+    lever, park target and reason, sequencing state, the requested outputs and the
+    fault bits, from the measurement table every --period seconds. In an M4b build the
+    requests are DRIVEN (channel 7 + TOE31); in a gated build they stay requests only."""
     addr = meas_table_addr(args.elf, 54)
     u16 = lambda d, o: int.from_bytes(d[o:o + 2], "big")
     levers = {0: "-", 5: "D", 6: "N", 7: "R", 8: "P"}
     srcs = {0: "CAN-C", 1: "shifter bus", 2: "none"}
     park_names = {0: "unknown", 1: "in P", 2: "not in P"}
-    print(f"measurement table at 0x{addr:08X} ({args.elf}); outputs are requests only (M4a); Ctrl-C to stop")
+    print(f"measurement table at 0x{addr:08X} ({args.elf}); Ctrl-C to stop")
     print("  uptime  engine  lever (source)      contacts   target   reason        state      release hold  faults ctl/mon")
     n = 0
     try:
@@ -1141,6 +1142,54 @@ def cmd_park(b, args):
             time.sleep(args.period)
     except KeyboardInterrupt:
         pass
+
+
+def cmd_park_out(b, args):
+    """M4b park output commissioning (docs/firmware/01-m4-range-park.md section 8, FE11):
+    drives the park release valve (channel 7, full on) or the park hold magnet (TOE31 /
+    PL6, duty in percent) one at a time, with the engine off, while the park module is
+    suspended. Ammeter expected: park release and park hold coils are ~25 ohm (spec 12
+    section 1.1), i.e. ~0.5 A at 13 V. DRY BENCH, SHORT BURSTS ONLY."""
+    print("M4b PARK OUTPUT COMMISSIONING (FE11) - E-SHIFT MECHATRONIC, ENGINE OFF, SHORT BURSTS")
+    print("out 0 = park release (ch 7, ~25 ohm), out 1 = park hold (TOE31/PL6 -> C7, ~25 ohm)")
+    if input("Magnet(s) connected with an ammeter in circuit, transmission NOT connected? [yes/no] ").strip() != "yes":
+        return
+    u = Uds(b, args.bus)
+    r = u.extended()
+    if not r or r[0] != 0x50:
+        sys.exit(f"extended session failed: {hexs(r)}")
+    stop_tp = u.start_tester_present()
+    names = ["park release (ch 7)", "park hold (TOE31)"]
+    rows = []
+    try:
+        while True:
+            line = input("out (0-1) seconds (1-5) [duty %% 1-100, default 100], or q: ").split()
+            if not line or line[0] == "q":
+                break
+            out_, sec = int(line[0]), int(line[1])
+            duty = int(line[2]) if len(line) > 2 else 0
+            req = bytes([0x31, 0x01, 0xFE, 0x11, out_, sec]) + (bytes([duty]) if duty else b"")
+            r = u.request(req)
+            if not r or r[0] != 0x71:
+                print("refused:", hexs(r))
+                continue
+            duty_s = f" at {duty} % duty" if duty and duty != 100 else ""
+            print(f"{names[out_]}{duty_s} for {sec} s")
+            meas = input("ammeter reading in mA (Enter to skip): ").strip()
+            res = u.request(b"\x31\x03\xFE\x11")
+            print("result:", hexs(res))
+            rows.append({"time": time.strftime("%H:%M:%S"), "out": out_, "duty_pct": duty or 100,
+                         "seconds": sec, "measured_mA": meas, "result": hexs(res)})
+    finally:
+        u.request(b"\x31\x02\xFE\x11")
+        stop_tp.set()
+    if rows and args.csv:
+        with open(args.csv, "a", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=list(rows[0]))
+            if f.tell() == 0:
+                w.writeheader()
+            w.writerows(rows)
+        print(f"{len(rows)} rows appended to {args.csv}")
 
 
 def crc8_j1850(data):
@@ -1186,11 +1235,18 @@ class LeverSender(threading.Thread):
 
 
 def cmd_park_check(b, args):
-    """Bench check of M4a (docs/firmware/01-m4-range-park.md): sends lever frames, reads the
+    """Bench check of M4 (docs/firmware/01-m4-range-park.md): sends lever frames, reads the
     lever decode and the park target from the measurement table and compares them with the
-    expected values. Module alone: no park contacts, so the sequencing ends in SAFE (outputs
-    are requests only and are never driven in M4a)."""
+    expected values. Without --hw (module alone, no park contacts) the sequencing ends in
+    SAFE. With --hw (M4b build + E-Shift mechatronic connected) the outputs are DRIVEN and
+    the sequencing state and requests are logged per step; a dry mechatronic has no line
+    pressure, so the release piston may not move and RELEASING can time out (that fault
+    path is the expected outcome without hydraulics)."""
     addr = meas_table_addr(args.elf, 54)
+    if args.hw:
+        print("M4b HARDWARE CHECK - PARK OUTPUTS WILL BE DRIVEN (channel 7 + TOE31)")
+        if input("E-Shift mechatronic connected, rig secured at standstill? [yes/no] ").strip() != "yes":
+            return 1
     P, R, N, D = 1, 2, 3, 4
     # (description, code, 0x2EA on, 0x210 on, bad CRC, lever expected or None, source expected,
     #  kind: "P" engage by lever, "RND" lever R/N/D, "none" no valid lever)
@@ -1226,9 +1282,15 @@ def cmd_park_check(b, args):
                               "none": (8, 5) if still else (6, 2)}[kind]
             ok = d[20] == src and (lev is None or d[19] == lev) and d[48] == want_t and d[49] == want_r
             results.append(ok)
+            hw = ""
+            if args.hw:
+                st_h = PARK_STATES[d[50]] if d[50] < len(PARK_STATES) else d[50]
+                hw = f"  [state {st_h}, contacts {d[42]}, release {'on' if d[51] & 1 else 'off'}, " \
+                     f"hold {'on' if d[51] & 2 else 'off'}]"
             print(f"  {'PASS' if ok else 'FAIL'}  {desc:30s} lever {d[19]} ({srcs.get(d[20], d[20])})  "
                   f"target {d[48]} reason {PARK_REASONS[d[49]] if d[49] < len(PARK_REASONS) else d[49]}"
-                  + ("" if ok else f"   expected lever {lev} src {src} target {want_t} reason {want_r}"))
+                  + ("" if ok else f"   expected lever {lev} src {src} target {want_t} reason {want_r}")
+                  + hw)
     finally:
         snd.stop.set()
         snd.join(1.0)
@@ -1277,6 +1339,9 @@ def main():
     p.add_argument("--count", type=int, default=0)
     p = sub.add_parser("park-check"); p.add_argument("--bus", type=int, default=2)
     p.add_argument("--elf", default="build/sh2a/tcu_app_ram.elf"); p.add_argument("--settle", type=float, default=1.0)
+    p.add_argument("--hw", action="store_true", help="M4b: drive the park outputs (mechatronic connected)")
+    p = sub.add_parser("park-out"); p.add_argument("--bus", type=int, default=1)
+    p.add_argument("--csv", default="m4b_park_out_results.csv")
     p = sub.add_parser("app-flash"); p.add_argument("image", nargs="?", default="build/sh2a/tcu_app_df.bin")
     p.add_argument("--yes", action="store_true"); p.add_argument("--send-s", type=float, default=60.0)
     p.add_argument("--slow", action="store_true", help="power-cut test: stretch the write to about 35 s")
@@ -1318,7 +1383,8 @@ def main():
          "plant-entry": cmd_plant_entry, "plant-uds": cmd_plant_uds,
          "plant-seedscan": cmd_plant_seedscan, "app-flash": cmd_app_flash,
          "plant-probe34": cmd_plant_probe34, "plant-dump-session": cmd_plant_dump_session,
-         "app-selftest": cmd_app_selftest, "sensors": cmd_sensors, "park": cmd_park, "park-check": cmd_park_check}[args.cmd](b, args)
+         "app-selftest": cmd_app_selftest, "sensors": cmd_sensors, "park": cmd_park,
+         "park-check": cmd_park_check, "park-out": cmd_park_out}[args.cmd](b, args)
     finally:
         b.shutdown()
 
