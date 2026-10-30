@@ -1,6 +1,6 @@
 # Firmware architecture — proposal (for review)
 
-Status: **agreed 2026-10-14** (decisions in §9; licence deferred). Implementation starts with M0. It turns the specifications
+Status: **agreed 2026-10-14** (decisions in §9; licence decided 2026-10-30: GPLv3). Implementation starts with M0. It turns the specifications
 (`docs/spec/`) into a module structure for an open C firmware running on the stock Bosch TCU
 (SH7254R, ZF 8HP Gen 1). Open questions for the project owner are listed in §9.
 
@@ -202,5 +202,6 @@ Each milestone has host tests and a bench checklist before moving on.
    types, explicit units). — agreed
 3. **Floating point:** fixed-point on all interfaces; float allowed inside a module. — agreed
 4. **Measurement protocol:** compatible with the stock framing (spec 10). — agreed
-5. **Licence:** deferred until the repository is made public.
+5. **Licence:** **GNU GPL v3** (decided 2026-10-30, when the repository went public; see
+   `LICENSE` and the README). — agreed
 6. **Host simulator:** I/O stubs for M0–M3; closed-loop drivetrain model with M5. — agreed

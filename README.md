@@ -55,3 +55,12 @@ Static analysis of the stock firmware is well advanced (hardware I/O, CAN, measu
 shift strategy, lockup, shift execution, line pressure, solenoid outputs, park/range, fault
 memory). Bench and vehicle validation are pending. Gen 2 (8HP50 / 75 / 95) is in scope but
 deferred; Gen 3 (Infineon TriCore TCU) is out of scope.
+
+## License
+
+Copyright 2026 the 8hp-tcu-open authors.
+
+This repository — the specifications, the project firmware, and the tools — is licensed under
+the **GNU General Public License v3**; see [LICENSE](LICENSE). Firmware, calibration and EEPROM
+dumps remain excluded (see above): they are Bosch / FCA work product and are not covered by
+this license because they are not part of this repository.
