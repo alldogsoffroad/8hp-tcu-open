@@ -18,6 +18,7 @@ ghidra/
 __pycache__/
 *.pyc
 .vscode/
+.zcode/
 .idea/
 *.swp
 
