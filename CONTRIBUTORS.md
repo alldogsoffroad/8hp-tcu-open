@@ -17,3 +17,8 @@ and tooling in this repository — designed, debugged, and validated
 against chadk's bench results.
 
 Credited as `Co-authored-by` on the commits.
+
+## History
+
+Part of this repository's early development was assisted by Anthropic's
+Claude; the work has since continued with the chadk/ZCode pair above.
