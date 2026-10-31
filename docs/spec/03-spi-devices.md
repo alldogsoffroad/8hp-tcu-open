@@ -264,3 +264,28 @@ must provide an equivalent fail-safe path.
   `uds` invocations let the bench session time out and clear the lab state between commands.
   FE13 gained type 8 (`sup_app_pattern3`): caller-selected life-sign bit, default-0x20
   switch byte, single-frame request.
+
+**Decompile 2026-10-31 night (reply-path dig, fresh Ghidra import + AddrXref):**
+- **`0xFFF90951` is the supervisor MODE byte, not a fault flag.** Writer
+  `FUN_0007DC76`: `= 0` normally, `= 0x31` when `0xFFF93B8D ≠ 0` (a system-mode
+  condition set through the trivial setter `0x6BC76`, called via function pointer from
+  the mode manager `0x68830`/`0x8316C`, gated on system state `0xFFF93B42 == 3`);
+  `== 6` is the power-down state. The word builder's bit-7 branch fires on
+  `(mode & 0x11) == 0x11` — i.e. **mode 0x31 is the engaged stock's operating mode**,
+  and its word shape (bit 7 + bit-4 toggle) is that mode's LEGAL dialect. The NORMAL
+  mode shape is the bit-2 toggle we already send. Our bit-7 reset = speaking the 0x31
+  dialect outside that mode.
+- The disabler `FUN_000932F2` clears the enable (`0xFFF90953 = 0`, `0xFFF9094A = 1`)
+  on a job-reply condition (param bit 0x40, counter `0xFFF907D8`).
+- `FUN_00091C86` enable dispatch (fresh decompile): enable-requested + echo bit 0 →
+  calls the WDT-switch path; without the echo it goes nowhere — confirming the echo
+  latch is the gate.
+- **Bench consequence:** the enable-pattern replay behavior is NONDETERMINISTIC
+  run-to-run — identical sequences (state-set + normal shape + enable) survived twice
+  (17:22, 17:44 run 1) and rebooted the app twice (17:31, 17:44 run 2). The supervisor
+  keeps latched state across application reboots (it stays powered), so its internal
+  phase/counter differs per attempt. Blind replay has hit its limit; the decisive next
+  step is a logic-analyzer capture of a live engaged stock run (word sequence, echo
+  responses, job interleave — one capture replaces all guessing).
+- Tooling: `tools/ghidra_scripts/AddrXref.java` (address xrefs + decompile, house
+  style).
