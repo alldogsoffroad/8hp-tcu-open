@@ -78,6 +78,10 @@ bool plat_sup_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n);
  * one exchange - the shape of the stock boot routine 0x1D478: 0x8E01 followed by eleven
  * 0x8401 (spec 03 section 4.4). */
 bool plat_sup_burst(const uint16_t *tx, uint16_t *rx, uint8_t n);
+/* SSLB2 (third RSPI-B device, SPI mode 0) burst - the stock's cyclic [0x00FF] job. */
+bool plat_sup_burst2(const uint16_t *tx, uint16_t *rx, uint8_t n);
+/* Watchdog mode: interval-timer (enable-edge behavior, 0x978A4) vs reset mode (0x97850). */
+void plat_wdt_mode(bool interval);
 
 /* ---- Solenoid driver chips on RSPI-A (spec 03, spec 12 section 2b) ----
  * Send n 16-bit frames; frame i goes to chip i mod 5 (SSLA3, SSLA2, SSLA1, SSLA0, SSLA5) and the

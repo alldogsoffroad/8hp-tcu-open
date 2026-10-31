@@ -177,6 +177,20 @@ completion handler `0x92AC0` validates the headers and stores status to `0xFFF90
 - The stock's reply masks are loose: `0xF900` accepts both `0xA8xx` and `0xAAxx`, `0xFE00`
   accepts `0xABxx` — the class bit that varies is data-dependent, not per-chip.
 
+**Bench 2026-10-31 (FE13 + full decompile):** the stock's enable is a *confirmation
+handshake* — the app sets bit 0 and only switches its own watchdog to interval mode when the
+`0x22` echo shows the bit latched (`0x91C86`, `0x978A4`); our supervisor's echo stays `0x00`,
+so the enable never latches and asserting it resets the TCU (also at PWM level 6/31, with
+enumeration and full cyclic context). **The PWM level register is the one register that
+latches**: `0x84 <level>` (level = stock setpoint/200; start-up `0x4B0` → 6, shutdown-path
+`0x1838` → 31) and the `0x0A` read returns the achieved level — levels 1/6/7/0x1F all track
+on the bench. The stock checks this feedback with retry/fault-latch (`0x6C742`), gates
+outputs on level ≥ 6 **and** the echo bit (`0x6C63E`), and the fine 32-bit duty job
+(`0x409F4`: `[0x29xx ×2, 0x88xx ×4, 0x12]`) reports the level in its replies (`0x910EE`).
+**SSLB2 is alive** (fourth reply class `0x0Cxx`, live data — the stock's cyclic `0x00FF`
+job reads a varying 16-bit value). Register `0x24` = the `0x90` register readback (reads
+`0x00` — the `0x90` write still never latches); `0x29` mirrors the `0x28` status (`0x45`).
+
 **Supervisor register map, live (FE13 lab, SSLB1 unless noted):** `0x06` → `0x14` (ID),
 `0x18` → `0x80`, `0x1E` → `0x0A`, `0x22` → control echo (`0x00` with the idle word; latches
 and echoes ≈ every other frame when the full three-job pattern runs), `0x28` → `0x45`,

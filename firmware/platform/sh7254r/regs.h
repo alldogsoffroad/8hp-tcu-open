@@ -14,6 +14,8 @@
 #define WDT_WTCR    REG16(0xFFFE0000u)  /* write: 0xA5xx */
 #define WDT_WTCNT   REG16(0xFFFE0002u)  /* write: 0x5Axx */
 #define WDT_WRCR    REG16(0xFFFE0006u)  /* write: 0x5Axx */
+#define WDT_RSTCSR  REG16(0xFFFE0004u)  /* RSTCSR: WOVF clear via 0xA5-keyed write */
+#define WDT_IPR     REG16(0xFFFE0C04u)  /* watchdog interrupt priority (stock 0x978A4: 0xE) */
 
 /* ---- Compare match timer (section 15) ---------------------------------- */
 #define CMT_CMSTR   REG16(0xFFFEC000u)  /* bit0 STR0, bit1 STR1 */

@@ -500,6 +500,41 @@ static int sup_lab_start(const uint8_t *in, uint16_t n)
         }
         return 0;
     }
+    if (in[0] == 7u) {                                     /* pattern incl. SSLB2 */
+        if (n != 3u) {
+            return -NRC_IMLOIF;
+        }
+        sup_app_pattern2(true, in[1], in[2], true);
+        s_sup_mode = 2u;
+        return 0;
+    }
+    if (in[0] == 5u) {                                     /* watchdog mode switch */
+        if (n != 2u) {
+            return -NRC_IMLOIF;
+        }
+        plat_wdt_mode(in[1] != 0u);
+        s_sup_mode = 0u;
+        return 0;
+    }
+    if (in[0] == 6u) {                                     /* SSLB2-only burst (mode 0) */
+        const uint16_t bytes = (uint16_t)(n - 1u);
+        if (bytes < 2u || bytes > 2u * SUP_LAB_MAX || (bytes & 1u) != 0u) {
+            return -NRC_IMLOIF;
+        }
+        {
+            uint16_t tx[SUP_LAB_MAX];
+            const uint8_t cnt = (uint8_t)(bytes / 2u);
+            for (uint8_t i = 0u; i < cnt; i++) {
+                tx[i] = (uint16_t)(((uint16_t)in[1u + 2u * i] << 8) | in[2u + 2u * i]);
+            }
+            if (!plat_sup_burst2(tx, s_sup_rx, cnt)) {
+                return -NRC_CNC;
+            }
+            s_sup_n = cnt;
+            s_sup_mode = 1u;
+        }
+        return 0;
+    }
     if (in[0] == 2u) {                                     /* stock cyclic pattern on */
         if (n != 3u) {
             return -NRC_IMLOIF;
@@ -546,7 +581,8 @@ static int sup_lab_results(uint8_t *out, uint16_t max)
         out[19] = (uint8_t)(st->echo_bad >> 8); out[20] = (uint8_t)st->echo_bad;
         out[21] = (uint8_t)(st->a8_bad >> 8);   out[22] = (uint8_t)st->a8_bad;
         out[23] = (uint8_t)(st->aa_bad >> 8);   out[24] = (uint8_t)st->aa_bad;
-        return 25;
+        out[25] = (uint8_t)(st->sslb2_rx >> 8); out[26] = (uint8_t)st->sslb2_rx;
+        return 27;
     }
     if (max < 1u) {
         return -NRC_IMLOIF;

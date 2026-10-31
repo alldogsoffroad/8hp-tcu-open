@@ -28,7 +28,8 @@ typedef struct {
     uint8_t drv_reg[5][256];    /* simulated chip registers, by write command */
     uint16_t drv_last_tx[45];
     unsigned drv_jobs;
-    uint16_t toe_duty;          /* park hold PWM duty (permil), TOE31 / PL6 */
+    uint16_t toe_duty;
+    bool wdt_interval;         /* last plat_wdt_mode() state */          /* park hold PWM duty (permil), TOE31 / PL6 */
     bool userboot_ok;
     bool fwe;                   /* FPMON.FWE */
     unsigned flasher_starts;

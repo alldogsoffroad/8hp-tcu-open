@@ -197,6 +197,16 @@ bool plat_sup_burst(const uint16_t *tx, uint16_t *rx, uint8_t n)
     return true;
 }
 
+bool plat_sup_burst2(const uint16_t *tx, uint16_t *rx, uint8_t n)
+{
+    for (uint8_t i = 0u; i < n; i++) {
+        rx[i] = (uint16_t)(0xB400u | (tx[i] & 0x00FFu));   /* SSLB2 replies 0xB4xx */
+    }
+    return true;
+}
+
+void plat_wdt_mode(bool interval) { (void)interval; }
+
 void plat_drv_init(void) { }
 
 bool plat_drv_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n)

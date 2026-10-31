@@ -33,6 +33,12 @@
  *                                                          (the three jobs of spec 03 4.4;
  *                                                          bits8e bit 0 = output enable)
  *   start   31 01 FE 13 03                               pattern off (normal 5 ms word)
+ *   start   31 01 FE 13 07 <bits8e> <bits90>              stock cyclic pattern on,
+ *                                                          including the SSLB2 exchange
+ *   start   31 01 FE 13 05 <0|1>                         watchdog mode: 1 = interval
+ *                                                          timer (0x978A4), 0 = reset
+ *   start   31 01 FE 13 06 <words BE16>                   SSLB2-only burst (third chip,
+ *                                                          SPI mode 0, stock job 0x40C74)
  *   start   31 01 FE 13 04 <words BE16, 2..200 bytes>   SSLB1-only burst: all frames to
  *                                                          the supervisor back to back, the
  *                                                          shape of the stock 0x1D478 ritual

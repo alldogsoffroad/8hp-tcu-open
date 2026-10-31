@@ -63,6 +63,39 @@ void plat_wdt_service(void)
     WDT_WTCNT = 0x5ADBu;    /* ~30 ms to overflow */
 }
 
+/* Watchdog mode switch, the stock enable-edge behavior (0x978A4 / 0x97850): on the
+ * output-enable edge the app moves its own watchdog from reset mode into interval-
+ * timer mode with the interrupt priority raised to 0xE; on disable back to reset
+ * mode with WRCR = 0x5A80. Interrupts stay globally masked in this firmware, so the
+ * interval-mode IRQ only pends; the WDTOVF pin behaviour is the observable. */
+void plat_wdt_mode(bool interval)
+{
+    uint32_t sr;
+
+    __asm__ volatile ("stc sr, %0" : "=r"(sr));
+    __asm__ volatile ("ldc %0, sr" : : "r"(sr | 0xF0u));
+    if (interval) {
+        if ((WDT_WTCR & 0x40u) != 0u) {
+            if ((WDT_WTCR & 0x20u) == 0u) {
+                WDT_WTCR = (uint16_t)((WDT_WTCR & 0xFFBFu) | 0xA500u);
+            } else {
+                WDT_WTCR = (uint16_t)((WDT_WTCR & 0xFF9Fu) | 0xA520u);
+            }
+        }
+        WDT_IPR = (uint16_t)((WDT_IPR & 0xFFF0u) | 0xEu);
+    } else {
+        if ((WDT_WTCR & 0x40u) == 0u) {
+            if ((WDT_WTCR & 0x20u) == 0u) {
+                WDT_WTCR = (uint16_t)(WDT_WTCR | 0xA540u);
+            } else {
+                WDT_WTCR = (uint16_t)((WDT_WTCR & 0xFFDFu) | 0xA560u);
+            }
+        }
+        WDT_WRCR = 0x5A80u;
+    }
+    __asm__ volatile ("ldc %0, sr" : : "r"(sr));
+}
+
 /* ---- 1 ms tick: CMT0, P/8 = 2.5 MHz, compare 2499 --------------------------- */
 static void tick_init(void)
 {
@@ -353,6 +386,44 @@ bool plat_sup_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n)
         SPDRB = tx[i];
         (void)SPSRB;
         SPSRB = 0u;                     /* start trigger (manual 17.4.9) */
+        for (guard = 20000u; guard != 0u && (SPSRB & SPSR_SPRF) == 0u; guard--) {
+        }
+        if (guard == 0u) {
+            return false;
+        }
+        rx[i] = SPDRB;
+        SPSRB = (uint8_t)(SPSRB & SPSR_SPTEF);
+    }
+    return true;
+}
+
+bool plat_sup_burst2(const uint16_t *tx, uint16_t *rx, uint8_t n)
+{
+    /* SSLB2 variant: the third RSPI-B device uses its own select AND SPI mode 0
+     * (SPCMD 0xAF20, cpol0 cpha0 - stock job 0x40C74 with cfg 0x40D84). */
+    SPCRB = 0x00u;
+    RSPIB_DMA_REQ0 = 0u;
+    RSPIB_DMA_REQ1 = 0u;
+    SPSRB = 0u;
+    SPPCRB = 0u;
+    SPBRB = 5u;
+    SPCKDB = 0u;
+    SSLNDB = 0u;
+    SPNDB = 1u;
+    SPSCRB = 0u;
+    SPCMDB0 = 0xAF20u;                  /* SSLB2, mode 0 */
+    SPCRB = 0x48u;
+    for (uint8_t i = 0u; i < n; i++) {
+        uint32_t guard;
+        for (guard = 20000u; guard != 0u && (SPSRB & SPSR_SPTEF) == 0u; guard--) {
+        }
+        if (guard == 0u) {
+            return false;
+        }
+        (void)SPSRB;
+        SPDRB = tx[i];
+        (void)SPSRB;
+        SPSRB = 0u;
         for (guard = 20000u; guard != 0u && (SPSRB & SPSR_SPRF) == 0u; guard--) {
         }
         if (guard == 0u) {

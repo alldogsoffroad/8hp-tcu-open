@@ -11,6 +11,7 @@ static bool s_pat_raw;                /* lab: raw pattern — bit 0 NOT cleared 
 static bool s_suspended;              /* lab: raw exchange owns the RSPI bus */
 static uint16_t s_pat_word, s_pat_toggle;
 static uint8_t s_app8e, s_app90;       /* stock-pattern data bytes (FE13) */
+static bool s_app_sslb2;               /* pattern includes the SSLB2 exchange */
 
 void sup_init(void)
 {
@@ -67,8 +68,15 @@ void sup_set_pattern_raw(bool pattern_on, uint16_t word, uint16_t toggle)
 
 void sup_app_pattern(bool on, uint8_t bits8e, uint8_t bits90)
 {
+    sup_app_pattern2(on, bits8e, bits90, false);
+}
+
+void sup_app_pattern2(bool on, uint8_t bits8e, uint8_t bits90, bool with_sslb2)
+{
     s_app8e = bits8e;
     s_app90 = bits90;
+    s_app_sslb2 = with_sslb2;
+    s_st.sslb2_on = with_sslb2;
     s_st.app_pattern = on;
     if (on) {
         s_pattern = false;             /* the stock pattern replaces the FE32 word pattern */
@@ -95,7 +103,8 @@ static void app_pattern_tick(void)
     };
     const uint16_t job2[2] = { (uint16_t)(0x9000u | s_app90), 0x2400u };
     const uint16_t job3[2] = { 0x2800u, 0x2E00u };
-    uint16_t rx1[4], rx2[2], rx3[2];
+    const uint16_t job4[1] = { 0x00FFu };           /* SSLB2, stock job 0x40C74 */
+    uint16_t rx1[4], rx2[2], rx3[2], rx4[1];
 
     s_st.sent++;
     if (!plat_sup_xfer(job1, rx1, 4u) || !plat_sup_xfer(job2, rx2, 2u) ||
@@ -103,6 +112,11 @@ static void app_pattern_tick(void)
         s_st.busy++;
         return;
     }
+    if (s_app_sslb2 && !plat_sup_burst2(job4, rx4, 1u)) {
+        s_st.busy++;
+        return;
+    }
+    s_st.sslb2_rx = rx4[0];
     s_st.last_tx = job1[0];
     s_st.last_rx = rx1[2];             /* the 0x22 control echo drives the next toggle */
     s_st.enable = (job1[0] & SUP_BIT_ENABLE) != 0u;

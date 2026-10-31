@@ -247,7 +247,7 @@ int main(void)
         CHECK(sup->rx_words[2] == 0xA804u && sup->rx_words[0] == 0xA804u);
         CHECK(sup->echo_ok + sup->echo_bad >= 2u && sup->aa_bad >= 8u);
         r = bench_routine(3u, BENCH_SUP_RID, NULL, 0u, out, 64u);
-        CHECK(r == 25 && out[0] == 2u && out[1] == 0xA8u && out[2] == 0x04u);
+        CHECK(r == 27 && out[0] == 2u && out[1] == 0xA8u && out[2] == 0x04u);
         /* stop restores the single 5 ms word */
         uds_req((const uint8_t[]){ 0x31, 0x02, 0xFE, 0x13 }, 4u);
         CHECK(!sup->app_pattern);

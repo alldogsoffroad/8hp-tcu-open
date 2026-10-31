@@ -32,6 +32,8 @@ typedef struct {
     uint32_t echo_bad;
     uint32_t a8_bad;        /* SSLB1 (supervisor) frames not in the 0xA8 reply class */
     uint32_t aa_bad;        /* SSLB0 frames not in the 0xAA reply class */
+    uint16_t sslb2_rx;       /* last SSLB2 reply (stock job 0x40C74 sends 0x00FF) */
+    bool     sslb2_on;       /* pattern includes the cyclic SSLB2 exchange */
 } sup_status_t;
 
 void sup_init(void);
@@ -60,5 +62,8 @@ void sup_suspend(bool on);            /* lab: suspend the 5ms tick (raw exchange
  * bits may carry bit 0 (output enable) — a deliberate, dangerous bench act: on the bench the
  * enable bit sent without this full context reset the TCU (2026-10-30). */
 void sup_app_pattern(bool on, uint8_t bits8e, uint8_t bits90);
+/* Full-fidelity variant: additionally sends the stock's cyclic SSLB2 exchange
+ * ([0x00FF], SPI mode 0) each 5 ms pass, as job 0x40C74 does. */
+void sup_app_pattern2(bool on, uint8_t bits8e, uint8_t bits90, bool with_sslb2);
 
 #endif
