@@ -546,8 +546,10 @@ two 2026-10-31 mid-day D-feeder stops behaved the same), while every
 The no-comm safe state is **lever-gated: P keeps the solenoids held (park
 lock), D drops them**. After the D-stop release the box **re-engaged itself
 to ~1.8 A at ~1 min 9 s with no feed** — the 0x90586 keep-warm/priming
-machine (§ above) pulling it back up autonomously; released-window duration
-is therefore ~1 min before the autonomous re-engage. This also explains the
+machine (§ above) pulling it back up autonomously; the released window was
+~1 min that time, in pure bus silence (refined hours later: with 0x361 tester
+traffic on the bus it shrinks to ~3 s — see the sweep-session note below).
+This also explains the
 ammeter video starting at 0.170 (inside the released window) vs the overnight
 1.87 hold (P-ending, never released).
 
@@ -584,3 +586,50 @@ Run-relative map: feed-on P = run 5, D 13, R 23, N 31, D 37, P 45, stop 53.
 The first video "starting at 0.170" is thereby explained the same way: both
 runs show feed-on-from-silence knocking out the self-hold for ~13 s before
 an autonomous re-engage.
+
+**0xFFF8xxxx measurement-cell sweep + stop-oscillation video 2026-10-31 evening
+#4 (IMG_2637, 75.6 s, 20 display reads, every read W = V·A cross-checked):**
+new tool `/tmp/sweep8.py` — cmd `0x20` read-words proven live on the bench
+(3 × A16 words per request on 0x361, reply `20 81` on 0x398; 401 cells — all
+392 CSV measurement addresses in 0xFFF8xxxx, 8 park-logic cells, the 6 FFF9
+anchors — in ~3 s per sweep, 3× the 0x2A transport; 0 fails on all three
+sweeps). Three states captured with the ammeter as discriminator: **C**
+16:02:52 pre-feed, D-last engaged (1.912 A); **A** 16:03:45 = +6.2 s after
+the P-stop (engaged); **B** 16:04:23 = +4.1 s after the D-stop.
+
+1. **No gear/range cell hides in the measurement table.** The only cells that
+   differ across C/A/B beyond ±1-LSB monotonic counters (e.g. 0xFFF80F2E
+   0619→061a→061b) are the known state pair: 0xFFF93B92 (C=03 with D-engaged,
+   A=01 with P-engaged, B=02 transient) and 0xFFF90862 (0x1357/0x1b57/0x1e98).
+   The lever information that drives the stop decision is **not** among the
+   392 CSV measurement addresses — it lives outside 0xFFF8xxxx or in derived
+   form (0x2EA counters → 0xFFF9xxxx state machine).
+2. **Keep-warm commands continue while released:** sweep B (box released at
+   capture, video below) still reads a cycling command pair at 0x90586
+   (0x11 0x16). "Released = zero commands" is dead — the output gating sits
+   downstream of the command cells.
+3. **The stop is an immediate re-engage in both lever contexts, then a
+   state-dependent settle — caught on video this time.** P feed: released
+   0.170–0.174 for the whole 10 s, engaged by the first post-stop frame
+   (t=9.5 → 0.172, t=10.0 → 1.809), then keep-warm wander (1.81 → 1.57).
+   D feed: released 0.171–0.173 for the whole 10 s, **engaged ≤0.2 s after
+   the stop** (t=48.5 → 0.172, t=49.5 → 1.318 mid-climb, t=50 → 1.806),
+   **released again ~3–4 s later** (t=53 → 0.176 — exactly the sweep-B
+   window, hence the enum-02 / 0x1e98 snapshot), **re-engaged by t=56**
+   (1.680), then held engaged 1.68–1.91 to the end of the recording (user's
+   live read 1.898). A drop→rise→drop→rise oscillation within ~7 s of the
+   stop. Video alignment: phone creation tag 16:03:29 ≈ P-feed start
+   16:03:29.137; both stop edges land inside the observed engage brackets.
+4. This re-frames the "D-ending stop releases" law above: every earlier
+   D-stop release was observed with the box **already released at the stop**
+   (the 10 s feeder runs sit inside the ~13 s feed-on settling window, and
+   today's video proves a 10 s D feed never engages mid-feed), and a ≤0.5 s
+   post-stop engage blip is easy to miss by eye. What genuinely differs
+   between the sessions is the **duration of the post-stop released state:
+   ~1 min in pure bus silence (2026-10-30 dstop run) vs ~3 s with 0x361
+   tester traffic present (today, during sweep B)**. [I] Two-data-point
+   hypothesis: bus activity the box itself processes (measurement requests
+   on 0x361) resets a comm watchdog that keeps the hold engaged; in silence
+   it times out, and the 0x90586 keep-warm machine re-primes ~1 min later.
+   Discriminating test for the next bench session: D-stop → pure silence
+   vs D-stop → 0x361 reads only, ammeter timing the released window.
