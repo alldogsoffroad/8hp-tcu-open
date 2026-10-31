@@ -11,6 +11,7 @@ static bool s_pat_raw;                /* lab: raw pattern — bit 0 NOT cleared 
 static bool s_suspended;              /* lab: raw exchange owns the RSPI bus */
 static uint16_t s_pat_word, s_pat_toggle;
 static uint8_t s_app8e, s_app90;       /* stock-pattern data bytes (FE13) */
+static uint8_t s_app_toggle = SUP_BIT_TOGGLE;   /* life-sign bit the pattern alternates */
 static bool s_app_sslb2;               /* pattern includes the SSLB2 exchange */
 
 void sup_init(void)
@@ -75,6 +76,7 @@ void sup_app_pattern2(bool on, uint8_t bits8e, uint8_t bits90, bool with_sslb2)
 {
     s_app8e = bits8e;
     s_app90 = bits90;
+    s_app_toggle = SUP_BIT_TOGGLE;
     s_app_sslb2 = with_sslb2;
     s_st.sslb2_on = with_sslb2;
     s_st.app_pattern = on;
@@ -82,6 +84,15 @@ void sup_app_pattern2(bool on, uint8_t bits8e, uint8_t bits90, bool with_sslb2)
         s_pattern = false;             /* the stock pattern replaces the FE32 word pattern */
         s_flash_mode = false;
     }
+}
+
+void sup_app_pattern3(bool on, uint8_t bits8e, uint8_t toggle_bit, uint8_t bits90)
+{
+    /* Engaged-app shape (2026-10-31 stock RAM capture): the word is 0x8E91/0x8E81 —
+     * bit 7 held, BIT 4 alternating (not the boot software's bit 2), enable on.
+     * The toggle bit comes from the caller; bits outside the mask pass verbatim. */
+    s_app_toggle = toggle_bit ? toggle_bit : SUP_BIT_TOGGLE;
+    sup_app_pattern2(on, bits8e, bits90, true);
 }
 
 /* One 5 ms pass of the stock application's supervisor exchange: the three cyclic jobs of
@@ -96,8 +107,8 @@ static void app_pattern_tick(void)
      * answered with a reset (2026-10-30: 0x8E44 held for ~600 frames killed the TCU).
      * The pattern therefore self-toggles unconditionally; the echo is only counted. */
     s_toggle = !s_toggle;
-    const uint8_t bits = (uint8_t)((s_app8e & ~SUP_BIT_TOGGLE) |
-                                   (s_toggle ? SUP_BIT_TOGGLE : 0u));
+    const uint8_t bits = (uint8_t)((s_app8e & (uint8_t)~s_app_toggle) |
+                                   (s_toggle ? s_app_toggle : 0u));
     const uint16_t job1[4] = {
         (uint16_t)(SUP_CMD_CONTROL | bits), 0xC900u, 0x2200u, 0x0900u,
     };

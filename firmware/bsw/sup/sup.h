@@ -66,5 +66,9 @@ void sup_app_pattern(bool on, uint8_t bits8e, uint8_t bits90);
 /* Full-fidelity variant: additionally sends the stock's cyclic SSLB2 exchange
  * ([0x00FF], SPI mode 0) each 5 ms pass, as job 0x40C74 does. */
 void sup_app_pattern2(bool on, uint8_t bits8e, uint8_t bits90, bool with_sslb2);
+/* Engaged-app word shape (FE13 type 8): the life-sign bit is caller-selected — the
+ * engaged application alternates BIT 4 with bit 7 held (word 0x8E91/0x8E81, stock RAM
+ * 0xFFF907D4 capture 2026-10-31), not the boot software's bit 2. */
+void sup_app_pattern3(bool on, uint8_t bits8e, uint8_t toggle_bit, uint8_t bits90);
 
 #endif

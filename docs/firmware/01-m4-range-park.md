@@ -204,3 +204,15 @@ full-on field, hold current at C7); AN5/AN6 contact polarity; `park-check --hw`.
 sequencing times (replace the 500 ms / 1 s project values); ch 7 behaviour while holding (the
 `keep_release` flag); behaviour of `0x112` byte 0 (spec 14 §8.4) and of `D5F8`; the
 battery-compensated hold duty; DTC mapping (P1B13 / P1B14).
+
+## 8b. Bench session 2026-10-31 evening — the gate mapped, still closed [M]
+
+Loader restaged (spec 18 §9) and the M4b outputs re-tested live with the supervisor replay
+ladder (spec 03 §4.4 addendum): FE10 channel bursts and the FE11 park-hold magnet (TOE31,
+the driver-chip-independent path) both draw nothing — the blocker is the shared upstream
+switched supply rail. New facts: level 31 latches (`AA 1F`), `0x88 ← 0x20` makes the held
+enable bit survivable (echo still `0x00` = not accepted), bit 7 (`0x91` word shape) reboots
+the TCU, and the stock's engaged confirmation (`0xFFF90954` = echo bit 0) plus the exact
+engaged word shape (`0x91`/`0x81`) are now known from live captures. Next leads: the
+`0xFFF90951` status writer (decompile reply-path alias) or a logic-analyzer sniff of an
+engaged stock run. FE11/AN5-AN6/park-check --hw commissioning still pending on the gate.

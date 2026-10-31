@@ -236,3 +236,31 @@ must provide an equivalent fail-safe path.
 5. ~~Roles of SSLB0 and SSLB2~~ — SSLB1 is the supervisor (§4.4); SSLB0 a second supervisor /
    system chip; SSLB2 open. Supervisor timeout and the meaning of SSLB1 registers `0x84`, `0x88`
    (written at start-up) are open.
+
+**Bench 2026-10-31 evening (M4b gate session, engaged-stock shadows + replay ladder):**
+- **Engaged-stock supervisor shadows** (three live captures, RAM read via cmd 0x2A):
+  control word `0xFFF907D4` = **`0x91`/`0x81` alternating — bit 7 held, BIT 4 the life sign,
+  bit 0 the enable** (not the boot software's bit-2 toggle); echo `0xFFF907D5` = `0xb1`/`0xa1`
+  (bit 0 SET = accepted); `0xFFF90953` = 1 (enable request), **`0xFFF90954` = 1 — the
+  confirmation the output gate checks**; `0xFFF90944[0]` = `'c'` (switch output 0 on);
+  `0xFFF907D6` = 0x20 (the 0x90 shadow).
+- **Decoded:** the reply processor (`0x91ACA`) sets `0xFFF90954 = echo bit 0`; the word
+  builder (`0x91C86`) derives bit 7 from a supervisor-status branch (`0x90951 & 0x11 ==
+  0x11`), bit 2 in the normal branch as the complement of the echo's bit 2, bit 6 in state 6,
+  and ORs the enable from `0xFFF90953`. The output gate (`0x6C63E`) requires **level ≥ 6 AND
+  `0xFFF90954`** and then sets the master RAM gate `0xFFF800E8`.
+- **Replay ladder (our firmware, ammeter 0.169 A flat throughout):** PWM level 31 (readback
+  `AA 1F` ✓, the one latching write), `0x88 ← 0x20`, `0x90 ← 0x20`, the six-job cyclic
+  pattern incl. SSLB2 — then 500 mA channel bursts (FE10) and the FE11 park-hold magnet
+  (TOE31, direct path): **no current through any output; both paths share the upstream
+  switched supply rail, which never energises.**
+- **`0x88 ← 0x20` removes the instant reset on the held enable bit** (the TCU survives bit 0
+  in the pattern — previously fatal) — but the `0x22` echo still reads `0x00`: the
+  supervisor receives the enable without accepting it. **Bit 7 held (word shape `0x91`)
+  reboots the TCU** (uptime-verified) despite the full context — the stock's bit 7 is
+  legitimised by the status cell `0xFFF90951` (writer untyped in the decompile: a reply-path
+  alias — the next lead).
+- Housekeeping: FE13 lab patterns need a **continuous tester-present session** — separate
+  `uds` invocations let the bench session time out and clear the lab state between commands.
+  FE13 gained type 8 (`sup_app_pattern3`): caller-selected life-sign bit, default-0x20
+  switch byte, single-frame request.

@@ -508,6 +508,17 @@ static int sup_lab_start(const uint8_t *in, uint16_t n)
         s_sup_mode = 2u;
         return 0;
     }
+    if (in[0] == 8u) {                                     /* engaged-app word shape:
+                                                             * base bits, toggle mask, [0x90 bits] */
+        if (n != 3u && n != 4u) {
+            return -NRC_IMLOIF;
+        }
+        /* single-frame friendly: without the fourth byte use the engaged stock's
+         * measured 0x90 value (switch output 0, 2026-10-31 capture) */
+        sup_app_pattern3(true, in[1], in[2], n == 4u ? in[3] : 0x20u);
+        s_sup_mode = 2u;
+        return 0;
+    }
     if (in[0] == 5u) {                                     /* watchdog mode switch */
         if (n != 2u) {
             return -NRC_IMLOIF;
