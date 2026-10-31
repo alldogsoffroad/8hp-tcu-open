@@ -536,10 +536,10 @@ Working numbers for the open firmware: **engaged hold ≈ 1.85–1.87 A**
 (user-confirmed idle 1.870), **released ≈ 0.17 A**, re-engage climb ≈ 1.5–1.7 A
 over ~1–2 s.
 
-**Clean-feed re-run + stop tests 2026-10-30 (post-video):** re-ran the full
+**Clean-feed re-run + stop tests 2026-10-31 (post-video):** re-ran the full
 P-D-R-N-D-P sequence with ALL bus polling removed (feed-only, 0 errors) —
 started from the overnight self-held 1.905, ran all six phases, ended at
-1.871; video transcription pending. Then the release discriminator, live at
+1.871; transcribed below. Then the release discriminator, live at
 the ammeter: a **D-feed stop releases to ~0.173 A** (third confirmation; the
 two 2026-10-31 mid-day D-feeder stops behaved the same), while every
 **P-ending stop self-holds at ~1.87 A** (twice: overnight 1.870, today 1.871).
@@ -550,3 +550,37 @@ machine (§ above) pulling it back up autonomously; released-window duration
 is therefore ~1 min before the autonomous re-engage. This also explains the
 ammeter video starting at 0.170 (inside the released window) vs the overnight
 1.87 hold (P-ending, never released).
+
+**Clean-run video transcription 2026-10-31 (IMG_2635, 93.2 s, 41 display reads
+at 2 fps, every read W = V·A cross-checked):** video t₀ pinned to the run log
+two ways — the phone's `creation_date` tag (video leads the 15:32:02.142 run
+start by 16.1 s) and the audio track (a single loud solenoid clack at video
+t=21.16 vs logged feed-on 21.14), so the alignment is exact to ~0.2 s.
+Run-relative map: feed-on P = run 5, D 13, R 23, N 31, D 37, P 45, stop 53.
+1. **Feed-on from silence releases the engaged self-hold.** Flat 1.905–1.906
+   through pre-feed (video 0–21), one loud clack at the P burst, display at
+   0.170–0.172 solid by video 22.5 (the 21.5/22.0 frames still read 1.906 —
+   PSU display refresh straddling the fall). The box stays released through
+   the whole P phase AND past the D boundary.
+2. **Autonomous silent re-engage ~13 s after feed-on** (edge in video
+   (34.5,35] = run ≈18.7, ~5.5 s into D; no audible click). The window is
+   feed-on + ~13 s, **not phase-correlated** — released at D+0.8 through
+   D+5.5. Reads like an ignition-on engagement procedure settling, not a
+   lever response.
+3. After re-engage: **flat 1.905 through the entire D→R→N→D→P sequence**
+   (six samples video 35–65) — mid-feed lever commands do not disturb the
+   engaged hold at display resolution (confirms the first video's finding
+   without the polling confound).
+4. **Second, uncommanded release late in the final P phase** (onset run
+   ≈49–52, quiet), **re-engaging exactly at the feed stop** (run 53.0: video
+   69.0 still 0.171, 69.5 mid-rise 0.884, 70.0 = 1.698, twin clicks audio
+   69.37/69.48). With the stop discriminator above: stop-from-P-engaged →
+   self-hold; stop-from-D-engaged → release; stop-while-released → engage.
+   The stop event forces a hold-state re-evaluation in both directions.
+5. **Post-stop hold is not flat:** engaged hold wanders 1.70–1.91 A over the
+   next 20 s (1.698→1.847→1.906→1.709→1.875, never releases) — the 0x90586
+   keep-warm machine cycling hold combinations, matching the user's live
+   1.871 post-run read.
+The first video "starting at 0.170" is thereby explained the same way: both
+runs show feed-on-from-silence knocking out the self-hold for ~13 s before
+an autonomous re-engage.
