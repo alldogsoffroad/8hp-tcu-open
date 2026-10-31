@@ -28,6 +28,12 @@ only on a bench or a stationary vehicle, unless a test plan says otherwise.
   The first bus on which a valid `0x361` arrives is latched (`0xFFF80D1A`: 1 = bus 2,
   2 = bus 1). On bus 1 the frame must additionally match a stored value (`0x77F3C`) [O].
   [I] Use bus 2.
+  **Bench 2026-10-31 (running stock, live reads): bus 1 answers plain `0x2A` reads with no
+  stored-value obstruction while bus 2 stays silent at idle power-up** — the `0x77F3C` match
+  evidently passes (or does not gate reads). The intake also SLOWS over uptime: fresh boot
+  answers at ~0.3 s cadence, after ~30 min idle ~1 reply per 2.5 s window — pace probes and
+  retry. `/tmp/sup_live.py` pattern (read = `0x361 [2A 00 A32 00 00]`, reply `0x398
+  [2A 81 <6B>]`).
 - Response byte 0 echoes the command; byte 1 = `0x81` for a positive data response. For write
   commands the response byte 0 is `0x01` = done or `0x03` = rejected. Unknown commands get `0x03`
   [O].
