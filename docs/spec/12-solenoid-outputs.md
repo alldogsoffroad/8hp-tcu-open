@@ -517,3 +517,21 @@ area read IDENTICAL across engaged and released states — output gating is the
 0x90586-class command cells, not the supervisor cells. Sweep tool:
 `/tmp/ramsweep.py` (267 cells, 5-7 s when engaged); `/tmp/ramwatch.py` polls
 the state cells and auto-fires a full sweep on a flip.
+
+**Ammeter video 2026-10-31 (76.3 s, lever-sequence run):** transcription of the
+PSU display at 21 points (every read cross-checked against the display's own
+W = V·A). Aligned to the run log (t₀ ≈ 14:56:27.7): released 0.169–0.172 A
+(feed off) → engage climb t≈8 (1.566 A) → **lever holds P/D1/R/N/D2/P2 all at
+1.855–1.868 A** — no detectable phase difference at display resolution.
+The three full dropouts to ~0.17 A (t≈9–18, t=28.3–30, t=48–~66) are **not
+lever responses**: each coincides (±0.2 s) with `leverseq.py`'s measurement
+polling bursts (baseline t=8.3+, D1-end t=28.3, N-end t=48.3) which stall the
+46-node feed on the shared bus; the stock times out on missing node frames,
+releases (audible click), and re-engages ~1–2 s after the feed resumes. The
+2–4 s between-phase gaps (lever unchanged, feed alive — t=40 and t=44 reads
+1.857/1.858) do **not** drop it, so the node-frame timeout is ≥4 s while total
+feed loss releases within a burst. Third dropout was the longest (~18 s),
+matching the known plant-poll latency growth with uptime (0.3 s → 2.5 s).
+Working numbers for the open firmware: **engaged hold ≈ 1.85–1.87 A**
+(user-confirmed idle 1.870), **released ≈ 0.17 A**, re-engage climb ≈ 1.5–1.7 A
+over ~1–2 s.
