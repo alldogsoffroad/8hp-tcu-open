@@ -322,3 +322,16 @@ from live stock via cmd 0x2A next time stock runs.
 **Replay test ready:** all job templates fit the existing FE13 one-shot burst (sub-04),
 so the sequence is testable on the bench without stock: duty job → level job → enable
 pattern, ammeter + echo as the verdict.
+
+**Replay executed (2026-10-31 late night, flash app, ammeter verdict):** the decoded
+start-up sequence was replayed live — duty job `[8800 8800 8818 8838 1200 0C00 0A00]`
+(accepted: `AA00`×4 + commit ack `AAC5/C7`), level job `[8406 0A00 1200 0C00]`
+(**achieved level 6 latched, read-back `AA06`**), then the enable pattern — on both a
+warm and a fully power-cycled (fresh) supervisor. **Result: no rail current in any run
+(0.167 A throughout), and the enable arm reboots the flash app deterministically (3/3)**
+(the RAM app survived it 2/4 — nondeterministic there; the echo never latched anywhere).
+Remaining deltas for the next session: (a) the REAL duty value — our 0x1838 is a guess;
+read `0xFFF92414` from live engaged stock via cmd 0x2A (needs a stock restore cycle);
+(b) the monitor's level RAMP (0x8CEDC dwell states, not a single level write);
+(c) diagnose the flash-app reboot at the enable arm (crash vs supervisor reset —
+read the reset-cause registers after a repro).
