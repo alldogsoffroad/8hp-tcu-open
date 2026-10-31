@@ -170,3 +170,14 @@ transitions of the range code (from 5, 6 or 7 to 8 = P) over a timer.
 2. Whether the local identifiers `0x1389–0x13A4` are reachable by UDS ReadDataByIdentifier.
 3. Fault group map (§2a): the 6 groups not found (39, 47, 106, 157, 158, 160) and group 196;
    the conflict over `0x037`/`0x2F9`/`0x170` (§2c).
+**Bench 2026-10-31 (running stock, live):** a synthesized network of ~46 bus-1 node
+messages with **zero-filled bodies** (plus proper lever `0x2EA`/`0x210`, RPM `0x108`
+with counter+CRC, brake `0x140`) is **accepted by the communication monitor** —
+feeding it transitions the TCU from the no-comm outputs-released state (~0.170 A,
+periodic still running) to solenoid engagement (**audible clicks**, ~1.7 A transient,
+~1.85 A held); a D request during the feed produces a distinct 1.9 A bump → 1.7 A dip
+→ re-hold; stopping the feed releases the outputs again (~0.170 A) after the comm
+timeout. Per-frame content validation evidently does not gate network-aliveness
+(presence + pacing suffice). The driver-feeder pattern: `/tmp/feedmon3.py`
+(exception-guarded — the ~5 kHz aggregate feed rate can trip the Teensy serial link;
+always guard the sniffer/reader threads).
