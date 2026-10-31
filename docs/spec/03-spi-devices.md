@@ -191,6 +191,16 @@ outputs on level ≥ 6 **and** the echo bit (`0x6C63E`), and the fine 32-bit dut
 job reads a varying 16-bit value). Register `0x24` = the `0x90` register readback (reads
 `0x00` — the `0x90` write still never latches); `0x29` mirrors the `0x28` status (`0x45`).
 
+**Bench 2026-10-31 afternoon — the decisive correction:** the data-flash loader (spec 18 §5)
+is the code-flash *application* on this unit since 2026-10-18. **The stock application has not
+run during any supervisor bench work** — every "mute stock" observation (refused DIDs, silent
+CAN, dead measurement protocol, no engagement) was the minimal loader, not a fail-safe stock.
+The stock app was overwritten when the loader was installed; the 2026-10-29 "pristine restore"
+repaired only the 0xE0000 marker block. A stock-firmware run therefore requires restoring the
+application region (and, suspected, the stock data-flash identification ring the boot reads —
+0x0F10/0x0F11/0x0F15/0x0F20 records; the 2026-10-17 stock run had a populated ring, today's is
+blank). The stock-run campaign state is recorded in spec 18 §8c.
+
 **Supervisor register map, live (FE13 lab, SSLB1 unless noted):** `0x06` → `0x14` (ID),
 `0x18` → `0x80`, `0x1E` → `0x0A`, `0x22` → control echo (`0x00` with the idle word; latches
 and echoes ≈ every other frame when the full three-job pattern runs), `0x28` → `0x45`,

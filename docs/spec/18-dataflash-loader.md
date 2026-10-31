@@ -169,3 +169,41 @@ Supervisor, watchdog and CAN polling run in the loader exactly as in the RAM fla
 2. Behaviour of EEPRE/EEPWE after the boot code's writes (re-enable with the keys).
 3. The 100 ms listen window adds to start-up time in a vehicle; FE30 avoids needing it.
 4. ~~Execution speed from RAM~~ — measured about 74 % of code-flash speed (§7b).
+
+### 8c. Stock-firmware restore campaign (2026-10-31) [B]
+
+Goal: run the genuine stock application on the bench to observe its supervisor introduction
+(the open firmware has never met an introduced supervisor — registers 0x8E/0x90 never latch,
+spec 03 §4.4). Findings and state:
+
+- **The stock app was overwritten by the loader install** (the loader is an application-shaped
+  image, spec 06 markers, stock identification fields). It has not run since 2026-10-18.
+- **Write mechanics learned the hard way:** in the 64 KB FCU zone (0x040000–0x09FFFF) the
+  erase op is 64 KB-granular regardless of the addressed sub-block — stepping erases at 8 KB
+  destroys the previously written sub-blocks (each erase also invalidates the app header
+  block). Correct pattern: **one erase per 64 KB FCU block, then program all 256 B units**,
+  with ARM retries (3 s waits; the first ARM after a real erase is routinely refused — the
+  FCU-busy window — and succeeds on retry). The header block 0x40000 *is* writable.
+- **Driver:** the one-session restore pattern (import `tcu_write.TCU`, loop erase/ARM/program
+  from the pristine ELF slice at file offset `0x1000 + flash_addr`) wrote 0x40000–0x60000 with
+  512/512 program acks. A full-region write (~0x40000–0x180000, ~14 min one session) is
+  mechanically identical.
+- **Current bench state:** code flash 0x40000–0x60000 = pristine stock (v2 driver),
+  0x60000–0x180000 = original stock (untouched), markers valid, data flash blank, loader gone,
+  **boot refuses the app and the TCU is silent**. Prime suspect: the blank data-flash
+  identification ring (the boot reads identification records before starting an application;
+  the 2026-10-17 stock run had a populated ring). The stock ring content is recoverable from
+  the ACDP-2 EEPROM read-out (§3), and the plant session's data-flash write grammar is
+  captured (spec 17 work; round-53 logs show 16 × op-21 data-flash erases and df program ops).
+- **Session discipline (hard-won):** the mode-5 plant server is *consumed* by an engine
+  launch — never probe between catch and the real command; catch the storm, kill it, launch
+  immediately. `pkill -f <pattern>` self-matches the invoking shell when the pattern appears
+  in the command text — use bracket patterns (`pkill -f "restor[e]_stock"`). The storm exits
+  reliably on the announce frame (`!!! TCU FRAME:` in its log); a caught plant server has
+  survived 10+ minutes idle.
+- **Next steps, in order:** (1) restore the stock df ring (ACDP-2 read-out → plant-session
+  df writes) or first read back the header block via the engine read pump to verify the v2
+  write; (2) power cycle → stock runs → observe: ammeter, CAN periodic (0x037/0x2F9 at
+  ~15.6 ms per spec 08), and the measurement protocol (0x361, spec 10) reading live RAM —
+  the actual 0x8E word, the 0x22 echo, the enable flag 0xFFF90953, the level ramp; (3) then
+  Teensy-restore the loader and restage the open firmware with the knowledge.
