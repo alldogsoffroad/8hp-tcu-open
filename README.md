@@ -53,7 +53,7 @@ write operation it performed is reproduced (and documented) by the open flasher.
 
 | Area | Complete | Basis |
 |---|---|---|
-| Stock-firmware reverse engineering (specs 01–15) | **78 %** | every subsystem's structure is mapped; the full 10,982-function decompile is indexed; the supervisor's protocol/word semantics are bench-measured (spec 03 §4.4); open: CAN signal meanings, chip identities, the stock's enable preconditions |
+| Stock-firmware reverse engineering (specs 01–15) | **82 %** | every subsystem's structure is mapped; the full 10,982-function decompile is indexed; the supervisor's protocol/word semantics are bench-measured (spec 03 §4.4); **the stock itself runs on the bench again (2026-10-31, full pristine restore + ring, spec 16 §11)** — live-stock probing (0x361 RAM reads, input-driven behaviour) is now possible; open: CAN signal meanings, chip identities |
 | Code-flash independence — read / write / recover (specs 16–18, [8hp-teensy-flasher](https://github.com/alldogsoffroad/8hp-teensy-flasher)) | **95 %** | Teensy-only write and restore proven on the bench (2026-10-30, spec 17 §5l); remaining: an end-to-end shakedown of the released tool suite as packaged |
 | Open firmware, bench-proven (milestones M0–M6, [§8](docs/firmware/00-architecture.md)) | **55 %** | M0–M3 done (boot, CAN + measurement, sensors, solenoid outputs; 19/19 host tests); M4 implemented, bench session 2026-10-30 blocked at the driver-supply gate (spec 12 §2d) — the chips talk but no coil current flows; M4 commissioning, M5 limp mode, M6 shifting remain |
 | Vehicle integration (M7: Nissan profile, on-car validation) | **0 %** | not started |

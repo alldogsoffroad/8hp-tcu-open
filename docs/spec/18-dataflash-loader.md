@@ -188,9 +188,10 @@ spec 03 §4.4). Findings and state:
   from the pristine ELF slice at file offset `0x1000 + flash_addr`) wrote 0x40000–0x60000 with
   512/512 program acks. A full-region write (~0x40000–0x180000, ~14 min one session) is
   mechanically identical.
-- **Current bench state:** code flash 0x40000–0x60000 = pristine stock (v2 driver),
+- **Current bench state (superseded 2026-10-31 — see §8d):** code flash 0x40000–0x60000 = pristine stock (v2 driver),
   0x60000–0x180000 = original stock (untouched), markers valid, data flash blank, loader gone,
-  **boot refuses the app and the TCU is silent**. Prime suspect: the blank data-flash
+  **boot refuses the app and the TCU is silent**. *(Correction: 0x60000+ was NOT untouched —
+  it was erased by the loader install; and the data flash was never blank — see §8d.)* Prime suspect: the blank data-flash
   identification ring (the boot reads identification records before starting an application;
   the 2026-10-17 stock run had a populated ring). The stock ring content is recoverable from
   the ACDP-2 EEPROM read-out (§3), and the plant session's data-flash write grammar is
@@ -207,3 +208,28 @@ spec 03 §4.4). Findings and state:
   ~15.6 ms per spec 08), and the measurement protocol (0x361, spec 10) reading live RAM —
   the actual 0x8E word, the 0x22 echo, the enable flag 0xFFF90953, the level ramp; (3) then
   Teensy-restore the loader and restage the open firmware with the knowledge.
+
+## 8d. Round-56 correction: the ring was never blank; the app body was erased (2026-10-31)
+
+The §8c "blank identification ring" theory was wrong on both counts:
+
+- **The data flash was never blank.** The blank readings (grab_all, the pf-engine read) came
+  through one DF window/routing; the v13 engine's staged reads (ARM selector 3) and its
+  selector-2 writes each see *different* content at 0x801xxxxx, and the *default-view* op-01
+  pointer read — the one matching what the boot and a running app see — showed the ring intact
+  all along (sections 3062/30603/3064 survived every "wipe"). Three windows disagree; only the
+  default view is authoritative. A factory 128 KB DF image (sections 3061/3062/3063, `MMSBLANK`
+  read-out markers replaced by 0xFF) exists inside the pristine ELF itself as LOAD segment 3
+  (file offset 0x281000) and was written into DB00 via the engine op-11/selector-2 path
+  (one ARM per 128 B + op-12 8-byte programs, `52`-acked; the ACDP-2's `MMSBLANK` spots are its
+  read-out placeholders for erased content).
+- **The real cause of the silent TCU:** the loader install had erased the app body
+  0x60000–0x160000 (spec 16 §11). After restoring it (with the FENTRY1-key fix), the stock
+  boots and runs.
+
+The pf-engine (plantflash v22: full DB00–15 window + EEPWE1/EEPRE1) was also bench-tried for
+the DF write but its `fcu_enter_df` latches ILGL in the FF01-engine context (FENTRYD never
+sticks); the v13 vendor-replica path wrote the DF instead. Plantflash keeps the wider window
+(the source change is in the tree) but its DF P/E entry needs the vendor restart order
+(FENTRYR 0xAA00 gestures around FRESETR, per acdp2-re vendor_engine_findings) before it can
+replace the v13 route.

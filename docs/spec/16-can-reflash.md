@@ -259,3 +259,32 @@ Implementation notes:
 6. Lock bits: if Bosch locked the application blocks, erase fails with ERSERR and FPESTAT `0x11`
    (reported by `22 F1 95`). Overriding them (FPROTR) is deliberately not implemented; decide if
    it happens.
+
+## 11. The FENTRY1 split and the 2026-10-31 full-stock restore [B]
+
+The round-55 "silent TCU after pristine restore" had a second cause beyond the data flash:
+**the ACDP-2 loader install (2026-10-17) had erased the whole application body, 0x60000–0x160000**,
+rewriting only its own first 128 KB plus the marker islands (0x17FBFC end word, 0x17FE00 marker 1).
+Every marker/validity probe therefore kept passing while the app CRC range (0x40080–0x17FB6F,
+spec 06 §2) was mostly blank — the boot manager refused to start the application, and the TCU sat
+silent at ~0.163 A. Found by engine op-01 default-view pointer reads against the pristine ELF.
+
+Restoring the body surfaced the **1 MB MAT split** (already implied by §3's FENTRYR table, now
+bench-proven): user MAT 0 is programmed under `FENTRYR = 0xAA01` (FENTRY0, addresses 0x0–0xFFFFF,
+P/E window 0x80800000–0x808FFFFF) and **user MAT 1 only under `FENTRYR = 0xAA02` (FENTRY1,
+0x100000–0x1FFFFF, window 0x80900000–0x809FFFFF)**. With key 1 at ≥0x100000 the FCU rejects
+program *and* erase as illegal (engine error class 2 / 0x22, sub 0x32) from a clean boot — not
+lock bits (FPROTR's FPROTCN read 1 = protection cancelled), not FCU degradation. The driver fix
+is one byte: the ARM's key field = 2 for offsets ≥ 0x100000.
+
+Also observed: after ~2560 consecutive program units the FCU latches an ILGL state that survives
+engine ARM cycles; a power cycle clears it (resume the remaining units in a fresh session). And
+the engine's op-13 staged-read path stalls deterministically at the ~18th read of a session —
+verify with spot reads across fresh handshakes instead.
+
+Result (2026-10-31): code flash 0x40000–0x160000 pristine + markers committed + the data-flash
+ring restored (spec 18 §8c) → **the stock application boots and runs**: solenoid drive from
+power-up (1.73 A transient, 1.79 A steady vs 0.166 A for our outputs-off firmware) and the full
+bus-1 periodic set live (0x037/0x2F9, 0x144, 0x170, 0x1A0, 0x2A8, 0x178, 0x3D1) — matching the
+2026-10-17 stock capture. Driver: `/tmp/restore_body.py` pattern (blank-region program, no
+erases; resume mode; ~5 units/s ⇒ 0x100000 bytes ≈ 11 min).

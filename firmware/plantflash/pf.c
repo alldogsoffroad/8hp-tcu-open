@@ -184,13 +184,14 @@ extern volatile uint16_t pfh_rommat;
 /* ---- data MAT (EEPROM) programming — FWE-FREE per manual section 26 ----
  * FENTRYD (FENTRYR=0xAA80) needs only ROM-enabled mode + FRDY + AA key.
  * Block enables: word access, KEY byte then DBWE flags (manual 26.3.6/26.3.7).
- * Target discipline: DB00-DB07 only (the loader staging area, spec 18). */
+ * Target discipline: the full 16-block data MAT (stock-ring restore writes the
+ * factory sections 3061/3062/3063 into DB00-DB11; DB12-15 stays blank). */
 #define FL_EEPRE0    0xFFFFA840u    /* 16: DB00-07 read enable,  KEY 0x2D */
 #define FL_EEPRE1    0xFFFFA842u    /* 16: DB08-15 read enable,  KEY 0xD2 */
 #define FL_EEPWE0    0xFFFFA850u    /* 16: DB00-07 P/E enable,   KEY 0x1E */
 #define FL_EEPWE1    0xFFFFA852u    /* 16: DB08-15 P/E enable,   KEY 0xE1 */
 #define PF_DFW_LO    0x80100000u    /* DB00 (direct view for P/E) */
-#define PF_DFW_HI    0x80110000u    /* end of DB07 (8 x 8KB) */
+#define PF_DFW_HI    0x80120000u    /* end of DB15 (16 x 8KB) */
 #define PF_DF_PAGE   128u
 
 /* engine error codes -> F0F0 NRC: 19->0x13, 36->0x24, 49->0x31, 51->0x33, 114->0x72 */
@@ -242,7 +243,7 @@ extern volatile uint16_t pfh_rommat;
 #define PF_ST_SUPWAIT 4u             /* supervisor experiment settle delay */
 
 #define PF_ASYNC     0xFFu           /* op_* return: async operation started */
-#define PF_VERSION   1u
+#define PF_VERSION   2u              /* v22: full-DF window (DB00-15) + EEPWE1/EEPRE1 */
 
 /* All engine state lives in this downloaded block: the section is initialised data, so a
  * 34/36 download writes a known-good state (ST_IDLE) into RAM. No .bss anywhere. */
@@ -581,8 +582,12 @@ static uint8_t fcu_enter_df(void)
     /* 4. FCU reset (clears everything) + firmware reload */
     fcu_reset();
     fcu_fw_transfer();
-    /* 5. set block enables BEFORE entry (matches fl_fcu.c ordering) */
+    /* 5. set block enables BEFORE entry (matches fl_fcu.c ordering); EEPWE1/EEPRE1
+     *    open DB08-15 (stock ring section 3063) — key bytes 0xE1/0xD2, all blocks */
     wr16(FL_EEPWE0, (uint16_t)(0x1E00u | 0xFFu));
+    wr16(FL_EEPWE1, (uint16_t)(0xE100u | 0xFFu));
+    wr16(FL_EEPRE0, (uint16_t)(0x2D00u | 0xFFu));
+    wr16(FL_EEPRE1, (uint16_t)(0xD200u | 0xFFu));
     /* 6. NOW enter P/E mode */
     wr16(FL_FENTRYR, 0xAA80u);
     (void)rd16(FL_FENTRYR);
@@ -956,7 +961,7 @@ static uint8_t op_program(const uint8_t *data, uint16_t dlen, uint16_t off, uint
     return PF_ASYNC;
 }
 
-/* data MAT erase: 8 KB block, DB00-DB07 only. Data = block address BE32. */
+/* data MAT erase: 8 KB block, DB00-DB15. Data = block address BE32. */
 static uint8_t op_df_erase(const uint8_t *data, uint16_t dlen)
 {
     const uint32_t addr = be32(data);
@@ -966,7 +971,7 @@ static uint8_t op_df_erase(const uint8_t *data, uint16_t dlen)
         return PF_E_LEN;
     }
     if (addr < PF_DFW_LO || addr >= PF_DFW_HI) {
-        return PF_E_DENIED;             /* DB08-15 / outside: refusal */
+        return PF_E_DENIED;             /* outside the data MAT: refusal */
     }
     if ((addr & 0x1FFFu) != 0u) {
         return PF_E_RANGE;              /* not an 8 KB block boundary */
