@@ -547,9 +547,9 @@ The no-comm safe state is **lever-gated: P keeps the solenoids held (park
 lock), D drops them**. After the D-stop release the box **re-engaged itself
 to ~1.8 A at ~1 min 9 s with no feed** — the 0x90586 keep-warm/priming
 machine (§ above) pulling it back up autonomously; the released window was
-~1 min that time, in pure bus silence (refined hours later: with 0x361 tester
-traffic on the bus it shrinks to ~3 s — see the sweep-session note below).
-This also explains the
+~1 min that time (later the same evening the same silence protocol re-engaged
+in ~10 s — the window is a variable internal timer, see the sweep-session
+note below). This also explains the
 ammeter video starting at 0.170 (inside the released window) vs the overnight
 1.87 hold (P-ending, never released).
 
@@ -624,12 +624,21 @@ the P-stop (engaged); **B** 16:04:23 = +4.1 s after the D-stop.
    D-stop release was observed with the box **already released at the stop**
    (the 10 s feeder runs sit inside the ~13 s feed-on settling window, and
    today's video proves a 10 s D feed never engages mid-feed), and a ≤0.5 s
-   post-stop engage blip is easy to miss by eye. What genuinely differs
-   between the sessions is the **duration of the post-stop released state:
-   ~1 min in pure bus silence (2026-10-30 dstop run) vs ~3 s with 0x361
-   tester traffic present (today, during sweep B)**. [I] Two-data-point
-   hypothesis: bus activity the box itself processes (measurement requests
-   on 0x361) resets a comm watchdog that keeps the hold engaged; in silence
-   it times out, and the 0x90586 keep-warm machine re-primes ~1 min later.
-   Discriminating test for the next bench session: D-stop → pure silence
-   vs D-stop → 0x361 reads only, ammeter timing the released window.
+   post-stop engage blip is easy to miss by eye.
+
+**Discriminating test executed 2026-10-31 evening #5 (/tmp/stoptest.py,
+identical 10 s D-feeds, ammeter-timed):** the 0x361-traffic hypothesis is
+**refuted**. Silence run (stop 16:21:43.8, then 120 s of zero bus traffic,
+verified 0 requests sent): engaged 1.912 pre-feed → 0.170 after the stop,
+held ~10 s, rose to 1.904, held to +120. Poll run (stop 16:26:19.5, then
+60 s of sustained cmd-0x20 reads, 2,994 requests / 2,993 replies at
+50 req/s): engaged 1.904 → 0.179 → back to 1.908 and held (window un-timed,
+brief). Bus traffic is neither required for a fast return nor does silence
+force a long one — and the box answers 0x361 reads normally while released.
+The post-stop released window is a **variable internal timer**: observed
+~3–4 s (sweep session), ~10 s (silence), brief (poll), and ~69 s only in the
+2026-10-30 dstop run, which is the outlier. What sets the period is unknown
+([I] candidates: prior cycle history, time since feed-on, internal phase of
+the keep-warm machine). Working summary for the open firmware: after losing
+comm in D the stock re-primes the hold on its own within seconds-to-minutes;
+it does not latch released.
