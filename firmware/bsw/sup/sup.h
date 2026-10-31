@@ -33,6 +33,7 @@ typedef struct {
     uint32_t a8_bad;        /* SSLB1 (supervisor) frames not in the 0xA8 reply class */
     uint32_t aa_bad;        /* SSLB0 frames not in the 0xAA reply class */
     uint16_t sslb2_rx;       /* last SSLB2 reply (stock job 0x40C74 sends 0x00FF) */
+    uint16_t rx_id[4];       /* last ID-job replies (stock 0x40B80: 06/03/00/00) */
     bool     sslb2_on;       /* pattern includes the cyclic SSLB2 exchange */
 } sup_status_t;
 

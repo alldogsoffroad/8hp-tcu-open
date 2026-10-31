@@ -104,7 +104,9 @@ static void app_pattern_tick(void)
     const uint16_t job2[2] = { (uint16_t)(0x9000u | s_app90), 0x2400u };
     const uint16_t job3[2] = { 0x2800u, 0x2E00u };
     const uint16_t job4[1] = { 0x00FFu };           /* SSLB2, stock job 0x40C74 */
-    uint16_t rx1[4], rx2[2], rx3[2], rx4[1];
+    const uint16_t job5[4] = { 0x0600u, 0x0300u, 0x0000u, 0x0000u };  /* stock 0x40B80 */
+    const uint16_t job6[5] = { 0x1800u, 0x0C00u, 0x1E00u, 0x0600u, 0x1400u }; /* 0x40BA0 */
+    uint16_t rx1[4], rx2[2], rx3[2], rx4[1], rx6[5];
 
     s_st.sent++;
     if (!plat_sup_xfer(job1, rx1, 4u) || !plat_sup_xfer(job2, rx2, 2u) ||
@@ -117,6 +119,12 @@ static void app_pattern_tick(void)
         return;
     }
     s_st.sslb2_rx = rx4[0];
+    if (s_app_sslb2) {                    /* complete cycle: the two mixed jobs too */
+        if (!plat_sup_xfer(job5, s_st.rx_id, 4u) || !plat_sup_xfer(job6, rx6, 5u)) {
+            s_st.busy++;
+            return;
+        }
+    }
     s_st.last_tx = job1[0];
     s_st.last_rx = rx1[2];             /* the 0x22 control echo drives the next toggle */
     s_st.enable = (job1[0] & SUP_BIT_ENABLE) != 0u;
