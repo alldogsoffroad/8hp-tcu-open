@@ -25,6 +25,13 @@ typedef struct {
     uint32_t replies_bad;
     uint32_t busy;          /* transmitter not free when due */
     bool     enable;        /* output enable currently sent */
+    /* Stock-pattern mode (spec 03 section 4.4, FE13): the three app cyclic jobs */
+    bool     app_pattern;
+    uint16_t rx_words[8];   /* last replies: job 8E/C9/22/09, then 90/24, then 28/2E */
+    uint32_t echo_ok;       /* 0x22 control echo matched the sent word (mask 0xDF) */
+    uint32_t echo_bad;
+    uint32_t a8_bad;        /* SSLB1 (supervisor) frames not in the 0xA8 reply class */
+    uint32_t aa_bad;        /* SSLB0 frames not in the 0xAA reply class */
 } sup_status_t;
 
 void sup_init(void);
@@ -46,5 +53,12 @@ void sup_set_flash_mode(bool on);
 void sup_set_pattern(bool pattern_on, uint16_t word, uint16_t toggle);
 void sup_set_pattern_raw(bool pattern_on, uint16_t word, uint16_t toggle); /* lab: no bit-0 clear */
 void sup_suspend(bool on);            /* lab: suspend the 5ms tick (raw exchange) */
+/* Stock-application pattern (FE13): instead of the single 0x8E word, the 5 ms tick sends the
+ * app's three cyclic jobs verbatim (spec 03 section 4.4): [0x8E00|bits, 0xC900, 0x2200,
+ * 0x0900], [0x9000|bits90, 0x2400], [0x2800, 0x2E00], with frames alternating SSLB1 / SSLB0.
+ * Bit 2 of the 0x8E word follows the complement of the 0x22 echo's bit 2 as in the stock.
+ * bits may carry bit 0 (output enable) — a deliberate, dangerous bench act: on the bench the
+ * enable bit sent without this full context reset the TCU (2026-10-30). */
+void sup_app_pattern(bool on, uint8_t bits8e, uint8_t bits90);
 
 #endif

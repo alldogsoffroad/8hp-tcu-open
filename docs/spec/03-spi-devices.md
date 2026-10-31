@@ -162,10 +162,29 @@ watchdog feed `0xFFFE0002 = 0x5AB7` (`0x5ADB` in flash mode).
 completion handler `0x92AC0` validates the headers and stores status to `0xFFF90977/78` and
 `0xFFF907CF/D0`).
 
-**Bench 2026-10-30 [M]:** with the project firmware sending only the boot-style cyclic word
-(bit 2 toggling), setting **bit 0 cold resets the TCU** (state zeroed, ~200 ms loader cycle). The
-stock application's bit 0 is valid only after its start-up register writes (`0x84`, `0x88`,
-`0x90` — §6 open item); replicating that init is the prerequisite for any output-enable request.
+**Bench 2026-10-30/31 [M] — the 0x8E data byte, empirically:**
+- **bit 2 = the watchdog life sign.** A *constant* word (no alternation) makes the supervisor
+  reset the TCU in a loop that self-breaks after minutes; the word must alternate every frame.
+- **bit 6 = power-down.** `0x8E40` held: the bench supply showed the TCU's own draw collapse
+  0.169 A → 0.018 A, latched > 4 min. "State 6" in the stock state machine is therefore the
+  shutdown/sleep path, not normal driving.
+- **bit 0 = instant reset** — in every shape tried: the bare 5 ms word (2026-10-30), the full
+  cyclic pattern with toggle + ID-job enumeration, and the boot burst `0x8E01` + 11 × `0x8401`
+  itself (the request dies before its UDS response). On this supervisor bit 0 is a
+  reset/attention command, or the stock's "output enable" reading of `0xFFF90953` needs a
+  precondition not yet found (the app's own WDT-mode switch at `0x920A4` on enable changes is
+  the remaining untried stock behavior).
+- The stock's reply masks are loose: `0xF900` accepts both `0xA8xx` and `0xAAxx`, `0xFE00`
+  accepts `0xABxx` — the class bit that varies is data-dependent, not per-chip.
+
+**Supervisor register map, live (FE13 lab, SSLB1 unless noted):** `0x06` → `0x14` (ID),
+`0x18` → `0x80`, `0x1E` → `0x0A`, `0x22` → control echo (`0x00` with the idle word; latches
+and echoes ≈ every other frame when the full three-job pattern runs), `0x28` → `0x45`,
+`0x2E` → a drifting counter (0x1F–0x25, follows the 5 ms activity), `0x30`/`0x36` → `0xFF`,
+`0x14` → `0xD5`, `0x00` → `0xBC`. **SSLB0:** `0x06` → `0xD0` (ID), `0x03` → `0x42`,
+`0x0C` → `0xDF`, `0x28` → `0xFF`. Register `0x90` switch-bit writes (bits 5–7) are accepted
+without error but nothing observable changes (driver-chip status stays `0xA240`, config reads
+stay 0x00 — spec 12 §2d).
 
 **Project firmware:** `firmware/bsw/sup` (from commit after M2) sends the control word every 5 ms
 with bit 2 toggling, using the CPU-mode set-up above (start trigger included), and checks the

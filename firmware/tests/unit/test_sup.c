@@ -80,6 +80,53 @@ int main(void)
     sup_tick_5ms();
     CHECK((stub.sup_tx[18] & 0xFFF1u) == 0x8E00u);
 
+    /* ---- stock application pattern (FE13, spec 03 section 4.4) ----
+     * One 5 ms pass = the three cyclic jobs, 8 frames: [8E|b, C9, 22, 09, 90|b, 24, 28, 2E].
+     * Bit 2 self-toggles every pass (the supervisor watchdog's life sign; bench
+     * 2026-10-30: a constant word resets the TCU). The scripted echo 0xA800 never
+     * matches, so echo_bad counts every pass. */
+    {
+        uint32_t sent0 = s->sent, busy0 = s->busy;
+        stub.sup_xfer_rx = 0xA800u;
+        sup_app_pattern(true, 0x40u, 0x21u);
+        CHECK(s->app_pattern);
+        sup_tick_5ms();
+        CHECK(stub.sup_n == 19u + 8u);              /* 8 frames recorded */
+        CHECK((stub.sup_tx[19] & 0xFFFBu) == 0x8E40u);   /* state-6 word, toggle phase 1 */
+        CHECK(stub.sup_tx[20] == 0xC900u && stub.sup_tx[21] == 0x2200u &&
+              stub.sup_tx[22] == 0x0900u);
+        CHECK(stub.sup_tx[23] == 0x9021u && stub.sup_tx[24] == 0x2400u);
+        CHECK(stub.sup_tx[25] == 0x2800u && stub.sup_tx[26] == 0x2E00u);
+        CHECK(s->rx_words[2] == 0xA800u && s->rx_words[7] == 0xA800u);
+        CHECK(s->echo_ok == 0u && s->echo_bad == 1u);
+        CHECK(s->a8_bad == 0u && s->aa_bad == 4u);  /* SSLB0 frames get the A8 script */
+        CHECK(s->sent == sent0 + 1u && s->busy == busy0);
+        sup_tick_5ms();
+        CHECK((stub.sup_tx[27] ^ stub.sup_tx[19]) == 0x04u);  /* bit 2 alternates */
+        CHECK((stub.sup_tx[27] & 0xFFFBu) == 0x8E40u);
+        CHECK(s->echo_bad == 2u && s->aa_bad == 8u);
+        /* xfer timeout: busy counted, no frames (toggle phase NOT consumed) */
+        stub.sup_xfer_fail = true;
+        sup_tick_5ms();
+        CHECK(stub.sup_n == 19u + 16u && s->busy == busy0 + 1u);
+        stub.sup_xfer_fail = false;
+        /* suspension honored in pattern mode */
+        sup_suspend(true);
+        sup_tick_5ms();
+        CHECK(stub.sup_n == 19u + 16u);
+        sup_suspend(false);
+        /* enable bit passes through verbatim (danger word, deliberate) */
+        sup_app_pattern(true, 0x41u, 0x00u);
+        sup_tick_5ms();
+        CHECK((stub.sup_tx[35] & 0x01u) == 1u && s->enable);
+        CHECK((stub.sup_tx[35] & 0xFFFEu) == 0x8E40u || (stub.sup_tx[35] & 0xFFFEu) == 0x8E44u);
+        /* pattern off: back to the single word, no enable */
+        sup_app_pattern(false, 0u, 0u);
+        sup_tick_5ms();
+        CHECK(!s->app_pattern);
+        CHECK((stub.sup_tx[43] & 0xFF00u) == 0x8E00u && (stub.sup_tx[43] & 0x01u) == 0u);
+    }
+
     if (fails == 0) {
         printf("test_sup: ok\n");
     }

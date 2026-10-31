@@ -97,6 +97,39 @@ bool plat_speed_read(uint8_t ch, speed_raw_t *r)
 
 void plat_sup_init(void) { stub.sup_n = 0u; }
 
+bool plat_sup_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n)
+{
+    if (stub.sup_xfer_fail) {
+        return false;
+    }
+    for (uint8_t i = 0u; i < n; i++) {
+        rx[i] = stub.sup_xfer_rx;
+        if (!stub.sup_busy && stub.sup_n < 64u * 16u) {
+            /* ring record: the app-pattern tick sends 8 frames per 5 ms pass */
+            stub.sup_tx[stub.sup_n % 64u] = tx[i];
+        }
+        if (!stub.sup_busy) {
+            stub.sup_n++;
+        }
+    }
+    return true;
+}
+
+bool plat_sup_burst(const uint16_t *tx, uint16_t *rx, uint8_t n)
+{
+    if (stub.sup_xfer_fail) {
+        return false;
+    }
+    for (uint8_t i = 0u; i < n; i++) {
+        rx[i] = stub.sup_xfer_rx;
+        if (!stub.sup_busy) {
+            stub.sup_tx[stub.sup_n % 64u] = tx[i];
+            stub.sup_n++;
+        }
+    }
+    return true;
+}
+
 uint8_t plat_sup_exchange(uint16_t tx, uint16_t *rx)
 {
     uint8_t r = 0u;

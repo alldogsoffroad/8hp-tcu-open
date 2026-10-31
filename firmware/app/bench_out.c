@@ -3,10 +3,7 @@
 #include "bsw/sup/sup.h"
 #include "io/actuators/sol_drv.h"
 #include "io/vehicle/vehicle.h"
-
-#if defined(TCU_M4B_OUTPUTS)
-#include "platform/platform.h"          /* plat_toe_out_* for the FE11 park hold test */
-#endif
+#include "platform/platform.h"          /* plat_sup_xfer (FE13); plat_toe_out_* (FE11) */
 
 #define NRC_IMLOIF 0x13
 #define NRC_CNC    0x22
@@ -397,9 +394,9 @@ static int rspi_lab(const uint8_t *in, uint16_t n, uint8_t *out, uint16_t max)
         return -NRC_IMLOIF;
     }
     for (uint16_t i = 0u; i < n / 2u; i++) {
-        tx[i] = (uint16_t)((in[2u * i] << 8) | in[2u * i + 1u]);
+        tx[i] = (uint16_t)(((uint16_t)in[2u * i] << 8) | in[2u * i + 1u]);
     }
-    if (!plat_drv_xfer(tx, rx, n / 2u)) {
+    if (!plat_drv_xfer(tx, rx, (uint8_t)(n / 2u))) {
         return -NRC_CNC;
     }
     for (uint16_t i = 0u; i < n / 2u; i++) {
@@ -449,6 +446,115 @@ static int rspi_dump(uint8_t type, uint8_t *out, uint16_t max)
 }
 #endif
 
+/* ---- FE13: RSPI-B supervisor lab (spec 03 section 4.4) -------------------------------
+ * One-shot raw exchanges with the stock two-command sequence (SSLB1 / SSLB0 alternating)
+ * and a sustained replay of the stock application's cyclic supervisor jobs, so the bench
+ * can iterate supervisor hypotheses live. Words with 0x8E bit 0 (output enable) or bit 7
+ * are the danger words: they reset or re-flash the TCU when sent without the full context. */
+#define SUP_LAB_MAX 100u
+
+static uint16_t s_sup_rx[SUP_LAB_MAX];
+static uint8_t  s_sup_n;
+static uint8_t  s_sup_mode;            /* 0 idle, 1 one-shot done, 2 stock pattern on */
+
+static int sup_lab_start(const uint8_t *in, uint16_t n)
+{
+    if (n < 1u) {
+        return -NRC_IMLOIF;
+    }
+    if (in[0] == 1u) {                                     /* one-shot raw exchange */
+        const uint16_t bytes = (uint16_t)(n - 1u);
+        if (bytes < 2u || bytes > 2u * SUP_LAB_MAX || (bytes & 1u) != 0u) {
+            return -NRC_IMLOIF;
+        }
+        {
+            uint16_t tx[SUP_LAB_MAX];
+            const uint8_t cnt = (uint8_t)(bytes / 2u);
+            for (uint8_t i = 0u; i < cnt; i++) {
+                tx[i] = (uint16_t)(((uint16_t)in[1u + 2u * i] << 8) | in[2u + 2u * i]);
+            }
+            if (!plat_sup_xfer(tx, s_sup_rx, cnt)) {
+                return -NRC_CNC;
+            }
+            s_sup_n = cnt;
+            s_sup_mode = 1u;
+        }
+        return 0;
+    }
+    if (in[0] == 4u) {                                     /* SSLB1-only burst (0x1D478 shape) */
+        const uint16_t bytes = (uint16_t)(n - 1u);
+        if (bytes < 2u || bytes > 2u * SUP_LAB_MAX || (bytes & 1u) != 0u) {
+            return -NRC_IMLOIF;
+        }
+        {
+            uint16_t tx[SUP_LAB_MAX];
+            const uint8_t cnt = (uint8_t)(bytes / 2u);
+            for (uint8_t i = 0u; i < cnt; i++) {
+                tx[i] = (uint16_t)(((uint16_t)in[1u + 2u * i] << 8) | in[2u + 2u * i]);
+            }
+            if (!plat_sup_burst(tx, s_sup_rx, cnt)) {
+                return -NRC_CNC;
+            }
+            s_sup_n = cnt;
+            s_sup_mode = 1u;
+        }
+        return 0;
+    }
+    if (in[0] == 2u) {                                     /* stock cyclic pattern on */
+        if (n != 3u) {
+            return -NRC_IMLOIF;
+        }
+        sup_app_pattern(true, in[1], in[2]);
+        s_sup_mode = 2u;
+        return 0;
+    }
+    if (in[0] == 3u) {                                     /* pattern off */
+        sup_app_pattern(false, 0u, 0u);
+        s_sup_mode = 0u;
+        return 0;
+    }
+    return -NRC_SFNS;
+}
+
+static int sup_lab_results(uint8_t *out, uint16_t max)
+{
+    const sup_status_t *st = sup_status();
+
+    if (s_sup_mode == 1u) {                                /* last one-shot replies */
+        const uint16_t need = (uint16_t)(2u + 2u * s_sup_n);
+        if (max < need) {
+            return -NRC_IMLOIF;
+        }
+        out[0] = 1u;
+        out[1] = s_sup_n;
+        for (uint8_t i = 0u; i < s_sup_n; i++) {
+            out[2u + 2u * i] = (uint8_t)(s_sup_rx[i] >> 8);
+            out[3u + 2u * i] = (uint8_t)s_sup_rx[i];
+        }
+        return (int)need;
+    }
+    if (s_sup_mode == 2u) {                                /* pattern status + replies */
+        if (max < 25u) {
+            return -NRC_IMLOIF;
+        }
+        out[0] = 2u;
+        for (uint8_t i = 0u; i < 8u; i++) {
+            out[1u + 2u * i] = (uint8_t)(st->rx_words[i] >> 8);
+            out[2u + 2u * i] = (uint8_t)st->rx_words[i];
+        }
+        out[17] = (uint8_t)(st->echo_ok >> 8);  out[18] = (uint8_t)st->echo_ok;
+        out[19] = (uint8_t)(st->echo_bad >> 8); out[20] = (uint8_t)st->echo_bad;
+        out[21] = (uint8_t)(st->a8_bad >> 8);   out[22] = (uint8_t)st->a8_bad;
+        out[23] = (uint8_t)(st->aa_bad >> 8);   out[24] = (uint8_t)st->aa_bad;
+        return 25;
+    }
+    if (max < 1u) {
+        return -NRC_IMLOIF;
+    }
+    out[0] = 0u;
+    return 1;
+}
+
 int bench_routine(uint8_t type, uint16_t rid, const uint8_t *in, uint16_t n, uint8_t *out,
                   uint16_t max)
 {
@@ -459,6 +565,17 @@ int bench_routine(uint8_t type, uint16_t rid, const uint8_t *in, uint16_t n, uin
     const bool park_rid = false;
 #endif
 
+    if (rid == BENCH_SUP_RID) {
+        if (type == 1u) {
+            return sup_lab_start(in, n);
+        }
+        if (type == 2u) {
+            sup_app_pattern(false, 0u, 0u);
+            s_sup_mode = 0u;
+            return 0;
+        }
+        return sup_lab_results(out, max);
+    }
 #if defined(TCU_M4B_OUTPUTS)
     if (rid == BENCH_RSPI_DIAG_RID) {
         if (type == 4u) {

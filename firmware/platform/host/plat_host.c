@@ -160,6 +160,43 @@ uint8_t plat_sup_exchange(uint16_t tx, uint16_t *rx)
     return (uint8_t)(r | 1u);
 }
 
+/* Stock-job transport (spec 03 section 4.4): even frames to SSLB1 (the supervisor,
+ * 0xA8 reply class), odd frames to SSLB0 (0xAA class). The supervisor echoes the last
+ * 0x8E control byte back through the 0x22 read, as the stock handler 0x92D94 expects. */
+bool plat_sup_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n)
+{
+    static uint16_t ctl;
+
+    for (uint8_t i = 0u; i < n; i++) {
+        if ((tx[i] & 0xFF00u) == 0x8E00u) {
+            ctl = tx[i];
+        }
+        if ((i & 1u) == 0u) {
+            rx[i] = (tx[i] & 0xFF00u) == 0x2200u ? (uint16_t)(0xA800u | (ctl & 0x00FFu))
+                                                 : (uint16_t)(0xA800u | (tx[i] & 0x00FFu));
+        } else {
+            rx[i] = (uint16_t)(0xAA00u | (tx[i] & 0x00FFu));
+        }
+    }
+    return true;
+}
+
+/* Burst: all frames to SSLB1, echoing like the stock handler expects (0x22 read
+ * returns the last 0x8E control byte). */
+bool plat_sup_burst(const uint16_t *tx, uint16_t *rx, uint8_t n)
+{
+    static uint16_t ctl;
+
+    for (uint8_t i = 0u; i < n; i++) {
+        if ((tx[i] & 0xFF00u) == 0x8E00u) {
+            ctl = tx[i];
+        }
+        rx[i] = (tx[i] & 0xFF00u) == 0x2200u ? (uint16_t)(0xA800u | (ctl & 0x00FFu))
+                                             : (uint16_t)(0xA800u | (tx[i] & 0x00FFu));
+    }
+    return true;
+}
+
 void plat_drv_init(void) { }
 
 bool plat_drv_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n)

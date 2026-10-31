@@ -450,6 +450,15 @@ switched solenoid supply (VS rail to B10-13, spec 01 §2.9) never asserted:
 The chips' markings are unobtainable (shielded TCU, no marks found), so the datasheet route is
 closed; the stock code is the datasheet.
 
+**Update 2026-10-31 (FE13 supervisor lab):** the supervisor-side gate was exercised directly —
+the full stock cyclic pattern (three jobs, toggle alternating, ID-job enumeration, `0x90`
+switch bits 5–7 stepped one at a time) leaves the driver status at `0xA240` and all config
+read-backs at 0x00. Every attempt to assert the `0x8E` output-enable bit resets the TCU
+instantly (see spec 03 §4.4 for the measured word semantics: bit 2 = life sign, bit 6 =
+power-down, bit 0 = reset). The remaining stock behavior not yet replayed: the app's WDT-mode
+switch on enable transitions (`0x920A4`) and the handover job frames `[0x18, 0x0C, 0x1E,
+0x06, 0x14]` (registers `0x0C`/`0x14` now readable — `0xDF`/`0xD5`).
+
 ## 3. Solenoid characteristics [O]
 
 Seven pressure → current curves (calibration objects 3371–3377, group `0xFFF84D18`, struct

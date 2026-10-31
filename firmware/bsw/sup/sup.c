@@ -10,6 +10,7 @@ static bool s_pattern;
 static bool s_pat_raw;                /* lab: raw pattern — bit 0 NOT cleared for 0x8E words */
 static bool s_suspended;              /* lab: raw exchange owns the RSPI bus */
 static uint16_t s_pat_word, s_pat_toggle;
+static uint8_t s_app8e, s_app90;       /* stock-pattern data bytes (FE13) */
 
 void sup_init(void)
 {
@@ -20,6 +21,8 @@ void sup_init(void)
     s_pattern = false;
     s_pat_raw = false;
     s_suspended = false;
+    s_app8e = 0u;
+    s_app90 = 0u;
     plat_sup_init();
 }
 
@@ -62,6 +65,73 @@ void sup_set_pattern_raw(bool pattern_on, uint16_t word, uint16_t toggle)
     s_pattern = pattern_on;
 }
 
+void sup_app_pattern(bool on, uint8_t bits8e, uint8_t bits90)
+{
+    s_app8e = bits8e;
+    s_app90 = bits90;
+    s_st.app_pattern = on;
+    if (on) {
+        s_pattern = false;             /* the stock pattern replaces the FE32 word pattern */
+        s_flash_mode = false;
+    }
+}
+
+/* One 5 ms pass of the stock application's supervisor exchange: the three cyclic jobs of
+ * spec 03 section 4.4, frames alternating SSLB1 (even) / SSLB0 (odd) through the
+ * two-command SPCMD sequence. */
+static void app_pattern_tick(void)
+{
+    /* Bit 2 must ALTERNATE every frame: it is the supervisor watchdog's life sign. The
+     * stock derives it as the complement of the 0x22 echo's bit 2 (0x91C86 with
+     * 0xFFF907D5), which equals self-toggling while the echo works - but on the bench
+     * the echo reads 0x00 and echo-following sent a CONSTANT word, which the supervisor
+     * answered with a reset (2026-10-30: 0x8E44 held for ~600 frames killed the TCU).
+     * The pattern therefore self-toggles unconditionally; the echo is only counted. */
+    s_toggle = !s_toggle;
+    const uint8_t bits = (uint8_t)((s_app8e & ~SUP_BIT_TOGGLE) |
+                                   (s_toggle ? SUP_BIT_TOGGLE : 0u));
+    const uint16_t job1[4] = {
+        (uint16_t)(SUP_CMD_CONTROL | bits), 0xC900u, 0x2200u, 0x0900u,
+    };
+    const uint16_t job2[2] = { (uint16_t)(0x9000u | s_app90), 0x2400u };
+    const uint16_t job3[2] = { 0x2800u, 0x2E00u };
+    uint16_t rx1[4], rx2[2], rx3[2];
+
+    s_st.sent++;
+    if (!plat_sup_xfer(job1, rx1, 4u) || !plat_sup_xfer(job2, rx2, 2u) ||
+        !plat_sup_xfer(job3, rx3, 2u)) {
+        s_st.busy++;
+        return;
+    }
+    s_st.last_tx = job1[0];
+    s_st.last_rx = rx1[2];             /* the 0x22 control echo drives the next toggle */
+    s_st.enable = (job1[0] & SUP_BIT_ENABLE) != 0u;
+    for (uint8_t i = 0u; i < 4u; i++) {
+        s_st.rx_words[i] = rx1[i];
+    }
+    s_st.rx_words[4] = rx2[0];
+    s_st.rx_words[5] = rx2[1];
+    s_st.rx_words[6] = rx3[0];
+    s_st.rx_words[7] = rx3[1];
+    /* Reply classes: SSLB1 (supervisor) frames answer 0xA8xx, SSLB0 frames 0xAAxx
+     * (stock completion handler 0x92D94). SSLB1 frames are the even indices. */
+    for (uint8_t i = 0u; i < 4u; i += 2u) {
+        if ((rx1[i] & SUP_REPLY_MASK) != SUP_REPLY_OK) { s_st.a8_bad++; }
+        if ((rx1[i + 1u] & 0xFE00u) != 0xAA00u)         { s_st.aa_bad++; }
+    }
+    if ((rx2[0] & SUP_REPLY_MASK) != SUP_REPLY_OK) { s_st.a8_bad++; }
+    if ((rx2[1] & 0xFE00u) != 0xAA00u)             { s_st.aa_bad++; }
+    if ((rx3[0] & SUP_REPLY_MASK) != SUP_REPLY_OK) { s_st.a8_bad++; }
+    if ((rx3[1] & 0xFE00u) != 0xAA00u)             { s_st.aa_bad++; }
+    /* The supervisor echoes the control word back through the 0x22 read; the stock checks
+     * it against the sent word with the toggle bit (and bit 5) masked (0x92D94). */
+    if (((rx1[2] ^ job1[0]) & 0xDFu) == 0u) {
+        s_st.echo_ok++;
+    } else {
+        s_st.echo_bad++;
+    }
+}
+
 void sup_tick_5ms(void)
 {
     uint16_t rx = 0u;
@@ -70,6 +140,10 @@ void sup_tick_5ms(void)
 
     if (s_suspended) {
         return;                        /* lab: the raw exchange owns the bus */
+    }
+    if (s_st.app_pattern) {
+        app_pattern_tick();
+        return;
     }
     s_toggle = !s_toggle;
     if (s_pattern) {

@@ -68,6 +68,16 @@ bool plat_mem_read(uint32_t addr, uint8_t *out, uint16_t n);
  * Returns bit 0 = tx started, bit 1 = *rx valid. */
 void plat_sup_init(void);
 uint8_t plat_sup_exchange(uint16_t tx, uint16_t *rx);
+/* Stock-job transport (spec 03 section 4.4, app cyclic jobs 0x40BE8/0x40C0C/0x40C54): send n
+ * 16-bit frames as one exchange - full register re-setup per exchange plus the explicit start
+ * trigger, two-command sequence SPCMD0 = SSLB1, SPCMD1 = SSLB0, so even-indexed frames go to
+ * the supervisor (SSLB1) and odd-indexed frames to the second system chip (SSLB0), exactly as
+ * the stock DMA jobs alternate. Replies land in rx[i]. Blocking; false on a bus timeout. */
+bool plat_sup_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n);
+/* Burst variant: all n frames to SSLB1 alone (single-command sequence), back to back in
+ * one exchange - the shape of the stock boot routine 0x1D478: 0x8E01 followed by eleven
+ * 0x8401 (spec 03 section 4.4). */
+bool plat_sup_burst(const uint16_t *tx, uint16_t *rx, uint8_t n);
 
 /* ---- Solenoid driver chips on RSPI-A (spec 03, spec 12 section 2b) ----
  * Send n 16-bit frames; frame i goes to chip i mod 5 (SSLA3, SSLA2, SSLA1, SSLA0, SSLA5) and the

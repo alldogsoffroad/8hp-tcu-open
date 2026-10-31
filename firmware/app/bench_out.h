@@ -24,6 +24,24 @@
  *   results 31 03 FE 10 -> 71 03 FE 10 state ch mA_hi mA_lo remaining_100ms reason sol_faults
  *           state 0 idle, 1 active; reason = why the last test ended (BENCH_END_*)
  *
+ * RoutineControl FE13 (RSPI-B supervisor lab, no interlocks — read/write class 0x8E
+ * words with bit 0 or bit 7 set are DANGER WORDS: bench consent per request):
+ *   start   31 01 FE 13 01 <words BE16, 2..200 bytes>   one-shot exchange; even-indexed
+ *                                                          frames go to SSLB1 (supervisor),
+ *                                                          odd-indexed to SSLB0
+ *   start   31 01 FE 13 02 <bits8e> <bits90>             stock app cyclic pattern on
+ *                                                          (the three jobs of spec 03 4.4;
+ *                                                          bits8e bit 0 = output enable)
+ *   start   31 01 FE 13 03                               pattern off (normal 5 ms word)
+ *   start   31 01 FE 13 04 <words BE16, 2..200 bytes>   SSLB1-only burst: all frames to
+ *                                                          the supervisor back to back, the
+ *                                                          shape of the stock 0x1D478 ritual
+ *                                                          (8E01 + 11x 8401, spec 03 4.4)
+ *   stop    31 02 FE 13                                  pattern off
+ *   results 31 03 FE 13 -> 71 03 FE 13 mode [data]: mode 0 idle; 1 = one-shot:
+ *           [n] + n reply words BE16; 2 = pattern: 8 last reply words + echo_ok/echo_bad/
+ *           a8_bad/aa_bad (u16 BE each)
+ *
  * RoutineControl FE11 (park outputs, commissioning; one CAN frame):
  *   start   31 01 FE 11 out seconds [duty_%]      (out 0 = ch 7, 1 = TOE31;
  *                                                   duty 1..100 %, default 100)
@@ -38,6 +56,7 @@
 #define BENCH_RID          0xFE10u
 #define BENCH_PARK_RID     0xFE11u
 #define BENCH_RSPI_DIAG_RID 0xFE12u     /* RSPI-A diagnostic dump (M4b debug; see bench_out.c) */
+#define BENCH_SUP_RID       0xFE13u     /* RSPI-B supervisor lab (see bench_out.c) */
 #define BENCH_MAX_CHANNEL  6u
 #define BENCH_MAX_MA       1000u
 #define BENCH_MAX_S        5u

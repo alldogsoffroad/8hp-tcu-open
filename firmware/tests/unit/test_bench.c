@@ -211,6 +211,53 @@ int main(void)
     run_10ms(501u);
     CHECK(!bench_active() && sol->mode[4] == SOL_MODE_OFF && uds_session() == 0x01u);
 
+    /* ---- FE13 supervisor lab: one-shot RSPI-B exchange and the stock app pattern ---- */
+    uds_req((const uint8_t[]){ 0x10, 0x03 }, 2u);
+    {
+        uint8_t out[64];
+        int r;
+
+        uds_req((const uint8_t[]){ 0x31, 0x03, 0xFE, 0x13 }, 4u);
+        CHECK(memcmp(&last_rsp()[1], "\x71\x03\xFE\x13\x00", 5) == 0);   /* idle */
+        /* malformed one-shots: odd byte count, unknown sub */
+        uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x01, 0x06 }, 6u);
+        CHECK(last_nrc() == 0x13u);
+        uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x09 }, 5u);
+        CHECK(last_nrc() == 0x12u);
+        /* one-shot 0x0600 (even index -> SSLB1), scripted reply 0xA8BD */
+        stub.sup_xfer_rx = 0xA8BDu;
+        uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x01, 0x06, 0x00 }, 7u);
+        CHECK(memcmp(&last_rsp()[1], "\x71\x01\xFE\x13", 4) == 0);
+        r = bench_routine(3u, BENCH_SUP_RID, NULL, 0u, out, 64u);
+        CHECK(r == 4 && out[0] == 1u && out[1] == 1u && out[2] == 0xA8u && out[3] == 0xBDu);
+        /* bus timeout -> conditions not correct */
+        stub.sup_xfer_fail = true;
+        uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x01, 0x28, 0x00 }, 7u);
+        CHECK(last_nrc() == 0x22u);
+        stub.sup_xfer_fail = false;
+        /* stock app pattern on: the 5 ms tick becomes the three cyclic jobs.
+         * Entering, last_rx = 0xA800 (bit 2 clear) so pass 1 sends 0x8E04 and the
+         * scripted reply 0xA804 matches the echo (mask 0xDF); pass 2 sends 0x8E00
+         * and the echo check then counts bad - the stub script is not word-aware. */
+        stub.sup_xfer_rx = 0xA804u;
+        uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x02, 0x00, 0x21 }, 7u);
+        CHECK(memcmp(&last_rsp()[1], "\x71\x01\xFE\x13", 4) == 0);
+        CHECK(sup->app_pattern);
+        run_10ms(1u);
+        CHECK(sup->rx_words[2] == 0xA804u && sup->rx_words[0] == 0xA804u);
+        CHECK(sup->echo_ok + sup->echo_bad >= 2u && sup->aa_bad >= 8u);
+        r = bench_routine(3u, BENCH_SUP_RID, NULL, 0u, out, 64u);
+        CHECK(r == 25 && out[0] == 2u && out[1] == 0xA8u && out[2] == 0x04u);
+        /* stop restores the single 5 ms word */
+        uds_req((const uint8_t[]){ 0x31, 0x02, 0xFE, 0x13 }, 4u);
+        CHECK(!sup->app_pattern);
+        r = bench_routine(3u, BENCH_SUP_RID, NULL, 0u, out, 64u);
+        CHECK(r == 1 && out[0] == 0u);
+        /* sub 3 (pattern off via start) also accepted */
+        uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x03 }, 5u);
+        CHECK(memcmp(&last_rsp()[1], "\x71\x01\xFE\x13", 4) == 0);
+    }
+
     if (fails == 0) {
         printf("test_bench: ok\n");
     }
