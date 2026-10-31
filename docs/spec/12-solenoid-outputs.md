@@ -535,3 +535,18 @@ matching the known plant-poll latency growth with uptime (0.3 s → 2.5 s).
 Working numbers for the open firmware: **engaged hold ≈ 1.85–1.87 A**
 (user-confirmed idle 1.870), **released ≈ 0.17 A**, re-engage climb ≈ 1.5–1.7 A
 over ~1–2 s.
+
+**Clean-feed re-run + stop tests 2026-10-30 (post-video):** re-ran the full
+P-D-R-N-D-P sequence with ALL bus polling removed (feed-only, 0 errors) —
+started from the overnight self-held 1.905, ran all six phases, ended at
+1.871; video transcription pending. Then the release discriminator, live at
+the ammeter: a **D-feed stop releases to ~0.173 A** (third confirmation; the
+two 2026-10-31 mid-day D-feeder stops behaved the same), while every
+**P-ending stop self-holds at ~1.87 A** (twice: overnight 1.870, today 1.871).
+The no-comm safe state is **lever-gated: P keeps the solenoids held (park
+lock), D drops them**. After the D-stop release the box **re-engaged itself
+to ~1.8 A at ~1 min 9 s with no feed** — the 0x90586 keep-warm/priming
+machine (§ above) pulling it back up autonomously; released-window duration
+is therefore ~1 min before the autonomous re-engage. This also explains the
+ammeter video starting at 0.170 (inside the released window) vs the overnight
+1.87 hold (P-ending, never released).
