@@ -558,3 +558,32 @@ latches reset, and `[8E,80]` in mode 6 kills the TCU until a bench POR.
    key is fully wire-derived. Implemented in [8hp-teensy-flasher](
    https://github.com/alldogsoffroad/8hp-teensy-flasher) (`tools/protocol.py`); the banked
    (seed, response) pairs and full session captures decrypt byte-exact.**
+
+### 5l addendum — loader-install session 2026-10-31 (bench) [B]
+
+- **op-20 erase is refused for blocks ≥0x100000** (FENTRY1): constant error
+  `a0 02 22 32 …` for the standard form, a key byte in the CF tail, and with
+  a successful key-2 ARM before it. The engine's erase path never selects
+  FENTRYR key 2 (the ARM/program path does — that is why the 2026-10-31 app
+  body restore worked up high). The golden transcript's only erase is
+  low-bank, so no high-bank erase form is known. Workaround for image
+  installs: **gap-keep** (`build_image.py --gap-keep-above`) — keep the flash
+  content above the new image and compute the header CRC over the real bytes
+  (used for the loader install: stock kept above 0x100000, CRC `FB3BB0EB`,
+  boot manager accepted it).
+- **op-08 composition:** the FF carries crc16(start BE32 + size BE32) over
+  the CF — validated byte-exact against the tool's `081008006dd600b8`, whose
+  region is start `0xE0000` **size `0x20000`** (a full 128 KB block; an
+  earlier 0x2000 reading of the transcript was wrong). A wrong CRC or a
+  constant-lead frame with a foreign region makes the engine drop the
+  message **without advancing the cipher counter** — the session wedges
+  irrecoverably (power cycle). The checksum is **content-only** (not
+  address-dependent): blank signatures measured 64 KB → `de547e4e81cb0165`,
+  128 KB → `14b603cca7a12f57`.
+- **op-01 reads are boot-scoped stale:** after erase-only ops *and* after
+  program ops the default-view read serves cached content (the priming
+  ladder's identify reads fill the cache; a read right after a program
+  returns `FF`). One op-08 resets the read path to fresh. Verify after
+  writes therefore: op-08 first, then op-01.
+- Storm catch reliability: two for two this session (54.8 s / 56.7 s after
+  storm start, ~20k entry frames, first reply `53 11 a5…`).

@@ -233,3 +233,28 @@ sticks); the v13 vendor-replica path wrote the DF instead. Plantflash keeps the 
 (the source change is in the tree) but its DF P/E entry needs the vendor restart order
 (FENTRYR 0xAA00 gestures around FRESETR, per acdp2-re vendor_engine_findings) before it can
 replace the v13 route.
+
+## 9. Loader reinstalled Teensy-only (2026-10-31) [B]
+
+After the stock-restore session (2a69a33) the spare ran pristine stock again;
+the loader was reinstalled with the spec 17 path in one afternoon:
+
+1. `build_image.py --app build/sh2a/tcu_loader.hex --stock-ident
+   --gap-keep-above 0x100000` → `build/m5_loader_gapkeep_IFla.bin`
+   (CRC `FB3BB0EB`, byte-exact reproducible). The gap-keep form assumes the
+   flash above 0x100000 still holds the reference image — true after the
+   restore — so **no FENTRY1 erase was needed** (the engine refuses those,
+   spec 17 §5l addendum).
+2. Plant storm (2 catches in 2 attempts) → forged key → v13 engine → 500k
+   session → one 64 KB erase (0x40000) + 40 program units (7 s) → op-08/01
+   verified. Ten further low-bank blocks had been erased blank before the
+   high-bank wall forced the gap-keep replan; they stayed blank above the
+   loader (image gap = FF there).
+3. Power-cycle → boot manager accepted header + markers → loader mode
+   (`22 F1 95` → `LD`), `app-flash` wrote `tcu_app_df.bin` (DB00–03, 7.7 s),
+   TCU reset into the RAM application: heartbeat `0x7F0`, ident
+   **`8HPTCU-OPEN M1 RAM`**.
+
+Bench notes: stock is recoverable any time via the same path (app-body
+restore is proven); the stock gap above 0x100000 is reclaimed by any future
+full-image write once a high-bank erase exists.

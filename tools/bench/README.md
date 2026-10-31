@@ -140,7 +140,9 @@ flasher (built 2026-10-17 or later). Bus 1 only (TCU pins 5/6). Never with the e
 
 **D. Data-flash loader (spec 18)**: replaces C as the way to update without a power-cycle
 programming dance.
-1. Write `build/m5_loader_IFLa.bin` (the loader, with the stock identification) — historically
+1. Write `build/m5_loader_IFLa.bin` (the loader, with the stock identification; add
+   `--gap-keep-above 0x100000` when the flash above still holds the reference image —
+   the plant engine refuses erases at ≥0x100000, spec 17 §5l addendum) — historically
    done with the ACDP-2; today the Teensy flasher
    ([8hp-teensy-flasher](https://github.com/alldogsoffroad/8hp-teensy-flasher), spec 17 path)
    does it with no proprietary tool.

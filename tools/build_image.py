@@ -95,6 +95,12 @@ def main():
                     help="copy the stock identification from the reference: tail record 0x17FB70-0x17FBFB "
                          "(project code '0JIX...'), header +0x74 and the table it points to (bench test "
                          "2026-10-17: does the boot side check them before starting the application?)")
+    ap.add_argument("--gap-keep-above", metavar="ADDR", type=lambda x: int(x, 0), default=None,
+                    help="keep the reference bytes from ADDR to the end of the application block instead "
+                         "of 0xFF, and recompute the header CRC over the result. Assumes the flash above "
+                         "ADDR still holds the reference image (used 2026-10-31 for the loader install: "
+                         "the plant engine refuses erases at >=0x100000, spec 17 §5l, so the stock bytes "
+                         "above the loader were kept and the CRC computed over the real flash content)")
     a = ap.parse_args()
 
     img = bytearray(open(a.base, "rb").read())
@@ -126,6 +132,15 @@ def main():
         if tab:
             img[ptr:ptr + 0x30] = tab
         print(f"stock identification copied: tail {ref[TAIL_START:TAIL_START + 8]!r}, +0x74 = {ptr:#x}")
+
+    if a.gap_keep_above is not None:
+        if not APP_START <= a.gap_keep_above < MARKER1:
+            fail(f"--gap-keep-above {a.gap_keep_above:#x} outside the application block")
+        img[a.gap_keep_above:APP_END] = ref[a.gap_keep_above:APP_END]
+        # the validity markers are content, not gap: keep them as composed above
+        img[MARKER1:MARKER1 + MARKER_LEN] = b"\x00" * MARKER_LEN
+        img[MARKER2:MARKER2 + MARKER_LEN] = b"\xff" * MARKER_LEN
+        print(f"gap-keep: reference bytes kept from {a.gap_keep_above:#x} to {APP_END:#x}")
 
     if u32(img, APP_START) != 0x876543C1:
         fail("application header magic missing (is --app the block starting at 0x40000?)")
