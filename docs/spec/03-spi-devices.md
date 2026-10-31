@@ -289,3 +289,36 @@ must provide an equivalent fail-safe path.
   responses, job interleave — one capture replaces all guessing).
 - Tooling: `tools/ghidra_scripts/AddrXref.java` (address xrefs + decompile, house
   style).
+
+**Start-up register order decoded (2026-10-31 late night — the rail-gate sequence):**
+The supervisor jobs are flash templates installed by `FUN_000937F8(&flash_descr)`; the
+literal word sequences (read from the ELF) and their callers give the stock's order:
+
+1. **Init `0x91DD2`:** enable cleared, flags set, cyclic ID job `0x40B80` installed —
+   template `[0x0600, 0x0300, 0x0000, 0x0000, 0x0100, 0x0402]` (register reads 0x06/0x03/
+   0x00/0x01 + …). The 5 ms word runs the NORMAL dialect (bit-2 toggle) while mode = 0.
+2. **Monitor `0x873F0` state 0x45 → `0x8CEDC` → duty arm `0x6C802(duty, 0x1E)`:** duty
+   computed by the calibration walker `0x7EE8A`, stored at `0xFFF92414`, state set to 7.
+   The gate pass (`0x6C63E → 0x6C1BA`) then sends the **duty job `0x409F4`** — template
+   `[0x8800, 0x8800, 0x8800|hi, 0x8800|lo, 0x1200, 0x0C00, 0x0A00]`: four 0x88 words
+   (the 16-bit duty split into words 2/3), the **commit word 0x1200**, then 0x0C/0x0A reads.
+3. **Level job `0x40A14`** (via `0x91190(level)` from `0x6C1BA`'s other branch, a ramp
+   state machine at `0x94FE8`): template **`[0x8400|level, 0x0A00, 0x1200, 0x0C00]`** —
+   the 0x84 write is followed by the achieved-level READ, the 0x12 COMMIT, and a 0x0C read.
+   Our earlier bare `0x841F` omitted the commit and the reads.
+4. **Enable:** when the monitor's checks pass and level < 7 → `0x6C612(1)`; the 5 ms word
+   carries bit 0; the echo bit 0 confirms; the WDT switches to interval mode. Outputs gate
+   on level ≥ 6 (cell `0x93BA1`, harvested from feedback `0x90550` by `0x6C1EA`) AND the
+   confirm `0x90954`.
+5. Mode transitions (0 → 0x19/0x31 via the system-mode chain) switch the word dialect.
+
+**Key discovery: the `0x1200` commit word.** Every stock register write job ends with
+`0x1200` — a commit/execute command we have never sent. Our bare `0x841F`/`0x8820`/`0x9020`
+writes lacked it; the level happened to latch anyway, but the duty job — never sent at
+all — plus the commits are the outstanding deltas. The duty VALUE (`0xFFF92414`, output of
+the `0x7EE8A` calibration walker; first guess 0x1838 from the setpoint math) is readable
+from live stock via cmd 0x2A next time stock runs.
+
+**Replay test ready:** all job templates fit the existing FE13 one-shot burst (sub-04),
+so the sequence is testable on the bench without stock: duty job → level job → enable
+pattern, ammeter + echo as the verdict.
