@@ -55,12 +55,19 @@ int main(void)
     sol_tick_10ms();
     CHECK(s->mode[3] == SOL_MODE_OFF && stub.drv_last_tx[21] == 0xF000u);
 
-    /* wrong read-back: fault latched, channel forced off on the next cycle */
+    /* read-back mismatch: counted in status, not a latched fault (the reply format is open
+     * on hardware, bench 2026-10-30); the channel keeps running */
     sol_set(3u, SOL_MODE_CURRENT, 5000u);
-    stub.drv_bad_readback = true;
     sol_tick_10ms();
-    CHECK((s->faults & SOL_F_READBACK) != 0u);
-    stub.drv_bad_readback = false;
+    {
+        const uint16_t before = s->cfg_mismatch;
+        stub.drv_bad_readback = true;
+        sol_tick_10ms();
+        stub.drv_bad_readback = false;
+        CHECK(s->cfg_mismatch > before && s->faults == 0u);
+        CHECK(s->mode[3] == SOL_MODE_CURRENT);
+    }
+    sol_all_off();
     sol_tick_10ms();
     CHECK(s->mode[3] == SOL_MODE_OFF && stub.drv_last_tx[21] == 0xF000u);
 

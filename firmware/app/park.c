@@ -2,7 +2,6 @@
 
 #if defined(TCU_M4B_OUTPUTS)
 #include "app/bench_out.h"
-#include "bsw/sup/sup.h"
 #include "io/actuators/sol_drv.h"
 #endif
 
@@ -30,7 +29,6 @@ void park_init(void)
 #if defined(TCU_M4B_OUTPUTS)
     plat_toe_out_set(0u);
     sol_set(SOL_CH_PARK_RELEASE, SOL_MODE_OFF, 0u);
-    sup_enable_clear(SUP_EN_PARK);
 #endif
 }
 
@@ -45,16 +43,12 @@ static void apply(const park_out_t *out)
     if (bench_active()) {                /* commissioning test owns the outputs */
         sol_set(SOL_CH_PARK_RELEASE, SOL_MODE_OFF, 0u);
         plat_toe_out_set(0u);
-        sup_enable_clear(SUP_EN_PARK);
         return;
     }
     sol_set(SOL_CH_PARK_RELEASE, out->release ? SOL_MODE_FULL_ON : SOL_MODE_OFF, 0u);
     plat_toe_out_set(out->hold ? PARK_HOLD_DUTY : 0u);
-    if (out->release || out->hold) {
-        sup_enable_set(SUP_EN_PARK);
-    } else {
-        sup_enable_clear(SUP_EN_PARK);
-    }
+    /* no supervisor enable request: the 0x8E enable bit resets this TCU (bench
+     * 2026-10-30, see bench_out.c) */
 #else
     (void)out;                           /* M4a: requests are published only */
 #endif

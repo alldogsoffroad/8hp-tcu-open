@@ -141,12 +141,38 @@ self-test (`0x86916` via `0x8C808`) clears `0xFFF9094D`, **bit 7** from `0xFFF90
 `0x1D430`): disable the RSPI-B DMA requests (`0xFFFE6074` / `0xFFFE6076` = 0), `SPSR = 0`, `SPPCR = 0`,
 `SPBR = 5`, `SPDCR = 0`, `SPCKD = 0`, `SSLND = 0`, `SPND = 1`, `SPCMD0 = 0xAF11` (SSLB1, 16 bit, mode 1),
 `SPCR = 0x48`; then write a frame to `SPDR` (`0xFFFFB804`) and poll `SPSR` bit `0x20`. The bootloader
-routine `0x1D478` sends `0x8E01` followed by eleven `0x8401`.
+routine `0x1D478` sends `0x8E01` followed by eleven `0x8401`. Bench-confirmed 2026-10-30: the explicit
+**start trigger after the SPDR write is mandatory** (read SPSR with SPTEF set, then write 0) — without
+it the peripheral never clocks; this matches the driver-chip exchange (spec 12 §2d). In flash mode
+(`0xFFFF1000` bit 2) the boot software halves the rate: `SPBR = 0xB`.
+
+**Cyclic-task state machine** (`0x1D0B4`, twin `0x30E40`; wrapper `0x139FE` suspends it while flash
+activity is flagged `0xFFF84946`): the data byte of `0x8E00|data` follows a state byte
+(`0xFFF856F7`): state 6 → `0x40` (bit 6); state `0xE8` → one-shot `0x1D478` (`0x8E01` + 11 × `0x8401`),
+then `0x04`; states `0x19`/`0x31` (set by `0x1389A`: flash mode / normal) → bit 7 (flash request,
+`0x19` only) with the bit-4 flash-toggle handshake (`0x10` until acknowledged, then 0, gated on
+`0xFFF800EC ≤ 0x3F`); otherwise the bit-2 toggle. After 120 000 unanswered frames (10 min at 5 ms)
+the state clears and `0xFFFE3902` takes `0x10` (and loses `0x20`). Each pass ends with the internal
+watchdog feed `0xFFFE0002 = 0x5AB7` (`0x5ADB` in flash mode).
+
+**Boot manager reads** (`0x3D84` in the boot MAT, via the one-word helper `0x22CC` with a
+1000-iteration settle): sends `0x2800` then `0x2E00` and harvests `(reply & 0xF) << 6 | (reply & 0x3F)`
+— 10 configuration bits. The supervisor therefore shares the driver-chip command grammar
+(`0x28` status, `0x2E` read), and its **reply frames are `0xAAxx` and `0xA8xx` class** (DMA
+completion handler `0x92AC0` validates the headers and stores status to `0xFFF90977/78` and
+`0xFFF907CF/D0`).
+
+**Bench 2026-10-30 [M]:** with the project firmware sending only the boot-style cyclic word
+(bit 2 toggling), setting **bit 0 cold resets the TCU** (state zeroed, ~200 ms loader cycle). The
+stock application's bit 0 is valid only after its start-up register writes (`0x84`, `0x88`,
+`0x90` — §6 open item); replicating that init is the prerequisite for any output-enable request.
 
 **Project firmware:** `firmware/bsw/sup` (from commit after M2) sends the control word every 5 ms
-with bit 2 toggling and the output enable off, using the CPU-mode set-up above, and checks the
-`0xA8` reply header; the heartbeat `0x7F0` byte 1 reports the result. Images built before it do not
-service the supervisor. The supervisor timeout is open.
+with bit 2 toggling, using the CPU-mode set-up above (start trigger included), and checks the
+`0xA8` reply header; the heartbeat `0x7F0` byte 1 reports the result. Output-enable requests are
+**removed** after the 2026-10-30 finding above; the request-OR API (`SUP_EN_BENCH` |
+`SUP_EN_PARK`) is dormant until the start-up register init is replayed. The supervisor timeout
+is open.
 
 ## 5. Shutdown behavior
 

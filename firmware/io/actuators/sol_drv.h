@@ -47,6 +47,8 @@ typedef struct {
 typedef struct {
     uint8_t    faults;          /* SOL_F_*, latched until sol_init()  */
     bool       ready;           /* identification and configuration done */
+    uint16_t   cfg_mismatch;    /* config/cyclic read-back words that did not echo; the reply
+                                 * format is open (bench 2026-10-30) — logged, not faulted */
     uint32_t   cycles;
     sol_chip_t chip[SOL_CHIPS];
     ma10_t     current[SOL_CHANNELS];

@@ -71,9 +71,11 @@ static bool hail_pulse[2];     /* G mode: 300 ms storm / 300 ms silence so starv
  * on pin 14 (A0) every loop pass (~30-50 kS/s) and emits "P<feed millivolts>" on the
  * FIRST port whenever the value moves > threshold or every 50 ms heartbeat — the same
  * timeline as CAN frames, so feed dips/pulses correlate with the boot-session opening.
- * Divider: 33k (feed->pin) + 10k (pin->GND), ratio 4.3. 'A0' stops it. */
+ * Divider: 39k (feed->pin) + 10k (pin->GND), ratio 4.9. 'A0' stops it.
+ * (Measured bench 2026-10-30: 39k/10k, not 33k/10k — patch applies after the
+ * next Teensy reflash.) */
 static bool power_mon = false;
-static const float    PWR_RATIO = 4.3f;
+static const float    PWR_RATIO = 4.9f;
 static const uint16_t PWR_DELTA = 250;    /* emit when feed moves > 250 mV */
 static uint32_t       pwr_last_emit_ms;
 static uint16_t       pwr_last_mv;

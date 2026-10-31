@@ -55,31 +55,48 @@ static void put_cmd(uint8_t k, uint16_t cmd)
     }
 }
 
-static bool all_byte_headers(uint8_t frames)
+#define SOL_CHIPS_REAL 4u              /* bench 2026-10-30: only chips 0-3 populated; the
+                                        * fifth select (SSLA5) reads 0x0000 (no device) */
+
+/* Header check over the four real chips: frame i belongs to chip i % 5. */
+static bool real_chip_headers(uint8_t frames)
 {
     for (uint8_t i = 0u; i < frames; i++) {
-        if ((s_rx[i] & HDR_BYTE_MASK) != HDR_BYTE) {
+        if (i % 5u < SOL_CHIPS_REAL && (s_rx[i] & HDR_BYTE_MASK) != HDR_BYTE) {
             return false;
         }
     }
     return true;
 }
 
-static void job_id(void)
+static void job_id_once(void)
 {
     put_cmd(0u, 0x0600u);
     put_cmd(1u, 0x0000u);
-    if (!xfer(10u)) {
-        return;
+    (void)xfer(10u);
+}
+
+/* The first exchange after power-up can misalign (bench 2026-10-30: the boot-time ID job
+ * fails the header check while the identical frames pass seconds later) — retry a few
+ * times before latching the fault. */
+static void job_id(void)
+{
+    for (uint8_t attempt = 0u; attempt < 5u; attempt++) {
+        job_id_once();
+        if (real_chip_headers(10u)) {
+            for (uint8_t c = 0u; c < SOL_CHIPS; c++) {
+                s_st.chip[c].id[0] = (uint8_t)s_rx[c];
+                s_st.chip[c].id[1] = (uint8_t)s_rx[5u + c];
+            }
+            return;
+        }
+        for (volatile uint32_t d = 0u; d < 20000u; d++) {
+            if ((d & 0x3FFu) == 0u) {
+                plat_wdt_service();
+            }
+        }
     }
-    if (!all_byte_headers(10u)) {
-        s_st.faults |= SOL_F_ID;
-        return;
-    }
-    for (uint8_t c = 0u; c < SOL_CHIPS; c++) {
-        s_st.chip[c].id[0] = (uint8_t)s_rx[c];
-        s_st.chip[c].id[1] = (uint8_t)s_rx[5u + c];
-    }
+    s_st.faults |= SOL_F_ID;
 }
 
 static void job_config(void)
@@ -97,18 +114,21 @@ static void job_config(void)
     if (!xfer(40u)) {
         return;
     }
-    if (!all_byte_headers(40u)) {
+    if (!real_chip_headers(40u)) {
         s_st.faults |= SOL_F_CONFIG;
         return;
     }
-    /* read-backs as checked by stock 0x923BC: frame 20+c (low 6 bits) = mode byte of frame 15+c,
-     * frame 25+c = 0x90 data, frame 30+c = 0x8E data, frame 35+c = 0x96 data */
-    for (uint8_t c = 0u; c < SOL_CHIPS; c++) {
+    /* read-backs as stock 0x923BC checks them: frame 20+c (low 6 bits) = mode byte of
+     * frame 15+c, frame 25+c = 0x90 data, frame 30+c = 0x8E data, frame 35+c = 0x96 data.
+     * Bench 2026-10-30: the four chips accept the writes (0xA2 headers) but these reads
+     * return 0x00 in the data byte, so the reply format is open; count mismatches in
+     * status instead of latching a fault until it is decoded (spec 12 section 2b). */
+    for (uint8_t c = 0u; c < SOL_CHIPS_REAL; c++) {
         if ((s_rx[20u + c] & 0x3Fu) != (s_tx[15u + c] & 0x3Fu) ||
             (uint8_t)s_rx[25u + c] != (uint8_t)s_tx[5u + c] ||
             (uint8_t)s_rx[30u + c] != (uint8_t)s_tx[c] ||
             (uint8_t)s_rx[35u + c] != (uint8_t)s_tx[10u + c]) {
-            s_st.faults |= SOL_F_CONFIG;
+            s_st.cfg_mismatch++;
         }
     }
 }
@@ -121,7 +141,7 @@ static void job_status(void)
     if (!xfer(15u)) {
         return;
     }
-    if (!all_byte_headers(15u)) {
+    if (!real_chip_headers(15u)) {
         s_st.faults |= SOL_F_HEADER;
         return;
     }
@@ -155,7 +175,7 @@ static void job_cyclic(void)
     /* stock 0x92530: every reply of a chip carries the cyclic header; the read frames return
      * the written dither (25+c vs 5+c, 35+c vs 15+c, low byte) and setpoints (30+c vs 10+c,
      * 40+c vs 20+c, 11 bits) */
-    for (uint8_t c = 0u; c < SOL_CHIPS; c++) {
+    for (uint8_t c = 0u; c < SOL_CHIPS_REAL; c++) {
         for (uint8_t k = 0u; k < 9u; k++) {
             if ((s_rx[5u * k + c] & HDR_CYC_MASK) != HDR_CYC) {
                 s_st.faults |= SOL_F_HEADER;
@@ -165,7 +185,7 @@ static void job_cyclic(void)
             (s_rx[30u + c] & 0x7FFu) != (s_tx[10u + c] & 0x7FFu) ||
             (uint8_t)s_rx[35u + c] != (uint8_t)s_tx[15u + c] ||
             (s_rx[40u + c] & 0x7FFu) != (s_tx[20u + c] & 0x7FFu)) {
-            s_st.faults |= SOL_F_READBACK;
+            s_st.cfg_mismatch++;       /* read-back reply format open (see job_config) */
         }
     }
 }

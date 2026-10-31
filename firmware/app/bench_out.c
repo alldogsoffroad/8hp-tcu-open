@@ -105,7 +105,6 @@ void bench_tick_10ms(void)
     } else if (s_kind == BK_SOL) {
         bench_channels_off();
         sol_set(s_ch, SOL_MODE_CURRENT, (ma10_t)(s_ma * 10u));
-        sup_enable_set(SUP_EN_BENCH);
 #if defined(TCU_M4B_OUTPUTS)
     } else {                             /* BK_PARK_OUT */
         bench_channels_off();
@@ -115,8 +114,11 @@ void bench_tick_10ms(void)
         } else {
             plat_toe_out_set(s_duty);
         }
-        sup_enable_set(SUP_EN_BENCH);
 #endif
+        /* No supervisor output-enable request: on this unit the 0x8E enable bit in the
+         * keep-alive word RESETS the TCU (bench 2026-10-30 — every output test died
+         * within 0.6 s at any current; [8E,01] = control word with the bit set was a
+         * known lab reset). The actuator rail is live without it. */
     }
 }
 
@@ -172,6 +174,281 @@ static int park_out_start(const uint8_t *in, uint16_t n)
 }
 #endif
 
+/* FE12: RSPI-A diagnostic (no outputs, no interlocks). Dumps the driver-chip bus registers
+ * and tries one 16-bit transfer with four protocol variants, reporting the poll loop counts
+ * and final status per variant so the working CPU discipline can be identified:
+ *   regs   SPCRA SSLPA SPPCRA SPSRA SPSSRA SPBRA SPCKDA SSLNDA SPNDA SPSCRA
+ *          SPCMD0H/L .. SPCMD4L  ADMATCR56H/L ADMATCR57H/L                 (24 bytes)
+ *   v1 baseline (disable, SPSR=0, enable, poll SPTEF, SPDR, poll SPRF)     (6 bytes)
+ *   v2 v1 + the manual's start trigger: read SPSR, SPDR, read SPSR, write 0 (6 bytes)
+ *   v3 full per-frame setup exactly as the working RSPI-B exchange, single
+ *       command (SPSCR=0, SPCMD0=0xAF11, SPND=1), then SPDR, poll SPRF      (6 bytes)
+ *   v4 v3 + the v2 trigger                                                 (6 bytes)
+ * Each: result(0 ok,1 no-SPTEF,2 no-SPRF) tef_loops BE16 rxf_loops BE16 spsr rx BE16.
+ */
+#if defined(TCU_M4B_OUTPUTS)
+#include "platform/sh7254r/regs.h"      /* RSPI-A registers for the FE12 diagnostic */
+
+#define RSPIA_WAIT 20000u
+
+typedef struct {
+    uint16_t tef;
+    uint16_t rxf;
+    uint8_t  spsr;
+} rspi_diag_t;
+
+static rspi_diag_t s_diag;
+
+static uint8_t rspi_variant(uint8_t v, uint16_t *rx)
+{
+    uint32_t guard;
+    uint16_t tef = 0u, rxf = 0u;
+
+    if (v >= 3u) {
+        SPCRA = 0x00u;
+        RSPIA_DMA_REQ0 = 0u;
+        RSPIA_DMA_REQ1 = 0u;
+        SPSRA = 0u;
+        SPPCRA = 0u;
+        SPBRA = 5u;
+        SPCKDA = 0u;
+        SSLNDA = 0u;
+        SPNDA = 1u;
+        SPSCRA = 0u;
+        SPCMDA(0) = 0xAF11u;
+        if (v == 5u) {
+            SPCMDA(0) = 0xAF31u;            /* SSLA3 instead of SSLA1  */
+        } else if (v == 6u) {
+            SPSCRA = 4u;                    /* the driver's sequence   */
+            SPCMDA(0) = 0xAF31u;
+            SPCMDA(1) = 0xAF21u;
+            SPCMDA(2) = 0xAF11u;
+            SPCMDA(3) = 0xAF01u;
+            SPCMDA(4) = 0xAF51u;
+        }
+        SPCRA = 0x48u;
+    } else {
+        SPCRA = 0x08u;
+        SPSRA = 0u;
+        SPCRA = 0x48u;
+    }
+    for (guard = RSPIA_WAIT; guard != 0u && (SPSRA & SPSR_SPTEF) == 0u; guard--) {
+    }
+    tef = (uint16_t)(RSPIA_WAIT - guard);
+    if (guard != 0u) {
+        (void)SPSRA;                        /* read SPTEF = 1 (write prerequisite) */
+        SPDRA = 0x8800u;
+        if (v == 2u || v == 4u) {
+            (void)SPSRA;                    /* read 1 ...                          */
+            SPSRA = 0u;                     /* ... then write 0: the start trigger  */
+        }
+        for (guard = RSPIA_WAIT; guard != 0u && (SPSRA & SPSR_SPRF) == 0u; guard--) {
+        }
+        rxf = (uint16_t)(RSPIA_WAIT - guard);
+        if (guard != 0u) {
+            *rx = SPDRA;
+        }
+    }
+    s_diag.tef = tef;
+    s_diag.rxf = rxf;
+    s_diag.spsr = SPSRA;
+    if (tef >= RSPIA_WAIT) {
+        return 1u;
+    }
+    return rxf >= RSPIA_WAIT ? 2u : 0u;
+}
+
+static int rspi_diag(uint8_t type, const uint8_t *in, uint16_t n, uint8_t *out, uint16_t max)
+{
+    uint16_t rx[6] = { 0u, 0u, 0u, 0u, 0u, 0u };
+    uint8_t r[6];
+
+    (void)in;
+    (void)n;
+    if (type != 1u || max < 72u) {
+        return -NRC_IMLOIF;
+    }
+    out[0] = SPCRA;
+    out[1] = REG8(0xFFFFB001u);          /* SSLPA  */
+    out[2] = SPPCRA;
+    out[3] = SPSRA;
+    out[4] = REG8(0xFFFFB009u);          /* SPSSRA */
+    out[5] = SPBRA;
+    out[6] = SPCKDA;
+    out[7] = SSLNDA;
+    out[8] = REG8(0xFFFFB00Eu);          /* SPNDA  */
+    out[9] = SPSCRA;
+    for (uint8_t i = 0u; i < 5u; i++) {
+        out[10u + 2u * i] = (uint8_t)(SPCMDA(i) >> 8);
+        out[11u + 2u * i] = (uint8_t)SPCMDA(i);
+    }
+    out[20] = (uint8_t)(RSPIA_DMA_REQ0 >> 8);
+    out[21] = (uint8_t)RSPIA_DMA_REQ0;
+    out[22] = (uint8_t)(RSPIA_DMA_REQ1 >> 8);
+    out[23] = (uint8_t)RSPIA_DMA_REQ1;
+
+    for (uint8_t v = 0u; v < 6u; v++) {
+        r[v] = rspi_variant((uint8_t)(v + 1u), &rx[v]);
+        out[24u + v * 8u] = r[v];
+        out[25u + v * 8u] = (uint8_t)(s_diag.tef >> 8);
+        out[26u + v * 8u] = (uint8_t)s_diag.tef;
+        out[27u + v * 8u] = (uint8_t)(s_diag.rxf >> 8);
+        out[28u + v * 8u] = (uint8_t)s_diag.rxf;
+        out[29u + v * 8u] = s_diag.spsr;
+        out[30u + v * 8u] = (uint8_t)(rx[v] >> 8);
+        out[31u + v * 8u] = (uint8_t)rx[v];
+    }
+    /* leave the registers as the driver layer expects them */
+    SPCRA = 0x00u;
+    SPSRA = 0u;
+    SPSCRA = 4u;
+    SPCMDA(0) = 0xAF31u;
+    SPCMDA(1) = 0xAF21u;
+    SPCMDA(2) = 0xAF11u;
+    SPCMDA(3) = 0xAF01u;
+    SPCMDA(4) = 0xAF51u;
+    SPNDA = 0u;
+    SPCRA = 0x48u;
+    return 72;
+}
+
+
+/* FE12 type 3: driver-chip command map on chip 0 (SSLA3). For every config-style write
+ * command: write a probe value, then read it back with every read command, so the real
+ * write/read pairing and any unlock requirement become visible. Response words (BE16):
+ *   phase 1 baseline reads:  06 00 18 1E 28 2E 30 36 60 66 C0 D8        (12 words)
+ *   phase 2 write+readback:  for each W in {8E,88,90,96,A0,A6,E8,F0}:     (8 x 9 words)
+ *       W->0x5A, then reads 06 18 1E 28 2E 30 36 60 66  (W echo may be any of them)
+ *   phase 3 candidate special writes 01 11 21 50 51 70 71 80 -> then reads 28 30 18
+ *       (8 x 3 words)                                                    (24 words)
+ * Total 108 words = 216 bytes.
+ */
+#define NMAP_W 8u
+#define NMAP_R 12u
+static const uint16_t map_w[NMAP_W] = { 0x8Eu, 0x88u, 0x90u, 0x96u, 0xA0u, 0xA6u, 0xE8u, 0xF0u };
+static const uint16_t map_r1[NMAP_R] = { 0x0600u, 0x0000u, 0x1800u, 0x1E00u, 0x2800u, 0x2E00u,
+                                         0x3000u, 0x3600u, 0x6000u, 0x6600u, 0xC000u, 0xD800u };
+
+static void map_xfer(const uint16_t *tx, uint8_t n, uint16_t *out_words)
+{
+    (void)plat_drv_xfer(tx, out_words, n);
+}
+
+static int rspi_map(uint8_t type, uint8_t *out, uint16_t max)
+{
+    uint16_t rx[12];
+    uint16_t tx[10];
+    uint8_t k = 0;
+
+    (void)type;
+    if (max < 216u) {
+        return -NRC_IMLOIF;
+    }
+    /* phase 1: baseline reads (12 commands, one frame each to chip 0) */
+    for (uint8_t i = 0u; i < NMAP_R; i++) {
+        tx[0] = map_r1[i];
+        map_xfer(tx, 1u, rx);
+        out[2u * i] = (uint8_t)(rx[0] >> 8);
+        out[2u * i + 1u] = (uint8_t)rx[0];
+    }
+    k = 24u;
+    /* phase 2: write probe, read back with the 9 read commands */
+    for (uint8_t w = 0u; w < NMAP_W; w++) {
+        tx[0] = (uint16_t)(map_w[w] << 8) | 0x5Au;
+        map_xfer(tx, 1u, rx);                     /* the write */
+        static const uint16_t r2[9] = { 0x0600u, 0x1800u, 0x1E00u, 0x2800u, 0x2E00u,
+                                        0x3000u, 0x3600u, 0x6000u, 0x6600u };
+        for (uint8_t i = 0u; i < 9u; i++) {
+            tx[0] = r2[i];
+            map_xfer(tx, 1u, rx);
+            out[k] = (uint8_t)(rx[0] >> 8);
+            out[k + 1u] = (uint8_t)rx[0];
+            k += 2u;
+        }
+    }
+    /* phase 3: candidate unlock/watchdog words, then status reads */
+    static const uint16_t w3[8] = { 0x0100u, 0x1100u, 0x2100u, 0x5000u,
+                                    0x5100u, 0x7000u, 0x7100u, 0x8000u };
+    static const uint16_t r3[3] = { 0x2800u, 0x3000u, 0x1800u };
+    for (uint8_t w = 0u; w < 8u; w++) {
+        tx[0] = w3[w];
+        map_xfer(tx, 1u, rx);
+        for (uint8_t i = 0u; i < 3u; i++) {
+            tx[0] = r3[i];
+            map_xfer(tx, 1u, rx);
+            out[k] = (uint8_t)(rx[0] >> 8);
+            out[k + 1u] = (uint8_t)rx[0];
+            k += 2u;
+        }
+    }
+    return (int)k;
+}
+
+
+/* FE12 type 4: RSPI-A sequence lab. Request: <n words, big-endian, n = 1..100>; runs the
+ * words as one exchange (full setup per exchange as the driver layer does) and returns the
+ * n replies, big-endian. Lets the bench iterate chip-command hypotheses live. */
+static int rspi_lab(const uint8_t *in, uint16_t n, uint8_t *out, uint16_t max)
+{
+    uint16_t tx[100];
+    uint16_t rx[100];
+
+    if (n < 1u || n > 100u || n % 2u != 0u || max < n) {
+        return -NRC_IMLOIF;
+    }
+    for (uint16_t i = 0u; i < n / 2u; i++) {
+        tx[i] = (uint16_t)((in[2u * i] << 8) | in[2u * i + 1u]);
+    }
+    if (!plat_drv_xfer(tx, rx, n / 2u)) {
+        return -NRC_CNC;
+    }
+    for (uint16_t i = 0u; i < n / 2u; i++) {
+        out[2u * i] = (uint8_t)(rx[i] >> 8);
+        out[2u * i + 1u] = (uint8_t)rx[i];
+    }
+    return (int)n;
+}
+
+/* FE12 type 2: raw reply dump of the driver layer's ID job (0x0600, 0x0000 to every chip)
+ * and configuration job, so the real reply formats can be compared with the [I] checks in
+ * sol_drv.c (spec 12 section 2b). Response: 50 words, big-endian: 10 ID + 40 config. */
+static int rspi_dump(uint8_t type, uint8_t *out, uint16_t max)
+{
+    static const uint16_t id_tx[10] = {
+        0x0600u, 0x0600u, 0x0600u, 0x0600u, 0x0600u,
+        0x0000u, 0x0000u, 0x0000u, 0x0000u, 0x0000u,
+    };
+    const uint16_t cfg_tx[40] = {
+        0x8E00u, 0x8E00u, 0x8E00u, 0x8E00u, 0x8E00u,     /* CFG_8E = 0            */
+        0x9021u, 0x9021u, 0x9021u, 0x9021u, 0x9021u,     /* CFG_90 = 0x21         */
+        0x9655u, 0x9655u, 0x9655u, 0x9655u, 0x9655u,     /* CFG_96 = 0x55         */
+        0x8810u, 0x8810u, 0x8810u, 0x8810u, 0x8810u,     /* mode bytes, bit 4 set */
+        0x2800u, 0x2800u, 0x2800u, 0x2800u, 0x2800u,
+        0x3000u, 0x3000u, 0x3000u, 0x3000u, 0x3000u,
+        0x2E00u, 0x2E00u, 0x2E00u, 0x2E00u, 0x2E00u,
+        0x3600u, 0x3600u, 0x3600u, 0x3600u, 0x3600u,
+    };
+    uint16_t rx[40];
+    bool ok;
+
+    (void)type;
+    if (max < 100u) {
+        return -NRC_IMLOIF;
+    }
+    ok = plat_drv_xfer(id_tx, rx, 10u);
+    for (uint8_t i = 0u; i < 10u; i++) {
+        out[2u * i] = (uint8_t)(rx[i] >> 8);
+        out[2u * i + 1u] = (uint8_t)rx[i];
+    }
+    ok = ok && plat_drv_xfer(cfg_tx, rx, 40u);
+    for (uint8_t i = 0u; i < 40u; i++) {
+        out[20u + 2u * i] = (uint8_t)(rx[i] >> 8);
+        out[21u + 2u * i] = (uint8_t)rx[i];
+    }
+    return ok ? 100 : -1;
+}
+#endif
+
 int bench_routine(uint8_t type, uint16_t rid, const uint8_t *in, uint16_t n, uint8_t *out,
                   uint16_t max)
 {
@@ -182,6 +459,17 @@ int bench_routine(uint8_t type, uint16_t rid, const uint8_t *in, uint16_t n, uin
     const bool park_rid = false;
 #endif
 
+#if defined(TCU_M4B_OUTPUTS)
+    if (rid == BENCH_RSPI_DIAG_RID) {
+        if (type == 4u) {
+            return rspi_lab(in, n, out, max);
+        }
+        return type == 1u ? rspi_diag(type, in, n, out, max)
+             : type == 2u ? rspi_dump(type, out, max)
+             : type == 3u ? rspi_map(type, out, max)
+             : -NRC_SFNS;
+    }
+#endif
     if (!sol_rid && !park_rid) {
         return -NRC_ROOR;
     }

@@ -391,14 +391,64 @@ are still open.
 `firmware/io/actuators/sol_drv.c` reproduces the four bus-0 jobs with the stock frame layouts and
 reply checks; RSPI-A is driven by the CPU with the five-command sequence of the stock job start
 (`0x96468`). Configuration bytes `0x8E` = 0x00 [I], `0x90` = 0x21, `0x96` = 0x55, mode bit 4 set;
-dither amplitude 0 (dither not used). Any reply or read-back fault latches and forces all
-channels off. Channels 0–6 are only driven by the bench test `firmware/app/bench_out.c` (safety
-design in `firmware/README.md`), which requests the supervisor output enable (spec 03 §4.4)
-while a test is active. M4b (2026-10-30): channel 7 is driven full-on by the park module
-(`app/park.c`, compile gate `TCU_M4B_OUTPUTS`) or the FE11 commissioning routine; the park hold
-(§1.2, TOE31) is driven by a new timer-E platform output; the supervisor enable is a per-source
-request OR (`SUP_EN_BENCH` | `SUP_EN_PARK`). The full-on chip mode field and the TOE31 polarity
-are verified by FE11 on the bench (bench items 1/16).
+dither amplitude 0 (dither not used). A reply fault latches and forces all channels off; a
+configuration read-back mismatch is counted (`cfg_mismatch`) but not faulted — on the live chips
+the configuration reads return 0x00 whatever was written (§2d). Channels 0–6 are only driven by
+the bench test `firmware/app/bench_out.c` (safety design in `firmware/README.md`). M4b
+(2026-10-30): channel 7 is driven full-on by the park module (`app/park.c`, compile gate
+`TCU_M4B_OUTPUTS`) or the FE11 commissioning routine; the park hold (§1.2, TOE31) is driven by a
+new timer-E platform output. The supervisor output enable is **not** requested by the project
+firmware: on the bench, bit 0 of the `0x8E` word sent without the stock start-up register
+initialisation resets the TCU (spec 03 §4.4); the per-source request API
+(`SUP_EN_BENCH` | `SUP_EN_PARK`) exists but stays unused until the enable path is understood.
+The full-on chip mode field and the TOE31 polarity are to be verified by FE11 on the bench
+(bench items 1/16) — blocked by §2d.
+
+### 2d. Bench check 2026-10-30 — live chips, spare E-Shift mechatronic [M]
+
+First live-chip session (real coils connected, 12.5–13.8 V bench supply, TCU in the case,
+firmwired via the RAM loader). Firmware-side results:
+
+- **Exchange protocol confirmed.** The stock CPU-mode recipe (spec 03 §4.4, `0x1D430`) is what
+  the hardware needs: full register re-setup per exchange, then SPDR write **plus the explicit
+  start trigger** (read SPSR with SPTEF set, then write 0) — without the trigger the peripheral
+  never clocks. The first exchange after power-up misaligns; the ID job is retried (5×) and then
+  runs clean forever.
+- **Four chips, not five.** Select 4 (`i % 5 == 4`) consistently returns `0x0000` — the fifth
+  device is unpopulated on this board. `SOL_CHIPS_REAL = 4`; channel map unchanged (8 channels
+  on 4 two-channel chips).
+- **Command map probed live** (FE12 type 3, one command per chip at a time): `0x06` → `0xA212`,
+  `0x00` → `0xA2BD`, `0x28` → `0xA240` (constant, both chips, always), `0x2E`/`0x30`/`0x36`
+  reads return `0x00`-class data; writes `0x8E`/`0x88`/`0x90`/`0x96` acknowledge with the
+  `0xA0`-class echo, setpoints `0xE8`/`0xF0` likewise; unknown commands answer `0xAAxx`;
+  `0x0000` sometimes. So the chips accept everything — and keep answering the same `0xA240`
+  status.
+- **Configuration writes do not stick**: every configuration read-back returns 0x00 regardless
+  of the value written (demoted to a counter, see §2c).
+- **No current flows.** With the M3 ladder running clean on the firmware side (all 10 steps,
+  end reason 0x01 = completed, setpoints acknowledged, no reply faults, status `0xA240`
+  fault-free), the bench ammeter shows no movement (≤ 1 mA variance) on any channel 0–6 at
+  12.5 V and 13.8 V, supply delta invisible on the Teensy rail monitor. The coils are ~25 Ω
+  and directly wired, so a commanded 1 A could not hide.
+
+**Blocker, ranked.** The driver chips talk but do not drive; the most probable cause is the
+switched solenoid supply (VS rail to B10-13, spec 01 §2.9) never asserted:
+
+1. **Supervisor start-up register init missing.** The stock *application* drives the same
+   `0x8E` word with bit 0 = output enable — but only after start-up writes to supervisor
+   registers `0x84`, `0x88` and `0x90` (switch-output enables, bits 5–7) that the project has
+   never sent (spec 03 §4.4/§6). On our bench, bit 0 sent cold — in the *boot*-style cyclic
+   word — **resets the TCU**. The constant `0xA240` chip status may simply mean "no VS".
+   Next: decompile the app's start-up sequence (`0x91DD2` area, staging words
+   `0xFFF907D4/0xD6`, reply handler `0x92AC0` → replies are `0xAAxx`/`0xA8xx` class) and replay
+   the register init through a new FE12 type / RSPI-B lab before touching bit 0 again.
+2. Chip-level unlock/config semantics (writes ack'd, reads 0x00 — the stock sends the
+   configuration job cyclically, maybe for a reason; or an unlock command we have not found).
+3. Mode-byte semantics (mode bits acknowledged but meaning something else on this revision —
+   ID `0xA212`/`0xBD` revision handling in the stock, §2b).
+
+The chips' markings are unobtainable (shielded TCU, no marks found), so the datasheet route is
+closed; the stock code is the datasheet.
 
 ## 3. Solenoid characteristics [O]
 

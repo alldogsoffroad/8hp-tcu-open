@@ -7,14 +7,16 @@
  *     1-5 s, DUMMY LOADS ONLY;
  *   - FE11 (M4b, TCU_M4B_OUTPUTS builds only): commissioning of the two park outputs,
  *     one at a time — out 0 = park release (driver channel 7, full on), out 1 = park
- *     hold (TOE31 / PL6, duty in permille, default 1000). While any bench test is
+ *     hold (TOE31 / PL6, duty in percent, one byte so the request fits one CAN frame,
+ *     default 100). While any bench test is
  *     active the park module suspends its own outputs (app/park.c);
  *   - idle forcing covers channels 0-6 only: channels 7 and TOE31 belong to the park
  *     module (M4b builds) and are never touched by the idle path;
  *   - the test ends on timeout, 0x31 02, leaving the extended session (incl. S3 timeout
  *     without tester present), engine running, or any driver / supervisor fault;
- *   - the supervisor output enable is requested (SUP_EN_BENCH) only while a test is
- *     active; the park module holds its own request (SUP_EN_PARK).
+ *   - no supervisor output-enable request is made: bit 0 of the 0x8E word sent without the
+ *     stock start-up register init resets the TCU (bench 2026-10-30, spec 03 section 4.4);
+ *     the request API stays dormant until that init is replayed (spec 12 section 2d).
  *
  * RoutineControl FE10 (solenoid, dummy loads):
  *   start   31 01 FE 10 ch current seconds      (current in 10 mA steps, 1..100; one CAN frame)
@@ -35,6 +37,7 @@
 
 #define BENCH_RID          0xFE10u
 #define BENCH_PARK_RID     0xFE11u
+#define BENCH_RSPI_DIAG_RID 0xFE12u     /* RSPI-A diagnostic dump (M4b debug; see bench_out.c) */
 #define BENCH_MAX_CHANNEL  6u
 #define BENCH_MAX_MA       1000u
 #define BENCH_MAX_S        5u

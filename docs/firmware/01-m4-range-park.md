@@ -172,9 +172,35 @@ exercise of the fault path). Full pawl engagement against a driveline needs a be
 transmission or vehicle; M4b-mechatronic level proves the complete electrical chain with the
 real actuators and the real position sensor.
 
+## 8a. Bench session 2026-10-30 — blocked at the supply gate [M]
+
+The M4b session on the spare E-Shift mechatronic ran phase A (the M3 checklist) and reached a
+hard blocker before any M4b commissioning:
+
+- The M3 ladder (channels 0–6, real coils, `solenoid` command) runs clean on the firmware
+  side: every job completes, setpoints are acknowledged by the chips, no reply faults, and the
+  results report the requested currents (end reason 0x01).
+- **No current flows through any coil** — ammeter and supply delta both flat at 12.5 V and
+  13.8 V. The driver chips answer every command (ID `0x06` → `0xA212`, status `0x28` → the
+  constant `0xA240`, writes ack'd `0xA0`-class) but configuration read-backs return 0x00 and
+  nothing energises. The chain above is wired and verified; the missing piece is upstream of
+  the chips (spec 12 §2d: ranked as the supervisor-switched VS rail, chip unlock, or mode
+  semantics — evidence now points at the supervisor start-up register init, spec 03 §4.4).
+- The supervisor output-enable requests (SUP_EN_BENCH / SUP_EN_PARK) were **removed** after the
+  bench finding that bit 0 sent without the stock start-up register init resets the TCU. The
+  FE11/FE12 code paths stay; only the enable call is gone.
+- FE12 grew into the RSPI lab used for all of the above: type 1 register dump + protocol
+  variants, type 2 raw job replies, type 3 command-map probe, type 4 arbitrary sequence.
+
+M4b status: implemented and host-tested (stub TOE31 duty, ch-7 full-on staging, arbitration,
+idle scope 0–6), **not commissioned** — the FE11 ammeter steps need the coils to actually draw.
+
 ## 9. Open after the M4b bench session
 
-Hardware sequencing times (replace the 500 ms / 1 s project values); ch 7 behaviour while
-holding (the `keep_release` flag); the TOE31 polarity and full-on chip field (settled by FE11);
-contact polarity (spec 04 §4.4 [I]); behaviour of `0x112` byte 0 (spec 14 §8.4) and of `D5F8`;
-the battery-compensated hold duty; DTC mapping (P1B13 / P1B14).
+**Blocker: the switched solenoid supply (spec 12 §2d, spec 03 §4.4).** Then, in order: replay
+the stock app's supervisor start-up register init (`0x84`/`0x88`/`0x90`) over RSPI-B and retry
+the enable; M3 ladder readings (supply-delta method); FE11 commissioning (TOE31 polarity,
+full-on field, hold current at C7); AN5/AN6 contact polarity; `park-check --hw`. Hardware
+sequencing times (replace the 500 ms / 1 s project values); ch 7 behaviour while holding (the
+`keep_release` flag); behaviour of `0x112` byte 0 (spec 14 §8.4) and of `D5F8`; the
+battery-compensated hold duty; DTC mapping (P1B13 / P1B14).

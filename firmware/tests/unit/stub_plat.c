@@ -22,6 +22,8 @@ bool plat_can_send(can_bus_t bus, const can_frame_t *f)
     return true;
 }
 
+void plat_wdt_service(void) { }
+
 void plat_reset(void)
 {
     stub.resets++;

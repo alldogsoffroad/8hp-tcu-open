@@ -333,7 +333,7 @@ void plat_drv_init(void)
     SPBRA = 5u;
     SPCKDA = 0u;
     SSLNDA = 0u;
-    SPNDA = 0u;
+    SPNDA = 1u;
     SPSCRA = 4u;                        /* sequence of five commands */
     for (uint32_t i = 0u; i < 5u; i++) {
         SPCMDA(i) = s_drv_cmd[i];
@@ -344,8 +344,23 @@ void plat_drv_init(void)
 
 bool plat_drv_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n)
 {
-    SPCRA = 0x08u;                      /* disable: restarts the command sequence */
+    /* Full re-init before EVERY exchange, the discipline the RSPI needs to actually clock
+     * (bench 2026-10-30, FE12 diagnostic: with only an SPCR toggle the peripheral enables
+     * and accepts the write but never shifts; with the full setup each frame completes —
+     * the same lesson as the RSPI-B supervisor transport, spec 03 section 4.4). */
+    SPCRA = 0x00u;
+    RSPIA_DMA_REQ0 = 0u;
+    RSPIA_DMA_REQ1 = 0u;
     SPSRA = 0u;
+    SPPCRA = 0u;
+    SPBRA = 5u;
+    SPCKDA = 0u;
+    SSLNDA = 0u;
+    SPNDA = 1u;
+    SPSCRA = 4u;
+    for (uint32_t i = 0u; i < 5u; i++) {
+        SPCMDA(i) = s_drv_cmd[i];
+    }
     SPCRA = 0x48u;                      /* enable, master */
     for (uint8_t i = 0u; i < n; i++) {
         uint32_t guard;
@@ -354,7 +369,13 @@ bool plat_drv_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n)
         if (guard == 0u) {
             return false;
         }
+        (void)SPSRA;                    /* read SPTEF = 1: the SPDR write prerequisite */
         SPDRA = tx[i];
+        /* Start trigger (manual 17.4.9): a CPU transfer begins when SPTEF is cleared by
+         * the read-1-then-write-0 path after the SPDR write — the peripheral does not
+         * auto-start from the write alone (bench 2026-10-30, FE12 variants 1 vs 2). */
+        (void)SPSRA;
+        SPSRA = 0u;
         for (guard = DRV_WAIT_LOOPS; guard != 0u && (SPSRA & SPSR_SPRF) == 0u; guard--) {
         }
         if (guard == 0u) {

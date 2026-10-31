@@ -107,7 +107,7 @@ int main(void)
     /* a valid test: channel 2 at 400 mA for 1 s */
     CHECK(start(2u, 400u, 1u));
     run_10ms(1u);
-    CHECK(bench_active() && sup->enable);
+    CHECK(bench_active());
     CHECK(sol->mode[2] == SOL_MODE_CURRENT && sol->current[2] == 4000u);
     for (unsigned c = 0u; c < SOL_CHANNELS; c++) {
         CHECK(c == 2u || sol->mode[c] == SOL_MODE_OFF);
@@ -117,7 +117,7 @@ int main(void)
 
     /* timeout after 1 s */
     run_10ms(100u);
-    CHECK(!bench_active() && !sup->enable && sol->mode[2] == SOL_MODE_OFF);
+    CHECK(!bench_active() && sol->mode[2] == SOL_MODE_OFF);
     {
         uint8_t res[7];
         CHECK(bench_routine(3u, BENCH_RID, NULL, 0u, res, 7u) == 7 && res[5] == BENCH_END_TIMEOUT);
@@ -149,13 +149,14 @@ int main(void)
     stub.sup_reply = 0xA800u;
     run_10ms(2u);
 
-    /* driver fault */
+    /* driver header fault (a read-back mismatch alone is no longer a fault: the reply
+     * format is open on hardware, bench 2026-10-30 — counted in sol status instead) */
     CHECK(start(1u, 300u, 5u));
     run_10ms(2u);
-    stub.drv_bad_readback = true;
+    stub.drv_bad_header = true;
     run_10ms(2u);
     CHECK(!bench_active() && sol->mode[1] == SOL_MODE_OFF);
-    stub.drv_bad_readback = false;
+    stub.drv_bad_header = false;
     CHECK(!start(1u, 300u, 5u) && last_nrc() == 0x22u);     /* latched until re-init */
     sol_init();
     run_10ms(1u);
@@ -172,7 +173,7 @@ int main(void)
     /* park release (out 0): channel 7 full on, TOE31 off, enable requested */
     CHECK(start_park(0u, 2u, 0u));
     run_10ms(1u);
-    CHECK(bench_active() && sup->enable);
+    CHECK(bench_active() && !sup->enable);   /* no enable request: the bit resets the TCU */
     CHECK(sol->mode[7] == SOL_MODE_FULL_ON && stub.toe_duty == 0u);
     for (unsigned c = 0u; c < SOL_CH_PARK_RELEASE; c++) {
         CHECK(sol->mode[c] == SOL_MODE_OFF);
@@ -187,7 +188,7 @@ int main(void)
     /* park hold (out 1): TOE31 duty 1000 default, channel 7 off */
     CHECK(start_park(1u, 1u, 0u));
     run_10ms(1u);
-    CHECK(sol->mode[7] == SOL_MODE_OFF && stub.toe_duty == 1000u && sup->enable);
+    CHECK(sol->mode[7] == SOL_MODE_OFF && stub.toe_duty == 1000u);
     /* explicit duty honoured */
     uds_req((const uint8_t[]){ 0x31, 0x02, 0xFE, 0x11 }, 4u);
     run_10ms(1u);
