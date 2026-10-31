@@ -503,3 +503,17 @@ Seven pressure → current curves (calibration objects 3371–3377, group `0xFFF
    2026-10-15); protocol decoded from the firmware (§2b).
 7. Output enable path: SSLB1 control word bit 0 and the supervisor service (spec 03 §4.4).
    Bench check that a channel drives a dummy load only with the enable set.
+
+**Bench 2026-10-31 (running stock, live 0x361 reads):** the app-side solenoid
+command pair lives around **0xFFF90586** (`11 xx 00 01 11 xx` — two channel
+commands mirrored); in the idle-hold state (~1.85 A) the stock **cycles
+combinations on its own** (observed xx = 0x41/0x34/0x3A/0x27/0x0E/0x1F/0x3C/
+0x26/0x44 over minutes — a keep-warm/pressure-priming state machine, which also
+explains the self re-engagement after a comm-timeout release). Companion state
+cells: 0xFFF93B92 = state enum (observed 0..4), 0xFFF90862 = 16-bit live value
+(0x1300-0x1F50 range, tracks the mode), 0xFFF9054A/0x90544 = mode bytes. The
+word/echo (0xFFF907D4/0x7D5), the level cell (0x9054F = 0x1F) and the flag
+area read IDENTICAL across engaged and released states — output gating is the
+0x90586-class command cells, not the supervisor cells. Sweep tool:
+`/tmp/ramsweep.py` (267 cells, 5-7 s when engaged); `/tmp/ramwatch.py` polls
+the state cells and auto-fires a full sweep on a flip.
