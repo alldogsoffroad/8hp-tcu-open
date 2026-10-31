@@ -258,3 +258,26 @@ the loader was reinstalled with the spec 17 path in one afternoon:
 Bench notes: stock is recoverable any time via the same path (app-body
 restore is proven); the stock gap above 0x100000 is reclaimed by any future
 full-image write once a high-bank erase exists.
+
+## 10. Code-flash application boot-verified (2026-10-31 night) [B]
+
+The flash-resident build (`tcu_app.hex`, no `TCU_RAM_APP`) — the product configuration —
+was installed and booted for the first time since 2026-10-18, using the gap-keep route:
+`build_image.py --app tcu_app.hex --stock-ident --gap-keep-above 0x50000` (app code
+ends 0x48DE0; ONE 64 KB erase at 0x40000 + 142 units, CRC `4834DE3A`). Power-cycle →
+boot manager accepted → heartbeat `0x7F0`, ident **`8HPTCU-OPEN M1`** (no "RAM" suffix),
+`info` fully live, outputs gated (M4b). Ammeter 0.167 A. The loader+RAM development
+path reinstalls over this any time with the same gap-keep route (block 0x40000 only).
+
+**Shadow-poll campaign (same session, spec 12/spec 03 cross-reference):** the supervisor
+shadow cells were polled live at 10 Hz through release, silent re-engage, and a full
+power-cycle boot. Results: (1) engaged steady state live-captured — word `0x91/0x81`
+(bit-7 dialect, bit-4 life sign), echo `0xa1/0xb1` with **bit 0 confirmed**, enable +
+confirm `01 01`, mode byte `0x19` (a new engaged value; also satisfies the bit-7 branch
+`& 0x11 == 0x11`), `0xFFF93B8D = 1`, switch output 0 `'c'`; (2) **the shadows are
+identical released (0.169 A) and engaged** — the app-side supervisor context is static
+across the rail state; (3) the boot capture shows enable/confirm/mode already fully set
+at the measurement server's first answering instant — **the enable handshake completes
+before cmd-0x2A/0x20 service starts, so it is unobservable through the measurement
+protocol.** The remaining route to the supervisor's acceptance: replicate the stock
+start-up register order from the decompile (0x91DD2 init / 0x873F0 monitor sequence).
