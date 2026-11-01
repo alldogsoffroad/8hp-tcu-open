@@ -377,3 +377,42 @@ why every blind replay (0x1838 and friends) left the rail closed:
   echo (level echo 6 — commanded accepted) or the 0x0C feedback (achieved 0, selector 6).
   The remaining unknowns are only procedural: the supervisor's acceptance criteria for the
   token/commit chain, and the enable-arm reboot cause.
+
+**Token exchange proven live (2026-10-31 session 2, host scripts v2/v3):** replaying the
+jobs with computed tokens against the live supervisor: `AA06` was the **0x0A echo**
+(level echo — commanded level accepted); the 0x0C feedback carried the challenge.
+Answering each challenge rotates it: observed trace `8,12 → 9,13 → 2,6 → 3,7` (residues
+march 0-3 with +4 inside each), and the 0x1200 commit status byte's bit 0 correlates
+perfectly with rotation (0 = challenge advanced, 1 = held) — the supervisor announces
+its rotations. The table is **16 entries** (selector = full low nibble; beyond 0x452AB
+starts the walker's node descriptors — RAM addresses + sizes at 0xFFF925xx/0xFFF940xx).
+Levels echo every command exactly (6→`AA06`, 7→`AA07`). **Architectural find: the FE13
+one-shot bursts stop the cyclic 5 ms pattern** (exchange counters freeze from the first
+burst; a re-arm does not revive them) — and the acceptance echo (0x22 bit 0) lives in
+that stream, so host-scripted replay can never latch it.
+
+**Native engage sequence (firmware `sup_engage`, same session):** the stock's law now
+runs from the 5 ms tick itself — read-only probe `[0A00 0C00 0C01]` harvests the live
+challenge, duty jobs answer `token(sel)`, the level ramps 1→7 (300 ms/job, duty arms
+between), HOLD continues token rounds; the enable bit joins the 0x8E word only at
+level ≥ 6. FE13 sub-09 arms it, results mode 3 reports state/sel/lvl/rotations/tokens;
+raw one-shots are refused while it owns the bus. Flash image `m4i_engage_IFla.bin`
+(CRC FEAF929A) installed via the engine writer (the op-01 verify diffs after
+programming are the known stale-read artifact — one op-08 resets the read path; the
+patched installer verified clean). Bench result: **probe found the supervisor still at
+level 7, straight to HOLD, 249 token challenges answered with zero bad replies over
+75 s, the cyclic stream unbroken the whole time (echo counters ~100/s).** The
+challenge sat at selector 0 unrotated ("held") under the clean stream — rotation
+appears to be the supervisor's MISS/retry behavior under the stuttering host-burst
+regime, not a requirement.
+
+**Enable arm rebooted the app — with full context (same session):** the enable
+request on the live sequence (HOLD, level 7, tokens flowing, 0x90 = 0x20) reset the
+TCU within a second (request unanswered, app back in default session `7F 31 7F`;
+1/1 on this build, 3/3 the previous night on the same step). Conclusion: **the enable
+bit in the normal (bit-2 toggle) dialect is rejected regardless of context.** The
+engaged stock never sends that combination: while enabled the word is `0x8E91/0x8E81`
+— bit 7 held, bit 4 toggling, **enable riding bit 0 of the same shape**. The untried
+legitimate move is the dialect switch on top of the live token chain (sup pattern3,
+0x91/0x81). Note for that test: bit 7 outside engaged-class state rebooted the box
+once (2026-10-30) — but never with the token chain running.
