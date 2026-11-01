@@ -460,6 +460,22 @@ before 2026-10-31). Next levers, ranked: (1) the 0x3F-init level exchange in
 sup_engage; (2) driver register sync with the stock's exact job words; (3)
 reset-cause capture at app init.
 
+**Level exchange bench-proven (2026-11-01, commit a67d4da, image m4l):** the
+echo-confirmed ramp ran from a cold power cycle — **levels 1..7 then the engaged
+0x1F, each confirmed by the supervisor's 0x0A echo (8/8, zero mismatches, zero
+retries, ~4 s)** — the first fully witnessed ramp; the feedback nibble wandered
+6↔7 throughout exactly as predicted (the echo is the truth). HOLD at commanded
+31 with the token chain running and the enable shadow unspent; **still no grant**
+(0x22 echo flat AA00, ammeter flat 0.167). This isolates the last big structural
+delta: **our driver transport is RSPI-A (plat_drv_xfer: SPCRA/SPCMDA — the
+supervisor never sees a word of it), while the stock's driver register sync runs
+on RSPI-B with the five-select rotation af31/af21/af11/af01/af51 — the
+supervisor's own select IN the rotation, every driver word on its bus** (write
+template 8E 90 96 88 28 30 2E 36 per chip, reads 18 1E 28 88 A0 E8 A6 F0 60 C0
+66 D8; jobs 0x40A9E/0xAB8/B28/B48, senders 0x9225C/0x92344/0x924B0 from the
+current-control loop 0x901A0). Next lever: a driver-sync job on RSPI-B with the
+stock's exact template interleaved into the 5 ms stream alongside the engage —
+the commissioning the supervisor has never witnessed from us.
 **Structural decode 2026-11-01 (job registry + the enable's true order):** a hexdump
 of the job-table region (0x40980–0x40E00) decoded the full descriptor format —
 32-byte records `[01 xx n xx | staging RAM | reply RAM | template ptr | status cell
