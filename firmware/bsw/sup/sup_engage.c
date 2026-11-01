@@ -43,12 +43,18 @@ void sup_engage_arm(bool on)
         s.state = ST_IDLE;
         s.enable_req = false;
         s.enable_sent = false;
+        s.enable_from_start = false;
     }
 }
 
 void sup_engage_request_enable(bool on)
 {
     s.enable_req = on;
+}
+
+void sup_engage_enable_from_start(bool on)
+{
+    s.enable_from_start = on;
 }
 
 bool sup_engage_active(void)
@@ -58,9 +64,11 @@ bool sup_engage_active(void)
 
 bool sup_engage_enable_bit(void)
 {
-    /* Stock gate 0x6C63E: the output enable goes out once the achieved level
-     * reached 6 (the supervisor's echo acceptance is its side of the bargain). */
-    s.enable_sent = s.enable_req && s.lvl >= 6u;
+    /* Two orders: the stock's monitor latches the enable on its FIRST pass
+     * (0x873F0, one-shot 0xFFF93B94) — bit 0 rides the word through the whole
+     * ramp. Enabling only after the ramp completed resets the TCU (bench
+     * 2026-11-01), so enable-from-start is the stock-faithful default test. */
+    s.enable_sent = s.enable_req && (s.enable_from_start || s.lvl >= 6u);
     return s.enable_sent;
 }
 

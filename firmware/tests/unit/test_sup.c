@@ -240,6 +240,19 @@ int main(void)
         sup_tick_5ms();
         CHECK(!e->enable_sent && !s->enable);
 
+        /* stock order: enable from the FIRST frame (monitor one-shot), even at
+         * level 0 — the late enable is what resets the TCU on the bench */
+        sup_engage_request_enable(true);
+        sup_engage_enable_from_start(true);
+        sup_tick_5ms();
+        CHECK(e->enable_sent && (fs.last_8e & 0x01u) == 1u);
+        sup_engage_enable_from_start(false);
+        sup_tick_5ms();
+        CHECK(e->enable_sent);                        /* level 7: gate stays open */
+        sup_engage_request_enable(false);
+        sup_tick_5ms();
+        CHECK(!e->enable_sent);
+
         /* hold state keeps answering the rolling challenge */
         {
             uint16_t tok = e->tokens;

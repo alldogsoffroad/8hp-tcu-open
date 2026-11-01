@@ -437,7 +437,31 @@ Also queued: reset-cause capture at app init (crash-vs-supervisor proof), and th
 `jobs` counter in the engage status is uint8 and wraps at 256 (cosmetic, note for
 the next results reader).
 
-**Decomposition closed (same session, final test):** the engaged shape WITHOUT the
+**Structural decode 2026-11-01 (job registry + the enable's true order):** a hexdump
+of the job-table region (0x40980–0x40E00) decoded the full descriptor format —
+32-byte records `[01 xx n xx | staging RAM | reply RAM | template ptr | status cell
+| completion handler | cfg ptr | 45B9F72D]` — giving the COMPLETE supervisor job
+registry: cyclic ID/mixed/job1 `[8E C9 22 09]` (handler 0x92D94, staging shadow
+0xFFF88424)/job2/job3/SSLB2, the register duty (0x910EE) and level (0x911D8) jobs,
+FOUR 5-select driver jobs (handlers 0x921E0/0x92298/0x923BC/0x92530) whose
+templates write `8E 90 96 88 28 30 2E 36` and read `18 1E 28 88 A0 E8 A6 F0 60
+C0 66 D8` per chip — the never-run driver commissioning (register 0x96 etc.).
+**There is no mode-set register job** — the mode-0x31 chain is app-internal, and
+since the engaged shape is accepted in mode 0 anyway, the mode theory for the
+enable is dead. The decisive find is in the monitor `0x873F0` (fresh decompile):
+after the gate poll it latches **`0x6C612(1)` — the enable — on its FIRST pass,
+one-shot via `0xFFF93B94`, while the level is still 0**. The stock's bit 0 rides
+the 5 ms word from the very first frame of the ramp (still normal dialect; the
+0x91 shape comes later with mode 0x31), and the echo acceptance arrives DURING
+the enabled ramp. Our sequence inverted this — enable only after level 7 in
+HOLD — i.e. an enable appearing mid-stream after start-up, which is exactly the
+violation the supervisor resets on. Firmware: `sup_engage` gained the stock-order
+arm (FE13 sub-09 `in[1]=2`: enable from the first frame), image
+`m4j_engagestart_IFla.bin`. The decisive bench test: fresh power cycle (cold
+supervisor, level 0) → engage armed enable-from-start → the supervisor WITNESSES
+the 0→7 ramp with bit 0 present from frame one → echo bit 0 + ammeter verdict.
+
+**Decomposition closed (2026-10-31 final test):** the engaged shape WITHOUT the
 enable — `0x8E90/0x8E80`, single-frame sub-08 `31 01 FE 13 08 90 10` — **survived
 the full 45 s watch with the token chain running, and the supervisor answered it**:
 the 0x22 echo moved from flat `0xAA00` to **`0xAA90`** (mirroring the engaged base

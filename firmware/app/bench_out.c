@@ -464,12 +464,17 @@ static int sup_lab_start(const uint8_t *in, uint16_t n)
         return -NRC_IMLOIF;
     }
     if (in[0] == 9u) {                                     /* engage sequence: arm /
-                                                             * [1 = also request enable] */
-        if (n < 2u || n > 3u || in[1] > 1u) {
+                                                             * [1 = enable req] /
+                                                             * [2 = stock order: enable
+                                                             *  from the first frame] */
+        if (n < 2u || n > 3u || in[1] > 2u) {
             return -NRC_IMLOIF;
         }
         sup_engage_arm(in[1] != 0u);
-        if (n == 3u) {
+        sup_engage_enable_from_start(in[1] == 2u);
+        if (in[1] == 2u) {
+            sup_engage_request_enable(true);
+        } else if (n == 3u) {
             sup_engage_request_enable(in[2] != 0u);
         }
         s_sup_mode = 3u;
@@ -599,7 +604,8 @@ static int sup_lab_results(uint8_t *out, uint16_t max)
         out[9] = e->echo_bad;
         out[10] = e->status;
         out[11] = (uint8_t)(e->tokens >> 8); out[12] = (uint8_t)e->tokens;
-        out[13] = (uint8_t)((e->enable_req ? 1u : 0u) | (e->enable_sent ? 2u : 0u));
+        out[13] = (uint8_t)((e->enable_req ? 1u : 0u) | (e->enable_sent ? 2u : 0u) |
+                            (e->enable_from_start ? 4u : 0u));
         for (uint8_t i = 0u; i < 8u; i++) {                /* cyclic replies as mode 2 */
             out[14u + 2u * i] = (uint8_t)(st->rx_words[i] >> 8);
             out[15u + 2u * i] = (uint8_t)st->rx_words[i];
