@@ -437,6 +437,29 @@ Also queued: reset-cause capture at app init (crash-vs-supervisor proof), and th
 `jobs` counter in the engage status is uint8 and wraps at 256 (cosmetic, note for
 the next results reader).
 
+**Grant-law firmware + cold watch (2026-11-01, commits 3f23794):** with the echo-
+gated enable installed (`m4k_echogate_IFla.bin`), the engage ran from a cold
+power cycle for 150 s: probe → straight to HOLD (the 0x0C feedback nibble read
+level 7 seconds after power-on — the nibble wanders even cold) → **498 token
+challenges answered, zero bad, no reset, enable shadow never spent** (`en=101`:
+requested, from-start, never sent). The supervisor granted nothing (0x22 echo
+flat `AA00`, challenge held at sel 0). Findings: (1) the grant law is SAFE and
+correct — resets are now impossible from our side; (2) our simplified ramp never
+runs when the feedback nibble reads ≥ 6, but the STOCK does not trust that
+nibble — it initialises commanded to 0x3F, lets the harvester flag the mismatch,
+and drives the **bump-and-resend level-job loop until the 0x0A ECHO matches**
+(0x6C12C init → 0x6C1EA mismatch → 0x6C720 → 0x6C0BA; the echo 0x9054F is the
+sync signal, not the fb nibble). That exchange is the top remaining candidate
+for what the supervisor wants to witness before granting. Also decoded this
+session: the driver register jobs are RUNTIME state-sync from the current-
+control loop (0x901A0 sends on channel-state change; senders 0x9225C/0x92344/
+0x924B0), not a boot one-shot; the installer 0x937F8 is a job QUEUE (10 cyclic
++ 5 register slots with integrity pairs); `AA45` is likely just the normal
+reply to the 0x9020 switch word (mode-2 readouts with bits90=0x20 didn't exist
+before 2026-10-31). Next levers, ranked: (1) the 0x3F-init level exchange in
+sup_engage; (2) driver register sync with the stock's exact job words; (3)
+reset-cause capture at app init.
+
 **Structural decode 2026-11-01 (job registry + the enable's true order):** a hexdump
 of the job-table region (0x40980–0x40E00) decoded the full descriptor format —
 32-byte records `[01 xx n xx | staging RAM | reply RAM | template ptr | status cell
