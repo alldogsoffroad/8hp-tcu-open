@@ -243,6 +243,13 @@ static const uint16_t S_DRV_SP_REGS[9] = {
     0x6000u, 0xC000u, 0x6600u, 0xD800u,
 };
 #define DRV_SP_SETPOINT 0x1141u
+/* the engaged stock's keep-warm DITHER (0x90586 capture, low bytes of the
+ * 11 xx command pairs) — the supervisor may watch for CHANGING commands */
+static const uint16_t S_DRV_DITHER[9] = {
+    0x1141u, 0x1134u, 0x113Au, 0x1127u, 0x110Eu, 0x111Fu, 0x113Cu, 0x1126u, 0x1144u,
+};
+static uint8_t s_drv_dither;
+static bool s_drv_alternate;                /* periodic job alternates read/sp */
 static bool s_drv_sp_pending;
 
 void sup_drv_sync(bool on)
@@ -305,6 +312,23 @@ bool sup_drv_poll(uint16_t *words, uint8_t *n)
         return false;
     }
     s_drv_div = 0u;
+    if (s_drv_alternate) {
+        /* the keep-warm dither: cycle the captured command sequence */
+        s_drv_alternate = false;
+        const uint16_t sp = S_DRV_DITHER[s_drv_dither];
+        s_drv_dither = (uint8_t)((s_drv_dither + 1u) % 9u);
+        for (uint8_t r = 0u; r < 9u; r++) {
+            for (uint8_t c = 0u; c < 4u; c++) {
+                words[4u * r + c] = (uint16_t)(S_DRV_SP_REGS[r] |
+                    ((r == 2u || r == 4u) ? sp : 0u));
+            }
+        }
+        *n = DRV_SP_WORDS;
+        s_drv.drv_jobs++;
+        s_drv.drv_sp++;
+        return true;
+    }
+    s_drv_alternate = true;
     for (uint8_t r = 0u; r < 12u; r++) {
         for (uint8_t c = 0u; c < 5u; c++) {
             words[5u * r + c] = S_DRV_READ_REGS[r];
