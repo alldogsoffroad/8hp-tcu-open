@@ -224,13 +224,15 @@ static sup_drv_status_t s_drv;
 static uint16_t s_drv_div;
 static bool s_drv_on;
 
-/* The write job (stock sender 0x92344): template flash 0x40AD8 verbatim,
- * register-major across the five-select rotation; the stock ORs per-channel
- * data into 8E/90/96/88 and leaves 28/30/2E/36 bare as readbacks. Our first
- * pass is the zero-value commissioning: configs cleared, setpoints zero. */
+/* The write job (stock sender 0x92344): template flash 0x40AD8, register-major
+ * across the five-select rotation, per-channel data OR'd into 8E/90/96/88 and
+ * 28/30/2E/36 bare as readbacks. Data values are the ENGAGED STOCK's own live
+ * state, swept 2026-10-30 at 13.4 V (ramsweep_held: 0x908FB..FF = 55, 0x90900..04
+ * = 9f, 0x90's data = the 0x901A0 loop constant 0x02; the 0x88 flags byte is 0
+ * at commissioning - real currents ride the 0x2D job's 11-bit setpoints). */
 #define DRV_WRITE_WORDS 40u
 static const uint16_t S_DRV_WRITE_TMPL[8] = {
-    0x8E00u, 0x9000u, 0x9600u, 0x8800u, 0x2800u, 0x3000u, 0x2E00u, 0x3600u,
+    0x8E55u, 0x9002u, 0x969Fu, 0x8800u, 0x2800u, 0x3000u, 0x2E00u, 0x3600u,
 };
 static bool s_drv_write_pending;
 
@@ -252,8 +254,8 @@ bool sup_drv_poll(uint16_t *words, uint8_t *n)
         return false;
     }
     if (s_drv_write_pending) {
-        /* zero-value commissioning pass: all configs cleared, setpoints zero,
-         * readbacks bare — the safe subset of the stock's write+verify job */
+        /* commissioning pass with the engaged stock's own register values;
+         * readbacks bare — the stock's write+verify job, live-valued */
         s_drv_write_pending = false;
         for (uint8_t r = 0u; r < 8u; r++) {
             for (uint8_t c = 0u; c < 5u; c++) {
