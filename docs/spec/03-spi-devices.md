@@ -473,7 +473,28 @@ on RSPI-B with the five-select rotation af31/af21/af11/af01/af51 — the
 supervisor's own select IN the rotation, every driver word on its bus** (write
 template 8E 90 96 88 28 30 2E 36 per chip, reads 18 1E 28 88 A0 E8 A6 F0 60 C0
 66 D8; jobs 0x40A9E/0xAB8/B28/B48, senders 0x9225C/0x92344/0x924B0 from the
-current-control loop 0x901A0). Next lever: a driver-sync job on RSPI-B with the
+current-control loop 0x901A0). **Driver-sync campaign (2026-11-01, commits 2bf23db..54639d8):** the five-select
+read job (12 regs x SSLB3/2/1/0/5, every 2 s) runs clean — chips answer (24
+strict-AA + mixed per job; our supervisor answers AA-class on everything, so
+a8:0 is expected). The zero-value write pass (m4n) also survived — no grant.
+The LIVE-VALUE write (m4o, values swept from the engaged stock's RAM:
+0x8E=0x55, 0x90=0x02, 0x96=0x9F, 0x88=0) **RESET the TCU**: with a fresh RSPI
+setup the command sequence restarts at SPCMD0, so the supervisor's select
+received 0x8E55 as a control word — bits 0,2,4,6 = an ungranted enable plus
+the POWER-DOWN bit. The stock never does this because its rotation phase is
+CONTINUOUS across jobs. Fix (m4p, `54639d8`): driver WRITES go to the four
+chips only (af31/21/01/51, 32 words, plat_sup_xfer4); the supervisor stays
+in the read rotation where it only sees bare reads. **The m4p run: the full
+decoded commissioning — tokens, echo-confirmed level exchange to 0x1F,
+live-value driver writes, periodic reads, enable as an obedient shadow — runs
+stably and indefinitely with NO reset, and still no grant** (0x22 echo flat,
+ammeter 0.167). Remaining leads, ranked: (1) the 0x2D job — the 11-bit
+CURRENT SETPOINTS (the stock's keep-warm machine commands real currents from
+boot; our 0x88 stays 0 — the supervisor may require seeing commanded load);
+(2) the 0x0A-class job (10 words, handler 0x921E0, never decoded); (3) the
+rotation-phase fidelity question; (4) system-mode wire consequences.
+
+Next lever: a driver-sync job on RSPI-B with the
 stock's exact template interleaved into the 5 ms stream alongside the engage —
 the commissioning the supervisor has never witnessed from us.
 **Structural decode 2026-11-01 (job registry + the enable's true order):** a hexdump
