@@ -235,11 +235,27 @@ static const uint16_t S_DRV_WRITE_TMPL[8] = {
 };
 static bool s_drv_write_pending;
 
+/* setpoint job (stock 0x2D): [88, A0, E8, A6, F0, 60, C0, 66, D8] x 4 chips;
+ * E8/F0 carry the 11-bit current setpoints (sender positions chan+0xC/+0x14).
+ * Static keep-warm class 0x1141 (0x90586 engaged capture: 11 xx pairs). */
+static const uint16_t S_DRV_SP_REGS[9] = {
+    0x8800u, 0xA000u, 0xE800u, 0xA600u, 0xF000u,
+    0x6000u, 0xC000u, 0x6600u, 0xD800u,
+};
+#define DRV_SP_SETPOINT 0x1141u
+static bool s_drv_sp_pending;
+
 void sup_drv_sync(bool on)
 {
     s_drv_on = on;
     s_drv_div = DRV_PERIOD - 1u;        /* first pass on the next tick */
     s_drv_write_pending = on;           /* one commissioning write at arm */
+    s_drv_sp_pending = on;              /* then one keep-warm setpoint pass */
+}
+
+void sup_drv_setpoint_once(void)
+{
+    s_drv_sp_pending = true;
 }
 
 const sup_drv_status_t *sup_drv_status(void)
@@ -265,6 +281,21 @@ bool sup_drv_poll(uint16_t *words, uint8_t *n)
         *n = DRV_WRITE_WORDS;
         s_drv.drv_jobs++;
         s_drv.drv_writes++;
+        return true;
+    }
+    if (s_drv_sp_pending) {
+        /* the keep-warm hypothesis: a static keep-warm-class setpoint on both
+         * channels of every chip — data only while the rail stays closed */
+        s_drv_sp_pending = false;
+        for (uint8_t r = 0u; r < 9u; r++) {
+            for (uint8_t c = 0u; c < 4u; c++) {
+                words[4u * r + c] = (uint16_t)(S_DRV_SP_REGS[r] |
+                    ((r == 2u || r == 4u) ? DRV_SP_SETPOINT : 0u));
+            }
+        }
+        *n = DRV_SP_WORDS;
+        s_drv.drv_jobs++;
+        s_drv.drv_sp++;
         return true;
     }
     if (s_drv_div < DRV_PERIOD) {
@@ -296,4 +327,13 @@ void sup_drv_replies(const uint16_t *rx, uint8_t n)
         }
     }
 }
+
+
+/* ---- the setpoint job (stock 0x2D, sender 0x924B0): template flash 0x40D0C
+ * = [88, A0, E8, A6, F0, 60, C0, 66, D8]; the stock ORs the flags byte into
+ * 0x88, bytes into A0/A6, and the 11-BIT CURRENT SETPOINTS into E8/F0 (two
+ * per chip, sender positions 10-14 / 20-24 = chan+0xC / chan+0x14). The
+ * engaged stock's keep-warm machine commands these continuously from boot
+ * (0x90586 capture: 11 xx 00 01 11 xx, xx cycling 41/34/3A/27/0E/1F/3C/26/44);
+ * our commissioning sends a static keep-warm-class 0x1141 on both channels. */
 

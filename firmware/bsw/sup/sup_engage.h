@@ -41,10 +41,12 @@ typedef struct {
  * has never witnessed from us (our solenoid path is RSPI-A). */
 #define SUP_DRV_READ_WORDS 60u
 #define DRV_WRITE_WORDS 32u   /* 8 regs x the four driver chips */
+#define DRV_SP_WORDS 36u      /* 9 regs x 4 chips, the setpoint job */
 
 typedef struct {
     uint8_t  drv_jobs;     /* driver jobs sent (read + write) */
     uint8_t  drv_writes;   /* commissioning write jobs sent */
+    uint8_t  drv_sp;       /* setpoint jobs sent (keep-warm class) */
     uint8_t  drv_bad;      /* words whose reply fits no known class */
     uint16_t drv_a8;       /* supervisor-class (0xA8xx) replies seen */
     uint16_t drv_aa;       /* other-chip-class (0xAAxx) replies seen */
@@ -73,6 +75,7 @@ const sup_eng_status_t *sup_engage_status(void);
  * hands the replies to sup_drv_replies(). */
 void sup_drv_sync(bool on);
 void sup_drv_write_once(void);   /* queue one zero-value write pass */
+void sup_drv_setpoint_once(void);/* queue one keep-warm setpoint pass */
 bool sup_drv_poll(uint16_t *words, uint8_t *n);
 void sup_drv_replies(const uint16_t *rx, uint8_t n);
 const sup_drv_status_t *sup_drv_status(void);
