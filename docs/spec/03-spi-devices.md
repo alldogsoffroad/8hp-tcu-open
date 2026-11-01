@@ -416,3 +416,43 @@ engaged stock never sends that combination: while enabled the word is `0x8E91/0x
 legitimate move is the dialect switch on top of the live token chain (sup pattern3,
 0x91/0x81). Note for that test: bit 7 outside engaged-class state rebooted the box
 once (2026-10-30) — but never with the token chain running.
+
+**Engaged-dialect test (same session, final step):** the dialect switch via FE13
+sub-08 taught us two mechanics before it taught us the answer. (1) **The 8-byte
+sub-08 request is multi-frame, and multi-frame RX fails while the engage sequence
+owns the 5 ms tick** — the CF window is missed, the request is silently dropped
+(no reply, NO execution; the earlier v2/v3 multi-frame duty bursts worked only
+because the cyclic pattern was dead then). Single-frame forms (≤ 7 bytes) always
+get through: sub-08's 3-byte form (`31 01 FE 13 08 91 10`, bits90 defaults 0x20)
+is the bench-safe shape. (2) The **`0x8E91/0x81` engaged shape with the enable bit
+reset the TCU too** — delivered, executed, reboot within a second, ammeter profile
+identical (brief .001 dip, back to 0.167). So with 350+ clean token rounds at
+level 7 behind it, **both enable-bearing word shapes are rejected**. Open
+decomposition: engaged shape WITHOUT the enable (`0x8E90/0x80`) — if that survives,
+the enable bit alone is the trigger and the missing legitimiser is the stock's
+mode-0x31 chain (system state `0xFFF93B42 == 3` → `0x6BC76` → mode byte 0x31), i.e.
+a state the supervisor expects the app to reach BEFORE enabling; identifying that
+chain's wire side (a register job or a CAN-level state) is the next decode target.
+Also queued: reset-cause capture at app init (crash-vs-supervisor proof), and the
+`jobs` counter in the engage status is uint8 and wraps at 256 (cosmetic, note for
+the next results reader).
+
+**Decomposition closed (same session, final test):** the engaged shape WITHOUT the
+enable — `0x8E90/0x8E80`, single-frame sub-08 `31 01 FE 13 08 90 10` — **survived
+the full 45 s watch with the token chain running, and the supervisor answered it**:
+the 0x22 echo moved from flat `0xAA00` to **`0xAA90`** (mirroring the engaged base
+bits through the bit-5-masked echo), and the 0x90-register reply changed
+`0xAA00 → 0xAA45` (a dialect-acknowledgment status we had never seen; bits
+0x45 = 0100_0101). Echo counters climb 1:1 — the arithmetic of the bit-4 toggle
+against the constant echo, as expected. **So: bit 7 and the bit-4 life-sign are
+accepted in our state; the enable bit ALONE is the reset trigger, in both
+dialects.** The rail-gate question is now precisely: what legitimises bit 0? The
+stock's own sequence between the ramp and `0x6C612(1)` is the mode-0x31 chain
+(system state `0xFFF93B42 == 3` → setter `0x6BC76` sets `0xFFF93B8D` → mode byte
+`0xFFF90951 = 0x31`), and possibly the supervisor needing to SEE a fresh 0→7 ramp
+(our level 7 came from its own latch, not from a ramp it observed) or a longer
+correct-token history. Next decode targets, in order: (1) the wire side of the
+`0x6BC76` mode-set — find what it writes (register job or supervisor word field);
+(2) reset-cause capture in our app at init (crash-vs-supervisor proof for the
+enable reset); (3) a fresh power-cycled supervisor with the engage running from
+cold, so the ramp 0→7 happens under observation.
