@@ -23,6 +23,8 @@ typedef struct {
     uint8_t  bad;          /* register-job replies outside the 0xA8 class */
     uint8_t  echo_ok;      /* level echo (0x0A reply) matched the command */
     uint8_t  echo_bad;     /* level echo mismatches */
+    uint8_t  lvl_echo;     /* last 0x0A echo value (the supervisor's commanded) */
+    uint8_t  retries;      /* consecutive echo mismatches at this level */
     uint8_t  status;       /* last 0x1200 commit status byte */
     uint16_t tokens;       /* duty jobs answered */
     bool     enable_req;   /* host-gated enable request (the shadow) */

@@ -24,6 +24,12 @@ static uint32_t token(uint8_t sel)
  * exchanges ran clean at 0.3-1.1 s cadences (2026-10-31 v2/v3 traces). */
 #define JOB_PERIOD 60u
 #define SYNC_JOBS  2u
+#define LEVEL_MAX  7u      /* the stock's target cell caps at 7 (0x6C542) */
+#define LEVEL_RUN  31u     /* the engaged commanded level: 0x1F, live-observed
+                            * (2026-10-30 shadow 0x9054E/F = 1f 1f; the 841F
+                            * one-shot latched AA1F on the bench) */
+#define ECHO_RETRY 3u     /* 0x6C742: resend the level job while the 0x0A echo
+                           * disagrees with the command */
 
 enum { ST_IDLE = 0u, ST_SYNC = 1u, ST_RAMP = 2u, ST_HOLD = 3u };
 
@@ -147,10 +153,10 @@ void sup_engage_replies(const uint16_t *rx, uint8_t n)
             return;
         }
         harvest_fb(rx[1]);
-        s.lvl_cmd = s.lvl >= 1u ? s.lvl : 1u;
-        if (s.lvl >= 6u) {
-            s.state = ST_HOLD;           /* already engaged-class: answer tokens */
-        }
+        s.lvl_echo = (uint8_t)(rx[0] & 0x3Fu);
+        s.state = ST_RAMP;               /* the exchange IS the sequence: the
+                                          * fb nibble wanders (reads 7 cold) —
+                                          * the stock always runs the loop */
     } else if (n == 8u) {                /* duty job: fb [5], status [4], echo [6] */
         if ((rx[5] & 0xF900u) != 0xA800u) {
             s.bad++;
@@ -169,17 +175,33 @@ void sup_engage_replies(const uint16_t *rx, uint8_t n)
         }
         s.status = (uint8_t)(rx[2] & 0xFFu);
         harvest_fb(rx[3]);
-        if ((rx[1] & 0xFFu) == s.lvl_cmd) {
+        s.lvl_echo = (uint8_t)(rx[1] & 0x3Fu);
+        if (s.lvl_echo == s.lvl_cmd) {
             s.echo_ok++;
+            s.retries = 0u;
             if (s.state == ST_RAMP) {
-                if (s.lvl_cmd < 7u) {
+                if (s.lvl_cmd < LEVEL_MAX) {
                     s.lvl_cmd++;
-                } else if (s.lvl >= 6u) {
-                    s.state = ST_HOLD;   /* steady state: token duty arms, 0x6C63E 0x1E */
+                } else if (s.lvl_cmd == LEVEL_MAX) {
+                    s.lvl_cmd = LEVEL_RUN;   /* 7 confirmed -> the engaged 0x1F */
+                } else {
+                    s.state = ST_HOLD;       /* 0x1F confirmed: steady duty arms */
                 }
             }
         } else {
             s.echo_bad++;
+            /* 0x6C742: the confirm poll resends while the echo disagrees;
+             * after persistent mismatch step anyway (observed, logged) */
+            if (s.state == ST_RAMP && ++s.retries > ECHO_RETRY) {
+                s.retries = 0u;
+                if (s.lvl_cmd < LEVEL_MAX) {
+                    s.lvl_cmd++;
+                } else if (s.lvl_cmd == LEVEL_MAX) {
+                    s.lvl_cmd = LEVEL_RUN;
+                } else {
+                    s.state = ST_HOLD;
+                }
+            }
         }
     }
 }

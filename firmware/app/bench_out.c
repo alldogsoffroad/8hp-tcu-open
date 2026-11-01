@@ -589,7 +589,7 @@ static int sup_lab_results(uint8_t *out, uint16_t max)
 
     if (s_sup_mode == 3u) {                                /* engage sequence status */
         const sup_eng_status_t *e = sup_engage_status();
-        if (max < 34u) {
+        if (max < 36u) {
             return -NRC_IMLOIF;
         }
         out[0] = 3u;
@@ -603,16 +603,18 @@ static int sup_lab_results(uint8_t *out, uint16_t max)
         out[8] = e->echo_ok;
         out[9] = e->echo_bad;
         out[10] = e->status;
-        out[11] = (uint8_t)(e->tokens >> 8); out[12] = (uint8_t)e->tokens;
-        out[13] = (uint8_t)((e->enable_req ? 1u : 0u) | (e->enable_sent ? 2u : 0u) |
+        out[11] = e->lvl_echo;
+        out[12] = e->retries;
+        out[13] = (uint8_t)(e->tokens >> 8); out[14] = (uint8_t)e->tokens;
+        out[15] = (uint8_t)((e->enable_req ? 1u : 0u) | (e->enable_sent ? 2u : 0u) |
                             (e->enable_from_start ? 4u : 0u));
         for (uint8_t i = 0u; i < 8u; i++) {                /* cyclic replies as mode 2 */
-            out[14u + 2u * i] = (uint8_t)(st->rx_words[i] >> 8);
-            out[15u + 2u * i] = (uint8_t)st->rx_words[i];
+            out[16u + 2u * i] = (uint8_t)(st->rx_words[i] >> 8);
+            out[17u + 2u * i] = (uint8_t)st->rx_words[i];
         }
-        out[30] = (uint8_t)(st->echo_ok >> 8);  out[31] = (uint8_t)st->echo_ok;
-        out[32] = (uint8_t)(st->echo_bad >> 8); out[33] = (uint8_t)st->echo_bad;
-        return 34;
+        out[32] = (uint8_t)(st->echo_ok >> 8);  out[33] = (uint8_t)st->echo_ok;
+        out[34] = (uint8_t)(st->echo_bad >> 8); out[35] = (uint8_t)st->echo_bad;
+        return 36;
     }
     if (s_sup_mode == 1u) {                                /* last one-shot replies */
         const uint16_t need = (uint16_t)(2u + 2u * s_sup_n);

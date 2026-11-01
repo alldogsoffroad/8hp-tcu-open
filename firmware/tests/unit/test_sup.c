@@ -216,23 +216,24 @@ int main(void)
         CHECK(back(3u) == 0x1200u && back(2u) == 0x0C00u &&
               back(1u) == 0x0A00u && back(0u) == 0x0C01u);
 
-        /* sync = two duty rounds, then the ramp: level jobs climb 1..7 with a
-         * duty arm between each (the stock's 0x8CEDC interleave) */
+        /* sync = two duty rounds, then the ramp: level jobs climb 1..7 then the
+         * engaged 31, each confirmed by the 0x0A echo before advancing (the
+         * stock's 0x6C742 confirm loop; mismatch = resend) */
         {
             unsigned guard = 0u;
             while (e->state == 1u && ++guard < 200000u) {
                 sup_tick_5ms();
             }
-            CHECK(e->state == 2u && e->tokens >= 2u);
+            CHECK(e->state == 2u);           /* probe goes straight to the ramp */
             guard = 0u;
             while (e->state == 2u && ++guard < 200000u) {
                 sup_tick_5ms();
             }
             CHECK(guard < 200000u);
         }
-        CHECK(e->state == 3u);                     /* hold: ramp complete */
-        CHECK(e->lvl_cmd == 7u && e->lvl >= 6u);
-        CHECK(e->echo_ok >= 7u && e->echo_bad == 0u);
+        CHECK(e->state == 3u);                     /* hold: 0x1F confirmed */
+        CHECK(e->lvl_cmd == 31u && e->lvl_echo == 31u);
+        CHECK(e->echo_ok >= 8u && e->echo_bad == 0u);   /* 1..7 + the 31 */
         CHECK(e->rot > 0u);                        /* challenge rotations observed */
 
         /* enable: NEVER before the supervisor's echo grants bit 0 (stock law —
