@@ -281,6 +281,7 @@ bool sup_drv_poll(uint16_t *words, uint8_t *n)
         *n = DRV_WRITE_WORDS;
         s_drv.drv_jobs++;
         s_drv.drv_writes++;
+        s_drv_div = 0u;                  /* reads resume after a full dwell */
         return true;
     }
     if (s_drv_sp_pending) {
@@ -296,6 +297,7 @@ bool sup_drv_poll(uint16_t *words, uint8_t *n)
         *n = DRV_SP_WORDS;
         s_drv.drv_jobs++;
         s_drv.drv_sp++;
+        s_drv_div = 0u;                  /* reads resume after a full dwell */
         return true;
     }
     if (s_drv_div < DRV_PERIOD) {
