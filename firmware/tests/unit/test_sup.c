@@ -15,6 +15,7 @@ static struct {
     uint8_t lvl;         /* achieved level, reported in the 0x0C read */
     uint8_t lvl_cmd;     /* last level write, echoed by the 0x0A read */
     uint8_t reads;       /* 0x0C read counter: rotates the challenge every 3rd */
+    bool    accept;      /* 0x22 echo carries bit 0 (the acceptance grant) */
     uint16_t last_8e;
 } fs;
 
@@ -44,6 +45,9 @@ static uint16_t fake_sup(uint16_t tx)
         break;
     case 0x0A:
         r = (uint16_t)(0xAA00u | fs.lvl_cmd);
+        break;
+    case 0x22:
+        r = (uint16_t)(0xA800u | (fs.accept ? 1u : 0u));  /* the grant echo */
         break;
     case 0x8E:
         fs.last_8e = tx;
@@ -231,24 +235,23 @@ int main(void)
         CHECK(e->echo_ok >= 7u && e->echo_bad == 0u);
         CHECK(e->rot > 0u);                        /* challenge rotations observed */
 
-        /* enable: not before level 6 even when requested earlier */
+        /* enable: NEVER before the supervisor's echo grants bit 0 (stock law —
+         * the request is a shadow; every unilateral enable resets the TCU) */
         sup_engage_request_enable(true);
         sup_tick_5ms();
+        CHECK(!e->enable_sent && !s->enable);         /* no grant yet: no bit 0 */
+        CHECK((fs.last_8e & 0x01u) == 0u);
+        fs.accept = true;                             /* the supervisor grants */
+        sup_tick_5ms();
+        CHECK(!e->enable_sent);                       /* grant seen this pass */
+        sup_tick_5ms();                               /* word carries it next pass */
         CHECK(e->enable_sent && s->enable);
         CHECK((fs.last_8e & 0x01u) == 1u);
-        sup_engage_request_enable(false);
+        fs.accept = false;                            /* grant withdrawn */
+        sup_tick_5ms();
+        CHECK(e->enable_sent);                        /* one pass of latency */
         sup_tick_5ms();
         CHECK(!e->enable_sent && !s->enable);
-
-        /* stock order: enable from the FIRST frame (monitor one-shot), even at
-         * level 0 — the late enable is what resets the TCU on the bench */
-        sup_engage_request_enable(true);
-        sup_engage_enable_from_start(true);
-        sup_tick_5ms();
-        CHECK(e->enable_sent && (fs.last_8e & 0x01u) == 1u);
-        sup_engage_enable_from_start(false);
-        sup_tick_5ms();
-        CHECK(e->enable_sent);                        /* level 7: gate stays open */
         sup_engage_request_enable(false);
         sup_tick_5ms();
         CHECK(!e->enable_sent);

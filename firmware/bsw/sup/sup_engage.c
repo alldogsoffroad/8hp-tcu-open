@@ -62,13 +62,19 @@ bool sup_engage_active(void)
     return s.state != ST_IDLE;
 }
 
+void sup_engage_echo_bit0(bool echo_set)
+{
+    s.echo_grant = echo_set;
+}
+
 bool sup_engage_enable_bit(void)
 {
-    /* Two orders: the stock's monitor latches the enable on its FIRST pass
-     * (0x873F0, one-shot 0xFFF93B94) — bit 0 rides the word through the whole
-     * ramp. Enabling only after the ramp completed resets the TCU (bench
-     * 2026-11-01), so enable-from-start is the stock-faithful default test. */
-    s.enable_sent = s.enable_req && (s.enable_from_start || s.lvl >= 6u);
+    /* Stock law (0x91C86 dispatch + word builder): the word's bit 0 goes out
+     * only once the supervisor's 0x22 echo shows bit 0 (the acceptance grant).
+     * The request itself is a shadow (0xFFF90953) latched early; asserting it
+     * unilaterally resets the TCU in every timing tried (bench 2026-10-30
+     * through 2026-11-01: late, from-start cold, warm, both dialects). */
+    s.enable_sent = s.enable_req && s.echo_grant;
     return s.enable_sent;
 }
 

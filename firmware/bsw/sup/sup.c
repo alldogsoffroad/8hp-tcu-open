@@ -108,10 +108,13 @@ static void app_pattern_tick(void)
      * answered with a reset (2026-10-30: 0x8E44 held for ~600 frames killed the TCU).
      * The pattern therefore self-toggles unconditionally; the echo is only counted. */
     s_toggle = !s_toggle;
+    /* The previous pass's 0x22 echo decides this pass's enable bit (stock law:
+     * the supervisor grants acceptance first; the app follows). */
+    sup_engage_echo_bit0((s_st.rx_words[2] & SUP_BIT_ENABLE) != 0u);
     uint8_t bits = (uint8_t)((s_app8e & (uint8_t)~s_app_toggle) |
                              (s_toggle ? s_app_toggle : 0u));
     if (sup_engage_active() && sup_engage_enable_bit()) {
-        bits |= SUP_BIT_ENABLE;          /* legal once the ramp reached level 6 */
+        bits |= SUP_BIT_ENABLE;
     }
     const uint16_t job1[4] = {
         (uint16_t)(SUP_CMD_CONTROL | bits), 0xC900u, 0x2200u, 0x0900u,

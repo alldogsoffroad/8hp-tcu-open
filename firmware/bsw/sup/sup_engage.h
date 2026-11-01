@@ -25,10 +25,11 @@ typedef struct {
     uint8_t  echo_bad;     /* level echo mismatches */
     uint8_t  status;       /* last 0x1200 commit status byte */
     uint16_t tokens;       /* duty jobs answered */
-    bool     enable_req;   /* host-gated enable request */
+    bool     enable_req;   /* host-gated enable request (the shadow) */
     bool     enable_from_start;  /* stock order: bit 0 in the word from frame one
                                   * (monitor 0x873F0 latches the enable on its FIRST
                                   * pass, level still 0 — not after the ramp) */
+    bool     echo_grant;   /* supervisor's 0x22 echo bit 0 observed (acceptance) */
     bool     enable_sent;  /* enable bit included in the 8E word */
 } sup_eng_status_t;
 
@@ -37,6 +38,11 @@ void sup_engage_request_enable(bool on);
 /* Stock-order variant: the enable rides the 8E word from the first frame of the
  * sequence (bench 2026-11-01: enabling only AFTER level 7 resets the TCU). */
 void sup_engage_enable_from_start(bool on);
+/* The supervisor grants acceptance (0x22 echo bit 0) spontaneously; the stock
+ * app answers by putting bit 0 in the word — NEVER the other way round. Every
+ * unilateral enable attempt has reset the TCU (bench 2026-10-30..11-01). Feed
+ * the observed echo bit here every 5 ms pass; the word's bit 0 follows it. */
+void sup_engage_echo_bit0(bool echo_set);
 bool sup_engage_active(void);
 /* The 0x8E word's enable bit is legal once the ramp reached level 6 (stock gate
  * 0x6C63E: level >= 6 AND the supervisor's echo acceptance). */
