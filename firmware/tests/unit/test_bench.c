@@ -2,6 +2,7 @@
 #include "app/bench_out.h"
 #include "bsw/diag/uds.h"
 #include "bsw/sup/sup.h"
+#include "bsw/sup/sup_engage.h"
 #include "bsw/com/crc8.h"
 #include "io/actuators/sol_drv.h"
 #include "io/vehicle/vehicle.h"
@@ -219,11 +220,13 @@ int main(void)
 
         uds_req((const uint8_t[]){ 0x31, 0x03, 0xFE, 0x13 }, 4u);
         CHECK(memcmp(&last_rsp()[1], "\x71\x03\xFE\x13\x00", 5) == 0);   /* idle */
-        /* malformed one-shots: odd byte count, unknown sub */
+        /* malformed one-shots: odd byte count, unknown sub, bare sub-09 */
         uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x01, 0x06 }, 6u);
         CHECK(last_nrc() == 0x13u);
-        uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x09 }, 5u);
+        uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x0A }, 5u);
         CHECK(last_nrc() == 0x12u);
+        uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x09 }, 5u);
+        CHECK(last_nrc() == 0x13u);
         /* one-shot 0x0600 (even index -> SSLB1), scripted reply 0xA8BD */
         stub.sup_xfer_rx = 0xA8BDu;
         uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x01, 0x06, 0x00 }, 7u);
@@ -256,6 +259,22 @@ int main(void)
         /* sub 3 (pattern off via start) also accepted */
         uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x03 }, 5u);
         CHECK(memcmp(&last_rsp()[1], "\x71\x01\xFE\x13", 4) == 0);
+
+        /* ---- sub 9: the engage sequence (arm, results mode 3, one-shot guard) ---- */
+        uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x02, 0x00, 0x21 }, 7u);
+        uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x09, 0x01 }, 6u);
+        CHECK(memcmp(&last_rsp()[1], "\x71\x01\xFE\x13", 4) == 0);
+        CHECK(sup_engage_active());
+        r = bench_routine(3u, BENCH_SUP_RID, NULL, 0u, out, 64u);
+        CHECK(r == 34 && out[0] == 3u && out[1] == 1u);      /* state 1 = sync */
+        /* raw one-shots refused while the engage sequence owns the stream */
+        uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x01, 0x06, 0x00 }, 7u);
+        CHECK(last_nrc() == 0x22u);
+        /* enable request accepted; disarm stops everything */
+        uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x09, 0x01, 0x01 }, 7u);
+        CHECK(memcmp(&last_rsp()[1], "\x71\x01\xFE\x13", 4) == 0);
+        uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x09, 0x00 }, 6u);
+        CHECK(!sup_engage_active());
     }
 
     if (fails == 0) {

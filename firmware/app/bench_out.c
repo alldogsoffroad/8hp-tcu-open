@@ -1,6 +1,7 @@
 #include "app/bench_out.h"
 #include "bsw/diag/uds.h"
 #include "bsw/sup/sup.h"
+#include "bsw/sup/sup_engage.h"
 #include "io/actuators/sol_drv.h"
 #include "io/vehicle/vehicle.h"
 #include "platform/platform.h"          /* plat_sup_xfer (FE13); plat_toe_out_* (FE11) */
@@ -462,6 +463,21 @@ static int sup_lab_start(const uint8_t *in, uint16_t n)
     if (n < 1u) {
         return -NRC_IMLOIF;
     }
+    if (in[0] == 9u) {                                     /* engage sequence: arm /
+                                                             * [1 = also request enable] */
+        if (n < 2u || n > 3u || in[1] > 1u) {
+            return -NRC_IMLOIF;
+        }
+        sup_engage_arm(in[1] != 0u);
+        if (n == 3u) {
+            sup_engage_request_enable(in[2] != 0u);
+        }
+        s_sup_mode = 3u;
+        return 0;
+    }
+    if (in[0] != 5u && in[0] != 7u && in[0] != 8u && sup_engage_active()) {
+        return -NRC_CNC;             /* raw one-shots would stop the cyclic stream */
+    }
     if (in[0] == 1u) {                                     /* one-shot raw exchange */
         const uint16_t bytes = (uint16_t)(n - 1u);
         if (bytes < 2u || bytes > 2u * SUP_LAB_MAX || (bytes & 1u) != 0u) {
@@ -566,6 +582,32 @@ static int sup_lab_results(uint8_t *out, uint16_t max)
 {
     const sup_status_t *st = sup_status();
 
+    if (s_sup_mode == 3u) {                                /* engage sequence status */
+        const sup_eng_status_t *e = sup_engage_status();
+        if (max < 34u) {
+            return -NRC_IMLOIF;
+        }
+        out[0] = 3u;
+        out[1] = e->state;
+        out[2] = e->sel;
+        out[3] = e->lvl;
+        out[4] = e->lvl_cmd;
+        out[5] = e->rot;
+        out[6] = e->jobs;
+        out[7] = e->bad;
+        out[8] = e->echo_ok;
+        out[9] = e->echo_bad;
+        out[10] = e->status;
+        out[11] = (uint8_t)(e->tokens >> 8); out[12] = (uint8_t)e->tokens;
+        out[13] = (uint8_t)((e->enable_req ? 1u : 0u) | (e->enable_sent ? 2u : 0u));
+        for (uint8_t i = 0u; i < 8u; i++) {                /* cyclic replies as mode 2 */
+            out[14u + 2u * i] = (uint8_t)(st->rx_words[i] >> 8);
+            out[15u + 2u * i] = (uint8_t)st->rx_words[i];
+        }
+        out[30] = (uint8_t)(st->echo_ok >> 8);  out[31] = (uint8_t)st->echo_ok;
+        out[32] = (uint8_t)(st->echo_bad >> 8); out[33] = (uint8_t)st->echo_bad;
+        return 34;
+    }
     if (s_sup_mode == 1u) {                                /* last one-shot replies */
         const uint16_t need = (uint16_t)(2u + 2u * s_sup_n);
         if (max < need) {

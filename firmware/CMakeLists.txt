@@ -10,7 +10,7 @@ include_directories(${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/include)
 
 set(CORE_SOURCES
     bsw/sched/sched.c
-    bsw/sup/sup.c
+    bsw/sup/sup.c bsw/sup/sup_engage.c
     bsw/com/crc8.c
     bsw/com/com.c
     bsw/com/com_tx.c
@@ -162,12 +162,12 @@ else()
     add_executable(test_sensors tests/unit/test_sensors.c io/sensors/adc.c io/sensors/speed.c
         io/sensors/tft.c io/sensors/sensors.c tests/unit/stub_plat.c)
     add_test(NAME sensors COMMAND test_sensors)
-    add_executable(test_sup tests/unit/test_sup.c bsw/sup/sup.c tests/unit/stub_plat.c)
+    add_executable(test_sup tests/unit/test_sup.c bsw/sup/sup.c bsw/sup/sup_engage.c tests/unit/stub_plat.c)
     add_test(NAME sup COMMAND test_sup)
     add_executable(test_sol tests/unit/test_sol.c io/actuators/sol_drv.c tests/unit/stub_plat.c)
     add_test(NAME sol COMMAND test_sol)
     add_executable(test_bench tests/unit/test_bench.c app/bench_out.c io/actuators/sol_drv.c
-        bsw/sup/sup.c bsw/diag/uds.c bsw/diag/isotp.c bsw/diag/boot_record.c
+        bsw/sup/sup.c bsw/sup/sup_engage.c bsw/diag/uds.c bsw/diag/isotp.c bsw/diag/boot_record.c
         io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
         tests/unit/stub_plat.c)
     target_compile_definitions(test_bench PRIVATE TCU_M4B_OUTPUTS)
@@ -175,7 +175,7 @@ else()
     add_executable(test_park tests/unit/test_park.c app/range.c app/park_ctl.c app/park.c
         app/bench_out.c bsw/diag/uds.c bsw/diag/isotp.c bsw/diag/boot_record.c
         safety/park_mon.c io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c
-        bsw/com/crc8.c io/actuators/sol_drv.c bsw/sup/sup.c tests/unit/stub_plat.c)
+        bsw/com/crc8.c io/actuators/sol_drv.c bsw/sup/sup.c bsw/sup/sup_engage.c tests/unit/stub_plat.c)
     target_compile_definitions(test_park PRIVATE PARK_TEST_HOOKS TCU_M4B_OUTPUTS)
     add_test(NAME park COMMAND test_park)
     add_executable(test_dump tests/unit/test_dump.c app/bench_dump.c tests/unit/stub_plat.c)
@@ -183,7 +183,7 @@ else()
     # project flasher on the simulated flash controller (spec 16 section 7)
     set(FL_HOST_SOURCES flasher/fl_core.c flasher/fl_fcu.c tests/unit/fl_sim.c)
     add_executable(test_flasher tests/unit/test_flasher.c ${FL_HOST_SOURCES} app/flash_entry.c
-        bsw/sup/sup.c tests/unit/stub_plat.c)
+        bsw/sup/sup.c bsw/sup/sup_engage.c tests/unit/stub_plat.c)
     target_compile_definitions(test_flasher PRIVATE FL_HOST)
     add_test(NAME flasher COMMAND test_flasher)
     add_executable(test_loader tests/unit/test_loader.c loader/ld_image.c)

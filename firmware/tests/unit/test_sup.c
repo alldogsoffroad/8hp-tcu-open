@@ -1,11 +1,66 @@
 /* Unit test: external supervisor service (toggle, output enable, reply check). */
 #include "bsw/sup/sup.h"
+#include "bsw/sup/sup_engage.h"
 #include "tests/unit/stub_plat.h"
 
 #include <stdio.h>
+#include <string.h>
 
 static int fails;
 #define CHECK(c) do { if (!(c)) { printf("FAIL %s:%d %s\n", __FILE__, __LINE__, #c); fails++; } } while (0)
+
+/* ---- fake supervisor for the engage sequence (spec 03 challenge-response) ---- */
+static struct {
+    uint8_t sel;         /* rolling challenge */
+    uint8_t lvl;         /* achieved level, reported in the 0x0C read */
+    uint8_t lvl_cmd;     /* last level write, echoed by the 0x0A read */
+    uint8_t reads;       /* 0x0C read counter: rotates the challenge every 3rd */
+    uint16_t last_8e;
+} fs;
+
+static uint16_t fake_sup(uint16_t tx)
+{
+    static uint16_t prev;
+    uint16_t r = 0xAA00u;
+
+    switch (tx >> 8) {
+    case 0x88:
+        fs.lvl = fs.lvl_cmd;             /* a token round settles the level */
+        break;
+    case 0x84:
+        fs.lvl_cmd = (uint8_t)(tx & 0x3Fu);
+        break;
+    case 0x12:
+        r = 0xAAC2u;                     /* commit ack */
+        break;
+    case 0x0C:
+        /* the cyclic mixed job [0x18, 0x0C, ...] reads the feedback too, but the
+         * challenge only rotates on register-job reads (bench v3: fb constant
+         * between register jobs while the cyclic stream runs at 200 Hz) */
+        if (prev != 0x1800u && ++fs.reads % 3u == 0u) {
+            fs.sel = (uint8_t)((fs.sel + 1u) & 0xFu);
+        }
+        r = (uint16_t)(0xAA00u | ((fs.lvl & 7u) << 4) | fs.sel);
+        break;
+    case 0x0A:
+        r = (uint16_t)(0xAA00u | fs.lvl_cmd);
+        break;
+    case 0x8E:
+        fs.last_8e = tx;
+        r = 0xA800u;
+        break;
+    default:
+        break;
+    }
+    prev = tx;
+    return r;
+}
+
+/* i-th frame counting back from the newest (the stub keeps a 64-word ring) */
+static uint16_t back(unsigned i)
+{
+    return stub.sup_tx[(stub.sup_n - 1u - i) % 64u];
+}
 
 int main(void)
 {
@@ -125,6 +180,82 @@ int main(void)
         sup_tick_5ms();
         CHECK(!s->app_pattern);
         CHECK((stub.sup_tx[43] & 0xFF00u) == 0x8E00u && (stub.sup_tx[43] & 0x01u) == 0u);
+    }
+
+    /* ---- engage sequence (spec 03, challenge-response decoded 2026-10-31) ----
+     * The fake supervisor starts at challenge sel 6 and achieved level 0; the
+     * 0x0C read rotates the challenge every 3rd read; a level write is echoed
+     * by the 0x0A read and settles into the achieved level on the next token. */
+    {
+        const sup_eng_status_t *e = sup_engage_status();
+
+        memset(&fs, 0, sizeof fs);
+        fs.sel = 6u;
+        stub.sup_reply_fn = fake_sup;
+        sup_app_pattern2(true, 0x00u, 0x20u, true);
+        sup_engage_arm(true);
+        CHECK(e->state == 1u && e->lvl_cmd == 1u);
+
+        /* first register job: the read-only probe (challenge harvest before the
+         * first token — 0A00 0C00 0C01), then the duty token for sel 6 */
+        while (e->jobs == 0u) {
+            sup_tick_5ms();
+        }
+        CHECK(e->jobs == 1u && e->sel == 6u && e->lvl_cmd == 1u);
+        CHECK(back(2u) == 0x0A00u && back(1u) == 0x0C00u && back(0u) == 0x0C01u);
+        while (e->jobs == 1u) {
+            sup_tick_5ms();
+        }
+        CHECK(e->jobs == 2u);
+        CHECK(back(7u) == 0x8863u && back(6u) == 0x8893u &&
+              back(5u) == 0x886Cu && back(4u) == 0x889Cu);
+        CHECK(back(3u) == 0x1200u && back(2u) == 0x0C00u &&
+              back(1u) == 0x0A00u && back(0u) == 0x0C01u);
+
+        /* sync = two duty rounds, then the ramp: level jobs climb 1..7 with a
+         * duty arm between each (the stock's 0x8CEDC interleave) */
+        {
+            unsigned guard = 0u;
+            while (e->state == 1u && ++guard < 200000u) {
+                sup_tick_5ms();
+            }
+            CHECK(e->state == 2u && e->tokens >= 2u);
+            guard = 0u;
+            while (e->state == 2u && ++guard < 200000u) {
+                sup_tick_5ms();
+            }
+            CHECK(guard < 200000u);
+        }
+        CHECK(e->state == 3u);                     /* hold: ramp complete */
+        CHECK(e->lvl_cmd == 7u && e->lvl >= 6u);
+        CHECK(e->echo_ok >= 7u && e->echo_bad == 0u);
+        CHECK(e->rot > 0u);                        /* challenge rotations observed */
+
+        /* enable: not before level 6 even when requested earlier */
+        sup_engage_request_enable(true);
+        sup_tick_5ms();
+        CHECK(e->enable_sent && s->enable);
+        CHECK((fs.last_8e & 0x01u) == 1u);
+        sup_engage_request_enable(false);
+        sup_tick_5ms();
+        CHECK(!e->enable_sent && !s->enable);
+
+        /* hold state keeps answering the rolling challenge */
+        {
+            uint16_t tok = e->tokens;
+            unsigned guard = 0u;
+            while (e->tokens == tok && ++guard < 200000u) {
+                sup_tick_5ms();
+            }
+            CHECK(e->tokens == tok + 1u && e->state == 3u);
+        }
+
+        /* disarm: enable forced off, state idle */
+        sup_engage_arm(false);
+        CHECK(!e->enable_sent && e->state == 0u && !sup_engage_active());
+        sup_tick_5ms();
+        CHECK(!s->enable);
+        stub.sup_reply_fn = 0;
     }
 
     if (fails == 0) {

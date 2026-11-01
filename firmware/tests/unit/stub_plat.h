@@ -21,6 +21,7 @@ typedef struct {
     bool sup_busy;              /* transmitter not free */
     uint16_t sup_reply;         /* reply returned for every frame after the first */
     uint16_t sup_xfer_rx;       /* plat_sup_xfer: reply returned for every frame */
+    uint16_t (*sup_reply_fn)(uint16_t tx);  /* per-word reply generator (fake supervisor) */
     bool sup_xfer_fail;         /* plat_sup_xfer: bus timeout */
     bool drv_fail;              /* driver bus timeout */
     bool drv_bad_header;        /* chips reply with a wrong header */
