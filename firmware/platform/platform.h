@@ -80,6 +80,9 @@ bool plat_sup_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n);
 bool plat_sup_burst(const uint16_t *tx, uint16_t *rx, uint8_t n);
 /* SSLB2 (third RSPI-B device, SPI mode 0) burst - the stock's cyclic [0x00FF] job. */
 bool plat_sup_burst2(const uint16_t *tx, uint16_t *rx, uint8_t n);
+/* Five-select rotation (SSLB3/2/1/0/5, the stock driver jobs' cfg 0x40CE4): the
+ * supervisor's select sits IN the rotation, so it witnesses the exchange. */
+bool plat_sup_xfer5(const uint16_t *tx, uint16_t *rx, uint8_t n);
 /* Watchdog mode: interval-timer (enable-edge behavior, 0x978A4) vs reset mode (0x97850). */
 void plat_wdt_mode(bool interval);
 

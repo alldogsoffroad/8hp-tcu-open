@@ -110,6 +110,8 @@
 #define SPNDB    REG8(0xFFFFB80Eu)
 #define SPCMDB0  REG16(0xFFFFB810u)
 #define SPCMDB1  REG16(0xFFFFB812u)   /* SPCMD1-B: stock supervisor jobs use the SSLB1/SSLB0 pair (spec 03 4.4) */
+#define SPCMDB(n) REG16(0xFFFFB810u + 2u * (n))  /* five-command sequence: the
+                                                  * stock driver jobs rotate SSLB3/2/1/0/5 (cfg 0x40CE4) */
 #define RSPIB_DMA_REQ0 REG16(0xFFFE6074u)   /* as cleared by the stock CPU-mode set-up */
 #define RSPIB_DMA_REQ1 REG16(0xFFFE6076u)
 /* RSPI-A (bus 0, solenoid driver chips) */

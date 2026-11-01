@@ -197,6 +197,16 @@ bool plat_sup_burst(const uint16_t *tx, uint16_t *rx, uint8_t n)
     return true;
 }
 
+bool plat_sup_xfer5(const uint16_t *tx, uint16_t *rx, uint8_t n)
+{
+    /* five-select rotation: select 2 = the supervisor (0xA8-class), the rest 0xAA */
+    static const uint16_t cls[5] = { 0xAA00u, 0xAA00u, 0xA800u, 0xAA00u, 0xAA00u };
+    for (uint8_t i = 0u; i < n; i++) {
+        rx[i] = (uint16_t)(cls[i % 5u] | (tx[i] & 0x00FFu));
+    }
+    return true;
+}
+
 bool plat_sup_burst2(const uint16_t *tx, uint16_t *rx, uint8_t n)
 {
     for (uint8_t i = 0u; i < n; i++) {

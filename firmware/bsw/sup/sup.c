@@ -125,6 +125,7 @@ static void app_pattern_tick(void)
     const uint16_t job5[4] = { 0x0600u, 0x0300u, 0x0000u, 0x0000u };  /* stock 0x40B80 */
     const uint16_t job6[5] = { 0x1800u, 0x0C00u, 0x1E00u, 0x0600u, 0x1400u }; /* 0x40BA0 */
     uint16_t rx1[4], rx2[2], rx3[2], rx4[1], rx6[5];
+    uint16_t dj[SUP_DRV_READ_WORDS], drx[SUP_DRV_READ_WORDS];
 
     s_st.sent++;
     if (!plat_sup_xfer(job1, rx1, 4u) || !plat_sup_xfer(job2, rx2, 2u) ||
@@ -152,6 +153,17 @@ static void app_pattern_tick(void)
                 sup_engage_replies(erx, en);
             } else {
                 s_st.busy++;
+            }
+        }
+    }
+    {   /* five-select driver read: the stock's commissioning traffic, witnessed
+         * by the supervisor (its select is in the rotation) */
+        uint8_t dn = 0u;
+        if (sup_drv_poll(dj, &dn)) {
+            if (!plat_sup_xfer5(dj, drx, dn)) {
+                s_st.busy++;
+            } else {
+                sup_drv_replies(drx, dn);
             }
         }
     }

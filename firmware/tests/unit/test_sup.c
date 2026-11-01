@@ -269,10 +269,30 @@ int main(void)
 
         /* disarm: enable forced off, state idle */
         sup_engage_arm(false);
+        sup_drv_sync(false);
         CHECK(!e->enable_sent && e->state == 0u && !sup_engage_active());
         sup_tick_5ms();
         CHECK(!s->enable);
         stub.sup_reply_fn = 0;
+    }
+
+    /* ---- five-select driver read sync (the stock commissioning witness) ---- */
+    {
+        const sup_drv_status_t *dv = sup_drv_status();
+
+        sup_app_pattern2(true, 0x00u, 0x20u, true);
+        sup_drv_sync(true);
+        CHECK(dv->drv_jobs == 0u);
+        for (unsigned i = 0u; i < 402u && dv->drv_jobs == 0u; i++) {
+            sup_tick_5ms();
+        }
+        CHECK(dv->drv_jobs == 1u);                    /* first job on the next tick */
+        CHECK(stub.drv5_jobs == 1u);
+        /* 60 words: select 2 (the supervisor, 0xA8-class) gets 12 of them */
+        CHECK(dv->drv_a8 == 12u && dv->drv_aa == 48u && dv->drv_bad == 0u);
+        sup_drv_sync(false);
+        sup_tick_5ms();
+        CHECK(dv->drv_jobs == 1u);                    /* off: no more jobs */
     }
 
     if (fails == 0) {

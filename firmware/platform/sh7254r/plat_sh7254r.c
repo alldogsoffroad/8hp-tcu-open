@@ -435,6 +435,50 @@ bool plat_sup_burst2(const uint16_t *tx, uint16_t *rx, uint8_t n)
     return true;
 }
 
+bool plat_sup_xfer5(const uint16_t *tx, uint16_t *rx, uint8_t n)
+{
+    /* Five-select rotation on RSPI-B (the stock driver jobs, cfg 0x40CE4):
+     * SPCMD0..4 = SSLB3/SSLB2/SSLB1/SSLB0/SSLB5, one command per frame in
+     * sequence — the supervisor's select sits IN the rotation, so it witnesses
+     * every driver-register word (spec 03, job registry 2026-11-01). */
+    SPCRB = 0x00u;
+    RSPIB_DMA_REQ0 = 0u;
+    RSPIB_DMA_REQ1 = 0u;
+    SPSRB = 0u;
+    SPPCRB = 0u;
+    SPBRB = 5u;
+    SPCKDB = 0u;
+    SSLNDB = 0u;
+    SPNDB = 1u;
+    SPSCRB = 4u;                        /* sequence of five commands */
+    SPCMDB(0) = 0xAF31u;                /* SSLB3 */
+    SPCMDB(1) = 0xAF21u;                /* SSLB2 */
+    SPCMDB(2) = 0xAF11u;                /* SSLB1: the supervisor */
+    SPCMDB(3) = 0xAF01u;                /* SSLB0 */
+    SPCMDB(4) = 0xAF51u;                /* SSLB5 */
+    SPCRB = 0x48u;                      /* enable, master */
+    for (uint8_t i = 0u; i < n; i++) {
+        uint32_t guard;
+        for (guard = 20000u; guard != 0u && (SPSRB & SPSR_SPTEF) == 0u; guard--) {
+        }
+        if (guard == 0u) {
+            return false;
+        }
+        (void)SPSRB;
+        SPDRB = tx[i];
+        (void)SPSRB;
+        SPSRB = 0u;
+        for (guard = 20000u; guard != 0u && (SPSRB & SPSR_SPRF) == 0u; guard--) {
+        }
+        if (guard == 0u) {
+            return false;
+        }
+        rx[i] = SPDRB;
+        SPSRB = (uint8_t)(SPSRB & SPSR_SPTEF);
+    }
+    return true;
+}
+
 bool plat_sup_burst(const uint16_t *tx, uint16_t *rx, uint8_t n)
 {
     /* Single-select burst (SSLB1 only, one command), otherwise the same exchange

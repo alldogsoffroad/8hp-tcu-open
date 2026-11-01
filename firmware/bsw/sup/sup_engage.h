@@ -28,17 +28,28 @@ typedef struct {
     uint8_t  status;       /* last 0x1200 commit status byte */
     uint16_t tokens;       /* duty jobs answered */
     bool     enable_req;   /* host-gated enable request (the shadow) */
-    bool     enable_from_start;  /* stock order: bit 0 in the word from frame one
-                                  * (monitor 0x873F0 latches the enable on its FIRST
-                                  * pass, level still 0 — not after the ramp) */
+    bool     enable_from_start;  /* stock order: the enable shadow latched at arm
+                                  * (monitor 0x873F0 one-shot), never asserted
+                                  * before the grant */
     bool     echo_grant;   /* supervisor's 0x22 echo bit 0 observed (acceptance) */
     bool     enable_sent;  /* enable bit included in the 8E word */
 } sup_eng_status_t;
 
+/* Driver register sync (the stock's five-select jobs, spec 03 job registry
+ * 2026-11-01): twelve read registers x the SSLB3/2/1/0/5 rotation = 60 words
+ * per pass on RSPI-B, the supervisor's select IN the rotation — the traffic it
+ * has never witnessed from us (our solenoid path is RSPI-A). */
+#define SUP_DRV_READ_WORDS 60u
+
+typedef struct {
+    uint8_t  drv_jobs;     /* driver read jobs sent */
+    uint8_t  drv_bad;      /* words whose reply fits no known class */
+    uint16_t drv_a8;       /* supervisor-class (0xA8xx) replies seen */
+    uint16_t drv_aa;       /* other-chip-class (0xAAxx) replies seen */
+} sup_drv_status_t;
+
 void sup_engage_arm(bool on);
 void sup_engage_request_enable(bool on);
-/* Stock-order variant: the enable rides the 8E word from the first frame of the
- * sequence (bench 2026-11-01: enabling only AFTER level 7 resets the TCU). */
 void sup_engage_enable_from_start(bool on);
 /* The supervisor grants acceptance (0x22 echo bit 0) spontaneously; the stock
  * app answers by putting bit 0 in the word — NEVER the other way round. Every
@@ -46,8 +57,6 @@ void sup_engage_enable_from_start(bool on);
  * the observed echo bit here every 5 ms pass; the word's bit 0 follows it. */
 void sup_engage_echo_bit0(bool echo_set);
 bool sup_engage_active(void);
-/* The 0x8E word's enable bit is legal once the ramp reached level 6 (stock gate
- * 0x6C63E: level >= 6 AND the supervisor's echo acceptance). */
 bool sup_engage_enable_bit(void);
 /* Called from the 5 ms pattern tick: returns true and fills words and *n when a
  * register job is due this pass; the caller transmits it and hands the replies
@@ -55,5 +64,14 @@ bool sup_engage_enable_bit(void);
 bool sup_engage_poll(uint16_t *words, uint8_t *n);
 void sup_engage_replies(const uint16_t *rx, uint8_t n);
 const sup_eng_status_t *sup_engage_status(void);
+
+/* Read-only driver sync interleaved into the same 5 ms tick (independent of the
+ * engage state machine); sup_drv_poll() returns true when the 60-word read job
+ * is due this pass — the caller transmits it via the five-select transport and
+ * hands the replies to sup_drv_replies(). */
+void sup_drv_sync(bool on);
+bool sup_drv_poll(uint16_t *words, uint8_t *n);
+void sup_drv_replies(const uint16_t *rx, uint8_t n);
+const sup_drv_status_t *sup_drv_status(void);
 
 #endif

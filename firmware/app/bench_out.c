@@ -466,12 +466,13 @@ static int sup_lab_start(const uint8_t *in, uint16_t n)
     if (in[0] == 9u) {                                     /* engage sequence: arm /
                                                              * [1 = enable req] /
                                                              * [2 = stock order: enable
-                                                             *  from the first frame] */
+                                                             *  shadow + driver sync] */
         if (n < 2u || n > 3u || in[1] > 2u) {
             return -NRC_IMLOIF;
         }
         sup_engage_arm(in[1] != 0u);
         sup_engage_enable_from_start(in[1] == 2u);
+        sup_drv_sync(in[1] != 0u);         /* the five-select read job rides along */
         if (in[1] == 2u) {
             sup_engage_request_enable(true);
         } else if (n == 3u) {
@@ -589,7 +590,8 @@ static int sup_lab_results(uint8_t *out, uint16_t max)
 
     if (s_sup_mode == 3u) {                                /* engage sequence status */
         const sup_eng_status_t *e = sup_engage_status();
-        if (max < 36u) {
+        const sup_drv_status_t *dv = sup_drv_status();
+        if (max < 42u) {
             return -NRC_IMLOIF;
         }
         out[0] = 3u;
@@ -614,7 +616,11 @@ static int sup_lab_results(uint8_t *out, uint16_t max)
         }
         out[32] = (uint8_t)(st->echo_ok >> 8);  out[33] = (uint8_t)st->echo_ok;
         out[34] = (uint8_t)(st->echo_bad >> 8); out[35] = (uint8_t)st->echo_bad;
-        return 36;
+        out[36] = dv->drv_jobs;
+        out[37] = dv->drv_bad;
+        out[38] = (uint8_t)(dv->drv_a8 >> 8); out[39] = (uint8_t)dv->drv_a8;
+        out[40] = (uint8_t)(dv->drv_aa >> 8); out[41] = (uint8_t)dv->drv_aa;
+        return 42;
     }
     if (s_sup_mode == 1u) {                                /* last one-shot replies */
         const uint16_t need = (uint16_t)(2u + 2u * s_sup_n);

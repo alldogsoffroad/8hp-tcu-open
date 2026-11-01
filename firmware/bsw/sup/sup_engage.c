@@ -205,3 +205,67 @@ void sup_engage_replies(const uint16_t *rx, uint8_t n)
         }
     }
 }
+
+/* ---- driver register sync (the stock's five-select read job, read-only) ---- */
+
+/* Read registers from the stock template at flash 0x40CE8: 18 1E 28 88 A0 E8
+ * A6 F0 60 C0 66 D8, register-major so the five-select rotation addresses each
+ * chip in turn (word i -> select i%5: SSLB3/2/1/0/5). */
+static const uint16_t S_DRV_READ_REGS[12] = {
+    0x1800u, 0x1E00u, 0x2800u, 0x8800u, 0xA000u, 0xE800u,
+    0xA600u, 0xF000u, 0x6000u, 0xC000u, 0x6600u, 0xD800u,
+};
+
+/* One 60-word pass every 400 passes = 2 s (the stock syncs on channel-state
+ * change from its current loop; a slow read cadence is the safe subset). */
+#define DRV_PERIOD 400u
+
+static sup_drv_status_t s_drv;
+static uint16_t s_drv_div;
+static bool s_drv_on;
+
+void sup_drv_sync(bool on)
+{
+    s_drv_on = on;
+    s_drv_div = DRV_PERIOD - 1u;        /* first pass on the next tick */
+}
+
+const sup_drv_status_t *sup_drv_status(void)
+{
+    return &s_drv;
+}
+
+bool sup_drv_poll(uint16_t *words, uint8_t *n)
+{
+    if (!s_drv_on) {
+        return false;
+    }
+    if (s_drv_div < DRV_PERIOD) {
+        s_drv_div++;
+        return false;
+    }
+    s_drv_div = 0u;
+    for (uint8_t r = 0u; r < 12u; r++) {
+        for (uint8_t c = 0u; c < 5u; c++) {
+            words[5u * r + c] = S_DRV_READ_REGS[r];
+        }
+    }
+    *n = SUP_DRV_READ_WORDS;
+    s_drv.drv_jobs++;
+    return true;
+}
+
+void sup_drv_replies(const uint16_t *rx, uint8_t n)
+{
+    /* strict classes — the stock's 0xF900 mask accepts 0xAAxx into the 0xA8
+     * class too (fine for its parity checks, useless for per-chip counts) */
+    for (uint8_t i = 0u; i < n && i < SUP_DRV_READ_WORDS; i++) {
+        if ((rx[i] & 0xFE00u) == 0xA800u) {
+            s_drv.drv_a8++;
+        } else if ((rx[i] & 0xFE00u) == 0xAA00u) {
+            s_drv.drv_aa++;
+        } else {
+            s_drv.drv_bad++;
+        }
+    }
+}
