@@ -488,7 +488,19 @@ in the read rotation where it only sees bare reads. **The m4p run: the full
 decoded commissioning — tokens, echo-confirmed level exchange to 0x1F,
 live-value driver writes, periodic reads, enable as an obedient shadow — runs
 stably and indefinitely with NO reset, and still no grant** (0x22 echo flat,
-ammeter 0.167). Remaining leads, ranked: (1) the 0x2D job — the 11-bit
+ammeter 0.167). **Setpoint + dither (2026-11-01, commits 241ae12/4e9f118):** the 0x2D job decoded
+and sent — [88 A0 E8 A6 F0 60 C0 66 D8] x chips with the 11-bit current
+setpoints in E8/F0 (two per chip, stock sender 0x924B0 positions). Static
+keep-warm class 0x1141: no grant. The DITHER (periodic jobs alternating
+60-word reads with setpoint passes cycling the engaged stock's captured
+command sequence 1141/1134/113A/1127/110E/111F/113C/1126/1144, m4r): stable,
+587 tokens + 92 driver jobs in 180 s, **the supervisor answered 5 words in
+its own 0xA8 class inside the driver jobs** (first time — its reply class
+varies by word/phase), still no grant, ammeter flat 0.167. Both passes ride
+the four-select rotation (supervisor excluded from writes). The keep-warm
+presence AND liveness hypotheses are both negative in static/dither form.
+
+Remaining leads, ranked: (1) the 0x2D job — the 11-bit
 CURRENT SETPOINTS (the stock's keep-warm machine commands real currents from
 boot; our 0x88 stays 0 — the supervisor may require seeing commanded load);
 (2) the 0x0A-class job (10 words, handler 0x921E0, never decoded); (3) the
