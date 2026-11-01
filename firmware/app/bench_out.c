@@ -591,7 +591,7 @@ static int sup_lab_results(uint8_t *out, uint16_t max)
     if (s_sup_mode == 3u) {                                /* engage sequence status */
         const sup_eng_status_t *e = sup_engage_status();
         const sup_drv_status_t *dv = sup_drv_status();
-        if (max < 42u) {
+        if (max < 43u) {
             return -NRC_IMLOIF;
         }
         out[0] = 3u;
@@ -620,7 +620,8 @@ static int sup_lab_results(uint8_t *out, uint16_t max)
         out[37] = dv->drv_bad;
         out[38] = (uint8_t)(dv->drv_a8 >> 8); out[39] = (uint8_t)dv->drv_a8;
         out[40] = (uint8_t)(dv->drv_aa >> 8); out[41] = (uint8_t)dv->drv_aa;
-        return 42;
+        out[42] = dv->drv_writes;
+        return 43;
     }
     if (s_sup_mode == 1u) {                                /* last one-shot replies */
         const uint16_t need = (uint16_t)(2u + 2u * s_sup_n);

@@ -224,10 +224,21 @@ static sup_drv_status_t s_drv;
 static uint16_t s_drv_div;
 static bool s_drv_on;
 
+/* The write job (stock sender 0x92344): template flash 0x40AD8 verbatim,
+ * register-major across the five-select rotation; the stock ORs per-channel
+ * data into 8E/90/96/88 and leaves 28/30/2E/36 bare as readbacks. Our first
+ * pass is the zero-value commissioning: configs cleared, setpoints zero. */
+#define DRV_WRITE_WORDS 40u
+static const uint16_t S_DRV_WRITE_TMPL[8] = {
+    0x8E00u, 0x9000u, 0x9600u, 0x8800u, 0x2800u, 0x3000u, 0x2E00u, 0x3600u,
+};
+static bool s_drv_write_pending;
+
 void sup_drv_sync(bool on)
 {
     s_drv_on = on;
     s_drv_div = DRV_PERIOD - 1u;        /* first pass on the next tick */
+    s_drv_write_pending = on;           /* one commissioning write at arm */
 }
 
 const sup_drv_status_t *sup_drv_status(void)
@@ -239,6 +250,20 @@ bool sup_drv_poll(uint16_t *words, uint8_t *n)
 {
     if (!s_drv_on) {
         return false;
+    }
+    if (s_drv_write_pending) {
+        /* zero-value commissioning pass: all configs cleared, setpoints zero,
+         * readbacks bare — the safe subset of the stock's write+verify job */
+        s_drv_write_pending = false;
+        for (uint8_t r = 0u; r < 8u; r++) {
+            for (uint8_t c = 0u; c < 5u; c++) {
+                words[5u * r + c] = S_DRV_WRITE_TMPL[r];
+            }
+        }
+        *n = DRV_WRITE_WORDS;
+        s_drv.drv_jobs++;
+        s_drv.drv_writes++;
+        return true;
     }
     if (s_drv_div < DRV_PERIOD) {
         s_drv_div++;
@@ -269,3 +294,4 @@ void sup_drv_replies(const uint16_t *rx, uint8_t n)
         }
     }
 }
+

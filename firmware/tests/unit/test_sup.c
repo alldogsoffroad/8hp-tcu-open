@@ -282,17 +282,22 @@ int main(void)
 
         sup_app_pattern2(true, 0x00u, 0x20u, true);
         sup_drv_sync(true);
-        CHECK(dv->drv_jobs == 0u);
         for (unsigned i = 0u; i < 402u && dv->drv_jobs == 0u; i++) {
             sup_tick_5ms();
         }
-        CHECK(dv->drv_jobs == 1u);                    /* first job on the next tick */
+        /* arm queues the zero-value WRITE first: 8 regs x 5 selects */
+        CHECK(dv->drv_jobs == 1u && dv->drv_writes == 1u);
         CHECK(stub.drv5_jobs == 1u);
-        /* 60 words: select 2 (the supervisor, 0xA8-class) gets 12 of them */
-        CHECK(dv->drv_a8 == 12u && dv->drv_aa == 48u && dv->drv_bad == 0u);
+        CHECK(dv->drv_a8 == 8u && dv->drv_aa == 32u && dv->drv_bad == 0u);
+        for (unsigned i = 0u; i < 402u && dv->drv_jobs == 1u; i++) {
+            sup_tick_5ms();
+        }
+        /* then the periodic 60-word read job */
+        CHECK(dv->drv_jobs == 2u && dv->drv_writes == 1u);
+        CHECK(dv->drv_a8 == 20u && dv->drv_aa == 80u && dv->drv_bad == 0u);
         sup_drv_sync(false);
         sup_tick_5ms();
-        CHECK(dv->drv_jobs == 1u);                    /* off: no more jobs */
+        CHECK(dv->drv_jobs == 2u);                    /* off: no more jobs */
     }
 
     if (fails == 0) {

@@ -42,7 +42,8 @@ typedef struct {
 #define SUP_DRV_READ_WORDS 60u
 
 typedef struct {
-    uint8_t  drv_jobs;     /* driver read jobs sent */
+    uint8_t  drv_jobs;     /* driver jobs sent (read + write) */
+    uint8_t  drv_writes;   /* commissioning write jobs sent */
     uint8_t  drv_bad;      /* words whose reply fits no known class */
     uint16_t drv_a8;       /* supervisor-class (0xA8xx) replies seen */
     uint16_t drv_aa;       /* other-chip-class (0xAAxx) replies seen */
@@ -70,6 +71,7 @@ const sup_eng_status_t *sup_engage_status(void);
  * is due this pass — the caller transmits it via the five-select transport and
  * hands the replies to sup_drv_replies(). */
 void sup_drv_sync(bool on);
+void sup_drv_write_once(void);   /* queue one zero-value write pass */
 bool sup_drv_poll(uint16_t *words, uint8_t *n);
 void sup_drv_replies(const uint16_t *rx, uint8_t n);
 const sup_drv_status_t *sup_drv_status(void);
