@@ -154,6 +154,22 @@ bool plat_sup_xfer5(const uint16_t *tx, uint16_t *rx, uint8_t n)
     return true;
 }
 
+bool plat_sup_xfer4(const uint16_t *tx, uint16_t *rx, uint8_t n)
+{
+    if (stub.sup_xfer_fail) {
+        return false;
+    }
+    for (uint8_t i = 0u; i < n; i++) {
+        rx[i] = (uint16_t)(0xAA00u | (stub.sup_reply_fn ? stub.sup_reply_fn(tx[i]) & 0xFFu : 0u));
+        if (!stub.sup_busy) {
+            stub.sup_tx[stub.sup_n % 64u] = tx[i];
+            stub.sup_n++;
+        }
+    }
+    stub.drv5_jobs++;
+    return true;
+}
+
 bool plat_sup_burst2(const uint16_t *tx, uint16_t *rx, uint8_t n)
 {
     if (stub.sup_xfer_fail) {

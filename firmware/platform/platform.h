@@ -83,6 +83,8 @@ bool plat_sup_burst2(const uint16_t *tx, uint16_t *rx, uint8_t n);
 /* Five-select rotation (SSLB3/2/1/0/5, the stock driver jobs' cfg 0x40CE4): the
  * supervisor's select sits IN the rotation, so it witnesses the exchange. */
 bool plat_sup_xfer5(const uint16_t *tx, uint16_t *rx, uint8_t n);
+/* Four-select (driver chips only, supervisor excluded) - for WRITES. */
+bool plat_sup_xfer4(const uint16_t *tx, uint16_t *rx, uint8_t n);
 /* Watchdog mode: interval-timer (enable-edge behavior, 0x978A4) vs reset mode (0x97850). */
 void plat_wdt_mode(bool interval);
 

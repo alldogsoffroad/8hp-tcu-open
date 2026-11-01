@@ -230,7 +230,6 @@ static bool s_drv_on;
  * state, swept 2026-10-30 at 13.4 V (ramsweep_held: 0x908FB..FF = 55, 0x90900..04
  * = 9f, 0x90's data = the 0x901A0 loop constant 0x02; the 0x88 flags byte is 0
  * at commissioning - real currents ride the 0x2D job's 11-bit setpoints). */
-#define DRV_WRITE_WORDS 40u
 static const uint16_t S_DRV_WRITE_TMPL[8] = {
     0x8E55u, 0x9002u, 0x969Fu, 0x8800u, 0x2800u, 0x3000u, 0x2E00u, 0x3600u,
 };
@@ -258,8 +257,9 @@ bool sup_drv_poll(uint16_t *words, uint8_t *n)
          * readbacks bare — the stock's write+verify job, live-valued */
         s_drv_write_pending = false;
         for (uint8_t r = 0u; r < 8u; r++) {
-            for (uint8_t c = 0u; c < 5u; c++) {
-                words[5u * r + c] = S_DRV_WRITE_TMPL[r];
+            for (uint8_t c = 0u; c < 4u; c++) {   /* chips only: the supervisor
+                                                    * is NOT in the write rotation */
+                words[4u * r + c] = S_DRV_WRITE_TMPL[r];
             }
         }
         *n = DRV_WRITE_WORDS;

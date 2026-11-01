@@ -207,6 +207,14 @@ bool plat_sup_xfer5(const uint16_t *tx, uint16_t *rx, uint8_t n)
     return true;
 }
 
+bool plat_sup_xfer4(const uint16_t *tx, uint16_t *rx, uint8_t n)
+{
+    for (uint8_t i = 0u; i < n; i++) {
+        rx[i] = (uint16_t)(0xAA00u | (tx[i] & 0x00FFu));
+    }
+    return true;
+}
+
 bool plat_sup_burst2(const uint16_t *tx, uint16_t *rx, uint8_t n)
 {
     for (uint8_t i = 0u; i < n; i++) {

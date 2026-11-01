@@ -160,7 +160,8 @@ static void app_pattern_tick(void)
          * by the supervisor (its select is in the rotation) */
         uint8_t dn = 0u;
         if (sup_drv_poll(dj, &dn)) {
-            if (!plat_sup_xfer5(dj, drx, dn)) {
+            const bool wr = dn == DRV_WRITE_WORDS;
+            if (!(wr ? plat_sup_xfer4(dj, drx, dn) : plat_sup_xfer5(dj, drx, dn))) {
                 s_st.busy++;
             } else {
                 sup_drv_replies(drx, dn);

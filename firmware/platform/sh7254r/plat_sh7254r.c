@@ -479,6 +479,50 @@ bool plat_sup_xfer5(const uint16_t *tx, uint16_t *rx, uint8_t n)
     return true;
 }
 
+bool plat_sup_xfer4(const uint16_t *tx, uint16_t *rx, uint8_t n)
+{
+    /* Four-select rotation for driver WRITES (SSLB3/2/0/5 - NO supervisor):
+     * a fresh setup restarts the command sequence at SPCMD0, so with the
+     * supervisor in a write rotation its select would receive register data
+     * shaped like control words (0x8E55 reset the TCU, bench 2026-11-01).
+     * Writes go to the chips only; the supervisor stays in the read rotation. */
+    SPCRB = 0x00u;
+    RSPIB_DMA_REQ0 = 0u;
+    RSPIB_DMA_REQ1 = 0u;
+    SPSRB = 0u;
+    SPPCRB = 0u;
+    SPBRB = 5u;
+    SPCKDB = 0u;
+    SSLNDB = 0u;
+    SPNDB = 1u;
+    SPSCRB = 3u;                        /* sequence of four commands */
+    SPCMDB(0) = 0xAF31u;                /* SSLB3 */
+    SPCMDB(1) = 0xAF21u;                /* SSLB2 */
+    SPCMDB(2) = 0xAF01u;                /* SSLB0 */
+    SPCMDB(3) = 0xAF51u;                /* SSLB5 */
+    SPCRB = 0x48u;
+    for (uint8_t i = 0u; i < n; i++) {
+        uint32_t guard;
+        for (guard = 20000u; guard != 0u && (SPSRB & SPSR_SPTEF) == 0u; guard--) {
+        }
+        if (guard == 0u) {
+            return false;
+        }
+        (void)SPSRB;
+        SPDRB = tx[i];
+        (void)SPSRB;
+        SPSRB = 0u;
+        for (guard = 20000u; guard != 0u && (SPSRB & SPSR_SPRF) == 0u; guard--) {
+        }
+        if (guard == 0u) {
+            return false;
+        }
+        rx[i] = SPDRB;
+        SPSRB = (uint8_t)(SPSRB & SPSR_SPTEF);
+    }
+    return true;
+}
+
 bool plat_sup_burst(const uint16_t *tx, uint16_t *rx, uint8_t n)
 {
     /* Single-select burst (SSLB1 only, one command), otherwise the same exchange

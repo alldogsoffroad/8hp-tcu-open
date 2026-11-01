@@ -40,6 +40,7 @@ typedef struct {
  * per pass on RSPI-B, the supervisor's select IN the rotation — the traffic it
  * has never witnessed from us (our solenoid path is RSPI-A). */
 #define SUP_DRV_READ_WORDS 60u
+#define DRV_WRITE_WORDS 32u   /* 8 regs x the four driver chips */
 
 typedef struct {
     uint8_t  drv_jobs;     /* driver jobs sent (read + write) */
