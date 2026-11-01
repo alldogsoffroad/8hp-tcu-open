@@ -335,3 +335,45 @@ read `0xFFF92414` from live engaged stock via cmd 0x2A (needs a stock restore cy
 (b) the monitor's level RAMP (0x8CEDC dwell states, not a single level write);
 (c) diagnose the flash-app reboot at the enable arm (crash vs supervisor reset —
 read the reset-cause registers after a repro).
+
+**Challenge-response decoded (2026-10-31 session 2 — the duty "value" is a rolling token):**
+A fresh AddrXref pass over the ramp cells dissolved all three deltas at once. The stock's
+"duty job" payload is **not a physical duty — it is a challenge-response token**, which is
+why every blind replay (0x1838 and friends) left the rail closed:
+
+- **The 0x0C read reply is the challenge.** Both job-completion handlers parse it into the
+  feedback byte `0xFFF90550`; the harvester `0x6C1EA` splits it: `selector = 0x90550 & 0xF`
+  (→ `0xFFF93BA6`), `achieved level = (0x90550 >> 4) & 7` (→ `0xFFF93BA1`). The `0x0A` read
+  reply → `0xFFF9054F` = commanded-level echo; the `0x1200` commit reply → `0xFFF90551` =
+  status bits, compared `& 5` against the ramp marker `0xFFF93BA5`.
+- **The token formula is fully static:** the calibration walker `0x7EE8A` returns
+  `~(xor_table[selector] ^ 0xAAAA ^ 0xFFF93320)`, where `0xAAAA` is what `0xFFFC1C04`
+  deterministically holds at walk return (the walker sets it at entry; `0x6BE34` never
+  writes it), `0xFFF93320` has two flash initializers that AGREE
+  (`flash[0x7F424]^0xAAAA` = `flash[0x8D20C]` = `0xB32F8A6A`), and the xor table lives at
+  flash `0x4526C` (pointer cell `0x7F12C`). All dumped from the ELF:
+
+  | sel | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+  |-----|---|---|---|---|---|---|---|---|
+  | token | FF0FF000 | B040BF4F | E919E616 | A656A959 | 75857A8A | 3ACA35C5 | 63936C9C | 2CDC23D3 |
+
+  Table entries pair-differ by exactly `0x4F4F4F4F` (0↔1, 2↔3, …) — a scrambler, not
+  physics. Wire form: token bytes OR'd onto the four template words → e.g. sel 6 =
+  `[8863 8893 886C 889C …]`. The real duty template is **8 words** (16 B at `0x40CA6`):
+  `[8800 8800 8800 8800 1200 0C00 0A00 0C01]` — the trailing `0x0C01` word we never sent.
+- **The level ramp law:** init `0x6C12C` sets level cells 7, commanded `0xFFF94FE8 = 0x3F`,
+  time-per-level `0xFFF93848 = level×200`; `0x6C542` raises target +1 per
+  `level×200 + 2400` ticks; `0x6C48C(time)` kicks the LEVEL job (`level = time×0x148>>16`
+  = time/200) via `0x6C0BA` (which sets job-selector `0xFFF93B9B = 7` and bumps the target);
+  `0x6BF9C` (job-selector = 0) programs the dwell timer (0xFFFFF5B0) and kicks the DUTY job;
+  on echo/level mismatch the harvester forces `0xFFF93BA4 = 7` → `0x8CEDC` state 0x2A →
+  `0x6C720` → bump + resend level job. While achieved level == 0 the duty arms cycle
+  contexts 0 → 7 → 0x19, and **state 0x19 sends the COMPLEMENT of the token** (`~uVar2`).
+  Once level ≠ 0 the steady context is 0x1E (plain token). All owned by the monitor task's
+  dispatch table (0x876C4–0x87AA0).
+- **Consequence for the plan:** the queued stock-restore duty read is UNNECESSARY — the
+  token is computable from the selector our own bursts already receive. Open item settled
+  next bench run by printing every reply position: whether last night's `AA06` was the 0x0A
+  echo (level echo 6 — commanded accepted) or the 0x0C feedback (achieved 0, selector 6).
+  The remaining unknowns are only procedural: the supervisor's acceptance criteria for the
+  token/commit chain, and the enable-arm reboot cause.
