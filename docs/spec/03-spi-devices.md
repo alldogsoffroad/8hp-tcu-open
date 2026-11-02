@@ -521,6 +521,25 @@ ToolSession -> installer, no re-init gap — retired the flaky two-process
 flow; NOTE it sets S9 itself after a fix — keep_rate alone inherits
 whatever the last chain left at S6).
 
+**The five-chip map (2026-11-02 night, FE13 sub-0A, image m4u/1d4d819):** the
+five-select probe (word i -> select i, one-hot verified) mapped the RSPI-B
+devices: **af31 silent** (no chip); **af21 = SSLB2 — answers EVERYTHING with
+a rolling counter** (0x0ECx..0x0F6x, +4/job — this IS the sslb2_rx counter
+seen in every mode-2 dump); **af11 = the supervisor** (reg 0 = 0xBC, data
+registers read 0x00); **af01 = the second system chip** (reg 0 = 0xBB,
+0x24 = 0xFF under our driver writes — the engaged stock's shadow 0x07D7
+reads **0x20**); **af51 = a fifth chip** (0x24 = 0xBB). The stock's job2/job3
+handlers (0x92ED4/0x92FD0) cross-check af01's 0x24/0x2E replies against the
+0x90 switch word (mask 0x15) and store the reply at shadow 0xFFF907D7 — a
+cross-chip confirmation loop. **Write attempts on af01's 0x24**: 0xA420 (M3
+reg|0x80 convention) with and without the 0x1200 commit — the register
+holds 0xFF (low byte) with a live high nibble (a/ab varying = status).
+Open: what makes af01's 0x24 read 0x20 as in the engaged stock — a different
+write encoding, a gated register (needs the supervisor's state first), or
+0x24 is a STATUS register reflecting switch state set by another path. The
+SSLB2 counter discovery also explains one old mystery: the mode-2 out[25:26]
+byte was never noise.
+
 Remaining leads, ranked: (1) the 0x2D job — the 11-bit
 CURRENT SETPOINTS (the stock's keep-warm machine commands real currents from
 boot; our 0x88 stays 0 — the supervisor may require seeing commanded load);
