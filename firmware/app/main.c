@@ -48,6 +48,7 @@
 #include "platform/platform.h"
 #include "bsw/sched/sched.h"
 #include "bsw/sup/sup.h"
+#include "bsw/sup/sup_engage.h"
 #include "bsw/com/com.h"
 #include "bsw/diag/uds.h"
 #include "bsw/meas/meas.h"
@@ -264,6 +265,19 @@ int main(void)
     uds_init(&s_uds_app);
     meas_table_init();
     (void)com_register_hw();
+#if defined(TCU_AUTOENGAGE)
+    /* Bench build (m4 series): the supervisor's acceptance window is a BOOT
+     * phenomenon — the engaged stock's echo bit0 is already latched at the
+     * first readable instant after power-up (shadow-poll campaign 2026-10-31).
+     * Our host-armed sequence ran minutes late; the stock's monitor starts
+     * within ~100 ms of app boot. Self-arm the full commissioning at init:
+     * pattern + ID poll + write + setpoints + tokens + ramp, enable as a
+     * grant-gated shadow (cannot reset the TCU — the A-law, 2026-11-01). */
+    sup_app_pattern2(true, 0x00u, 0x20u, true);
+    sup_drv_sync(true);
+    sup_engage_arm(true);
+    sup_engage_request_enable(true);
+#endif
     sched_init(s_tasks, (uint8_t)(sizeof s_tasks / sizeof s_tasks[0]));
 
     for (;;) {
