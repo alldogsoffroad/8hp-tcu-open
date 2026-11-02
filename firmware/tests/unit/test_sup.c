@@ -285,34 +285,41 @@ int main(void)
         for (unsigned i = 0u; i < 402u && dv->drv_jobs == 0u; i++) {
             sup_tick_5ms();
         }
-        /* arm queues the WRITE first: 8 regs x 4 driver chips (no supervisor
-         * in the write rotation - 0x8E55 to it reset the TCU, bench 2026-11-01) */
-        CHECK(dv->drv_jobs == 1u && dv->drv_writes == 1u);
+        /* the stock order: the ID POLL first - [0x0600 x5, 0x0000 x5] on the
+         * five-select (supervisor included; its select answers a8-class) */
+        CHECK(dv->drv_jobs == 1u && dv->drv_id == 1u);
         CHECK(stub.drv5_jobs == 1u);
-        CHECK(dv->drv_a8 == 0u && dv->drv_aa == 32u && dv->drv_bad == 0u);
+        CHECK(dv->drv_a8 == 2u && dv->drv_aa == 8u && dv->drv_bad == 0u);
+        for (unsigned i = 0u; i < 402u && dv->drv_jobs == 1u; i++) {
+            sup_tick_5ms();
+        }
+        /* then the WRITE: 8 regs x 4 driver chips (no supervisor in the
+         * write rotation - 0x8E55 to it reset the TCU, bench 2026-11-01) */
+        CHECK(dv->drv_jobs == 2u && dv->drv_writes == 1u);
+        CHECK(dv->drv_a8 == 2u && dv->drv_aa == 40u && dv->drv_bad == 0u);
         for (unsigned i = 0u; i < 402u && dv->drv_jobs == 1u; i++) {
             sup_tick_5ms();
         }
         /* then the keep-warm setpoint pass (E8/F0 = 0x1141, 4 chips) */
-        for (unsigned i = 0u; i < 402u && dv->drv_jobs == 1u; i++) {
-            sup_tick_5ms();
-        }
-        CHECK(dv->drv_jobs == 2u && dv->drv_writes == 1u && dv->drv_sp == 1u);
-        CHECK(dv->drv_a8 == 0u && dv->drv_aa == 68u && dv->drv_bad == 0u);
-        /* then the periodic jobs alternate read / dithered setpoint */
         for (unsigned i = 0u; i < 402u && dv->drv_jobs == 2u; i++) {
             sup_tick_5ms();
         }
         CHECK(dv->drv_jobs == 3u && dv->drv_writes == 1u && dv->drv_sp == 1u);
-        CHECK(dv->drv_a8 == 12u && dv->drv_aa == 116u && dv->drv_bad == 0u);
+        CHECK(dv->drv_a8 == 2u && dv->drv_aa == 76u && dv->drv_bad == 0u);
+        /* then the periodic jobs alternate read / dithered setpoint */
         for (unsigned i = 0u; i < 402u && dv->drv_jobs == 3u; i++) {
             sup_tick_5ms();
         }
-        CHECK(dv->drv_jobs == 4u && dv->drv_sp == 2u);   /* dither pass */
-        CHECK(dv->drv_a8 == 12u && dv->drv_aa == 152u && dv->drv_bad == 0u);
+        CHECK(dv->drv_jobs == 4u && dv->drv_writes == 1u && dv->drv_sp == 1u);
+        CHECK(dv->drv_a8 == 14u && dv->drv_aa == 124u && dv->drv_bad == 0u);
+        for (unsigned i = 0u; i < 402u && dv->drv_jobs == 4u; i++) {
+            sup_tick_5ms();
+        }
+        CHECK(dv->drv_jobs == 5u && dv->drv_sp == 2u);   /* dither pass */
+        CHECK(dv->drv_a8 == 14u && dv->drv_aa == 160u && dv->drv_bad == 0u);
         sup_drv_sync(false);
         sup_tick_5ms();
-        CHECK(dv->drv_jobs == 4u);                    /* off: no more jobs */
+        CHECK(dv->drv_jobs == 5u);                    /* off: no more jobs */
     }
 
     if (fails == 0) {

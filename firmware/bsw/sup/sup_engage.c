@@ -235,6 +235,12 @@ static const uint16_t S_DRV_WRITE_TMPL[8] = {
 };
 static bool s_drv_write_pending;
 
+/* ID poll (stock 0x0A, sender 0x921A0, handler 0x921E0): [0x0600 x5,
+ * 0x0000 x5] — registers 0x06 and 0x00 from every chip on the five-select
+ * rotation (supervisor included: pure reads). Replies in the 0xA2xx class
+ * (chip ID/status); the stock runs this BEFORE the register sync. */
+#define DRV_ID_WORDS 10u
+static bool s_drv_id_pending;
 /* setpoint job (stock 0x2D): [88, A0, E8, A6, F0, 60, C0, 66, D8] x 4 chips;
  * E8/F0 carry the 11-bit current setpoints (sender positions chan+0xC/+0x14).
  * Static keep-warm class 0x1141 (0x90586 engaged capture: 11 xx pairs). */
@@ -256,7 +262,8 @@ void sup_drv_sync(bool on)
 {
     s_drv_on = on;
     s_drv_div = DRV_PERIOD - 1u;        /* first pass on the next tick */
-    s_drv_write_pending = on;           /* one commissioning write at arm */
+    s_drv_id_pending = on;              /* the stock order: ID poll first */
+    s_drv_write_pending = on;           /* then the commissioning write */
     s_drv_sp_pending = on;              /* then one keep-warm setpoint pass */
 }
 
@@ -274,6 +281,17 @@ bool sup_drv_poll(uint16_t *words, uint8_t *n)
 {
     if (!s_drv_on) {
         return false;
+    }
+    if (s_drv_id_pending) {
+        s_drv_id_pending = false;
+        for (uint8_t c = 0u; c < 5u; c++) {
+            words[c] = 0x0600u;         /* chip ID/status register */
+            words[5u + c] = 0x0000u;    /* second status register */
+        }
+        *n = DRV_ID_WORDS;
+        s_drv.drv_jobs++;
+        s_drv.drv_id++;
+        return true;
     }
     if (s_drv_write_pending) {
         /* commissioning pass with the engaged stock's own register values;
@@ -348,6 +366,8 @@ void sup_drv_replies(const uint16_t *rx, uint8_t n)
             s_drv.drv_a8++;
         } else if ((rx[i] & 0xFE00u) == 0xAA00u) {
             s_drv.drv_aa++;
+        } else if ((rx[i] & 0xFF00u) == 0xA200u) {
+            s_drv.drv_a2++;            /* chip ID/status class (stock 0x0A job) */
         } else {
             s_drv.drv_bad++;
         }

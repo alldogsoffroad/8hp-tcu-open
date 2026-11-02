@@ -42,11 +42,14 @@ typedef struct {
 #define SUP_DRV_READ_WORDS 60u
 #define DRV_WRITE_WORDS 32u   /* 8 regs x the four driver chips */
 #define DRV_SP_WORDS 36u      /* 9 regs x 4 chips, the setpoint job */
+#define DRV_ID_WORDS 10u      /* 0x06 + 0x00 reads x 5 selects */
 
 typedef struct {
     uint8_t  drv_jobs;     /* driver jobs sent (read + write) */
     uint8_t  drv_writes;   /* commissioning write jobs sent */
     uint8_t  drv_sp;       /* setpoint jobs sent (keep-warm class) */
+    uint8_t  drv_id;       /* ID-poll jobs sent (the 0x0A pass) */
+    uint16_t drv_a2;       /* chip ID-class (0xA2xx) replies seen */
     uint8_t  drv_bad;      /* words whose reply fits no known class */
     uint16_t drv_a8;       /* supervisor-class (0xA8xx) replies seen */
     uint16_t drv_aa;       /* other-chip-class (0xAAxx) replies seen */
