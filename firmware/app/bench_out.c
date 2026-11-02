@@ -541,6 +541,27 @@ static int sup_lab_start(const uint8_t *in, uint16_t n)
         s_sup_mode = 2u;
         return 0;
     }
+    if (in[0] == 10u) {                                    /* five-select one-shot
+                                                             * (SSLB3/2/1/0/5 rotation):
+                                                             * word i -> select i%5 */
+        const uint16_t bytes = (uint16_t)(n - 1u);
+        if (bytes < 2u || bytes > 2u * SUP_LAB_MAX || (bytes & 1u) != 0u) {
+            return -NRC_IMLOIF;
+        }
+        {
+            uint16_t tx[SUP_LAB_MAX];
+            const uint8_t cnt = (uint8_t)(bytes / 2u);
+            for (uint8_t i = 0u; i < cnt; i++) {
+                tx[i] = (uint16_t)(((uint16_t)in[1u + 2u * i] << 8) | in[2u + 2u * i]);
+            }
+            if (!plat_sup_xfer5(tx, s_sup_rx, cnt)) {
+                return -NRC_CNC;
+            }
+            s_sup_n = cnt;
+            s_sup_mode = 1u;
+        }
+        return 0;
+    }
     if (in[0] == 5u) {                                     /* watchdog mode switch */
         if (n != 2u) {
             return -NRC_IMLOIF;

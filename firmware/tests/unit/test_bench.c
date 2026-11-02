@@ -26,6 +26,28 @@ static void uds_req(const uint8_t *d, uint8_t n)
     uds_tick_1ms();
 }
 
+/* multi-frame sender (FF + CFs, 1 ms ticks between) */
+static void uds_req_mf(const uint8_t *d, uint8_t n)
+{
+    can_frame_t f = { .id = 0x7E1u, .dlc = 8u };
+    memset(f.data, 0xCC, 8u);
+    f.data[0] = 0x10u; f.data[1] = n;
+    memcpy(&f.data[2], d, 6u);
+    (void)uds_rx(CAN_BUS1, &f);
+    uds_tick_1ms();
+    uint8_t seq = 0u;
+    for (uint8_t off = 6u; off < n; off += 7u) {
+        memset(f.data, 0xCC, 8u);
+        f.data[0] = (uint8_t)(0x20u + seq);
+        seq = (uint8_t)((seq + 1u) & 0x0Fu);
+        uint8_t k = n - off;
+        if (k > 7u) { k = 7u; }
+        memcpy(&f.data[1], &d[off], k);
+        (void)uds_rx(CAN_BUS1, &f);
+        uds_tick_1ms();
+    }
+}
+
 static const uint8_t *last_rsp(void)
 {
     return stub.n_tx != 0u ? stub.tx[stub.n_tx - 1u].data : (const uint8_t *)"";
@@ -223,7 +245,7 @@ int main(void)
         /* malformed one-shots: odd byte count, unknown sub, bare sub-09 */
         uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x01, 0x06 }, 6u);
         CHECK(last_nrc() == 0x13u);
-        uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x0A }, 5u);
+        uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x0B }, 5u);
         CHECK(last_nrc() == 0x12u);
         uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x09 }, 5u);
         CHECK(last_nrc() == 0x13u);
@@ -260,6 +282,16 @@ int main(void)
         uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x03 }, 5u);
         CHECK(memcmp(&last_rsp()[1], "\x71\x01\xFE\x13", 4) == 0);
 
+        /* ---- sub 10 (0x0A): five-select one-shot — word i -> select i%5 ---- */
+        stub.sup_xfer_rx = 0xA2A2u;
+        {   /* direct handler call (the 15-byte UDS form is multi-frame; the
+             * bench proven MF path covers it - here we test the handler) */
+            const uint8_t sub10[] = { 0x0A, 0x24, 0x00, 0x24, 0x00, 0x24,
+                                      0x00, 0x24, 0x00, 0x24, 0x00 };
+            CHECK(bench_routine(1u, BENCH_SUP_RID, sub10, sizeof sub10, out, 64u) == 0);
+        }
+        r = bench_routine(3u, BENCH_SUP_RID, NULL, 0u, out, 64u);
+        CHECK(r == 12 && out[0] == 1u && out[1] == 5u);   /* 5 replies, xfer5 used */
         /* ---- sub 9: the engage sequence (arm, results mode 3, one-shot guard) ---- */
         uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x02, 0x00, 0x21 }, 7u);
         uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x09, 0x01 }, 6u);
