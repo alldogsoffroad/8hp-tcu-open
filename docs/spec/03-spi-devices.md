@@ -500,6 +500,27 @@ varies by word/phase), still no grant, ammeter flat 0.167. Both passes ride
 the four-select rotation (supervisor excluded from writes). The keep-warm
 presence AND liveness hypotheses are both negative in static/dither form.
 
+**ID poll + auto-engage (2026-11-02, commits 684d39b/0244d90, images m4s/m4t):**
+the 0x0A job decoded ([0x0600 x5, 0x0000 x5] five-select chip-ID poll,
+0xA2xx replies into the 0x91108 channel block — sender 0x921A0/handler
+0x921E0) and implemented as the commissioning opener: ID poll -> write ->
+setpoints -> reads/dither. Bench (m4s): healthy, 591 tokens + 98 driver
+jobs, no grant — **the job registry is EXHAUSTED**; the question is formally
+outside it. Then the TIMING hypothesis (m4t, TCU_AUTOENGAGE): the
+commissioning self-arms at boot (the stock's grant latches within seconds
+of power-up; our host-armed runs were minutes late). Bench: pattern +
+full sequence from app start (counters live from the first readable
+second), **240 s / 25,641 frames on watch, zero grants, ammeter flat
+0.167** — on-time complete lawful commissioning, still withheld. Also this
+session: the ACS712 bench ammeter deployed (±3 mA, tools/bench/ammeter.py,
+telemetry in the Teensy bridge protocol §7) and a blown bus-1 transceiver
+driver diagnosed by error signature (bit errors, no ACK errors, one-
+directional) and fixed by the bus-2 module swap; /tmp/storm_and_probe.py =
+the one-process installer chain (storm -> session probe -> engine ->
+ToolSession -> installer, no re-init gap — retired the flaky two-process
+flow; NOTE it sets S9 itself after a fix — keep_rate alone inherits
+whatever the last chain left at S6).
+
 Remaining leads, ranked: (1) the 0x2D job — the 11-bit
 CURRENT SETPOINTS (the stock's keep-warm machine commands real currents from
 boot; our 0x88 stays 0 — the supervisor may require seeing commanded load);
