@@ -689,7 +689,11 @@ static bool readable(uint32_t a, uint16_t n)
         return false;
     }
     return end <= 0x001FFFFFu ||
-           (a >= 0xFFF80000u && end <= 0xFFF9FFFFu);
+           (a >= 0xFFF80000u && end <= 0xFFF9FFFFu) ||
+           (a >= 0xFFFC0000u && end <= 0xFFFFFFFFu);   /* m4v: I/O registers —
+            * the stock's boot-handshake mailbox (0xFFFC0D00/D04, spec 03 §6.2),
+            * module-stop state (0xFFFE080x) and the chip ID (0xFFFF1000) become
+             * readable from the bench (read-only; polled app, no r-t-c risks) */
 }
 
 bool plat_mem_read(uint32_t addr, uint8_t *out, uint16_t n)
