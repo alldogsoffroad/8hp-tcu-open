@@ -268,6 +268,32 @@ Implementation notes:
    probe FWE before the first erase and abort cleanly when low; issue every write early in the
    session's life (the plant session itself dies at ~10 min, taking the engine with it — the
    22:33 session expired mid-plan).
+   **Placement correction (2026-11-03, day): the FWE probe belongs AFTER the prime.** Spec 17
+   §5l: FWE is high "from at latest the `01` attestation exchange onward — the process is
+   deterministic." A probe placed *before* the prime measures the boot's raw pre-latch state
+   and discards sessions the documented chain would have written: the 2026-11-03 morning
+   install campaign gated on exactly such an unprimed probe (fastprobe.py) and burned its
+   cycles on false verdicts, with 30 s–6 min standby probe loops that the repo method never
+   had. The install now runs the flasher-repo chain verbatim (`arm_storm` catch → session →
+   key → engine → handshake → **prime** → one FWE rail → sig-first install;
+   `tools/install_image.py`), with the repo's retry units — re-handshake on the same boot, or
+   a power cycle — and no standby waits anywhere.
+   **Probe-mechanics corrections (bench 2026-11-03 day, runs 8–10):**
+   - **A refused ARM (`91 02 22 30`-class) wedges the session's op stream** — every later op
+     (ARM included) returns nothing until a re-hail. The `FWE LOW (None)` verdicts of the
+     fastprobe era therefore carried two different meanings silently: the refusal itself was
+     a real FWE-low at that instant, but the `None` FENTRYR read was post-refusal deafness,
+     not "no readback." Any FWE poll must re-hail per probe (fresh seed AND counter from 0 —
+     `ToolSession.handshake()` does not reset `ctr` by itself).
+   - **op-08 and op-11 answer on a bare, unprimed session** (bench: a refused-ARM reply and a
+     true `0x40000` signature, no prime) — priming is not an op-gate; the install's own
+     per-block verify ladder suffices.
+   - The window appears to **open late on the boot's own schedule**: every historical HIGH
+     probe sat minutes after session-up (loader attach read `FENTRYR=0x0001` already high;
+     chain_final4's ops at ~+50 s were accepted), while every same-session ~+40 s probe read
+     low — the rise, not just the fall, is time-dependent. The corrected rail polls actively
+     (re-hail + ARM every 20 s, bounded ~4 min) and either catches the rise or refutes it
+     with timestamps.
    Also observed this night: with the plant session long expired the TCU parks in a new
    quiescent state — **0.152 A, every service silent** (500 k UDS, 666 k plant, meas all dead) —
    below every catalogued draw (boot states 0.176–0.19, stock app 0.163, project app 0.166).
@@ -338,11 +364,16 @@ closed every open mechanic of the write grammar:
   `0x0001` after a key-1 ARM = P/E mode entered = FWE high; `0x0000` = FWE low. (A loader FWE
   probe that demanded the `0xAA` byte aborted a healthy session on 2026-11-02.)
 - **op-08 signature = offline oracle** (checksum core `0xFFF88590`): over the region bytes,
-  `sig_lo = ~zlib_crc32(data) XOR byte_sum`, `sig_hi = reflected_crc32(data, poly 0xEB31D82E)`
-  (both init `0xFFFFFFFF`, lsb-first; the lo polynomial is the standard `0xEDB88320`).
-  Validated against both blank signatures and a live content block. This turns every op-08
-  reply into a full-content comparison against a locally computed image — the airtight verify
-  the loader always lacked (first 4 bytes per unit was the previous best).
+  `sig_hi = reflected_crc32(data, poly 0xEB31D82E)` (init `0xFFFFFFFF`, lsb-first). This turns
+  every op-08 reply into a full-content comparison against a locally computed image — the
+  airtight verify the loader always lacked (first 4 bytes per unit was the previous best).
+  **sig_lo correction (bench 2026-11-03, run 21): the engine computes
+  `sig_lo = zlib_crc32(data) XOR byte_sum` — NO inversion.** The original form above
+  (`~crc XOR bsum`, which equals `~(crc^bsum)`) matched the *blank* constants only because
+  those were observed engine reads, not oracle outputs; against 13 freshly-written blocks the
+  engine's lo came back uniformly `~oracle_lo` while every hi matched (content byte-exact).
+  The m4v2 sig table was regenerated with the engine convention and validated against live
+  reads.
 - **Marker-block lesson**: erasing a block wipes markers living inside it, and a diff-vs-stock
   install plan skips units that equal the stock base — so `0x160000`'s erase must reprogram
   marker 1 (`0x17FE00`, 256 × `0x00`) even though the plan sees it as "already correct".

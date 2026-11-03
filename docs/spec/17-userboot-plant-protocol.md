@@ -526,14 +526,39 @@ the process is deterministic.
 fresh session (region checksum `42c38b5cf2dafbe9`; blank `14b603cca7a12f57`, the tool's marker
 `59552884f4395537`), then the block erased again — the TCU restored byte-identical to its
 original dump. No proprietary tool anywhere in the loop.
+**Full-image installs (2026-11-03):** `tools/install_image.py` runs this chain verbatim and
+replaces the ad-hoc `/tmp` install scripts: sig-first, resume-safe across power cycles (one
+op-08 per block decides skip/blank/partial), erase/ARM composers now carry the spec 16 §12
+FENTRY keys (repo `compose_erase` previously hardcoded key 1 — MAT1 blocks ≥`0x100000`
+erased refused), and the only FWE check is one post-priming rail probe before the first
+erase (spec 16 §10 placement correction). First bench run the same day caught on the storm's
+first power-up and chained clean (session, key, engine, handshake) but died at
+**"priming stalled"**: the repo `prime()` was still the positional form (read exactly nrx
+replies) that the 2026-11-02 install-chain lesson had already replaced with drain-mode in
+`tcu_write` — the repo had missed that fix too. Ported: send each tx, drain the reply burst
+until quiet, absorb busy pacing, never die on burst shape (the PRIMING table itself was
+confirmed complete — byte-equal to the transcript's idx 2..1114 tx script).
 
 **Delivery notes [B].** One engine download per boot: a failed launch keeps the download door
 open (~4 attempts, then `7F 34 22`); a successful launch closes it, and a stale partial RAM
-image answers MMS then garbage — power-cycle between attempts. Once the 500 kbit/s session
-starts, the 666.667 kbit/s door is closed (POR only). The vendor tool's phone app accepts
+image answers MMS then garbage — power-cycle between attempts. A download **broken
+mid-transfer also closes the door** (34 refused on the same boot, bench 2026-11-03) — retry
+blocks in place, but a dead transfer costs the boot. Once the 500 kbit/s session starts, the
+666.667 kbit/s door is closed (POR only). The vendor tool's phone app accepts
 byte-modified copies of its own read files (no content check) — that is how the write capture
 was made. Supervisor danger words stand (spec 03/16 history): `[8E,01]` resets, `[8E,50]`
 latches reset, and `[8E,80]` in mode 6 kills the TCU until a bench POR.
+
+**Priming caveat (bench 2026-11-03).** The priming sequence's identify reads are
+**content-dependent**: its read-arm at `0x80100000` (block `0x100000`) reads flash the m4v
+install ERASED, and the engine truncates that reply burst mid-stream (11–12 of 17 frames on
+two independent transports), desyncing the wire-order cipher — permanent silence after. Every
+completed prime predates the m4v image (last: 2026-11-02 22:33, 21 s). Meanwhile op-08 and
+op-11 answer on a bare unprimed session (true `0x40000` signature, refused-ARM replies), so
+priming is not an op-gate: the install flow drops it and lets its own per-block `08` verify
+ladder stand in. Revisit the attestations (`01`/`02`) only if some op family refuses unprimed.
+Also from the same runs: **a refused ARM wedges the session's op stream** until a re-hail
+(fresh seed, counter reset to 0 — see spec 16 §10's probe-mechanics corrections).
 
 ## 5m. The 500 kbit/s UDS front door (bench 2026-11-03) [O][B]
 
@@ -573,6 +598,13 @@ Tooling: `/tmp/frontdoor.py` (LED-gated full chain), `/tmp/race500k.py` (off-gat
 scan), the tap decoder pattern in this section. The Teensy LED protocol (fast = storm armed /
 power-on signal, slow = chained; `B1`/`B0` serial commands, flasher commit pending) was added
 the same night to remove host-latency races from the power-cycle protocol.
+**Storm/pipeline port collision (install cycle 2, 2026-11-03 00:33):** the storm's 5 s `C/O`
+controller-reset writes and the install pipeline's `10 60` probes both open ACM0, and pyserial
+dies on the multiple-access collision — both scripts silently, leaving the LED latched fast.
+Cycle 1 survived the same overlap only by timing luck (probe answered on try 1 before the
+storm's next reset tick). Fixed order in `pipeline_fast.sh` (repo + /tmp, verified 2026-11-03):
+storm `pkill` + `B0` **before** the probe loop; with this the LED goes slow at pipeline start
+(storm down, probing), not at chaining. General rule: one process owns a serial port at a time.
 
 ## 6. Open items
 
