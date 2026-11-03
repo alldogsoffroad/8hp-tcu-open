@@ -79,6 +79,11 @@ bool plat_can_rx_register(can_bus_t bus, uint16_t id)
     return true;            /* the replay delivers every frame; the receive layer filters */
 }
 
+void plat_can_rx_commit(void)
+{
+    /* no mailbox layer on the host replay */
+}
+
 /* Read the next frame of the replay log into s_pend. */
 static void log_next(void)
 {

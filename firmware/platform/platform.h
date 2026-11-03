@@ -28,6 +28,9 @@ bool plat_can_send(can_bus_t bus, const can_frame_t *f);
 /* Accept frames with this identifier on the bus (one hardware mailbox per identifier).
  * Returns false when the bus has no free receive mailbox. */
 bool plat_can_rx_register(can_bus_t bus, uint16_t id);
+/* Program the collected RX registrations in ascending identifier
+ * order (the RCAN stays in ID-reorder mode; see plat_sh7254r.c). */
+void plat_can_rx_commit(void);
 
 /* Fetch one received frame, if any. Polled from task context. */
 bool plat_can_recv(can_bus_t bus, can_frame_t *f);

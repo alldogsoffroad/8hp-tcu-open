@@ -170,22 +170,53 @@ bool plat_can_send(can_bus_t bus, const can_frame_t *f)
     return false;
 }
 
+/* RX registrations are collected and programmed in ascending identifier order by
+ * plat_can_rx_commit().  The RCAN is left in ID-reorder mode (the boot's setting,
+ * see can_init), and the reorder hardware expects a sorted mailbox table: an
+ * unsorted table silently drops identifiers whose search path crosses an inversion
+ * (bench 2026-11-03: 0x361 dead on both buses while every other registered id
+ * received, with the table starting 0x7E1, 0x7DF, 0x361, 0x108, ...). */
+static uint16_t s_rx_ids[CAN_BUS_COUNT][RCAN_MAILBOXES];
+static uint8_t s_rx_n[CAN_BUS_COUNT];
+
 bool plat_can_rx_register(can_bus_t bus, uint16_t id)
 {
-    uint32_t b, mb;
-
-    if (bus >= CAN_BUS_COUNT || s_rx_next[bus] >= RCAN_MAILBOXES) {
+    if (bus >= CAN_BUS_COUNT || s_rx_n[bus] >= (uint8_t)(RCAN_MAILBOXES - RX_MB_FIRST)) {
         return false;
     }
-    b = s_can_base[bus];
-    mb = s_rx_next[bus]++;
-    /* Mailbox is inactive (MBC 7) since can_init, so it may be configured now. */
+    s_rx_ids[bus][s_rx_n[bus]++] = id;
+    return true;
+}
+
+static void rx_mb_program(uint32_t b, uint32_t mb, uint16_t id)
+{
     RCAN_MB_CTRL0H(b, mb) = (uint16_t)((id & 0x7FFu) << 2);   /* standard data frame */
     RCAN_MB_CTRL0L(b, mb) = 0u;
     RCAN_MB_LAFMH(b, mb) = 0u;                                  /* all identifier bits compared */
     RCAN_MB_LAFML(b, mb) = 0u;
     RCAN_MB_CTRL1(b, mb) = (uint16_t)(RCAN_MBC_RX | 8u);        /* NMC 0: newest frame kept */
-    return true;
+}
+
+void plat_can_rx_commit(void)
+{
+    for (uint8_t bus = 0u; bus < (uint8_t)CAN_BUS_COUNT; bus++) {
+        uint32_t b = s_can_base[bus];
+        uint16_t n = s_rx_n[bus];
+
+        for (uint16_t i = 1u; i < n; i++) {                     /* insertion sort; n is small */
+            uint16_t key = s_rx_ids[bus][i];
+            uint16_t j = i;
+            while (j > 0u && s_rx_ids[bus][j - 1u] > key) {
+                s_rx_ids[bus][j] = s_rx_ids[bus][j - 1u];
+                j--;
+            }
+            s_rx_ids[bus][j] = key;
+        }
+        for (uint16_t i = 0u; i < n; i++) {
+            rx_mb_program(b, RX_MB_FIRST + i, s_rx_ids[bus][i]);
+        }
+        s_rx_next[bus] = (uint8_t)(RX_MB_FIRST + n);
+    }
 }
 
 bool plat_can_recv(can_bus_t bus, can_frame_t *f)

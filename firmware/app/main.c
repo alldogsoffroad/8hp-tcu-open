@@ -265,6 +265,9 @@ int main(void)
     uds_init(&s_uds_app);
     meas_table_init();
     (void)com_register_hw();
+    plat_can_rx_commit();       /* ascending-id mailboxes: the RCAN ID-reorder hardware
+                                 * drops ids whose search crosses an unsorted inversion (bench
+                                 * 2026-11-03: 0x361 dead while all other ids received) */
 #if defined(TCU_AUTOENGAGE)
     /* Bench build (m4 series): the supervisor's acceptance window is a BOOT
      * phenomenon — the engaged stock's echo bit0 is already latched at the

@@ -182,3 +182,26 @@ Roles **open**.
 2. Duty-cycle update paths and rates for group A.
 3. Setup of the unassigned TOE outputs (§3.4) and timer C.
 4. Mapping of speed-sensor channels to transmission shafts.
+
+## 7. The stock's scheduling architecture: bare metal, no RTOS (2026-11-03) [O]
+
+A structural sweep of the full dump (boot area, stock application, session engine, boot MAT)
+found **no real-time OS anywhere** — answering the standing question whether the unit runs a
+Renesas HI7000/ITRON kernel. The evidence is structural, not string-based (HI7000/4 ships as
+source and embeds no mandatory banner): **zero `trapa` instructions at any genuine instruction
+boundary** across all 323 byte-candidates (cross-checked against the seeded function map — a
+service-call mechanism does not exist); the application entry (`0x66CA8`) makes ~20 direct
+init calls and tail-jumps into a **busy superloop** (`0x67A68`); the vector table holds a
+dozen real ISRs with unexpected-interrupt reporter stubs (any kernel trampoline would surface
+there as logged faults); and no context-dispatch routine (full-register save/restore from
+TCBs) exists anywhere in the image.
+
+The periodic work — including the 15.625 ms (1/64 s) CAN schedule of spec 08 — is driven by
+the tick ISR (vector 228, `0x677F8`), which clears its flag and walks **flat cyclic handler
+tables** of 20-byte entries `{enable, period@+4, callback@+16}` at `0xFFF908DC` and a second
+table at `0xFFF9097C`, invoking callbacks directly from interrupt context. That is the
+mechanism to reproduce for equivalent timing behavior. The one remaining unknown is the
+runtime-constructed session/security code (spec 17 §5e), which is a CAN session handler and
+not a scheduler; a live `0x2A` RAM read of the engaged stock over `0xFFF80000–0xFFF9FFFF`
+would close it conclusively (ITRON would show TCB arrays at 64+140-byte cadence; bare metal
+predicts the flat tables above).
