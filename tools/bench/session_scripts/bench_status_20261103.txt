@@ -1,0 +1,16 @@
+23:33:38 bench OFF confirmed by user; arming race500k
+23:34:44 race500k v3: off-gate + 10 02 + security subfunction scan
+[23:35:10] race500k armed — waiting for confirmed OFF state before the signal
+[23:35:10] off state confirmed — LED FAST = power on now
+[23:35:12] edge at 175 mA — LED slow, chaining on 500k NOW
+[23:35:14] 500k responder up (1002) at t+0.0s
+[23:35:14] session 1002: 5002002800c8
+[23:35:14] session 1003: 5003002800c8
+[23:35:14] 27 01: 7f2712
+[23:35:14] 27 03: 7f2712
+[23:35:14] 27 11: 7f2712
+[23:35:14] 27 61: 7f277e
+[23:35:14] 27 71: 7f2712
+[23:35:14] no security subfunction gave a seed
+23:44:52 frontdoor.py ready: full chain, LED-gated, ~seconds from edge to keyed
+23:48:43 fronthail.py ready: hail at edge, ToolSession, FWE probe, inline install

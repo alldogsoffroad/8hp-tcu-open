@@ -251,6 +251,31 @@ Implementation notes:
    with no proprietary tool: [8hp-teensy-flasher](
    https://github.com/alldogsoffroad/8hp-teensy-flasher) (full write-up in spec 17 §5l). "Code-flash writes therefore stay with the ACDP-2" above is void: nothing
    stays with the ACDP-2.
+   **Bench 2026-11-02/03 — FWE is time-gated inside the session, and how to probe it.** Five
+   chained sessions quantified it. Probe = one op-11 ARM (key 1, the proven nightly form) then
+   read FENTRYR (`0xFFFFA902`, word) via op-01: FENTRYR reads back **only the FENTRY mode bits —
+   the `0xAA` key bits read zero** — so `0x0001` after a key-1 ARM = P/E mode entered = FWE high
+   (writes will succeed), `0x0000` = FWE low (refusal class 2/`0x22` sub `0x30`/`0x32` follows;
+   the ARM itself is refused with `91 02 22 30`). Matrix: announce-path entry, probed +4 min
+   after engine launch → **high** (drove the first successful FENTRY1 erases, §11); silent
+   entry (entry frames present from power-on), probed +2 min → **high**; heartbeat-era entry,
+   probed +9 min after launch / +20 min after power → **low**. Belief, stated as belief: FWE is
+   raised by the boot MAT / supervisor when the boot enters its flash-serving plant state — both
+   entry paths qualify — and it is not held indefinitely: it drops somewhere between ~4 and ~9
+   minutes after launch (or when the session sits idle; one low sample cannot split those). The
+   engine does **not** raise FWE itself — its `0xFFF89FE4` writes only FENTRYR, and FENTRYR
+   writes never stick below FWE (the 2026-10-26 note above). Corollaries baked into the loader:
+   probe FWE before the first erase and abort cleanly when low; issue every write early in the
+   session's life (the plant session itself dies at ~10 min, taking the engine with it — the
+   22:33 session expired mid-plan).
+   Also observed this night: with the plant session long expired the TCU parks in a new
+   quiescent state — **0.152 A, every service silent** (500 k UDS, 666 k plant, meas all dead) —
+   below every catalogued draw (boot states 0.176–0.19, stock app 0.163, project app 0.166).
+   Related engine-side limits hit the same night: the ~18-read session wall extends to op-01
+   (read a batch, then reads return nothing until a fresh handshake), and the boot's plant
+   announce, when it comes at all, appears near the 66.7 s handshake-timeout (one catch at
+   +67.5 s storm time ≈ +77 s from power) — a caught announce is neither necessary nor
+   sufficient for a working session; probing `10 60` after ~90 s is the reliable test.
 2. Whether a CPU copy of the FCU firmware is accepted (§3).
 3. Whether the user boot MAT also checks the calibration markers before starting the application
    (affects only which block must be valid; the order in §5 covers both).
@@ -288,3 +313,39 @@ power-up (1.73 A transient, 1.79 A steady vs 0.166 A for our outputs-off firmwar
 bus-1 periodic set live (0x037/0x2F9, 0x144, 0x170, 0x1A0, 0x2A8, 0x178, 0x3D1) — matching the
 2026-10-17 stock capture. Driver: `/tmp/restore_body.py` pattern (blank-region program, no
 erases; resume mode; ~5 units/s ⇒ 0x100000 bytes ≈ 11 min).
+
+## 12. The engine grammar closed: erase FENTRY key, FENTRYR readback, the op-08 oracle (2026-11-02/03) [O][B]
+
+Full disassembly of the vendor session engine (decrypted body at `0xFFF884B0`, 0x2970 bytes)
+closed every open mechanic of the write grammar:
+
+- **Op map** (dispatcher `0xFFF8AC56`, parsed command block `0xFFF80988`):
+  `0x01` read (sizes 1/2/4, CF tail byte) → `0xFFF8A1F4`; `0x02` → `0xFFF8A258`;
+  `0x11` ARM → `0xFFF8A2F8`; `0x12` program → `0xFFF8A538`; `0x13` → `0xFFF8A498`;
+  `0x20` erase → `0xFFF8A838`; `0x21` → `0xFFF8A6C0`; `0x08` verify → `0xFFF8A98C`.
+- **Erase CF layout**: `[FCU addr BE32][mode ≤1][FENTRY key][—][—]` — CF byte 5 is the FENTRY
+  key, byte 4 selects the address-window check (0 → mask `0xFF800000` vs `0x80800000`;
+  2 → mask `0xFFFE0000` vs the `0x80100000` alias window). The engine's `0xFFF89FE4` writes
+  **FENTRYR (`0xFFFFA902`) := `0xAA00 | CF[5]`** immediately before each FCU `0x20 0xD0`
+  command. The 2026-11-02 "erase refuses ≥0x100000" was our compose hardcoding CF[5] = 1:
+  FENTRY0 selected for a MAT1 block → FCU ILGL → `A0 22 32`. **Fix: CF[5] = 2 for blocks
+  ≥0x100000** (`compose_erase`, byte-exact-unchanged below 0x100000). The pre-erase key-2 ARM
+  of §11 was futile by construction — the erase's own CF[5] reselected FENTRY0 after it.
+  Bench-proven 2026-11-02: four 128 KB MAT1 erases accepted (`60 80`), blank signatures verified.
+- **ARM CF layout**: `[FCU addr][mode ≤1][flag ≤1][0xE8 unit][MAT key]` — CF[7] is the ARM's
+  FENTRY key (same `0xFFF89FE4` path), matching restore_body's proven key-2 programming.
+- **FENTRYR readback**: only the FENTRY mode bits read back — the `0xAA` key bits read zero.
+  `0x0001` after a key-1 ARM = P/E mode entered = FWE high; `0x0000` = FWE low. (A loader FWE
+  probe that demanded the `0xAA` byte aborted a healthy session on 2026-11-02.)
+- **op-08 signature = offline oracle** (checksum core `0xFFF88590`): over the region bytes,
+  `sig_lo = ~zlib_crc32(data) XOR byte_sum`, `sig_hi = reflected_crc32(data, poly 0xEB31D82E)`
+  (both init `0xFFFFFFFF`, lsb-first; the lo polynomial is the standard `0xEDB88320`).
+  Validated against both blank signatures and a live content block. This turns every op-08
+  reply into a full-content comparison against a locally computed image — the airtight verify
+  the loader always lacked (first 4 bytes per unit was the previous best).
+- **Marker-block lesson**: erasing a block wipes markers living inside it, and a diff-vs-stock
+  install plan skips units that equal the stock base — so `0x160000`'s erase must reprogram
+  marker 1 (`0x17FE00`, 256 × `0x00`) even though the plan sees it as "already correct".
+- **Engine-side limits**: the ~18-read session wall extends to op-01 (batch reads, then silence
+  until a fresh handshake); the prime transcript's op-13 stalls are normal and drain-mode
+  tolerates them; FENTRYR reads work through op-01 raw-address frames (`01 05 <addr> <sz>`).

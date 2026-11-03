@@ -535,6 +535,45 @@ byte-modified copies of its own read files (no content check) — that is how th
 was made. Supervisor danger words stand (spec 03/16 history): `[8E,01]` resets, `[8E,50]`
 latches reset, and `[8E,80]` in mode 6 kills the TCU until a bench POR.
 
+## 5m. The 500 kbit/s UDS front door (bench 2026-11-03) [O][B]
+
+The boot's 500 kbit/s responder (the D7656915 server of §5g, live whenever no application
+starts) carries a **UDS layer that opens with the same cube-forged key as the plant session** —
+keyed in about one second from power-on, with no entry frames, no storm and no waiting:
+
+| Step | Request | Result |
+|---|---|---|
+| Session | `10 61` | `50 61 00 32 01 F4` — a vendor session; `10 02`/`10 03` also answer, `10 60` is `7F 10 12` here (mirror of the plant side, where `0x60` is the enterable one) |
+| Seed | `27 77` | `67 77` + 16 random bytes; retry until `v2(ripemd160(seed)) % 3 == 0` (~1 in 3) |
+| Key | `27 78` + the 128-byte `forge_key_dom` cube key (the §5j crack, unchanged domain) | **`67 78` accepted** — bench 2026-11-03 23:41, keyed ≈1 s after the request sequence started |
+
+What the keyed session serves today, and what it does not (all bench-swept):
+
+- `34` (RequestDownload): `7F 34 31` for every format tried (`00 34`+addr4+len3, `00 44`+addr4+len4,
+  `00 33`+addr3+len3) at `0xFFF88400`, `0xFFF82000`, `0xFFF90000`, `0x00400000`, from sessions
+  `0x61`, `0x02`, `0x03`, `0x01` — the format or a vendor prelude is still unknown. **This is
+  the only remaining gate**: the `27 78` cube key is the complete security crack (the §5j key
+  that fully opens the plant path, flash writes included) — no higher level is needed.
+- `31 01 FF01`: `7F 31 33` — expected *without a download in place*; the launch routine is
+  downstream of `34`. Re-probe only after the download format is found.
+- Odd security sweep in `0x61` over `0x01..0x7F`: only `27 77` seeds; `27 75` answers `7E`
+  (exists, wrong session); even slots `02`/`04`/`12` answer `24` (seed-first), so further
+  key levels are structurally present.
+- After keying, session switching locks (`10 02`/`10 03` become `7F 10 12`).
+- Raw hails: `54FF3D22` is **the application's** opener — the 2026-10-28 tap's ToolSession
+  runs against a *running app* (app periodic frames `0x7F0–0x7F3` precede it), which is why
+  fresh boots never answer it. `D7656915` (the boot-side opener of §5/§5g) went unanswered on
+  three fresh boots, hailed from seconds to minutes after the edge; the 47 s/184 s "window" in
+  the old captures was human phone-app time, not a device gate.
+- FWE context (spec 16 §10): the front door exists precisely because FWE sits at its reset
+  level on power-up; whether the UDS-keyed path preserves write permission past the boot's
+  drop point is unmeasured — the install never got that far.
+
+Tooling: `/tmp/frontdoor.py` (LED-gated full chain), `/tmp/race500k.py` (off-gate + subfunction
+scan), the tap decoder pattern in this section. The Teensy LED protocol (fast = storm armed /
+power-on signal, slow = chained; `B1`/`B0` serial commands, flasher commit pending) was added
+the same night to remove host-latency races from the power-cycle protocol.
+
 ## 6. Open items
 
 1. ~~SecurityAccess algorithm~~ **Solved and bench-proven (2026-10-25, §5j): RIPEMD-160 digest +
