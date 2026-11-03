@@ -534,11 +534,30 @@ handlers (0x92ED4/0x92FD0) cross-check af01's 0x24/0x2E replies against the
 cross-chip confirmation loop. **Write attempts on af01's 0x24**: 0xA420 (M3
 reg|0x80 convention) with and without the 0x1200 commit — the register
 holds 0xFF (low byte) with a live high nibble (a/ab varying = status).
-Open: what makes af01's 0x24 read 0x20 as in the engaged stock — a different
-write encoding, a gated register (needs the supervisor's state first), or
-0x24 is a STATUS register reflecting switch state set by another path. The
-SSLB2 counter discovery also explains one old mystery: the mode-2 out[25:26]
+The SSLB2 counter discovery also explains one old mystery: the mode-2 out[25:26]
 byte was never noise.
+
+**CLOSED 2026-11-02 (evening, one-shot campaign on m4u):** `0x24` is the
+switch-state ECHO and `0xFF` is the chip's REFUSAL byte, not a writable
+register. Handler 0x92ED4 disassembly (sh2a, big-endian): the reply is stored
+RAW — `mov.b r4,@0xFFF907D7` keeps the reply's low byte untransformed, so the
+engaged stock's shadow `0x20` IS the raw reply; the cross-check is
+`(reply ^ sent_word) & 0x15` (pass flags `bset #4` into 0x07C8+word) — the chip
+echoes the SENT data when it accepts. Engaged stock: sends `0x9020`, chip
+answers `AA20`, pass. Bench matrix (five-select one-shot, ammeter live
+throughout — dual-port Teensy firmware this same evening): idle af01 answers
+EVERY read word with its reg-0 ID (`aabb`); after `0x90`-register traffic the
+0x24-slot reply becomes `AAFF` — for enables 0x00 AND 0x20, single pair and
+100× sustained at 91/s, ammeter flat throughout (no output conduction either
+way); the status decays back to the ID echo ~1 s after traffic stops. The
+armed auto-engage rotation (main.c `sup_app_pattern2(true, 0, 0x20, true)`)
+has been sending job2 `90|0x20 + 24` continuously since boot with the same
+`FF` answer — same words as the stock, different chip state. Conclusion:
+`0x24 = 0x20` is a SYMPTOM of the energized/engaged state (per the app's own
+`~(status & 0xE0)` masking, outputs reporting a fault are switched off), not a
+lever into it — the refusal is downstream of the grant/rail. Free instrument:
+the moment our rotation's 0x24 reply flips `FF → 20`, the SSLB1 output stage
+is live.
 
 Remaining leads, ranked: (1) the 0x2D job — the 11-bit
 CURRENT SETPOINTS (the stock's keep-warm machine commands real currents from
@@ -592,3 +611,46 @@ correct-token history. Next decode targets, in order: (1) the wire side of the
 (2) reset-cause capture in our app at init (crash-vs-supervisor proof for the
 enable reset); (3) a fresh power-cycled supervisor with the engage running from
 cold, so the ramp 0→7 happens under observation.
+
+### 6.1 Mode manager decoded (2026-11-02 evening; target (1) above answered)
+
+Static decode, `sh2a` big-endian (`sh-elf-objdump -m sh2a -EB`, image vma
+`0x08000000 + file offset`). Target (1) resolved: **`0x6BC76` is a one-instruction
+latch thunk** — `mov.b r4,@0xFFF93B8D` (twin `0x6BC7E` → `0xFFF93B90`) — called by
+the mode machinery, never a register job. The full structure:
+
+- **Mode byte `0xFFF93B42`**: values 0–5 valid, **15 = locked** (the setter
+  `0x68776` rejects any change into/out of 15; new mode must be ≤ 5). On a valid
+  change it stores the mode and copies a per-mode config byte from the 6-entry
+  table at **flash `0x46814`** = `[00, 02, 01, 00, 10, 00]` into shadow
+  `0xFFF84A48` (mode 4 carries bit 0x10 — the same switch-bit family as SSLB1's
+  0x90 bits).
+- **Leaving mode 3** (`0x68776` tail): word at peripheral `0xFFFE0400 |= 0x3C04`
+  and `0xFFF927D0 = 0` — real hardware consequences on the mode-3 exit.
+- **Applier `0x8316C`**: per-mode 16-byte entries at **flash `0x46764`** →
+  `[RAM struct ptr | dest | power-of-two index | 0x60]`, structs at
+  `0xFFF80134+` (stride 0x188), destinations `0xFFF89018+` (stride 0x60),
+  indices 1/2/4/8/0x10/0x20 for modes 0–5. When **mode == 3** and the struct's
+  active byte is 1: calls `0x6BC76(1)` (sets latch `0xFFF93B8D`), then bulk-copies
+  8/4/2-byte arrays from the struct's lists into the destination — a full buffer
+  world-switch on entering mode 3.
+- **Mode 3 transitions run through a TAG state machine `0x68C04`**: tag cell
+  `0xFFF80C4C` (32-bit ASCII); branches on **"WRPQ"** (`0x57505251`) and
+  **"RPRQ"** (`0x52505251`); the paths write **"WPER"/"WPAK"/"RPAK"**
+  (`0x57504552`/`0x5750414B`/`0x5250414B`) and **call the mode-3 entry
+  `0x6884E` directly** (twice in one path). The tag successor function
+  `0x68D52` reads the next tag from `0xFFF80C50` and compares a further tag
+  **"FBRQ"** (`0x46425251`) at `0xFFF884E8` — **inside the RSPI staging RAM
+  neighborhood** (`0xFFF88424` is job1's staging cell): the handshake interlocks
+  with the supervisor exchange data area.
+- **Dispatch** (case bodies at `0x7CB00+`): mode indices 0–5 tail-jump to the
+  applier with their index; **index 6 runs the chain `0x68C04 → 0x68D52 →
+  0x6A7F6 → 0x68B58`** (the tag machine + successors, still undecoded).
+- The mode-set entry also checks `0xFFF9095C` (values 5 and 10 steer
+  calibration-region handling, `0x180000`) — the calibration select byte noted
+  at spec 10.
+
+Open: the tag SOURCE — what writes `0xFFF80C4C`/`0xFFF884E8` with ASCII tags
+(wire path: CAN RX decode, or an RSPI reply path into staging). That is the
+engagement trigger surface. `0x6A7F6`/`0x68B58` undecoded; the RAM structs'
+runtime builder (who fills `0xFFF80134+`) unknown.

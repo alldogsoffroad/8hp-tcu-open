@@ -9,10 +9,12 @@ Or import Ammeter for scripted use (context manager; .ma property = the
 latest 1 s rolling mean; the log carries wall-clock + monotonic stamps so
 current lines align with every bench script's log).
 
-Telemetry: the Teensy emits 'A<milliamps>' lines on /dev/ttyACM0 when power
-monitoring is on ('A1' enables, 'A0' stops). NOTE: the enable command and the
-slcan bridge share the port — close or pause this logger before running any
-script that opens ACM0 itself, or point your scripts' bus1 elsewhere.
+Telemetry: the Teensy emits 'A<milliamps>' lines when power monitoring is on
+('A1' enables, 'A0' stops). Since the dual-port Teensy firmware (flasher repo
+2c7d6c6, 2026-11-02) the lines go to BOTH USB serial ports: a bridged bus-1
+session can run a live Ammeter(port='/dev/ttyACM1') alongside python-can on
+ACM0 — bench scripts now log their own current stamps. The 'A' command is
+channel-agnostic, so A1 sent on ACM1 also enables the stream.
 """
 import serial
 import statistics
