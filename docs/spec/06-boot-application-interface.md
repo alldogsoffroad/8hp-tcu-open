@@ -344,6 +344,13 @@ vehicle exemption):
    the project code `0JIX` (present in every Bosch block: `4HJD0JIX` at `0x7C74`, `0JIX22` in the
    boot manager at `0x21A1E`, `0JIX0JIX` in the protection block at `0x3FD70`); which of the three
    fields is checked was not isolated.
+   **Re-confirmed 2026-11-03 (m4v2 install), and it is a hard gate:** the stripped-ident image —
+   content otherwise byte-exact, end word and markers valid — sat in the boot with the 500 kbit/s
+   front door live (spec 17 §5m) across every install; patching only the three ident fields from
+   the unit's read-out (recomputing the app CRC, which then matched the documented build CRC
+   `070619F8`) made the identical firmware boot immediately. An install image without the
+   unit's stock ident fields will not start. Note the ranges: the ident table at `0x17FA70`
+   lies inside the app CRC range (`0x40080–0x17FB6F`); the tail record and header +0x74 do not.
 5. No use of the boot handover RAM (§5) other than writing the boot request record (§5a) when
    handing over to the boot side for reprogramming.
 6. A defined behavior for the EEPROM CRC binding (§6).
