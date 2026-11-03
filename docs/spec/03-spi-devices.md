@@ -626,7 +626,11 @@ the mode machinery, never a register job. The full structure:
   `0xFFF84A48` (mode 4 carries bit 0x10 — the same switch-bit family as SSLB1's
   0x90 bits).
 - **Leaving mode 3** (`0x68776` tail): word at peripheral `0xFFFE0400 |= 0x3C04`
-  and `0xFFF927D0 = 0` — real hardware consequences on the mode-3 exit.
+  and `0xFFF94710 = 0` — real hardware consequences on the mode-3 exit. The byte
+  pair `0xFFF94710/0xFFF94711` is the **engaged latch**: bit 0 of `0xFFF94711` is
+  set by the mode-3 applier path and gated in a dozen readers across the app
+  (0x6886C, 0x689D8, 0x68B5A, 0x78BC6, 0x7C738, 0x90B4A, 0x952A6, 0x98000,
+  0x98B80, 0x98CA2, 0x98CD0).
 - **Applier `0x8316C`**: per-mode 16-byte entries at **flash `0x46764`** →
   `[RAM struct ptr | dest | power-of-two index | 0x60]`, structs at
   `0xFFF80134+` (stride 0x188), destinations `0xFFF89018+` (stride 0x60),
@@ -635,22 +639,75 @@ the mode machinery, never a register job. The full structure:
   8/4/2-byte arrays from the struct's lists into the destination — a full buffer
   world-switch on entering mode 3.
 - **Mode 3 transitions run through a TAG state machine `0x68C04`**: tag cell
-  `0xFFF80C4C` (32-bit ASCII); branches on **"WRPQ"** (`0x57505251`) and
+  `0xFFF80C4C` (32-bit ASCII); branches on **"WPRQ"** (`0x57505251`) and
   **"RPRQ"** (`0x52505251`); the paths write **"WPER"/"WPAK"/"RPAK"**
   (`0x57504552`/`0x5750414B`/`0x5250414B`) and **call the mode-3 entry
-  `0x6884E` directly** (twice in one path). The tag successor function
-  `0x68D52` reads the next tag from `0xFFF80C50` and compares a further tag
-  **"FBRQ"** (`0x46425251`) at `0xFFF884E8` — **inside the RSPI staging RAM
-  neighborhood** (`0xFFF88424` is job1's staging cell): the handshake interlocks
-  with the supervisor exchange data area.
+  `0x6884E` directly** (twice in one path). The WPRQ path reads a further
+  record at `0xFFF8010C` (fields `+8 == 0x11`, `+28 == 1`, args `+32/+36`) and
+  a word from peripheral port `0xFFFFAD00`. The tag successor function
+  `0x68D52` operates on a record at **`0xFFF89000`** — the head cell of the
+  mode-destination array (`0xFFF89018+0x60*mode` follow it): `+0` must be 3,
+  `+4 == 0x100`, `+8` the tag — **"FBRQ"** (`0x46425251`) answered with
+  **"FBAC"** (`0x46424143`, latch `0xFFF94711` bit 0 permitting, counter
+  `0xFFF9472C := 10`) or **"FBER"** (`0x46424552`); FBAC with counter 0
+  proceeds to `0x68ADA` with args from `+12/+16/+20`. Full tag family:
+  WPRQ/RPRQ, WPER/RPER, WPAK/RPAK, FBRQ/FBAC/FBER.
 - **Dispatch** (case bodies at `0x7CB00+`): mode indices 0–5 tail-jump to the
   applier with their index; **index 6 runs the chain `0x68C04 → 0x68D52 →
-  0x6A7F6 → 0x68B58`** (the tag machine + successors, still undecoded).
-- The mode-set entry also checks `0xFFF9095C` (values 5 and 10 steer
-  calibration-region handling, `0x180000`) — the calibration select byte noted
-  at spec 10.
+  `0x6A7F6` → `0x68B58`** (the tag machine + successors, still undecoded).
+- The mode-set entry also checks `0xFFF94FE4` (values 5 and 10 steer
+  calibration-region handling, `0x180000`).
 
-Open: the tag SOURCE — what writes `0xFFF80C4C`/`0xFFF884E8` with ASCII tags
-(wire path: CAN RX decode, or an RSPI reply path into staging). That is the
-engagement trigger surface. `0x6A7F6`/`0x68B58` undecoded; the RAM structs'
-runtime builder (who fills `0xFFF80134+`) unknown.
+Address-correction note (same evening): the first pass of this section
+carried three wrong address conversions (FBRQ record 0xFFF884E8 → actually
+0xFFF89000; engaged latch 0xFFF927D1 → 0xFFF94711; cal select 0xFFF9095C →
+0xFFF94FE4). The "RSPI staging neighborhood" connection was an artifact of
+the first error — the FBRQ record is NOT in the RSPI staging area; it heads
+the mode-destination block.
+
+Open: the tag SOURCE — what writes `0xFFF80C4C` and the `0xFFF89000` record
+with ASCII tags (only `0x68D52` references 0xFFF89000 directly; the writer
+must use a computed pointer — suspect the block initializer of the
+`0xFFF89000` mode-destination area). That is the engagement trigger surface.
+`0x6A7F6`/`0x68B58` undecoded; the RAM structs' runtime builder (who fills
+`0xFFF80134+`) unknown.
+
+### 6.2 The engagement handshake at boot (2026-11-02 night, second decode)
+
+The mode-3 entry has a PRIMARY path that runs **before the scheduler starts**:
+the startup chain at `0x66CC0` (init calls in order, ending in the scheduler
+`0x9524A` and a deliberate halt) calls the handshake pair directly:
+
+- **Trigger `0x67200`**: reads the input word at **`0xFFFC0D00`** (peripheral
+  block based `0xFFFC0C00`); values 9/10 → state letter **85**, 13/14 →
+  letter **86** stored at `0xFFF93B43`; writes the request magic **`0x1234`
+  to `0xFFFC0D04`**.
+- **Sibling `0x6728E`**: waits up to **667 × 100 ms** for `0xFFFC0D04` to be
+  **cleared by the counterpart** (the acknowledgment). On clear:
+  **mode-set(3)** + reply magic `0x5555` (letter 85 path) / `0x3737`
+  (letter 86 path) written back to `0xFFFC0D04`; on timeout: mode-set(0),
+  letter `0xF0`, and the peripheral word `0xFFFE0400 |= 0x3C04`.
+
+So the stock enters the engaged system mode **at every boot**, gated on a
+hardware counterpart acknowledging through the `0xFFFC0D04` mailbox.
+
+- **Module clocks**: the stock's low-level init `0x9533C` writes the
+  module-stop/system block: `0xFFFE0802 := 0x69FF` then `0x5555` (MSTPCRA),
+  `0xFFFE0812 := 0x7821/0x7878` (chip-ID dependent), `0xFFFE0842 := 0x68FF`,
+  `0xFFFE080C := 0xFFFE`, enables the ROM cache `RCCR (0xFFFC1400) := 1` +
+  flush, sets `0xFFFE0400 |= 0x3C10`, and reads the chip ID at `0xFFFF1000`.
+  Our app configures none of this (the boot's defaults stand).
+- **Bench status**: our firmware's measurement gate (`readable()` in
+  `plat_sh7254r.c`) whitelists only flash ≤ 0x1FFFFF and RAM
+  0xFFF80000–0xFFF9FFFF — the all-`0x0E` live reads of `0xFFFC0C00` and
+  `0xFFFE0800` tonight were **our own DENIED_BYTE**, not the bus. Whether the
+  counterpart module exists and what `0xFFFC0D00` holds on our bench is
+  **undetermined**.
+
+NEXT: an m4-series build extending `readable()` with the I/O area
+(0xFFFC0000–0xFFFFFFFF), then live-read `0xFFFC0C00–0xFFFC0D10`,
+`0xFFFE0800–0xFFFE0842`, `0xFFFE0400` and the chip ID at `0xFFFF1000`. If the
+mode word lives, the entire mode-3 engagement becomes reproducible from our
+side; if it reads the bus-default pattern, the handshake is variant-gated and
+mode 3 was never active on this bench (the engaged stock's 1.79 A being the
+PWM-level world, not mode 3).
