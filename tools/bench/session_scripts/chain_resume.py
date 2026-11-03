@@ -49,10 +49,18 @@ if not r or r[0] != 0x74:
     ts("34 failed"); b.shutdown(); sys.exit(4)
 seq = 1
 for off in range(0, len(image), 0x100):
-    r = u.request(bytes([0x36, seq]) + image[off:off + 0x100], timeout=15)
-    if not r or r[0] != 0x76:
+    ok = False
+    for retry in range(3):          # scattered frame loss: retry the block
+        r = u.request(bytes([0x36, seq]) + image[off:off + 0x100], timeout=15)
+        if r and r[0] == 0x76:
+            ok = True
+            break
+        ts(f"36 block {seq} retry {retry+1}")
+        time.sleep(0.3)
+    if not ok:
         ts(f"36 block {seq} failed"); b.shutdown(); sys.exit(5)
     seq += 1
+    time.sleep(0.002)               # pacing: ease the command parser pressure
 u.request(b"\x37", timeout=15)
 for i in range(1, 401):
     r = u.request(bytes.fromhex("3101FF01"), timeout=5)
