@@ -128,3 +128,55 @@
   - Ammeter telemetry format decoded from raw ACM1 stream: A-lines = ~idle mA (140-195),
     P-lines = peaks 7.6-10.3 A at idle (RSPI exchange transients) - the sampler now knows
     the format. User's bench reading held 0.166-0.167 through every window.
+[evening, desk] THE 6.2e DECODE - the commissioning jobs are BUS-0 (E7 = m4z, CRC 499C62A0):
+  - Descriptor headers: {count, select-index}; select cfgs are SPCMD word tables
+    (0x40B74 = AF11 AF01 two-command; 0x40CE4 = AF31/21/11/01/51 five-select). Entries:
+    {0100, cnt|sel, TX, RX, cfg-ptr, status-cell 0xFFF908xx, reply-checker, records, 45B9F72D}.
+    SH-2A movi20 encodes RAM addrs as signed 20-bit - byte-greps miss pointers (0xFFF8844C
+    = -490420); grep the disassembly immediates instead.
+  - BUS PROOF: the live write job (staging 0xFFF88194) is descriptor 0x40B28 = the BUS-0
+    config job; its live RX = A200 x4 + 0000 = the bus-A signature (4 real chips + dead
+    SSLA5). E4/E5 "supervisor ignores write/ID jobs" RETRACTED - wrong bus. platform.h
+    comment corrected.
+  - LIVE write rows: 8E<-9F, 90<-21, 96<-55, 88<-{1A,1A,1A,12,15} (= ch0-5 CURRENT,
+    ch6 CURRENT/ch7 DISABLED, ch8-9 OFF - the engaged driving pattern). 0x1F at HOLD is
+    DEGENERATE: ladder level vs the 1kHz PWM divider (spec 12 2b: 32000/f-1=31). Our old
+    8E55/9002 = ramsweep values attached to the wrong registers.
+  - DUTY JOB: staging 0xFFF8844C (40 words, template flash 0x40ECC, composer 0x96900:
+    engine reset 0x967F4 -> 128B template copy -> DMAC 0xFFFE6000 armed 80B toward the
+    live duty array 0xFFF885E8..0xFFF88728, magic 0x5B97 end, checked 0x8F816). Eight
+    five-select rotations; slot-2 (SSLA1) gets 0xD0|duty[r], live {90,10,20,40,40,60,0,0};
+    others fixed maintenance words.
+  - E7 CODE (commit 0f09fe4): sol_engage_config(level) re-runs the bus-A config job with
+    0x8E=0x80|level per ladder change (main.c watcher); engaged mode staging; sol_duty_job
+    40-word burst = FE13 sub 13, replies in mode-3 bytes 182-198; wrong-bus emitters
+    retired; 19/19 tests green; m4z differs from m4y ONLY in block 0x40000.
+  - NEXT (bench): install m4z (storm+chain, /tmp/install_e7.py - e2_sigs reused, 0x40000
+    sig captured post-write to e7_sigs.json), boot, ladder; then FE12 (config law check),
+    FE13 13 (duty burst - AMMETER ANNOUNCED), job2/job3 re-read (0x24/0x2E off 0xFF?),
+    then the sub-12 bypass retest with FE10 running.
+[16:33-17:00] E7 LIVE - THE SUPERVISOR WOKE UP:
+  - INSTALL (2nd attempt, correct sequencing: storm+chain armed in the dark window, catch on
+    the FRESH boot): 16:33:24 pass done, 159 units into 0x40000, sig ad03ffe137ccca01, all
+    other blocks MATCH. LESSON (cost ~25 min): the install chain runs ENTIRELY in one power
+    state - storm catches the fresh boot's front door (E2: catch boot+23s); arming while the
+    old app still runs downloads the engine into the boot that's about to die.
+  - E7 boots clean; ladder HOLD (cmd/echo 0x1F, tokens climbing, 0 bad); mode-3 results now
+    198B with the duty block (E7 confirmed). Drivers ready, no faults, chip0=0x40.
+  - REGISTERS MOVED: during the 7->0x1F transition 0x24 read AA45 and 0x2E read 8315 (LIVE,
+    first time ever off FF!); steady HOLD: 0x24=AAFF, 0x28=AA45 (stock AA46 - one bit),
+    0x2E=ABFF (class nibble A->B vs E6's AAFF - NEW STATE). The supervisor watches something
+    E7 now does; its state machine demonstrably advanced.
+  - DUTY JOB (FE13 sub 13, ammeter held 0.167): accepted; slot-2 (SSLA1) replies A7FF then
+    AFFF x7 - NEW CLASS (A7 = cyclic-header family, data 0x7FF = full scale on the first
+    D0<-0x90 write). Writes land; no current (rail still gated).
+  - *** THE RESET TRIP ***: FE10 300mA/5s -> app HARD RESET at ~+4s (twice observed:
+    boot-anchor arithmetic from heartbeat uptime; my "reason 00 dead bench" reads were the
+    FRESH app's init state). Ammeter FLAT through every trip - the supervisor resets on the
+    SUSTAINED SETPOINT ATTEMPT (~3-4s), not on current. E1's 2s FE10 "completed" = ducked
+    under the trip. THE E7 COMMISSIONING MOVED THE SUPERVISOR FROM IGNORING TO ENFORCING -
+    active-monitor state; dead monitors don't enforce. The 0x22 grant remains the key;
+    attempting outputs without it = reset.
+  - UDS notes: mode-3 reads need the session held (7F317F after expiry; keep tp running);
+    each Uds.request FLUSHES the CAN rx queue - never interleave UDS polls with CAN
+    observation of the same window.

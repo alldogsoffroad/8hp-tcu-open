@@ -882,3 +882,37 @@ emitters in `sup_drv_poll` are retired. The open question the burst answers: whe
 supervisor's accepting state (the `0x22` grant) requires the duty stream / the
 correctly-valued commissioning — i.e. whether the gate is closed by anything we can now
 send.
+
+### 6.2f E7 live: the supervisor woke up — enforcement, not ignorance (2026-11-04, evening) [O]
+
+E7's first bench session changed the supervisor's behavior class:
+
+- **Registers moved.** During the ladder's 7→`0x1F` transition the never-written registers
+  read live values for the first time (`0x24` = `AA45`, `0x2E` = `8315`); at steady HOLD
+  they settle to `0x24`=`AAFF`, `0x28`=`AA45` (stock `AA46` — one state bit), `0x2E`=
+  `ABFF` — the class nibble moved A→B relative to E6's `AAFF`. The supervisor demonstrably
+  watches something E7's commissioning now does (bus-A law, engaged modes, or the tighter
+  bus-B stream after the retirement).
+- **The duty job lands.** FE13 sub 13 (stock live duties) is accepted with the ammeter
+  flat at the 0.167 A idle: the slot-2 chip (SSLA1) answers the eight `0xD0` writes with a
+  new reply class — `A7FF` for the first write (duty `0x90`; cyclic-header family, data
+  `0x7FF` = full scale), then `AFFF ×7`. The writes reach the chip; the rail stays gated.
+- **The reset trip.** A bench current test (FE10, ch 0, 300 mA, 5 s) now ends in a **hard
+  reset at ~4 s** — twice observed via heartbeat-uptime anchor arithmetic (the "dead bench,
+  reason 00" reads after each trip were the fresh app's `bench_init()` state; the E6-era
+  "session interlock cancels FE10" reading of the same signature is corrected). The
+  ammeter is flat through every trip: the supervisor resets on the **sustained setpoint
+  attempt** (~3–4 s), not on current. E1's 2 s FE10 "ran to completion" by ducking under
+  the trip window. Bench rule until understood: current tests ≤ 2 s while ungranted.
+- **Verdict: E7 moved the supervisor from ignoring to enforcing.** In E1–E6 it ignored our
+  current attempts; now it watchdog-resets on them. A dead monitor does not enforce — the
+  commissioning chain (bus-0 write values + engaged modes + the level law) advanced it
+  into the active-monitor state. The `0x22` grant remains the one missing piece, and
+  attempting outputs without it is now *punished* rather than ignored.
+
+Remaining differences from the stock's stream, in suspicion order: the duty job's cadence
+(the stock sends it cyclically; we sent it once), the exact `0x8E` ramp law (level vs
+1 kHz divider — degenerate at HOLD), and the reply-class details (`ABxx`). Sequencing
+notes: mode-3 reads need the UDS session held (`7F317F` after expiry — keep tester-present
+running); a `Uds.request` flushes the CAN receive queue, so never interleave UDS polls
+with CAN-frame observation of the same window.
