@@ -37,3 +37,22 @@
   body kill a CRC-valid+ident-valid boot (spec 06: the boot reads the app block beyond CRC).
   Bench state: E1 (HEAD code + stock body) running, healthy. m4b hardware checks UNBLOCKED
   (meas tools live).
+[12:19-12:49] DIAGNOSTIC CYCLE 1 (stock restore + RAM dump):
+  - TOOLING LESSON: combining storm+chain in one shell line deadlocks the chain's pgrep wait
+    (the wrapper cmdline matches "arm_storm.py"). Storm and chain must be separate managed
+    background tasks. One bench power-on wasted (12:07-12:19); recovered clean.
+  - Stock restore: block 0x40000 erase+write 256 units in 54s, 20 blocks skipped, verify 21/21
+    OK (12:23:42). Fast-cycle restore pattern proven: the stock body under our gap-keep images
+    makes stock<->ours a ONE-BLOCK swap either direction.
+  - Stock booted + self-engaged: bus-1 census 0x37/0x2F9@104Hz, 0x144/0x170/0x1A0/0x2A8@52Hz,
+    0x178, 0x3D1. MECHATRONIC CONNECTED (valve body): stock DROVES solenoids - 1.773 A,
+    audible hum, in the user's 1.7-1.86 A stock-driving family. Meas ident = "PRL210" (stock
+    project code) - sanity gate distinguished stock from our app.
+  - RAM DUMP via stock meas 0x2A (strict ping-pong, 6B/rt): 118,887/131,072 B, 0 lost;
+    denials = 0xFFF8F400-0xFFF90000, 0xFFF94A00-0xFFF94D00, 0xFFF9E000-0xFFFA0000 (the live
+    I/O buffer pool).
+  - ANALYSIS: LIVE flat TX schedule table @0xFFF909C0, 7 x 20B records {bufptr@0, seq@4,
+    type@8 = rate divisor of ~104Hz base (2->52Hz, 0x0A->10.4Hz, 0x32->2.1Hz), id@12,
+    flags@16}; 6/7 ids = live census, rates match exactly. ZERO kernel signatures (no TCB
+    cadence, no stack ladder, 47% sparse static). NO-RTOS VERDICT RUNTIME-CONFIRMED -
+    spec 02 section 7c. Dump bytes stay in /tmp (vendor runtime data).

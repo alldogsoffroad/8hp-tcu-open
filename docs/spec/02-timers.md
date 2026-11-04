@@ -242,3 +242,31 @@ function calls), but the structural evidence does, re-proven with correct SH-2A 
 
 A minimal non-preemptive BCC1/SC1 build could *resemble* a superloop, but it would still leave
 an activation queue, task descriptors with priorities, and hook call sites — none exist.
+
+### 7c. Runtime confirmation — live 0x2A dump of the actuating stock (2026-11-04) [O]
+
+The stock app (only block `0x40000` restored over our firmware; its body/tail/calibration were
+still in flash beneath) booted, **self-engaged, and drove the bench mechatronic** — ammeter
+1.773 A (in the user's remembered 1.7–1.86 A solenoid-driving family, 2026-11-04), solenoids
+audibly humming on the valve body — while its entire on-chip RAM `0xFFF80000–0xFFFA0000` was
+dumped through its own measurement protocol (`0x361` cmd `0x2A`, 6 B per round-trip, strict
+ping-pong; 118,887 B read, 0 lost, 12,189 denied in three windows: `0xFFF8F400–0xFFF90000`,
+`0xFFF94A00–0xFFF94D00`, `0xFFF9E000–0xFFFA0000` — the last is the active I/O buffer pool the
+schedule table points into).
+
+- **The flat schedule table is live at `0xFFF909C0`**: 7 × 20-byte records
+  `{buf-ptr@0 → 0xFFF9EExx/0xFFF90Fxx, seq@4, type@8, pad@10, CAN-id@12, flags@16}`.
+  Six of the seven ids equal the live bus-1 census (`0x144/0x170/0x1A0/0x2A8/0x178/0x3D1`;
+  7th is `0x300`), and `type` is a **rate divisor of a common ≈104 Hz base**: 2 → 52 Hz,
+  `0x0A` → 10.4 Hz, `0x32` → 2.1 Hz — each matching its census count exactly. This is spec 08's
+  1/64 s schedule mechanism, observed mid-operation. (The §7 static decode described the flash
+  initializer's entry layout; the live record differs — buffer pointer at +0, id at +12 — and
+  the "cursor at `0xFFF909F8`" was a record's flags field.)
+- **Zero kernel signatures anywhere in readable RAM**: no TCB cadence (64 B / 140 B structure
+  scans at noise level), no task-stack ladder (47% of RAM is sparse static emptiness in ~20
+  fragments — static buffers, not N stacks), no priority ready-list.
+- The architecture was doing hard real-time hydraulic control (solenoid hold currents) as a
+  bare superloop over flat tables and buffers while all of the above held.
+
+**The §7 verdict is runtime-confirmed: no RTOS of any family runs on this unit.** Question
+closed for ITRON and AUTOSAR alike.
