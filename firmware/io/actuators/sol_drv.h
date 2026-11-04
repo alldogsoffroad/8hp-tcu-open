@@ -53,6 +53,8 @@ typedef struct {
     sol_chip_t chip[SOL_CHIPS];
     ma10_t     current[SOL_CHANNELS];
     uint8_t    mode[SOL_CHANNELS];
+    uint16_t   duty_rx[8];      /* slot-2 (SSLA1) replies of the last sol_duty_job()  */
+    uint8_t    duty_runs;       /* duty jobs completed (bus timeout does not count)   */
 } sol_status_t;
 
 /* Run identification and configuration; all channels off. */
@@ -63,6 +65,21 @@ void sol_set(uint8_t ch, sol_mode_t mode, ma10_t current);
 void sol_all_off(void);
 void sol_tick_10ms(void);
 const sol_status_t *sol_status(void);
+
+/* Engaged re-configuration (spec 03 section 6.2e): the stock's commissioning write job is a
+ * bus-0 job that repeats while engaged, its 0x8E row carrying 0x80 | 0x1F live at HOLD
+ * (driving dump 2026-11-04). 0x1F is degenerate there: ladder level or the 1 kHz PWM
+ * divider of spec 12 section 2b (32000/f - 1). We send 0x80 | level per ladder step — under
+ * the divider reading the ramp values are benign higher PWM frequencies while all setpoints
+ * stay zero. Stages one re-send of the 40-word configuration job; runs from the 10 ms task.
+ * The rows 0x90 = 0x21, 0x96 = 0x55 and the mode bytes ride the same job / the cyclic job. */
+void sol_engage_config(uint8_t level);
+
+/* One-shot 40-word duty job (spec 03 section 6.2e): eight five-select rotations; the slot-2
+ * select (SSLA1) receives 0xD0 | duty[r] in rotation r while the other four selects carry the
+ * stock's fixed maintenance words (template flash 0x40ECC, driving dump 2026-11-04). The
+ * slot-2 replies land in status->duty_rx. Bench-gated; never part of the cyclic stream. */
+bool sol_duty_job(const uint16_t duty[8]);
 
 /* exposed for tests */
 uint16_t sol_setpoint(ma10_t current);

@@ -21,6 +21,8 @@ static sol_status_t s_st;
 static uint8_t s_req_mode[SOL_CHANNELS];
 static ma10_t s_req_cur[SOL_CHANNELS];
 static uint8_t s_div;
+static uint8_t s_eng_level;      /* supervisor ladder level mirrored into the 0x8E row */
+static bool    s_cfg_pending;    /* sol_engage_config() staged a re-send               */
 
 static uint16_t s_tx[45];
 static uint16_t s_rx[45];
@@ -99,9 +101,9 @@ static void job_id(void)
     s_st.faults |= SOL_F_ID;
 }
 
-static void job_config(void)
+static void job_config(uint8_t v8e)
 {
-    put_cmd(0u, 0x8E00u | CFG_8E);
+    put_cmd(0u, 0x8E00u | v8e);
     put_cmd(1u, 0x9000u | CFG_90);
     put_cmd(2u, 0x9600u | CFG_96);
     for (uint8_t c = 0u; c < SOL_CHIPS; c++) {
@@ -199,14 +201,22 @@ void sol_init(void)
         s_req_cur[i] = 0u;
     }
     s_div = 0u;
+    s_eng_level = 0u;
+    s_cfg_pending = false;
     job_id();
     if (s_st.faults == 0u) {
-        job_config();
+        job_config(CFG_8E);
     }
     s_st.ready = s_st.faults == 0u;
     if (!s_st.ready) {
         s_st.faults |= SOL_F_NOT_READY;
     }
+}
+
+void sol_engage_config(uint8_t level)
+{
+    s_eng_level = level;
+    s_cfg_pending = true;
 }
 
 void sol_set(uint8_t ch, sol_mode_t mode, ma10_t current)
@@ -233,12 +243,55 @@ void sol_tick_10ms(void)
         s_st.mode[i] = allowed ? s_req_mode[i] : (uint8_t)SOL_MODE_OFF;
         s_st.current[i] = allowed && s_req_mode[i] == SOL_MODE_CURRENT ? s_req_cur[i] : 0u;
     }
+    if (s_cfg_pending) {         /* engaged re-configuration (spec 03 section 6.2e): the
+                                  * stock repeats the commissioning write job as the ladder
+                                  * climbs, 0x8E row = 0x80 | level (live 0x9F at HOLD) */
+        s_cfg_pending = false;
+        job_config((uint8_t)(0x80u | s_eng_level));
+    }
     job_cyclic();
     if (++s_div >= 10u) {
         s_div = 0u;
         job_status();
     }
     s_st.cycles++;
+}
+
+/* The 40-word duty job (spec 03 section 6.2e): template flash 0x40ECC, driving dump
+ * 2026-11-04. Eight five-select rotations; slot 2 (SSLA1) receives 0xD0 | duty[r] in
+ * rotation r (the stock's live duties 90 10 20 40 40 60 00 00), the other selects carry
+ * fixed maintenance words (SSLA2: 0x80 <- 0xB0 constant, SSLA0: 0x30/0xF0 alternating
+ * reads, SSLA5: 0xE0 <- 0xD0 constant, SSLA3: the varying slot-0 row). */
+static const uint16_t S_DUTY_TMPL[40] = {
+    0xC070u, 0x80B0u, 0xD090u, 0x30A0u, 0xE0D0u,
+    0x7050u, 0x80B0u, 0xD010u, 0xF0A0u, 0xE0D0u,
+    0x2070u, 0x80B0u, 0xD020u, 0x30A0u, 0xE0D0u,
+    0x2050u, 0x80B0u, 0xD040u, 0xF0A0u, 0xE0D0u,
+    0x4070u, 0x80B0u, 0xD040u, 0x30A0u, 0xE0D0u,
+    0x6050u, 0x80B0u, 0xD060u, 0xF0A0u, 0xE0D0u,
+    0x6070u, 0x80B0u, 0xD000u, 0x30A0u, 0xE0D0u,
+    0x0050u, 0x80B0u, 0xD000u, 0xF0A0u, 0xE0D0u,
+};
+
+bool sol_duty_job(const uint16_t duty[8])
+{
+    if (s_st.faults != 0u || !s_st.ready) {
+        return false;
+    }
+    for (uint8_t i = 0u; i < 40u; i++) {
+        s_tx[i] = S_DUTY_TMPL[i];
+    }
+    for (uint8_t r = 0u; r < 8u; r++) {
+        s_tx[5u * r + 2u] = (uint16_t)(0xD000u | (duty[r] & 0xFFu));
+    }
+    if (!xfer(40u)) {
+        return false;
+    }
+    for (uint8_t r = 0u; r < 8u; r++) {
+        s_st.duty_rx[r] = s_rx[5u * r + 2u];
+    }
+    s_st.duty_runs++;
+    return true;
 }
 
 const sol_status_t *sol_status(void)

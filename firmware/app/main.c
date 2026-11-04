@@ -94,10 +94,22 @@ static void task_1ms(void)
 static void task_10ms(void)
 {
     static uint8_t s_mb_div;
+    static uint8_t s_sol_lvl = 0xFFu;
 
     if (++s_mb_div >= 10u) {    /* boot-mailbox machine at ~100 ms (spec 03 section 6.2) */
         s_mb_div = 0u;
         plat_mb_tick();
+    }
+    {   /* supervisor ladder -> bus-0 commissioning mirror (spec 03 section 6.2e): every
+         * level change re-runs the configuration job with the 0x8E row = 0x80 | level,
+         * the stock's live law (0x9F at HOLD). Runs before sol_tick so the job leaves
+         * in the same pass. */
+        const uint8_t lvl = sup_engage_status()->lvl_cmd;
+
+        if (lvl != s_sol_lvl) {
+            s_sol_lvl = lvl;
+            sol_engage_config(lvl);
+        }
     }
     vehicle_update_10ms();
     sensors_update_10ms();
@@ -292,6 +304,16 @@ int main(void)
      * grant-gated shadow (cannot reset the TCU — the A-law, 2026-11-01). */
     sup_app_pattern2(true, 0x00u, 0x20u, true);
     sup_drv_sync(true);
+    /* Engaged channel staging (spec 03 section 6.2e): the live 0x88 mode flags of
+     * the driving stock = the six pressure channels + line pressure in CURRENT
+     * mode at zero setpoint, park release DISABLED, unused channels OFF. Zero
+     * setpoints drive nothing; FE10 overrides the currents during bench tests. */
+    for (uint8_t ch = 0u; ch < 7u; ch++) {
+        sol_set(ch, SOL_MODE_CURRENT, 0u);
+    }
+    sol_set(7u, SOL_MODE_DISABLED, 0u);
+    sol_set(8u, SOL_MODE_OFF, 0u);
+    sol_set(9u, SOL_MODE_OFF, 0u);
     sup_engage_arm(true);
     sup_engage_request_enable(true);
 #endif

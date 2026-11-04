@@ -298,7 +298,8 @@ int main(void)
         CHECK(memcmp(&last_rsp()[1], "\x71\x01\xFE\x13", 4) == 0);
         CHECK(sup_engage_active());
         r = bench_routine(3u, BENCH_SUP_RID, NULL, 0u, out, sizeof out);
-        CHECK(r == 181 && out[0] == 3u && out[1] == 1u);      /* state 1 = sync */
+        CHECK(r == 198 && out[0] == 3u && out[1] == 1u);      /* state 1 = sync; 198 =
+                                                                 * 181 + duty block (E7) */
         /* raw one-shots refused while the engage sequence owns the stream */
         uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x01, 0x06, 0x00 }, 7u);
         CHECK(last_nrc() == 0x22u);

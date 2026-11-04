@@ -822,3 +822,63 @@ lands, and (3) the ID class: the chips return data-class (`AAxx`) to our `0x06` 
 instead of the stock's ID-class (`A2xx`), suggesting a register-phase or select-mapping
 difference in our RSPI framing. The `0201`/`0402` descriptor headers (words, select?) and
 the duty-job composer (`C0xx/D0xx/Exxx`) are the next decode targets.
+
+### 6.2e The header decode, the bus-0 proof, and the duty job (2026-11-04, evening) [O]
+
+**Descriptor headers.** The cyclic-entry second word is `{frame count, select index}`:
+`0x0402` = 4 frames / two-command alternate (cfg `0x40B74` = `AF11 AF01`, even frame →
+SSLB1, odd → SSLB0), `0x0502` = 5 frames (same two-command run), `0x0201`/`0x0101` = 2/1
+frames, and the commissioning class (`0A05`/`2805`/`2D05` = `{register, count}`) uses the
+five-select cfg `0x40CE4` = `AF31 AF21 AF11 AF01 AF51`. Full entry layout (job `0x40BE8`
+= cyclic job1): `{0100, count|select, TX-ptr, RX-ptr, select-cfg-ptr, status-cell
+(0xFFF908xx), completion-handler (reply checker, e.g. `0x92D94` checks the AA class and
+sets status bits), trailing-records ptr, 45B9F72D}`. The `0004 0xxx` words are 32-bit
+flash pointers (byte-greps miss them; SH-2A `movi20` immediates encode RAM addresses as
+signed 20-bit, e.g. `0xFFF8844C` = −490420).
+
+**The commissioning jobs are bus-0 jobs.** The live TX staging of the write job
+(`0xFFF88194`, 40 words, register-major 8 rows × 5 chips) is served by descriptor
+`0x40B28` — the §4.3/§4.1 bus-0 configuration job — and its live RX staging reads
+`A200 ×4, 0000`: four real driver chips plus the dead fifth select, the exact bus-A
+signature of our own FE12 dumps. The bus-B five-select never draws A2-class replies
+(E4/E5: `0x0000` from the fourth select). **The E4/E5 conclusion "the supervisor ignores
+write/ID jobs" is retracted — those experiments emulated bus-0 jobs on bus B.** The
+platform.h note that the supervisor "sits in the rotation and witnesses" them was a
+misread of cfg `0x40CE4` (bus-0 SPCMD values); corrected 2026-11-04.
+
+**The live write rows** (driving dump, staging `0xFFF88194`): `0x8E ← 0x9F`, `0x90 ←
+0x21`, `0x96 ← 0x55`, `0x88 ← {1A, 1A, 1A, 12, 15}` per chip, then bare reads
+`28/30/2E/36`. The `0x9F` low byte `0x1F` is **degenerate at HOLD**: spec 12 §2b decodes
+the `0x8E` data as the PWM-frequency divider `32000/f − 1` + calibration bit 7 — `0x1F`
+= divider 31 = *f* = 1 kHz — while the ladder level at HOLD is also 0x1F. Which law the
+stock applies while the ladder climbs is open (both predict `0x9F` at HOLD; a mid-ramp
+staging capture would separate them). Our October ramsweep had attached the shadow bytes
+{55, 9F} to the wrong registers, and `0x02` from a loop constant to `0x90`. The mode
+flags decode as per-channel modes: chips 0–2 = `(CURRENT, CURRENT)`, chip 3 =
+`(CURRENT, DISABLED)` (line pressure current-mode, park release disabled), chip 4 =
+`(OFF, OFF)` — the engaged driving pattern. The setpoint job's `E8`/`F0` rows are
+`(register << 8) | 12-bit setpoint`; live values `{853, 589, 58A, 853, 800}` /
+`{589, 589, 53, 0, 0}`.
+
+**The duty job.** The unidentified staging tail at `0xFFF8844C` is a 40-word stream
+seeded from flash template `0x40ECC` (composer `0x96900`: engine reset `0x967F4` →
+byte-copy of the 128-byte template → DMAC channel at `0xFFFE6000` armed for an 80-byte
+move toward `0xFFF885E8`, the live duty array, 161 words terminated by magic `0x5B97`,
+checked at `0x8F816`). The 40 words are **eight five-select rotations**: slot 2 (SSLA1)
+receives `0xD0 | duty[r]` each rotation — live duties `90 10 20 40 40 60 00 00` — while
+the other selects carry fixed maintenance words (SSLA2 `0x80←0xB0` constant, SSLA0
+`0x30/0xF0` alternating, SSLA5 `0xE0←0xD0` constant, SSLA3 the varying slot-0 row). A
+parameter table at `0x40DD8` carries `{0003, D090}` — the first duty as data.
+
+**E7 (`m4z`, CRC `499C62A0`)** implements the corrections: `sol_engage_config(level)`
+re-runs the bus-A configuration job with `0x8E = 0x80 | level` on every ladder change
+(stock live `0x9F` at HOLD — under the level reading this mirrors the ladder, under the
+§2b divider reading the ramp values are benign higher PWM frequencies with zero
+setpoints commanded; the divergence is observable via FE12 after boot); the engaged
+channel staging matches the live `0x88` flags (all pressure channels CURRENT at zero
+setpoint, park release DISABLED); `sol_duty_job()` sends the 40-word burst one-shot
+(bench routine FE13 sub 13, replies in the mode-3 results, bytes 182–198); the wrong-bus
+emitters in `sup_drv_poll` are retired. The open question the burst answers: whether the
+supervisor's accepting state (the `0x22` grant) requires the duty stream / the
+correctly-valued commissioning — i.e. whether the gate is closed by anything we can now
+send.

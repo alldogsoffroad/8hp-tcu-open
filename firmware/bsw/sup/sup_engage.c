@@ -213,70 +213,27 @@ void sup_engage_replies(const uint16_t *rx, uint8_t n)
     }
 }
 
-/* ---- driver register sync (the stock's five-select read job, read-only) ---- */
-
-/* Read registers from the stock template at flash 0x40CE8: 18 1E 28 88 A0 E8
- * A6 F0 60 C0 66 D8, register-major so the five-select rotation addresses each
- * chip in turn (word i -> select i%5: SSLB3/2/1/0/5). */
-static const uint16_t S_DRV_READ_REGS[12] = {
-    0x1800u, 0x1E00u, 0x2800u, 0x8800u, 0xA000u, 0xE800u,
-    0xA600u, 0xF000u, 0x6000u, 0xC000u, 0x6600u, 0xD800u,
-};
-
-/* One 60-word pass every 400 passes = 2 s (the stock syncs on channel-state
- * change from its current loop; a slow read cadence is the safe subset). */
-#define DRV_PERIOD 400u
+/* ---- driver register sync: RETIRED 2026-11-04 (spec 03 section 6.2e) -----------------
+ *
+ * The ID (0x0A), write (0x28) and setpoint (0x2D) jobs emulated here were sent on the
+ * supervisor bus (RSPI-B five-select). The driving-state dump of 2026-11-04 proves they are
+ * bus-0 jobs: their live TX staging (0xFFF88194 = 8E9F/9021/9655 rows, RX = A200 x4 + 0000
+ * — the four real driver chips plus the dead fifth select) matches the bus-0 signature, and
+ * the bus-B five-select never draws A2-class replies (E4/E5: 0x0000 from the fourth chip).
+ * The real implementations live in io/actuators/sol_drv.c (job_id / job_config / job_cyclic
+ * on RSPI-A) with the live write values; the level law is sol_engage_config(). The status
+ * block and counters stay for the lab readout; the emitters are gone. */
 
 static sup_drv_status_t s_drv;
-static uint16_t s_drv_div;
-static bool s_drv_on;
-
-/* The write job (stock sender 0x92344): template flash 0x40AD8, register-major
- * across the five-select rotation, per-channel data OR'd into 8E/90/96/88 and
- * 28/30/2E/36 bare as readbacks. Data values are the ENGAGED STOCK's own live
- * state, swept 2026-10-30 at 13.4 V (ramsweep_held: 0x908FB..FF = 55, 0x90900..04
- * = 9f, 0x90's data = the 0x901A0 loop constant 0x02; the 0x88 flags byte is 0
- * at commissioning - real currents ride the 0x2D job's 11-bit setpoints). */
-static const uint16_t S_DRV_WRITE_TMPL[8] = {
-    0x8E55u, 0x9002u, 0x969Fu, 0x8800u, 0x2800u, 0x3000u, 0x2E00u, 0x3600u,
-};
-static bool s_drv_write_pending;
-
-/* ID poll (stock 0x0A, sender 0x921A0, handler 0x921E0): [0x0600 x5,
- * 0x0000 x5] — registers 0x06 and 0x00 from every chip on the five-select
- * rotation (supervisor included: pure reads). Replies in the 0xA2xx class
- * (chip ID/status); the stock runs this BEFORE the register sync. */
-#define DRV_ID_WORDS 10u
-static bool s_drv_id_pending;
-/* setpoint job (stock 0x2D): [88, A0, E8, A6, F0, 60, C0, 66, D8] x 4 chips;
- * E8/F0 carry the 11-bit current setpoints (sender positions chan+0xC/+0x14).
- * Static keep-warm class 0x1141 (0x90586 engaged capture: 11 xx pairs). */
-static const uint16_t S_DRV_SP_REGS[9] = {
-    0x8800u, 0xA000u, 0xE800u, 0xA600u, 0xF000u,
-    0x6000u, 0xC000u, 0x6600u, 0xD800u,
-};
-#define DRV_SP_SETPOINT 0x1141u
-/* the engaged stock's keep-warm DITHER (0x90586 capture, low bytes of the
- * 11 xx command pairs) — the supervisor may watch for CHANGING commands */
-static const uint16_t S_DRV_DITHER[9] = {
-    0x1141u, 0x1134u, 0x113Au, 0x1127u, 0x110Eu, 0x111Fu, 0x113Cu, 0x1126u, 0x1144u,
-};
-static uint8_t s_drv_dither;
-static bool s_drv_alternate;                /* periodic job alternates read/sp */
-static bool s_drv_sp_pending;
 
 void sup_drv_sync(bool on)
 {
-    s_drv_on = on;
-    s_drv_div = DRV_PERIOD - 1u;        /* first pass on the next tick */
-    s_drv_id_pending = on;              /* the stock order: ID poll first */
-    s_drv_write_pending = on;           /* then the commissioning write */
-    s_drv_sp_pending = on;              /* then one keep-warm setpoint pass */
+    (void)on;                 /* retired: the bus-0 commissioning runs in sol_drv */
 }
 
 void sup_drv_setpoint_once(void)
 {
-    s_drv_sp_pending = true;
+    /* retired: setpoints ride the sol_drv cyclic job */
 }
 
 const sup_drv_status_t *sup_drv_status(void)
@@ -286,97 +243,21 @@ const sup_drv_status_t *sup_drv_status(void)
 
 bool sup_drv_poll(uint16_t *words, uint8_t *n)
 {
-    if (!s_drv_on) {
-        return false;
-    }
-    if (s_drv_id_pending) {
-        s_drv_id_pending = false;
-        for (uint8_t c = 0u; c < 5u; c++) {
-            words[c] = 0x0600u;         /* chip ID/status register */
-            words[5u + c] = 0x0000u;    /* second status register */
-        }
-        *n = DRV_ID_WORDS;
-        s_drv.drv_jobs++;
-        s_drv.drv_id++;
-        return true;
-    }
-    if (s_drv_write_pending) {
-        /* commissioning pass with the engaged stock's own register values;
-         * readbacks bare — the stock's write+verify job, live-valued.
-         * ALL FIVE selects, the supervisor included (E5, bench 2026-11-04): the
-         * stock's rotation is five-wide and the supervisor's 0x84/0x88/0x90
-         * read empty on every boot where we sent this to the chips only. */
-        s_drv_write_pending = false;
-        for (uint8_t r = 0u; r < 8u; r++) {
-            for (uint8_t c = 0u; c < 5u; c++) {
-                words[5u * r + c] = S_DRV_WRITE_TMPL[r];
-            }
-        }
-        *n = DRV_WRITE_WORDS;
-        s_drv.drv_jobs++;
-        s_drv.drv_writes++;
-        s_drv_div = 0u;                  /* reads resume after a full dwell */
-        return true;
-    }
-    if (s_drv_sp_pending) {
-        /* the keep-warm hypothesis: a static keep-warm-class setpoint on both
-         * channels of every chip — data only while the rail stays closed */
-        s_drv_sp_pending = false;
-        for (uint8_t r = 0u; r < 9u; r++) {
-            for (uint8_t c = 0u; c < 4u; c++) {
-                words[4u * r + c] = (uint16_t)(S_DRV_SP_REGS[r] |
-                    ((r == 2u || r == 4u) ? DRV_SP_SETPOINT : 0u));
-            }
-        }
-        *n = DRV_SP_WORDS;
-        s_drv.drv_jobs++;
-        s_drv.drv_sp++;
-        s_drv_div = 0u;                  /* reads resume after a full dwell */
-        return true;
-    }
-    if (s_drv_div < DRV_PERIOD) {
-        s_drv_div++;
-        return false;
-    }
-    s_drv_div = 0u;
-    if (s_drv_alternate) {
-        /* the keep-warm dither: cycle the captured command sequence */
-        s_drv_alternate = false;
-        const uint16_t sp = S_DRV_DITHER[s_drv_dither];
-        s_drv_dither = (uint8_t)((s_drv_dither + 1u) % 9u);
-        for (uint8_t r = 0u; r < 9u; r++) {
-            for (uint8_t c = 0u; c < 4u; c++) {
-                words[4u * r + c] = (uint16_t)(S_DRV_SP_REGS[r] |
-                    ((r == 2u || r == 4u) ? sp : 0u));
-            }
-        }
-        *n = DRV_SP_WORDS;
-        s_drv.drv_jobs++;
-        s_drv.drv_sp++;
-        return true;
-    }
-    s_drv_alternate = true;
-    for (uint8_t r = 0u; r < 12u; r++) {
-        for (uint8_t c = 0u; c < 5u; c++) {
-            words[5u * r + c] = S_DRV_READ_REGS[r];
-        }
-    }
-    *n = SUP_DRV_READ_WORDS;
-    s_drv.drv_jobs++;
-    return true;
+    (void)words;
+    (void)n;
+    return false;             /* no bus-B driver jobs remain (spec 03 section 6.2e) */
 }
 
 void sup_drv_replies(const uint16_t *rx, uint8_t n)
 {
-    /* strict classes — the stock's 0xF900 mask accepts 0xAAxx into the 0xA8
-     * class too (fine for its parity checks, useless for per-chip counts) */
+    /* strict classes — kept for the historical lab data; no emitter feeds it now */
     for (uint8_t i = 0u; i < n && i < SUP_DRV_READ_WORDS; i++) {
         if ((rx[i] & 0xFE00u) == 0xA800u) {
             s_drv.drv_a8++;
         } else if ((rx[i] & 0xFE00u) == 0xAA00u) {
             s_drv.drv_aa++;
         } else if ((rx[i] & 0xFF00u) == 0xA200u) {
-            s_drv.drv_a2++;            /* chip ID/status class (stock 0x0A job) */
+            s_drv.drv_a2++;
         } else {
             s_drv.drv_bad++;
         }

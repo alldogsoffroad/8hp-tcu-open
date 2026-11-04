@@ -83,8 +83,12 @@ bool plat_sup_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n);
 bool plat_sup_burst(const uint16_t *tx, uint16_t *rx, uint8_t n);
 /* SSLB2 (third RSPI-B device, SPI mode 0) burst - the stock's cyclic [0x00FF] job. */
 bool plat_sup_burst2(const uint16_t *tx, uint16_t *rx, uint8_t n);
-/* Five-select rotation (SSLB3/2/1/0/5, the stock driver jobs' cfg 0x40CE4): the
- * supervisor's select sits IN the rotation, so it witnesses the exchange. */
+/* Five-select rotation (SSLB3/2/1/0/5, select cfg 0x40CE4 = AF31/AF21/AF11/AF01/AF51).
+ * CORRECTED 2026-11-04 (spec 03 section 6.2e): 0x40CE4 is the stock's BUS-0 five-select —
+ * the ID/write/setpoint commissioning jobs run on RSPI-A (SSLA3/2/1/0/5, driver chips;
+ * their live RX staging carries the bus-0 signature A200 x4 + 0000). The supervisor does
+ * NOT witness those jobs; earlier bench conclusions drawn from the bus-B rotation (E4/E5
+ * "supervisor ignores write/ID jobs") were the wrong bus, not the stock's design. */
 bool plat_sup_xfer5(const uint16_t *tx, uint16_t *rx, uint8_t n);
 /* Four-select (driver chips only, supervisor excluded) - for WRITES. */
 bool plat_sup_xfer4(const uint16_t *tx, uint16_t *rx, uint8_t n);

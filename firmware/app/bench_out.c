@@ -486,6 +486,29 @@ static int sup_lab_start(const uint8_t *in, uint16_t n)
         s_force_left_10ms = (uint16_t)(in[1] * 100u);
         return 0;
     }
+    if (in[0] == 13u) {                                    /* duty job (E7, spec 03 section
+                                                             * 6.2e): one 40-word bus-0 burst,
+                                                             * 0xD0 | duty[r] to the slot-2
+                                                             * chip per rotation */
+        if (n > 9u) {
+            return -NRC_ROOR;
+        }
+        {
+            /* in[1..8] = duties; omitted bytes default to the stock's live pattern
+             * (driving dump 2026-11-04: 90 10 20 40 40 60 00 00) */
+            static const uint16_t D_LIVE[8] = {
+                0x90u, 0x10u, 0x20u, 0x40u, 0x40u, 0x60u, 0x00u, 0x00u,
+            };
+            uint16_t duty[8];
+            for (uint8_t r = 0u; r < 8u; r++) {
+                duty[r] = (uint16_t)((n >= 2u + r) ? in[1u + r] : (uint8_t)D_LIVE[r]);
+            }
+            if (!sol_duty_job(duty)) {
+                return -NRC_CNC;
+            }
+        }
+        return 0;
+    }
     if (in[0] == 9u) {                                     /* engage sequence: arm /
                                                              * [1 = enable req] /
                                                              * [2 = stock order: enable
@@ -649,7 +672,7 @@ static int sup_lab_results(uint8_t *out, uint16_t max)
     if (s_sup_mode == 3u) {                                /* engage sequence status */
         const sup_eng_status_t *e = sup_engage_status();
         const sup_drv_status_t *dv = sup_drv_status();
-        if (max < 181u) {
+        if (max < 198u) {
             return -NRC_IMLOIF;
         }
         out[0] = 3u;
@@ -708,7 +731,18 @@ static int sup_lab_results(uint8_t *out, uint16_t max)
             for (; ev < 24u; ev++) {
                 out[o++] = 0u; out[o++] = 0u; out[o++] = 0u; out[o++] = 0u;
             }
-            return (int)o;                                       /* 51 + 2 + 32 + 96 = 181 */
+            /* E7 (spec 03 section 6.2e): the bus-0 duty job's slot-2 replies and the
+             * engaged-config state, so the commissioning law is observable live */
+            {
+                const sol_status_t *sv = sol_status();
+
+                out[o++] = sv->duty_runs;
+                for (uint8_t r = 0u; r < 8u; r++) {
+                    out[o++] = (uint8_t)(sv->duty_rx[r] >> 8);
+                    out[o++] = (uint8_t)sv->duty_rx[r];
+                }
+            }
+            return (int)o;                              /* 51 + 2 + 32 + 96 + 17 = 198 */
         }
     }
     if (s_sup_mode == 1u) {                                /* last one-shot replies */

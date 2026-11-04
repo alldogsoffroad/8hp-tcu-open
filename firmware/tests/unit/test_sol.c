@@ -71,6 +71,33 @@ int main(void)
     sol_tick_10ms();
     CHECK(s->mode[3] == SOL_MODE_OFF && stub.drv_last_tx[21] == 0xF000u);
 
+    /* ---- E7 (spec 03 section 6.2e): engaged re-configuration with the level law ---- */
+    sol_engage_config(0x1Fu);               /* HOLD level -> the stock's live 0x9F row */
+    sol_tick_10ms();                        /* pending config runs before the cyclic job */
+    CHECK(s->faults == 0u);
+    CHECK(stub.drv_reg[0][0x8E] == 0x9Fu && stub.drv_reg[2][0x8E] == 0x9Fu &&
+          stub.drv_reg[3][0x8E] == 0x9Fu);  /* 0x80 | 0x1F on every chip */
+    CHECK(stub.drv_reg[1][0x90] == 0x21u && stub.drv_reg[4][0x96] == 0x55u);
+    sol_engage_config(3u);                  /* mid-ramp level mirrors too */
+    sol_tick_10ms();
+    CHECK(stub.drv_reg[2][0x8E] == 0x83u);
+
+    /* ---- E7: the 40-word duty job (slot-2 = SSLA1 gets 0xD0 | duty[r]) ---- */
+    {
+        static const uint16_t D[8] = { 0x90u, 0x10u, 0x20u, 0x40u, 0x40u, 0x60u, 0x00u, 0x00u };
+
+        CHECK(sol_duty_job(D));
+        CHECK(s->duty_runs == 1u && s->faults == 0u);
+        CHECK(stub.drv_last_tx[2] == 0xD090u && stub.drv_last_tx[7] == 0xD010u);
+        CHECK(stub.drv_last_tx[12] == 0xD020u && stub.drv_last_tx[17] == 0xD040u);
+        CHECK(stub.drv_last_tx[22] == 0xD040u && stub.drv_last_tx[27] == 0xD060u);
+        CHECK(stub.drv_last_tx[32] == 0xD000u && stub.drv_last_tx[37] == 0xD000u);
+        CHECK(stub.drv_last_tx[1] == 0x80B0u && stub.drv_last_tx[4] == 0xE0D0u);  /* fixed rows */
+        CHECK(stub.drv_last_tx[3] == 0x30A0u && stub.drv_last_tx[8] == 0xF0A0u);  /* alternating */
+        CHECK(stub.drv_last_tx[0] == 0xC070u && stub.drv_last_tx[5] == 0x7050u);  /* slot-0 row */
+        CHECK((s->duty_rx[0] & 0xFF00u) == 0xA200u);      /* slot-2 reply class */
+    }
+
     /* header fault, bus fault, and start-up failure */
     sol_init();
     stub.drv_bad_header = true;
@@ -84,6 +111,12 @@ int main(void)
     sol_set(0u, SOL_MODE_CURRENT, 5000u);
     sol_tick_10ms();
     CHECK(s->mode[0] == SOL_MODE_OFF);
+    {   /* not ready: the duty job refuses (E7 safety gate); sol_init() above reset
+         * the status block, so duty_runs is back to zero */
+        static const uint16_t D[8] = { 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u };
+
+        CHECK(!sol_duty_job(D) && s->duty_runs == 0u);
+    }
 
     if (fails == 0) {
         printf("test_sol: ok\n");

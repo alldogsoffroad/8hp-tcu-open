@@ -276,50 +276,28 @@ int main(void)
         stub.sup_reply_fn = 0;
     }
 
-    /* ---- five-select driver read sync (the stock commissioning witness) ---- */
+    /* ---- driver sync emitters: RETIRED (spec 03 section 6.2e) --------------------
+     * The ID/write/setpoint jobs were bus-B emulations of bus-0 stock jobs (live RX
+     * staging proof, driving dump 2026-11-04). The real implementations live in
+     * sol_drv (bus A); these checks now pin the retirement: no bus-B driver jobs,
+     * no counter movement, whatever the sync request says. */
     {
         const sup_drv_status_t *dv = sup_drv_status();
+        uint16_t words[48];
+        uint8_t wn = 0u;
 
         sup_app_pattern2(true, 0x00u, 0x20u, true);
         sup_drv_sync(true);
-        for (unsigned i = 0u; i < 402u && dv->drv_jobs == 0u; i++) {
+        for (unsigned i = 0u; i < 100u; i++) {
             sup_tick_5ms();
         }
-        /* the stock order: the ID POLL first - [0x0600 x5, 0x0000 x5] on the
-         * five-select (supervisor included; its select answers a8-class) */
-        CHECK(dv->drv_jobs == 1u && dv->drv_id == 1u);
-        CHECK(stub.drv5_jobs == 1u);
-        CHECK(dv->drv_a8 == 2u && dv->drv_aa == 8u && dv->drv_bad == 0u);
-        for (unsigned i = 0u; i < 402u && dv->drv_jobs == 1u; i++) {
-            sup_tick_5ms();
-        }
-        /* then the WRITE: 8 regs x 4 driver chips (no supervisor in the
-         * write rotation - 0x8E55 to it reset the TCU, bench 2026-11-01) */
-        CHECK(dv->drv_jobs == 2u && dv->drv_writes == 1u);
-        CHECK(dv->drv_a8 == 2u && dv->drv_aa == 48u && dv->drv_bad == 0u);
-        for (unsigned i = 0u; i < 402u && dv->drv_jobs == 1u; i++) {
-            sup_tick_5ms();
-        }
-        /* then the keep-warm setpoint pass (E8/F0 = 0x1141, 4 chips) */
-        for (unsigned i = 0u; i < 402u && dv->drv_jobs == 2u; i++) {
-            sup_tick_5ms();
-        }
-        CHECK(dv->drv_jobs == 3u && dv->drv_writes == 1u && dv->drv_sp == 1u);
-        CHECK(dv->drv_a8 == 2u && dv->drv_aa == 84u && dv->drv_bad == 0u);
-        /* then the periodic jobs alternate read / dithered setpoint */
-        for (unsigned i = 0u; i < 402u && dv->drv_jobs == 3u; i++) {
-            sup_tick_5ms();
-        }
-        CHECK(dv->drv_jobs == 4u && dv->drv_writes == 1u && dv->drv_sp == 1u);
-        CHECK(dv->drv_a8 == 14u && dv->drv_aa == 132u && dv->drv_bad == 0u);
-        for (unsigned i = 0u; i < 402u && dv->drv_jobs == 4u; i++) {
-            sup_tick_5ms();
-        }
-        CHECK(dv->drv_jobs == 5u && dv->drv_sp == 2u);   /* dither pass */
-        CHECK(dv->drv_a8 == 14u && dv->drv_aa == 168u && dv->drv_bad == 0u);
+        CHECK(!sup_drv_poll(words, &wn));
+        CHECK(dv->drv_jobs == 0u && dv->drv_a8 == 0u && dv->drv_aa == 0u &&
+              dv->drv_bad == 0u);
         sup_drv_sync(false);
+        sup_drv_setpoint_once();
         sup_tick_5ms();
-        CHECK(dv->drv_jobs == 5u);                    /* off: no more jobs */
+        CHECK(dv->drv_jobs == 0u);                    /* retired: no jobs ever */
     }
 
     if (fails == 0) {
