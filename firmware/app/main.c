@@ -301,8 +301,12 @@ int main(void)
      * Our host-armed sequence ran minutes late; the stock's monitor starts
      * within ~100 ms of app boot. Self-arm the full commissioning at init:
      * pattern + ID poll + write + setpoints + tokens + ramp, enable as a
-     * grant-gated shadow (cannot reset the TCU — the A-law, 2026-11-01). */
-    sup_app_pattern2(true, 0x00u, 0x20u, true);
+     * grant-gated shadow (cannot reset the TCU — the A-law, 2026-11-01).
+     * E9 (spec 03 section 6.2g): the cyclic word takes the ENGAGED shape
+     * 0x8E90/0x8E80 — bit 7 held, BIT 4 toggling (2026-10-31 capture; the
+     * boot software's bit 2 was the pre-E1 shape) — with bit 0 still withheld
+     * by the A-law; the stock's live pair 0x91/0x81 = this base plus bit 0. */
+    sup_app_pattern3(true, 0x90u, 0x10u, 0x20u);
     sup_drv_sync(true);
     /* Engaged channel staging (spec 03 section 6.2e): the live 0x88 mode flags of
      * the driving stock = the six pressure channels + line pressure in CURRENT
