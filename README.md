@@ -53,19 +53,19 @@ write operation it performed is reproduced (and documented) by the open flasher.
 
 | Area | Complete | Basis |
 |---|---|---|
-| Stock-firmware reverse engineering (specs 01–15) | **82 %** | every subsystem's structure is mapped; the full 10,982-function decompile is indexed; the supervisor's protocol/word semantics are bench-measured (spec 03 §4.4); **the stock itself runs on the bench again (2026-10-31, full pristine restore + ring, spec 16 §11)** — live-stock probing (0x361 RAM reads, input-driven behaviour) is now possible; open: CAN signal meanings, chip identities |
+| Stock-firmware reverse engineering (specs 01–15) | **88 %** | every subsystem's structure is mapped; the full 10,982-function decompile is indexed; the supervisor's protocol/word semantics are bench-measured (spec 03 §4.4); **the stock itself runs on the bench again (2026-10-31, full pristine restore + ring, spec 16 §11)** — live-stock probing (0x361 RAM reads, input-driven behaviour) is now possible; **2026-11-04: the RTOS question closed at runtime (no ITRON, no AUTOSAR — bare superloop confirmed mid-actuation, spec 02 §7); the supervisor's full driving-time conversation reconstructed from staged RAM buffers, the `0x22` echo/grant law decoded, and the boot-mailbox handshake decoded and ruled off the drive path (spec 03 §6.2–6.2d)**; open: CAN signal meanings, chip identities, the duty-class cyclic job |
 | Code-flash independence — read / write / recover (specs 16–18, [8hp-teensy-flasher](https://github.com/alldogsoffroad/8hp-teensy-flasher)) | **95 %** | Teensy-only write and restore proven on the bench (2026-10-30, spec 17 §5l); remaining: an end-to-end shakedown of the released tool suite as packaged |
-| Open firmware, bench-proven (milestones M0–M6, [§8](docs/firmware/00-architecture.md)) | **55 %** | M0–M3 done (boot, CAN + measurement, sensors, solenoid outputs; 19/19 host tests); M4 implemented, bench session 2026-10-30 blocked at the driver-supply gate (spec 12 §2d) — the chips talk but no coil current flows; M4 commissioning, M5 limp mode, M6 shifting remain |
+| Open firmware, bench-proven (milestones M0–M6, [§8](docs/firmware/00-architecture.md)) | **62 %** | M0–M3 done (boot, CAN + measurement, sensors, solenoid outputs; 19/19 host tests) plus the RCAN fix proven live with the first working measurement responder (2026-11-04); M4's driver-supply gate is no longer a mystery — localized to the supervisor's echo grant with the ladder/commissioning proven correct and three precise divergences named (spec 03 §6.2b–6.2d, spec 12 §2d addendum); M4 commissioning, M5 limp mode, M6 shifting remain |
 | Vehicle integration (M7: Nissan profile, on-car validation) | **0 %** | not started |
 
-**Overall: ~56 %** — the straight average of the four areas. Gen 2 (8HP50/75/95)
+**Overall: ~61 %** — the straight average of the four areas. Gen 2 (8HP50/75/95)
 coverage is deferred and deliberately excluded from the figure.
 
 How the numbers move: closing a spec's open items (e.g. a signal-meaning table)
 moves row 1; tooling polish moves row 2; each completed milestone moves row 3
 (M4–M6 are 15 % each); row 4 begins with the first Nissan-side work. Static
 analysis alone is well advanced — bench and vehicle validation are what the
-percentages now track. *Last updated: 2026-10-31.*
+percentages now track. *Last updated: 2026-11-04.*
 
 Static analysis of the stock firmware is well advanced (hardware I/O, CAN, measurement protocol,
 shift strategy, lockup, shift execution, line pressure, solenoid outputs, park/range, fault
