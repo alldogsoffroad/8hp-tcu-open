@@ -69,6 +69,8 @@ static void stop(uint8_t reason)
 }
 
 static uint16_t s_force_left_10ms;      /* FE13 sub 11: A-law bypass window, 10 ms ticks */
+static bool s_duty_cyc;                 /* FE13 sub 14 (E8): the duty job cyclic */
+static uint8_t s_duty_div;
 
 void bench_init(void)
 {
@@ -90,6 +92,22 @@ void bench_tick_10ms(void)
 {
     if (s_force_left_10ms != 0u && --s_force_left_10ms == 0u) {
         sup_engage_force_enable(false);             /* the bypass window closes itself */
+    }
+    if (s_duty_cyc) {                               /* E8: the stock's duty stream, mirrored
+                                                     * at ~10 Hz while the ladder holds and
+                                                     * no bench test owns the outputs (the
+                                                     * reset trip, spec 03 section 6.2f) */
+        if (s_active || !sup_engage_active()) {
+            s_duty_div = 0u;
+        } else if (++s_duty_div >= 10u) {
+            static const uint16_t d_live[8] = {
+                0x90u, 0x10u, 0x20u, 0x40u, 0x40u, 0x60u, 0x00u, 0x00u,
+            };
+            s_duty_div = 0u;
+            if (!sol_duty_job(d_live)) {
+                s_duty_cyc = false;                 /* bus gone: stop the stream */
+            }
+        }
     }
     if (!s_active) {
         bench_channels_off();
@@ -507,6 +525,22 @@ static int sup_lab_start(const uint8_t *in, uint16_t n)
                 return -NRC_CNC;
             }
         }
+        return 0;
+    }
+    if (in[0] == 14u) {                                    /* E8 (spec 03 section 6.2f):
+                                                             * the duty job CYCLIC — the
+                                                             * stock sends it continuously;
+                                                             * we mirror it at ~10 Hz from
+                                                             * the bench tick, HOLD-gated,
+                                                             * never during a bench test */
+        if (n != 2u || in[1] > 1u) {
+            return -NRC_ROOR;
+        }
+        if (in[1] != 0u && !sup_engage_active()) {
+            return -NRC_CNC;                 /* the stream must be ladder-complete */
+        }
+        s_duty_cyc = in[1] != 0u;
+        s_duty_div = 0u;
         return 0;
     }
     if (in[0] == 9u) {                                     /* engage sequence: arm /
