@@ -1,0 +1,39 @@
+[09:20-11:40] AUTOSAR follow-up (user question): SWS R22-11 review vs stock dump -> NO AUTOSAR OS
+  (high confidence; spec 02 section 7 corrected: tick ISR ENQUEUES 16B slots into per-type rings
+  at 0xFFF943E8+8*type consumed by superloop 0x67FBE - not direct callbacks; +16 is a data ptr;
+  2nd table base 0xFFF909DC). Architecture decision 7: superloop, no RTOS (docs/firmware/00).
+  Committed 1f8e2e2.
+[11:40-12:2x] M4W BOOT-DEATH ARCHAEOLOGY (offline):
+  - m4v vs m4w app-region diff was STRUCTURAL: m4v2 = gap-keep (stock body under our app,
+    1353 solid regions), m4w = standalone (app + FF, 38 regions). Both carry stock ident.
+  - Worktree rebuild at 8afeeca: BYTE-EXACT vs the running m4v app (39256/39256 code bytes;
+    only 27 assembly-field bytes differ: CRC, stock-ident ptr, blanked build ident, tail
+    marker). Toolchain deterministic; m4w's ONLY source delta = the reorder fix (+232 text,
+    +132 bss = s_rx_ids/s_rx_n).
+  - Fix code review: no crash/hang path (RAM sort + mailbox register writes, MBs OFF'd first).
+  - Refused-erase theory DEAD: spec 17 5l's fentry-2 fix made >=0x100000 erases work (run 23
+    proved it); install completed + verified => flash == m4w image => CRC valid => boot
+    accepted => the APP died. Remaining suspects: (1) fix's only behavior change = 0x361
+    reception (first-ever live meas responder exercise), (2) erased stock body (data-only,
+    plat_mem_read-guarded - can't crash), (3) RCAN reorder-order hardware quirk.
+  - E1 EXPERIMENT BUILT (single variable): build/m4x_fixgapkeep_IFla.bin = HEAD app (fix
+    included) in the EXACT m4v2 gap-keep assembly (0x50000 gap-keep, stock base, stock
+    ident). Verified: 0 diff bytes vs running m4v2 outside app code/CRC/ident-ptr; CRC
+    2906EA8F self-consistent; sigs for 0x40000/0x50000 in /tmp/e1_sigs.json (sig fn validated
+    21/21 vs the m4v2 table). Install script /tmp/install_e1.py (chain_proven flow, TGT/SIGS
+    swapped); post-boot probe /tmp/probe_361.py (heartbeat + 0x361 ident/word-read -> 0x398).
+    Expected install: erase+write block 0x40000 only (~155 units), everything else skips.
+  E1 arms: boots+0x361 answers => the ERASED STOCK BODY killed m4w (assembly delta), fix GOOD.
+  E1 dies => the fix itself is hardware-hostile; E2 next (fix with sorting disabled).
+[11:43-11:47] E1 INSTALL: storm caught on the user's power-on (session open ~11:44), 67 62 first
+  try, engine downloaded, launched at boot+125s, reduced prime, FWE rail = first-unit ARM (51,
+  HIGH first try). Block 0x40000: ERASE + 155 units; 20 blocks sig-skipped; final verify 21/21
+  OK. "INSTALL COMPLETE" 11:46:58 (pass = 36s). Total cycle catch-to-done ~4 min.
+[11:59] E1 BOOT + PROBE: user power-cycled. Heartbeat 0x7F0-0x7F3 PASS (~15/s on the census).
+  *** 0x361 RECEPTION PROVEN + MEAS RESPONDER LIVE ***: ident 0x01 -> 0x398 "21 01 '8HPTCU'";
+  word-read 0x20 @0xFFF80000 -> "20 81 6268 6965 3031". First live measurement exchange ever.
+  VERDICT: reorder fix (bac8716) GOOD on hardware; m4w boot death = the ASSEMBLY delta
+  (standalone image erased the stock body; gap-keep boots). Open: WHY does an erased stock
+  body kill a CRC-valid+ident-valid boot (spec 06: the boot reads the app block beyond CRC).
+  Bench state: E1 (HEAD code + stock body) running, healthy. m4b hardware checks UNBLOCKED
+  (meas tools live).

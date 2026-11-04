@@ -351,6 +351,20 @@ vehicle exemption):
    `070619F8`) made the identical firmware boot immediately. An install image without the
    unit's stock ident fields will not start. Note the ranges: the ident table at `0x17FA70`
    lies inside the app CRC range (`0x40080–0x17FB6F`); the tail record and header +0x74 do not.
+4b. **The stock body under the application (bench 2026-11-03/04)**: a standalone project image
+   — header/CRC/markers/stock-ident all valid per §7 1–4a, but `0xFF` from the project app's end
+   up to `0x17FA6F` — did **not** start (m4w, 2026-11-03: restart loop, front door dead). The
+   byte-identical application code in a gap-keep assembly (stock body kept in the image and in
+   flash from `0x50000`, CRC recomputed over it) started immediately (E1, 2026-11-04: heartbeat
+   + full measurement responder live). This was the first boot ever attempted against an app
+   block whose stock body was erased — every earlier m4-series image said `0xFF` in its gaps but
+   the installers of the day never erased the mismatched blocks beneath, so the stock body was
+   always still in flash. [I] Mechanism open, two readings: (a) the boot manager reads the app
+   block beyond CRC at hand-over, or (b) the m4w install (transcript lost) left flash ≠ image
+   and the CRC check fired. Either way the operational rule is the same: **a project install
+   must not erase the stock body** — assemble with `build_image.py --gap-keep-above` and skip,
+   never erase, content-matched blocks (the `chain_proven`/`install_image` sig-first pass does
+   this; its erase-all-mismatched step must not be pointed at a gap-blank image).
 5. No use of the boot handover RAM (§5) other than writing the boot request record (§5a) when
    handing over to the boot side for reprogramming.
 6. A defined behavior for the EEPROM CRC binding (§6).

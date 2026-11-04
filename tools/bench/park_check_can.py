@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """park-check over the status frames: the m4a lever-decode bench check reading
-0x7F1 (inputs: lever, source) instead of the measurement table (the meas
-responder has a live receive-path bug — no 0x398 — banked for a firmware fix).
+0x7F1 (inputs: lever, source) instead of the measurement table (written when the
+meas responder looked dead; resolved 2026-11-04 — it was the RCAN mailbox reorder
+dropping 0x361, fixed in bac8716 and proven live: ident + word-read on 0x398).
 Steps and expectations mirror tcu_bench.py park-check / m4 doc §7a."""
 import sys, threading, time
 sys.path.insert(0, "/home/chadk/Documents/REA Projects/tools/bench")
