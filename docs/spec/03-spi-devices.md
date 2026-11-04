@@ -796,3 +796,29 @@ setpoint is uninformative; FE10 must start before the window (its test is autono
 observation must ride the 0x7F3 frames (the UDS server does not survive the window);
 re-arming the lab resets the ladder (minutes of re-climb) while the boot ladder continues
 underneath.
+
+### 6.2d Our side of the conversation — the same-day diff table (2026-11-04) [O]
+
+One-shot probes from E6 at the ladder-complete boot, against the §6.2b stock column:
+
+| job / register | ours | stock (driving) |
+|---|---|---|
+| cyclic job1 `8E00 C900 2200 0900` | `AA00 AA00 AA00 AA00` | `AA00 AA00 AAA1 AA00` |
+| job2 `9020 2400` | `AA00 AAFF` | `AA00 AA20` |
+| job3 `2800 2E00` | `AA45 AAFF` | `AA46 AA05` |
+| job6 (5 words) | `AA00 AADF AA0A AAD0 AAD5` | `AA00 AADF AA0A AAD0 AAC7` |
+| ID `0600 ×5, 0000 ×5` | `AA14 AAD0 ×…` (data class) | `A212 ×4 0000, A2BD ×4 0000` (ID class) |
+| `0x0A` level | `AA1F` | same class |
+| `0x0C` fb | `AAF3` | live |
+| `0x22` echo | `AA00` | `AAA1` |
+| `0x28 / 0x2E` | `AA45 / AAFF` | `AA46 / AA05` |
+| `0x14` (supervisor) | `AAD5` | `AAC7` |
+
+The conversation is fundamentally correct: job1 and job6 match the stock byte-for-byte
+except the echo and the live values. Three precise divergences remain — (1) the `0x22`
+echo (the gate), (2) the commissioning-touched registers (`0x24`, `0x2E`) reading the
+never-written `0xFF` for us — our five-select write still does not land where the stock's
+lands, and (3) the ID class: the chips return data-class (`AAxx`) to our `0x06` reads
+instead of the stock's ID-class (`A2xx`), suggesting a register-phase or select-mapping
+difference in our RSPI framing. The `0201`/`0402` descriptor headers (words, select?) and
+the duty-job composer (`C0xx/D0xx/Exxx`) are the next decode targets.
