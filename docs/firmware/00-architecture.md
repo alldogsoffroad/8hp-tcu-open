@@ -1,6 +1,7 @@
 # Firmware architecture — proposal (for review)
 
-Status: **agreed 2026-10-14** (decisions in §9; licence decided 2026-10-30: GPLv3). Implementation starts with M0. It turns the specifications
+Status: **agreed 2026-10-14** (decisions in §9; licence decided 2026-10-30: GPLv3; scheduling
+model decided 2026-11-04: superloop, no RTOS). Implementation starts with M0. It turns the specifications
 (`docs/spec/`) into a module structure for an open C firmware running on the stock Bosch TCU
 (SH7254R, ZF 8HP Gen 1). Open questions for the project owner are listed in §9.
 
@@ -205,3 +206,22 @@ Each milestone has host tests and a bench checklist before moving on.
 5. **Licence:** **GNU GPL v3** (decided 2026-10-30, when the repository went public; see
    `LICENSE` and the README). — agreed
 6. **Host simulator:** I/O stubs for M0–M3; closed-loop drivetrain model with M5. — agreed
+7. **Scheduling model:** run-to-completion superloop over the §6 task table — **no RTOS**.
+   — agreed 2026-11-04
+   - Rationale: the stock firmware is bare metal (spec 02 §7: no RTOS on any axis,
+     re-proven 2026-11-04 against both ITRON and the AUTOSAR OS spec R22-11 — no context
+     switcher, no kernel config shapes, hand-rolled cyclic tick tables). Bosch shipped this
+     exact silicon run-to-completion for an ASIL-rated TCU; the genuinely hard timing
+     (PWM phase, current loops, ADC) lives in hardware peripherals, not software tasks.
+   - An RTOS would buy blocking semantics, preemptive priorities and ready-made plumbing
+     (queues, priority-inheritance mutexes) — real, but none of it is needed by the §6 model.
+   - Cost is the port, not RAM (~52 KB free of our 88 KB slice; a 6-task kernel needs
+     4–6 KB): **no open-source RTOS ships for SH7254R + GCC.** Renesas's ITRON kernels are
+     closed (source only with a paid mass-production licence); FreeRTOS's SH-2A port targets
+     SH7216 with Renesas-toolchain asm (no official GCC port); TOPPERS/ASP is open with
+     official SH-2A support (SH7263) and is the fallback candidate if ever triggered.
+   - The task table is deliberately RTOS-shaped (each cyclic task is a task function; tasks
+     share state only through the loop), so a later migration is mechanical.
+   - **Revisit triggers (pre-agreed):** (a) a module must *block* while control loops run
+     (e.g. UDS mid-flash during actuator control), (b) outside contributors collide on the
+     task table, (c) a sub-ms software deadline that cannot live in an ISR.

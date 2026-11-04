@@ -197,11 +197,48 @@ there as logged faults); and no context-dispatch routine (full-register save/res
 TCBs) exists anywhere in the image.
 
 The periodic work — including the 15.625 ms (1/64 s) CAN schedule of spec 08 — is driven by
-the tick ISR (vector 228, `0x677F8`), which clears its flag and walks **flat cyclic handler
-tables** of 20-byte entries `{enable, period@+4, callback@+16}` at `0xFFF908DC` and a second
-table at `0xFFF9097C`, invoking callbacks directly from interrupt context. That is the
-mechanism to reproduce for equivalent timing behavior. The one remaining unknown is the
+the tick ISR (vector 228, `0x677F8`). **2026-11-04 correction (full sh2a disassembly, AUTOSAR
+follow-up below):** the tick does *not* invoke callbacks directly. It walks two **flat cyclic
+tables** of 20-byte entries `{enable@0, arg-u16@+2, period-u16@+4 (min-entry wins), arg-u32@+8,
+len-u8@+12, data-ptr@+16}` — base `0xFFF908DC` (8 entries) and `0xFFF909DC` (1 entry; the
+earlier `0xFFF9097C` was just the end of table 1, 8×20=0xA0) — and the `+16` word is a **data
+pointer, not a callback**. Each firing hands `{arg, data[len], id@+12, flags@+14}` to
+dispatcher `0x934AC`, which **enqueues a 16-byte slot into a per-type ring buffer** (control
+blocks at RAM `0xFFF943E8 + 8*type`: `{limit, cursor, max, bufptr}`); the superloop workhorse
+`0x67FBE` (called from `0x67A68`) drains the rings and executes the work. Entry enable-byte is
+cleared after firing (one-shot) except index 0 (the periodic anchor); the ISR tail re-arms from
+the flash rate table `0x66468` via cursor RAM `0xFFF909F8`. So the mechanism to reproduce is
+tick → 20-byte cyclic tables → per-type rings → main-loop consumer, with SR.I-level lock
+helpers (`0x96650`/`0x9665C`) guarding the queues. The one remaining unknown is the
 runtime-constructed session/security code (spec 17 §5e), which is a CAN session handler and
 not a scheduler; a live `0x2A` RAM read of the engaged stock over `0xFFF80000–0xFFF9FFFF`
-would close it conclusively (ITRON would show TCB arrays at 64+140-byte cadence; bare metal
-predicts the flat tables above).
+would close it conclusively (any kernel would show TCB/stack arrays and priority ready-lists;
+bare metal predicts the flat tables, cursor, and rings above).
+
+### 7b. AUTOSAR OS: also absent (2026-11-04) [O]
+
+Asked whether the *AUTOSAR* OS (SWS "Specification of Operating System" R22-11 — a different
+lineage from ITRON, descended from OSEK/VDX) runs on the stock. **No, high confidence.**
+The ITRON verdict's `trapa` evidence does **not** transfer (AUTOSAR OS services are plain
+function calls), but the structural evidence does, re-proven with correct SH-2A encodings:
+
+- **No context switcher anywhere.** Full-app scan of push banks (`movmu.l` ×7,317 — all
+  ordinary prologues, max run 10 and those are data coincidences; zero `sts.l pr` + ≥4-push
+  sites), multi-register `movml.l` at only 9 sites (ISR trampolines `0x96684`/`0x9A53A`, hash
+  `0x99AD8` — same-stack save/restore, `rte`, no SP reload), zero `ldc ssr/spc`, and exactly
+  one `mov rN,r15` in the app (a 2-instruction leaf at `0x95336`). No code loads a register
+  set from any TCB array.
+- **No AUTOSAR static config shapes.** Startup `0x66CA8` makes ~20 direct init calls — no
+  StartOS structure, no hook invocations (StartupHook/PreTaskHook/... are mandated in every
+  conformance class), no autostart-task activation loop. The flash descriptor table
+  `0x43794` (20-byte entries, 14 literal-pool references) has no priority/stack/activation
+  fields — it is signal/measurement metadata for the `0x92–0x96` subsystem.
+- **Tick architecture is incompatible.** AUTOSAR counters drive alarms with absolute-expiry
+  and *task activation queues*; the stock's per-entry down-counters feeding message rings are
+  a hand-rolled cyclic scheduler.
+- **Strings: zero hits** for AUTOSAR/OSEK/OSAL/MICROSAR/RTA-OS/tresos/ERIKA and all ~40
+  API+hook names — weak evidence both ways (SWS_Os_NA_00767: no mandated version banner), so
+  the verdict rests on structure. The plant engine image also scans clean.
+
+A minimal non-preemptive BCC1/SC1 build could *resemble* a superloop, but it would still leave
+an activation queue, task descriptors with priorities, and hook call sites — none exist.
