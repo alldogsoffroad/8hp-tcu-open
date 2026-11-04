@@ -305,8 +305,11 @@ int main(void)
      * E9 (spec 03 section 6.2g): the cyclic word takes the ENGAGED shape
      * 0x8E90/0x8E80 — bit 7 held, BIT 4 toggling (2026-10-31 capture; the
      * boot software's bit 2 was the pre-E1 shape) — with bit 0 still withheld
-     * by the A-law; the stock's live pair 0x91/0x81 = this base plus bit 0. */
-    sup_app_pattern3(true, 0x90u, 0x10u, 0x20u);
+     * by the A-law; the stock's live pair 0x91/0x81 = this base plus bit 0.
+     * E10: the job-2 register-0x90 data = the stock's live 0x21 (we sent 0x20
+     * since E1 — the switch-enable register's bit 0, the last known cyclic
+     * word delta). */
+    sup_app_pattern3(true, 0x90u, 0x10u, 0x21u);
     sup_drv_sync(true);
     /* Engaged channel staging (spec 03 section 6.2e): the live 0x88 mode flags of
      * the driving stock = the six pressure channels + line pressure in CURRENT
