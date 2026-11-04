@@ -56,3 +56,33 @@
     flags@16}; 6/7 ids = live census, rates match exactly. ZERO kernel signatures (no TCB
     cadence, no stack ladder, 47% sparse static). NO-RTOS VERDICT RUNTIME-CONFIRMED -
     spec 02 section 7c. Dump bytes stay in /tmp (vendor runtime data).
+[13:0x-14:2x] ACTUATOR PHASE + THE SUPPLY-GATE INVESTIGATION (mechatronic + valve body connected):
+  - E1 healthy: drivers ready, chip0=0x40, fluid 24C (real NTC on the rig), idle 0.167A bench /
+    0.1496A teensy ammeter (instruments agree ~17mA). Stock driving baseline: 1.7-1.86A.
+  - FE10 ch0 300mA/2s: ACCEPTED, ran to end reason 01, chips ack'd setpoints, 0x7F3 echoed
+    ch=0 mA=300 - AND ZERO CURRENT (both ammeters flat). The Oct-30 supply gate, reproduced.
+  - FE13 engagement re-armed under lab: ladder COMPLETE - state HOLD, lvl 0x1F commanded AND
+    echoed, 380+ tokens, 0 bad; rx_words ALL 0xAA00; en=05 (requested+from-start, NOT sent).
+    The A-law holds the enable: echo grant never comes. Tooling lesson: ammeter.py defaults to
+    ACM0 - collides with python-can; run it standalone only or pass port=ACM1.
+  - MAILBOX (spec 03 6.2): live 0xFFFC0D00/0D04 read 0 via our (m4v-era) I/O readable window.
+    Chip-ID 0x0021 readback validates the path. Disassembled 0x67200/0x6728E fully: input
+    9/10->letter 85, 13/14->86, ANY OTHER VALUE -> no handshake at all (letter 0); 0x1234 ->
+    wait clear -> reply 0x5555/0x3737; input==10 also mode-sets(3) in the trigger.
+  - E2 (capture at main's first instruction): input capture = 15 (0x000F), 3 boots identical.
+    E3 (1ms history, 512 samples): CONSTANT 15, zero transitions - the valid set never
+    appears in the first half-second; live reads 0 minutes later. Deterministic early value.
+  - E4 (stock init mirror from the 0x9533C disassembly: module-stop KEY 0xFFFF0802=0x69FF,
+    VALUE 0xFFFE0802=0x5555 - two registers, the 6.2 prose had conflated them; 0xFFFF0812=
+    0x7821 per chipID&3==0; RCCR=1+flush; 0xFFFE0400|=0x3C10): app boots fine, CAN alive,
+    BUT the 0x5555 readback reads 0x0000 (write-through-key semantics or rejected) and the
+    input word never changed. Mirror did not verifiably land.
+  - THE ANCHOR FACT (re-read of the 12:49 driving-state dump with the 0x91C86 decode): the
+    echo = bit 0 of BYTE 0xFFF907D5; the word-out = byte 0xFFF907D4. While DRIVING: echo byte
+    0xA1 (bit 0 SET = supervisor GRANTED), word byte 0x81 (enable+toggle sent), enable shadow
+    0xFFF90953=1, mode letter 0xFFF93B43=0x01 - THE MAILBOX HANDSHAKE NEVER RAN while the
+    stock drove 1.773A. Mode 3 is NOT on the drive path. The stock earns the grant through
+    the RSPI-B conversation alone. NEXT: decode the stock's cached reply words (0xFFF907C8+:
+    14c7 000a 81a1 2020...) vs our all-AA00 replies - the supervisor talks richly to the
+    stock and tersely to us; find the divergent job/step.
+  - Bench state: E4 running (heartbeat + meas + engagement ladder all healthy).

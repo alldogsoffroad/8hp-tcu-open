@@ -605,6 +605,20 @@ static int sup_lab_start(const uint8_t *in, uint16_t n)
     return -NRC_SFNS;
 }
 
+/* The boot-mailbox state (spec 03 section 6.2) rides at the end of every results block:
+ * input capture BE16, mailbox capture BE16, letter, phase, latest mailbox BE16. */
+static int sup_mb_block(uint8_t *out)
+{
+    const plat_mb_status_t *mb = plat_mb_status();
+
+    out[0] = (uint8_t)(mb->input_capture >> 8);   out[1] = (uint8_t)mb->input_capture;
+    out[2] = (uint8_t)(mb->mailbox_capture >> 8); out[3] = (uint8_t)mb->mailbox_capture;
+    out[4] = mb->letter;
+    out[5] = mb->phase;
+    out[6] = (uint8_t)(mb->mailbox >> 8);         out[7] = (uint8_t)mb->mailbox;
+    return 8;
+}
+
 static int sup_lab_results(uint8_t *out, uint16_t max)
 {
     const sup_status_t *st = sup_status();
@@ -612,7 +626,7 @@ static int sup_lab_results(uint8_t *out, uint16_t max)
     if (s_sup_mode == 3u) {                                /* engage sequence status */
         const sup_eng_status_t *e = sup_engage_status();
         const sup_drv_status_t *dv = sup_drv_status();
-        if (max < 43u) {
+        if (max < 181u) {
             return -NRC_IMLOIF;
         }
         out[0] = 3u;
@@ -642,10 +656,40 @@ static int sup_lab_results(uint8_t *out, uint16_t max)
         out[38] = (uint8_t)(dv->drv_a8 >> 8); out[39] = (uint8_t)dv->drv_a8;
         out[40] = (uint8_t)(dv->drv_aa >> 8); out[41] = (uint8_t)dv->drv_aa;
         out[42] = dv->drv_writes;
-        return 43;
+        (void)sup_mb_block(&out[43]);
+        /* the input-word trajectory: 32 undelayed samples captured at start-up (raw) and
+         * the 1 ms history compressed to its transitions (value, ms index) */
+        {
+            uint16_t n_hist;
+            const uint16_t *hist = plat_mb_hist(&n_hist);
+            uint16_t o = 51u;
+
+            if (max < 55u) {
+                return -NRC_IMLOIF;
+            }
+            out[o++] = (uint8_t)(n_hist >> 8); out[o++] = (uint8_t)n_hist;
+            for (uint16_t i = 0u; i < n_hist && i < 16u; i++) {   /* first 16 ms, raw */
+                out[o++] = (uint8_t)(hist[i] >> 8); out[o++] = (uint8_t)hist[i];
+            }
+            for (; o < 51u + 2u + 32u; o++) {
+                out[o] = 0u;                                     /* pad to fixed size */
+            }
+            uint16_t ev = 0u;                                    /* transitions, up to 24 */
+            for (uint16_t i = 1u; i < n_hist && ev < 24u; i++) {
+                if (hist[i] != hist[i - 1u]) {
+                    out[o++] = (uint8_t)(hist[i] >> 8); out[o++] = (uint8_t)hist[i];
+                    out[o++] = (uint8_t)(i >> 8);      out[o++] = (uint8_t)i;
+                    ev++;
+                }
+            }
+            for (; ev < 24u; ev++) {
+                out[o++] = 0u; out[o++] = 0u; out[o++] = 0u; out[o++] = 0u;
+            }
+            return (int)o;                                       /* 51 + 2 + 32 + 96 = 181 */
+        }
     }
     if (s_sup_mode == 1u) {                                /* last one-shot replies */
-        const uint16_t need = (uint16_t)(2u + 2u * s_sup_n);
+        const uint16_t need = (uint16_t)(2u + 2u * s_sup_n + 8u);
         if (max < need) {
             return -NRC_IMLOIF;
         }
@@ -655,10 +699,11 @@ static int sup_lab_results(uint8_t *out, uint16_t max)
             out[2u + 2u * i] = (uint8_t)(s_sup_rx[i] >> 8);
             out[3u + 2u * i] = (uint8_t)s_sup_rx[i];
         }
+        (void)sup_mb_block(&out[2u + 2u * s_sup_n]);
         return (int)need;
     }
     if (s_sup_mode == 2u) {                                /* pattern status + replies */
-        if (max < 25u) {
+        if (max < 35u) {
             return -NRC_IMLOIF;
         }
         out[0] = 2u;
@@ -671,9 +716,11 @@ static int sup_lab_results(uint8_t *out, uint16_t max)
         out[21] = (uint8_t)(st->a8_bad >> 8);   out[22] = (uint8_t)st->a8_bad;
         out[23] = (uint8_t)(st->aa_bad >> 8);   out[24] = (uint8_t)st->aa_bad;
         out[25] = (uint8_t)(st->sslb2_rx >> 8); out[26] = (uint8_t)st->sslb2_rx;
-        return 27;
+        (void)sup_mb_block(&out[27]);
+        return 35;
     }
-    if (max < 1u) {
+    if (max < 1u) {            /* idle stays one byte: a longer record would cross the
+                                * ISO-TP single-frame boundary on the wire (test 244) */
         return -NRC_IMLOIF;
     }
     out[0] = 0u;

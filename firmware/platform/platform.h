@@ -107,6 +107,42 @@ bool plat_drv_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n);
 void plat_toe_out_init(void);
 void plat_toe_out_set(uint16_t permil);
 
+/* ---- Mechatronic counterpart boot mailbox (spec 03 section 6.2) ----
+ * The stock reads the input word at 0xFFFC0D00 during start-up, before its scheduler:
+ * 9/10 select letter 85, 13/14 letter 86, any other value aborts without a handshake
+ * (stock 0x67200). The handshake writes 0x1234 to 0xFFFC0D04; the counterpart
+ * acknowledges by clearing it; the reply magic (0x5555 letter 85, 0x3737 letter 86)
+ * completes the exchange that admits the engaged system mode (stock 0x6728E).
+ * The input word may be a power-up transient, so plat_mb_capture() must run at the
+ * earliest instruction of main(); the clear-wait machine ticks from a task (~100 ms).
+ * Host build: capture/tick are no-ops and the status reads all zero. */
+enum {
+    PLAT_MB_IDLE = 0u,         /* capture not taken yet */
+    PLAT_MB_NO_HANDSHAKE = 1u, /* captured input not in {9,10,13,14}: the stock stops here */
+    PLAT_MB_WAIT_CLEAR = 2u,   /* 0x1234 written, waiting for the counterpart's clear */
+    PLAT_MB_OK = 3u,           /* cleared; reply magic written */
+    PLAT_MB_TIMEOUT = 4u,      /* counterpart did not clear within the bound */
+};
+typedef struct {
+    uint16_t input_capture;    /* 0xFFFC0D00 as latched at start-up */
+    uint16_t mailbox_capture;  /* 0xFFFC0D04 as latched at start-up */
+    uint8_t  letter;           /* 0x55 / 0x56 / 0 */
+    uint8_t  phase;            /* PLAT_MB_* */
+    uint16_t mailbox;          /* latest 0xFFFC0D04 value */
+} plat_mb_status_t;
+void plat_mb_capture(void);
+void plat_stock_init_mirror(void);            /* the stock start-up's system writes (spec 03
+                                                * section 6.2, disassembled 2026-11-04): module
+                                                * stop key/value, RAM cycle, ROM cache, port
+                                                * block - the mailbox input may depend on them */
+void plat_mb_tick(void);                       /* ~100 ms: the clear-wait machine */
+bool plat_mb_poll_init(void);                  /* re-read the input word; a valid value that
+                                                * appears later than start-up starts the
+                                                * handshake (returns true when it fires) */
+void plat_mb_tick_1ms(void);                   /* 1 ms: history sample + init re-check */
+const plat_mb_status_t *plat_mb_status(void);
+const uint16_t *plat_mb_hist(uint16_t *n);     /* 1 ms input-word history from start-up */
+
 /* ---- User boot MAT read-out (SH7254R manual 25.9.1) ----
  * Copy the 32 KB user boot MAT into dst (4-byte aligned, at least len bytes) by switching the
  * flash MAT from RAM-resident code with interrupts masked. Returns false if not available. */

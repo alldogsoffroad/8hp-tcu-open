@@ -447,6 +447,20 @@ switched solenoid supply (VS rail to B10-13, spec 01 §2.9) never asserted:
 3. Mode-byte semantics (mode bits acknowledged but meaning something else on this revision —
    ID `0xA212`/`0xBD` revision handling in the stock, §2b).
 
+### 2d addendum — the gate localized to the supervisor echo grant (2026-11-04) [O]
+
+Reproduced with the engagement machinery live: FE10 accepted and completed (end 0x01,
+setpoints ack'd, `0x7F3` echoed the commanded current) with **zero ammeter movement**, while
+the supervisor conversation simultaneously reached the full ladder end-state (HOLD, level
+0x1F commanded *and echoed*, commissioning values held, dither cycling — the same visible
+state the driving stock presents). The rail stays closed-off because the supervisor's cyclic
+`0x22` echo never grants: our every cyclic register read returns `0xAA00`, while the stock's
+cached echo byte (`0xFFF907D5`) reads `0xA1` — bit 0 set — in the dump taken while it drove
+the mechatronic at 1.773 A (spec 03 §6.2a). The `0xFFFC0D04` boot-mailbox/mode-3 path is
+**ruled out** as the gate: the driving stock never ran that handshake. What earns the grant
+is somewhere in the cyclic RSPI-B conversation the stock keeps and we only partly mirror —
+that diff is the open work item (spec 03 §6.2a, "the open question").
+
 The chips' markings are unobtainable (shielded TCU, no marks found), so the datasheet route is
 closed; the stock code is the datasheet.
 

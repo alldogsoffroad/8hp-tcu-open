@@ -691,12 +691,19 @@ the startup chain at `0x66CC0` (init calls in order, ending in the scheduler
 So the stock enters the engaged system mode **at every boot**, gated on a
 hardware counterpart acknowledging through the `0xFFFC0D04` mailbox.
 
-- **Module clocks**: the stock's low-level init `0x9533C` writes the
-  module-stop/system block: `0xFFFE0802 := 0x69FF` then `0x5555` (MSTPCRA),
-  `0xFFFE0812 := 0x7821/0x7878` (chip-ID dependent), `0xFFFE0842 := 0x68FF`,
-  `0xFFFE080C := 0xFFFE`, enables the ROM cache `RCCR (0xFFFC1400) := 1` +
-  flush, sets `0xFFFE0400 |= 0x3C10`, and reads the chip ID at `0xFFFF1000`.
-  Our app configures none of this (the boot's defaults stand).
+- **Module clocks** (addresses corrected from the disassembly 2026-11-04; the earlier
+  note conflated two registers): the stock's low-level init `0x9533C` writes the
+  module-stop protocol as a KEY at `0xFFFF0802 := 0x69FF` followed by the VALUE at
+  `0xFFFE0802 := 0x5555`, plus `0xFFFF0842 := 0x68FF` and the RAM access-cycle
+  `0xFFFF0812 := 0x7821/0x7800` (chip ID `& 3 == 0` selects 0x7821; this unit's ID
+  `0x0021` → `0x7821`), enables the ROM cache `RCCR (0xFFFC1400) := 1` + flush, sets
+  `0xFFFE0400 |= 0x3C10`, and reads the chip ID at `0xFFFF1000`. Our app configures
+  none of this; a 2026-11-04 mirror of this subset (E4 build) ran without harm but the
+  `0x5555` value read back `0x0000` — the write did not verifiably land
+  (write-through-key semantics or rejected without further protocol).
+- **Trigger input gating** (disassembled 2026-11-04): only input values 9/10 (letter 85)
+  and 13/14 (letter 86) start the handshake — **any other value writes letter 0 and never
+  sends the 0x1234 magic**. Input 10 additionally mode-sets(3) inside the trigger.
 - **Bench status**: our firmware's measurement gate (`readable()` in
   `plat_sh7254r.c`) whitelists only flash ≤ 0x1FFFFF and RAM
   0xFFF80000–0xFFF9FFFF — the all-`0x0E` live reads of `0xFFFC0C00` and
@@ -704,10 +711,33 @@ hardware counterpart acknowledging through the `0xFFFC0D04` mailbox.
   counterpart module exists and what `0xFFFC0D00` holds on our bench is
   **undetermined**.
 
-NEXT: an m4-series build extending `readable()` with the I/O area
+NEXT (2026-11-03): an m4-series build extending `readable()` with the I/O area
 (0xFFFC0000–0xFFFFFFFF), then live-read `0xFFFC0C00–0xFFFC0D10`,
-`0xFFFE0800–0xFFFE0842`, `0xFFFE0400` and the chip ID at `0xFFFF1000`. If the
-mode word lives, the entire mode-3 engagement becomes reproducible from our
-side; if it reads the bus-default pattern, the handshake is variant-gated and
-mode 3 was never active on this bench (the engaged stock's 1.79 A being the
-PWM-level world, not mode 3).
+`0xFFFE0800–0xFFFE0842`, `0xFFFE0400` and the chip ID at `0xFFFF1000`.
+
+### 6.2a The mailbox ruled off the drive path; the grant decoded (2026-11-04) [O]
+
+The readable() extension shipped with the m4v source; the live reads plus four
+instrumented boots (E2–E4) and a re-read of the 12:49 driving-state RAM dump
+settled the question, against the mode-3 hypothesis:
+
+- **The input word on this bench is 15 (0x000F) at power-up** — captured at the first
+  instruction of `main()`, identical across three boots, constant through a 512-sample
+  1 ms history, and 0 by the time CAN reads are possible. 15 is outside the stock's
+  {9,10,13,14} gate: with this input **the stock itself would not handshake**.
+- **The driving stock never ran the handshake**: in the dump taken while it drove the
+  mechatronic at 1.773 A, the mode letter `0xFFF93B43` reads `0x01` — not 85/86 (and not
+  the timeout letters 0xF0/0xF1). Mode 3 is not on the drive path.
+- **The grant while driving**: the cyclic word builder `0x91C86` loads the enable from
+  **bit 0 of byte `0xFFF907D5`** (the supervisor's 0x22 echo, cached), branches past the
+  enable when clear (the A-law, confirmed in the code), and composes the outgoing word
+  byte at `0xFFF907D4`. In the driving dump: `0xFFF907D5 = 0xA1` (**bit 0 set — the
+  supervisor had granted**), `0xFFF907D4 = 0x81` (enable + toggle sent), enable shadow
+  `0xFFF90953 = 1`. Our firmware reaches the same ladder end-state (HOLD, level 0x1F
+  commanded and echoed, commissioning values held, dither cycling) but every cyclic
+  register read returns `0xAA00` — the supervisor answers the ladder and stays mute in
+  the cyclic conversation.
+- **The open question**: what in the stock's cyclic RSPI-B job stream earns the grant.
+  The stock's cached conversation (`0xFFF907C8+`: `14c7 000a 81a1 2020 …`) is richer
+  than the all-`AA00` replies we receive; decode that cache and diff against our
+  captured replies to find the divergent job or step.

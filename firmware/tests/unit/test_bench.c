@@ -237,7 +237,7 @@ int main(void)
     /* ---- FE13 supervisor lab: one-shot RSPI-B exchange and the stock app pattern ---- */
     uds_req((const uint8_t[]){ 0x10, 0x03 }, 2u);
     {
-        uint8_t out[64];
+        uint8_t out[256];
         int r;
 
         uds_req((const uint8_t[]){ 0x31, 0x03, 0xFE, 0x13 }, 4u);
@@ -253,8 +253,8 @@ int main(void)
         stub.sup_xfer_rx = 0xA8BDu;
         uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x01, 0x06, 0x00 }, 7u);
         CHECK(memcmp(&last_rsp()[1], "\x71\x01\xFE\x13", 4) == 0);
-        r = bench_routine(3u, BENCH_SUP_RID, NULL, 0u, out, 64u);
-        CHECK(r == 4 && out[0] == 1u && out[1] == 1u && out[2] == 0xA8u && out[3] == 0xBDu);
+        r = bench_routine(3u, BENCH_SUP_RID, NULL, 0u, out, sizeof out);
+        CHECK(r == 12 && out[0] == 1u && out[1] == 1u && out[2] == 0xA8u && out[3] == 0xBDu);
         /* bus timeout -> conditions not correct */
         stub.sup_xfer_fail = true;
         uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x01, 0x28, 0x00 }, 7u);
@@ -271,12 +271,12 @@ int main(void)
         run_10ms(1u);
         CHECK(sup->rx_words[2] == 0xA804u && sup->rx_words[0] == 0xA804u);
         CHECK(sup->echo_ok + sup->echo_bad >= 2u && sup->aa_bad >= 8u);
-        r = bench_routine(3u, BENCH_SUP_RID, NULL, 0u, out, 64u);
-        CHECK(r == 27 && out[0] == 2u && out[1] == 0xA8u && out[2] == 0x04u);
+        r = bench_routine(3u, BENCH_SUP_RID, NULL, 0u, out, sizeof out);
+        CHECK(r == 35 && out[0] == 2u && out[1] == 0xA8u && out[2] == 0x04u);
         /* stop restores the single 5 ms word */
         uds_req((const uint8_t[]){ 0x31, 0x02, 0xFE, 0x13 }, 4u);
         CHECK(!sup->app_pattern);
-        r = bench_routine(3u, BENCH_SUP_RID, NULL, 0u, out, 64u);
+        r = bench_routine(3u, BENCH_SUP_RID, NULL, 0u, out, sizeof out);
         CHECK(r == 1 && out[0] == 0u);
         /* sub 3 (pattern off via start) also accepted */
         uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x03 }, 5u);
@@ -290,15 +290,15 @@ int main(void)
                                       0x00, 0x24, 0x00, 0x24, 0x00 };
             CHECK(bench_routine(1u, BENCH_SUP_RID, sub10, sizeof sub10, out, 64u) == 0);
         }
-        r = bench_routine(3u, BENCH_SUP_RID, NULL, 0u, out, 64u);
-        CHECK(r == 12 && out[0] == 1u && out[1] == 5u);   /* 5 replies, xfer5 used */
+        r = bench_routine(3u, BENCH_SUP_RID, NULL, 0u, out, sizeof out);
+        CHECK(r == 20 && out[0] == 1u && out[1] == 5u);   /* 5 replies, xfer5 used */
         /* ---- sub 9: the engage sequence (arm, results mode 3, one-shot guard) ---- */
         uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x02, 0x00, 0x21 }, 7u);
         uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x09, 0x01 }, 6u);
         CHECK(memcmp(&last_rsp()[1], "\x71\x01\xFE\x13", 4) == 0);
         CHECK(sup_engage_active());
-        r = bench_routine(3u, BENCH_SUP_RID, NULL, 0u, out, 64u);
-        CHECK(r == 43 && out[0] == 3u && out[1] == 1u);      /* state 1 = sync */
+        r = bench_routine(3u, BENCH_SUP_RID, NULL, 0u, out, sizeof out);
+        CHECK(r == 181 && out[0] == 3u && out[1] == 1u);      /* state 1 = sync */
         /* raw one-shots refused while the engage sequence owns the stream */
         uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x01, 0x06, 0x00 }, 7u);
         CHECK(last_nrc() == 0x22u);

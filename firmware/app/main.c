@@ -74,6 +74,7 @@ static const sensors_cfg_t s_sensors_cfg = { 0u, 1u, { 60u, 60u, 60u } };
 
 static void task_1ms(void)
 {
+    plat_mb_tick_1ms();   /* input-word history + late-window handshake */
     can_frame_t f;
 
     plat_wdt_service();
@@ -92,6 +93,12 @@ static void task_1ms(void)
 
 static void task_10ms(void)
 {
+    static uint8_t s_mb_div;
+
+    if (++s_mb_div >= 10u) {    /* boot-mailbox machine at ~100 ms (spec 03 section 6.2) */
+        s_mb_div = 0u;
+        plat_mb_tick();
+    }
     vehicle_update_10ms();
     sensors_update_10ms();
     park_tick_10ms();       /* M4a: decisions only, no outputs */
@@ -254,10 +261,17 @@ static const task_t s_tasks[] = {
 
 int main(void)
 {
+    plat_mb_capture();     /* counterpart input FIRST: it may be a power-up transient that
+                            * is gone before the scheduler runs (spec 03 section 6.2) */
     plat_init();
+    plat_stock_init_mirror();   /* the stock's system writes (spec 03 section 6.2): the
+                                 * mailbox input word may depend on the module-stop state */
+    (void)plat_mb_poll_init();  /* the valid window may open between capture and here */
     sup_init();
     sol_init();             /* identification + configuration; all channels off */
+    (void)plat_mb_poll_init();
     bench_init();
+    (void)plat_mb_poll_init();
     vehicle_init();
     park_init();
     sensors_init(&s_sensors_cfg);

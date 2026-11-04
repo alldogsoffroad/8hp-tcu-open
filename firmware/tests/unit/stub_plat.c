@@ -279,3 +279,34 @@ bool plat_userboot_copy(uint8_t *dst, uint32_t len)
     }
     return true;
 }
+
+/* boot-mailbox stubs (spec 03 section 6.2): zero status, no machine */
+void plat_mb_capture(void) { }
+void plat_mb_tick(void) { }
+void plat_stock_init_mirror(void)
+{
+}
+
+bool plat_mb_poll_init(void)
+{
+    return false;
+}
+
+void plat_mb_tick_1ms(void)
+{
+}
+
+const uint16_t *plat_mb_hist(uint16_t *n)
+{
+    if (n != NULL) {
+        *n = 0u;
+    }
+    return NULL;
+}
+
+const plat_mb_status_t *plat_mb_status(void)
+{
+    static const plat_mb_status_t s_mb_zero;
+
+    return &s_mb_zero;
+}

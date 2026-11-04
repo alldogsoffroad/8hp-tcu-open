@@ -1,5 +1,7 @@
 /* SH7254R platform layer: safe pin state, watchdog, 1 ms tick, CAN buses 1 and 2, ADC, speed inputs. */
 #include "platform/platform.h"
+#include <stddef.h>
+
 #include "regs.h"
 
 /* ---- Pins ----------------------------------------------------------------
@@ -736,6 +738,121 @@ bool plat_mem_read(uint32_t addr, uint8_t *out, uint16_t n)
         out[i] = *(const volatile uint8_t *)(uintptr_t)(addr + i);
     }
     return true;
+}
+
+/* ---- Mechatronic counterpart boot mailbox (spec 03 section 6.2) --------------------------
+ * The stock's own sequence, disassembled 2026-11-04: trigger 0x67200 reads 0xFFFC0D00 and
+ * only 9/10 (letter 85) or 13/14 (letter 86) proceed — every other value stores letter 0
+ * and never writes the magic. The letter jobs write 0x1234 to 0xFFFC0D04; sibling 0x6728E
+ * polls for the counterpart's clear and answers with 0x5555 (letter 85) / 0x3737 (86). */
+#define MB_IN_REG    REG16(0xFFFC0D00u)
+#define MB_BOX_REG   REG16(0xFFFC0D04u)
+#define MB_WAIT_TICKS 300u          /* 300 x 100 ms = 30 s clear-wait bound (stock: 667) */
+
+void plat_stock_init_mirror(void)
+{
+    /* stock 0x9533C, in its order, the mailbox-relevant subset (2026-11-04 disassembly):
+     * the module-stop protocol is a KEY write at 0xFFFF0802 followed by the VALUE at
+     * 0xFFFE0802 - two registers, which the section 6.2 prose had conflated. */
+    REG8(0xFFFE0420u) = (uint8_t)(REG8(0xFFFE0420u) | 0x40u);
+    REG8(0xFFFE0430u) = 0xE0u;
+    REG16(0xFFFF0812u) = 0x7821u;            /* chip ID 0x0021 & 3 == 0 -> 0x7821 */
+    REG16(0xFFFF0802u) = 0x69FFu;            /* module-stop key */
+    REG16(0xFFFF0842u) = 0x68FFu;
+    REG16(0xFFFE0802u) = 0x5555u;            /* module-stop value (the suspect) */
+    REG32(0xFFFC1400u) = 1u;                 /* RCCR: ROM cache enable */
+    REG32(0xFFFC1408u) = 0xFFFFFFF5u;        /* cache flush */
+    REG16(0xFFFE0400u) = (uint16_t)(REG16(0xFFFE0400u) | 0x3C10u);
+}
+
+static plat_mb_status_t s_mb;
+static uint16_t s_mb_wait;
+static uint16_t s_mb_hist[512];          /* input word, one sample per ms from start-up */
+static uint16_t s_mb_hist_n;
+static bool s_mb_started;                /* capture() ran; later valid values may still fire */
+
+static bool mb_try_letter(uint16_t input)
+{
+    if (s_mb.letter != 0u || (s_mb.phase != PLAT_MB_IDLE && s_mb.phase != PLAT_MB_NO_HANDSHAKE)) {
+        return false;                    /* already fired or already running */
+    }
+    switch (input) {
+    case 9u:
+    case 10u:
+        s_mb.letter = 0x55u;
+        break;
+    case 13u:
+    case 14u:
+        s_mb.letter = 0x56u;
+        break;
+    default:
+        return false;
+    }
+    /* valid letter: the stock writes the request magic immediately in the trigger */
+    MB_BOX_REG = 0x1234u;
+    s_mb.mailbox = 0x1234u;
+    s_mb.phase = PLAT_MB_WAIT_CLEAR;
+    s_mb_wait = MB_WAIT_TICKS;
+    return true;
+}
+
+void plat_mb_capture(void)
+{
+    s_mb_started = true;
+    s_mb.input_capture = MB_IN_REG;
+    s_mb.mailbox_capture = MB_BOX_REG;
+    s_mb.mailbox = s_mb.mailbox_capture;
+    if (!mb_try_letter(s_mb.input_capture)) {
+        s_mb.phase = PLAT_MB_NO_HANDSHAKE;   /* bench: 0x000F at t=0, three boots 2026-11-04 */
+    }
+}
+
+bool plat_mb_poll_init(void)
+{
+    return s_mb_started ? mb_try_letter(MB_IN_REG) : false;
+}
+
+void plat_mb_tick_1ms(void)
+{
+    if (s_mb_hist_n < (uint16_t)(sizeof s_mb_hist / sizeof s_mb_hist[0])) {
+        s_mb_hist[s_mb_hist_n++] = MB_IN_REG;
+        if (s_mb_hist_n <= 500u) {
+            (void)plat_mb_poll_init();   /* the valid window may open after start-up */
+        }
+    }
+}
+
+void plat_mb_tick(void)
+{
+    if (s_mb.phase != PLAT_MB_WAIT_CLEAR) {
+        return;
+    }
+    s_mb.mailbox = MB_BOX_REG;
+    if (s_mb.mailbox == 0u) {
+        MB_BOX_REG = (s_mb.letter == 0x55u) ? 0x5555u : 0x3737u;
+        s_mb.mailbox = MB_BOX_REG;
+        s_mb.phase = PLAT_MB_OK;
+        return;
+    }
+    if (s_mb_wait != 0u) {
+        s_mb_wait--;
+    }
+    if (s_mb_wait == 0u) {
+        s_mb.phase = PLAT_MB_TIMEOUT;
+    }
+}
+
+const plat_mb_status_t *plat_mb_status(void)
+{
+    return &s_mb;
+}
+
+const uint16_t *plat_mb_hist(uint16_t *n)
+{
+    if (n != NULL) {
+        *n = s_mb_hist_n;
+    }
+    return s_mb_hist;
 }
 
 /* ---- User boot MAT read-out (manual 25.9.1) ----------------------------------------------
