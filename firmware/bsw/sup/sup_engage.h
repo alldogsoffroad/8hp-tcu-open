@@ -40,7 +40,9 @@ typedef struct {
  * per pass on RSPI-B, the supervisor's select IN the rotation — the traffic it
  * has never witnessed from us (our solenoid path is RSPI-A). */
 #define SUP_DRV_READ_WORDS 60u
-#define DRV_WRITE_WORDS 32u   /* 8 regs x the four driver chips */
+#define DRV_WRITE_WORDS 40u   /* 8 regs x all five selects: the stock's commissioning
+                                * write includes the supervisor (bench 2026-11-04: its
+                                * 0x84/0x88/0x90 read empty because we skipped select 4) */
 #define DRV_SP_WORDS 36u      /* 9 regs x 4 chips, the setpoint job */
 #define DRV_ID_WORDS 10u      /* 0x06 + 0x00 reads x 5 selects */
 
@@ -57,6 +59,11 @@ typedef struct {
 
 void sup_engage_arm(bool on);
 void sup_engage_request_enable(bool on);
+void sup_engage_force_enable(bool on);     /* BENCH ONLY (FE13 sub 11, 2026-11-04): put the
+                                            * enable bit into the cyclic control word for a
+                                            * bounded window regardless of the echo grant -
+                                            * the deliberate A-law bypass experiment; the
+                                            * stock itself sends 0x8E81 while engaged */
 void sup_engage_enable_from_start(bool on);
 /* The supervisor grants acceptance (0x22 echo bit 0) spontaneously; the stock
  * app answers by putting bit 0 in the word — NEVER the other way round. Every

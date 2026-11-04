@@ -68,9 +68,12 @@ static void stop(uint8_t reason)
     sup_enable_clear(SUP_EN_BENCH);
 }
 
+static uint16_t s_force_left_10ms;      /* FE13 sub 11: A-law bypass window, 10 ms ticks */
+
 void bench_init(void)
 {
     s_active = false;
+    s_force_left_10ms = 0u;
     s_kind = BK_SOL;
     s_reason = BENCH_END_NONE;
     s_left_10ms = 0u;
@@ -85,6 +88,9 @@ bool bench_active(void)
 
 void bench_tick_10ms(void)
 {
+    if (s_force_left_10ms != 0u && --s_force_left_10ms == 0u) {
+        sup_engage_force_enable(false);             /* the bypass window closes itself */
+    }
     if (!s_active) {
         bench_channels_off();
         sup_enable_clear(SUP_EN_BENCH);
@@ -462,6 +468,23 @@ static int sup_lab_start(const uint8_t *in, uint16_t n)
 {
     if (n < 1u) {
         return -NRC_IMLOIF;
+    }
+    if (in[0] == 12u) {                                    /* A-law bypass: force the
+                                                             * enable bit, bench only, bounded */
+        if (n < 2u || n > 2u || in[1] > 10u) {
+            return -NRC_ROOR;
+        }
+        if (in[1] == 0u) {
+            sup_engage_force_enable(false);
+            s_force_left_10ms = 0u;
+            return 0;
+        }
+        if (!sup_engage_active()) {
+            return -NRC_CNC;                        /* only from the ladder-complete state */
+        }
+        sup_engage_force_enable(true);
+        s_force_left_10ms = (uint16_t)(in[1] * 100u);
+        return 0;
     }
     if (in[0] == 9u) {                                     /* engage sequence: arm /
                                                              * [1 = enable req] /

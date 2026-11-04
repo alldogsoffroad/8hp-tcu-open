@@ -58,6 +58,13 @@ void sup_engage_request_enable(bool on)
     s.enable_req = on;
 }
 
+static bool s_enable_forced;
+
+void sup_engage_force_enable(bool on)
+{
+    s_enable_forced = on;
+}
+
 void sup_engage_enable_from_start(bool on)
 {
     s.enable_from_start = on;
@@ -80,7 +87,7 @@ bool sup_engage_enable_bit(void)
      * The request itself is a shadow (0xFFF90953) latched early; asserting it
      * unilaterally resets the TCU in every timing tried (bench 2026-10-30
      * through 2026-11-01: late, from-start cold, warm, both dialects). */
-    s.enable_sent = s.enable_req && s.echo_grant;
+    s.enable_sent = (s.enable_req && s.echo_grant) || s_enable_forced;
     return s.enable_sent;
 }
 
@@ -295,12 +302,14 @@ bool sup_drv_poll(uint16_t *words, uint8_t *n)
     }
     if (s_drv_write_pending) {
         /* commissioning pass with the engaged stock's own register values;
-         * readbacks bare — the stock's write+verify job, live-valued */
+         * readbacks bare — the stock's write+verify job, live-valued.
+         * ALL FIVE selects, the supervisor included (E5, bench 2026-11-04): the
+         * stock's rotation is five-wide and the supervisor's 0x84/0x88/0x90
+         * read empty on every boot where we sent this to the chips only. */
         s_drv_write_pending = false;
         for (uint8_t r = 0u; r < 8u; r++) {
-            for (uint8_t c = 0u; c < 4u; c++) {   /* chips only: the supervisor
-                                                    * is NOT in the write rotation */
-                words[4u * r + c] = S_DRV_WRITE_TMPL[r];
+            for (uint8_t c = 0u; c < 5u; c++) {
+                words[5u * r + c] = S_DRV_WRITE_TMPL[r];
             }
         }
         *n = DRV_WRITE_WORDS;

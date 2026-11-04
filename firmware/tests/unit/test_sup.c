@@ -296,7 +296,7 @@ int main(void)
         /* then the WRITE: 8 regs x 4 driver chips (no supervisor in the
          * write rotation - 0x8E55 to it reset the TCU, bench 2026-11-01) */
         CHECK(dv->drv_jobs == 2u && dv->drv_writes == 1u);
-        CHECK(dv->drv_a8 == 2u && dv->drv_aa == 40u && dv->drv_bad == 0u);
+        CHECK(dv->drv_a8 == 2u && dv->drv_aa == 48u && dv->drv_bad == 0u);
         for (unsigned i = 0u; i < 402u && dv->drv_jobs == 1u; i++) {
             sup_tick_5ms();
         }
@@ -305,18 +305,18 @@ int main(void)
             sup_tick_5ms();
         }
         CHECK(dv->drv_jobs == 3u && dv->drv_writes == 1u && dv->drv_sp == 1u);
-        CHECK(dv->drv_a8 == 2u && dv->drv_aa == 76u && dv->drv_bad == 0u);
+        CHECK(dv->drv_a8 == 2u && dv->drv_aa == 84u && dv->drv_bad == 0u);
         /* then the periodic jobs alternate read / dithered setpoint */
         for (unsigned i = 0u; i < 402u && dv->drv_jobs == 3u; i++) {
             sup_tick_5ms();
         }
         CHECK(dv->drv_jobs == 4u && dv->drv_writes == 1u && dv->drv_sp == 1u);
-        CHECK(dv->drv_a8 == 14u && dv->drv_aa == 124u && dv->drv_bad == 0u);
+        CHECK(dv->drv_a8 == 14u && dv->drv_aa == 132u && dv->drv_bad == 0u);
         for (unsigned i = 0u; i < 402u && dv->drv_jobs == 4u; i++) {
             sup_tick_5ms();
         }
         CHECK(dv->drv_jobs == 5u && dv->drv_sp == 2u);   /* dither pass */
-        CHECK(dv->drv_a8 == 14u && dv->drv_aa == 160u && dv->drv_bad == 0u);
+        CHECK(dv->drv_a8 == 14u && dv->drv_aa == 168u && dv->drv_bad == 0u);
         sup_drv_sync(false);
         sup_tick_5ms();
         CHECK(dv->drv_jobs == 5u);                    /* off: no more jobs */

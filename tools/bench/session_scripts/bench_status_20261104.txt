@@ -108,3 +108,23 @@
     never populates. The stock sends 0x8E81 continuously while engaged. The A-law bypass
     (send the enable bit in the cyclic word, ladder-complete state, deliberately) is THE
     decisive experiment; risk = the Oct-30 reset class, power-cycle recoverable.
+[15:0x-16:0x] E6: THE A-LAW BYPASS VERDICT (FE13 sub 12, bounded 10 s windows):
+  - The enable word is SURVIVABLE (no reset in ladder-complete state - twice confirmed) but
+    the supervisor HANGS the exchange on it: every request during a window goes unanswered,
+    the UDS session starves (NRC 0x7F = SNSIAS cascade after), and the bench interlock
+    cancels any running FE10 (bench=False, end=00 the instant the window opens). Same
+    hold-the-bus behavior as the mis-framed 0x8E55 one-shot. NOT a grant.
+  - Experiment-design notes (all banked): a window without a setpoint proves nothing (idle
+    current regardless); FE10 must start BEFORE the window (its 5 s test is autonomous in
+    the 10 ms task); the window kills the UDS session so all observation must ride 0x7F3
+    frames; re-arming 9,2 resets the ladder (2-4 min re-climb) and the lab display mode
+    falls to idle after each session death (the BOOT ladder keeps running underneath).
+  - VERDICT: the supervisor's accepting state is upstream of the enable bit. The stock's
+    stream contains what we lack: the unidentified duty-class job (C070 80B0 D090 30A0
+    E0D0 7050 80B0 D010) + live write data 0x8E9F/0x9021 + setpoint-job per-chip flags
+    (881A/1A/1A/12/15) + reply classes we have never classified (ABFF, 98B7 in our own
+    rx capture today!). NEXT SESSION: decode the duty job's framing and sender, add it to
+    the cyclic stream (E7), re-test the bypass.
+  - Ammeter telemetry format decoded from raw ACM1 stream: A-lines = ~idle mA (140-195),
+    P-lines = peaks 7.6-10.3 A at idle (RSPI exchange transients) - the sampler now knows
+    the format. User's bench reading held 0.166-0.167 through every window.

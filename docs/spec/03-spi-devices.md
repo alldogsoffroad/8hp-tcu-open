@@ -771,3 +771,28 @@ never-tested branch is whether the supervisor, in the ladder-complete state we d
 reach, **accepts and echoes our enable bit** (grant) or **rejects it** (the 2026-10-30 reset
 class). The mis-framed `0x8E55` one-shot of 2026-11-04 hung the exchange but did not reset —
 the reset class appears narrower than "any unsolicited bit 0".
+
+### 6.2c The A-law bypass experiment — refused by hang, not by reset (2026-11-04) [O]
+
+FE13 sub 12 (E6 build) forces the enable bit into the cyclic control word for a bounded
+window. Verdict across three windows in the ladder-complete state:
+
+- **No reset** — the 2026-10-30 reset class did not fire; the app, heartbeat and status
+  frames continue throughout.
+- **The supervisor hangs the exchange on the enable word**: every UDS request inside the
+  window goes unanswered, the session starves (subsequent requests refused `NRC 0x7F`
+  SNSIAS), and the bench interlock cancels a running FE10 the moment the window opens
+  (`end=00`). The behavior matches the mis-framed `0x8E55` one-shot hang: the supervisor
+  refuses to clock the bit-0 word from us.
+- Therefore the stock's continuously-sent `0x8E81` works because its supervisor is in an
+  accepting state ours never reaches. **The gate is upstream of the enable bit.** The
+  leading candidates from the §6.2b reconstruction: the unidentified duty-class cyclic job
+  (`C070 80B0 D090 30A0 E0D0 7050 80B0 D010`), the live write data (`0x8E9F/0x9021`), the
+  setpoint job's per-chip flags (`881A/1A/1A/12/15`), or the reply classes our stream has
+  never drawn (`ABxx`, `98xx` — the latter observed in our own capture while at HOLD).
+
+Sequencing rules for the next attempt (all learned the hard way): a window without a live
+setpoint is uninformative; FE10 must start before the window (its test is autonomous);
+observation must ride the 0x7F3 frames (the UDS server does not survive the window);
+re-arming the lab resets the ladder (minutes of re-climb) while the boot ladder continues
+underneath.
