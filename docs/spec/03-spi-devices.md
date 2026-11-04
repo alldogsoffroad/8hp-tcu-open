@@ -741,3 +741,33 @@ settled the question, against the mode-3 hypothesis:
   The stock's cached conversation (`0xFFF907C8+`: `14c7 000a 81a1 2020 …`) is richer
   than the all-`AA00` replies we receive; decode that cache and diff against our
   captured replies to find the divergent job or step.
+
+### 6.2b The staged conversation, reconstructed from the driving dump (2026-11-04) [O]
+
+The stock's job table (`0x40A60–0x40C80`) is a list of descriptors — `{code, count?, TX-ptr,
+RX-ptr}` — whose staging buffers live in RAM (`0xFFF881xx`, `0xFFF884xx–0xFFF886xx`), all
+inside the 12:49 driving-state dump. Read together they reconstruct the exact cyclic
+conversation the stock kept while driving the mechatronic:
+
+| Job | Words (TX) | Replies (RX) | Note |
+|---|---|---|---|
+| 0x0A (ID) | `0600 ×5, 0000 ×5` | `A212 ×4, 0000` | chips ID; select 4 silent by design |
+| 0x28 (write) | `8E9F ×5, 9021 ×5` | `A200 ×4, 0000` | **supervisor ignores the write job**; live data `8E9F/9021` |
+| 0x2D (setpoint) | `881A/1A/1A/12/15, A000 ×5` | `A200 ×4, 0000` | supervisor silent |
+| 0x05 (read set) | `1800 0C00 1E00 0600 1400` | `AA00 AADF AA0A AAD0 AAC7` | **supervisor answers `0x1400` with data** |
+| cyclic job1 | `8E81 C900 2200 0900` | `AA00 AA00 AAA1 AA00` | **control word carries bit 0; the `0x22` echo mirrors it (`0xA1`)** |
+| job2/3 | `9020 2400 / 2800 2E00` | `AA00 AA20 / AA46 AA05` | |
+| unidentified | `C070 80B0 D090 30A0 E0D0 7050 80B0 D010` | | a duty-class cyclic job we have never sent; near it `0x119F` (keep-warm setpoint family) and `FF40 8000 8630 8640 5E50 7680 B640 FF00 8A80` |
+
+Bench same-day probes of the same jobs from our firmware (ladder-complete state,
+one-shots): job 0x05 returns `AA00 AADF AA0A AAD0 AAD5` — **byte-identical on the first four
+words**; the supervisor's live `0x1400` value reads `0xD5` (bit 0 set). The supervisor serves
+us the same read set as the stock; it is not protocol-gating us.
+
+**Synthesis.** The `0x22` register echoes the app's own control word: the stock sends
+`0x8E81` (enable + toggle) every cycle and the echo returns `0xA1`; we send `0x8E00` — the
+A-law withholds bit 0 pending an echo that by construction mirrors what we send. The
+never-tested branch is whether the supervisor, in the ladder-complete state we demonstrably
+reach, **accepts and echoes our enable bit** (grant) or **rejects it** (the 2026-10-30 reset
+class). The mis-framed `0x8E55` one-shot of 2026-11-04 hung the exchange but did not reset —
+the reset class appears narrower than "any unsolicited bit 0".

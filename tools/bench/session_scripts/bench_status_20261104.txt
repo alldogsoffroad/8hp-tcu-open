@@ -86,3 +86,25 @@
     14c7 000a 81a1 2020...) vs our all-AA00 replies - the supervisor talks richly to the
     stock and tersely to us; find the divergent job/step.
   - Bench state: E4 running (heartbeat + meas + engagement ladder all healthy).
+[15:0x-15:3x] THE STAGED-CONVERSATION RECONSTRUCTION (job table 0x40A60-0x40C80 + the driving dump):
+  - E5 (five-select write) RESULT: registers 0x84/0x88/0x90 STILL empty. VERDICT FROM THE
+    STOCK'S OWN STAGING: the write job's select-4 reply = 0x0000 even under the DRIVING STOCK
+    (job 0x28 TX 0xFFF88194 = 8E9F x5, 9021 x5 -> RX A200 x4, 0000) - the supervisor IGNORES
+    the write job (and the ID job) BY DESIGN. The five-select write was never the mechanism.
+    (Also: the stock's live write data = 0x8E9F/0x9021, not the swept 0x8E55/0x9002.)
+  - The stock's cyclic job1, staged mid-drive: TX [8E81 C900 2200 0900] -> RX [AA00 AA00
+    AAA1 AA00]. THE CONTROL WORD CARRIES BIT 0 (0x8E81) AND THE 0x22 ECHO RETURNS 0xA1.
+    The echo MIRRORS the sent control word - the stock sends the enable bit and the
+    supervisor echoes it.
+  - Job 0x05 (job6 shape [1800 0C00 1E00 0600 1400]) under the stock: replies
+    [AA00 AADF AA0A AAD0 AAC7] - select 4 (supervisor) ANSWERS 0x1400 WITH DATA.
+  - OUR job6 probe (E5 bench, disarm+one-shot): [AA00 AADF AA0A AAD0 AAD5] - FIRST FOUR
+    BYTE-IDENTICAL to the driving stock; the supervisor's 0x1400 = 0xAAD5 (live value, bit 0
+    SET). THE SUPERVISOR CONVERSES WITH US - same data set, live values. Not a stranger.
+  - Unidentified tail in the staging: a duty-class job [C070 80B0 D090 30A0 E0D0 7050 80B0
+    D010] + keep-warm-ish 0x119F and PWM-ish values (FF40 8000 8630 8640 5E50 7680 B640
+    FF00 8A80) - a cyclic job we have never sent (next decode).
+  - SYNTHESIS: the 0x22 echo mirrors our control word; we never send bit 0 (A-law), so it
+    never populates. The stock sends 0x8E81 continuously while engaged. The A-law bypass
+    (send the enable bit in the cyclic word, ladder-complete state, deliberately) is THE
+    decisive experiment; risk = the Oct-30 reset class, power-cycle recoverable.
