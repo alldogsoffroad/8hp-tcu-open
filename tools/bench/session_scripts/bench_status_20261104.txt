@@ -180,3 +180,27 @@
   - UDS notes: mode-3 reads need the session held (7F317F after expiry; keep tp running);
     each Uds.request FLUSHES the CAN rx queue - never interleave UDS polls with CAN
     observation of the same window.
+[17:00-17:47] THE EVENING ARC - E8/E9/E10 (three installs, one power state each, all clean):
+  - E8 m4aa (duty job cyclic, sub 14): NEUTRAL - stream runs at ~10 Hz, no reset, no grant,
+    AND THE EXCHANGE SURVIVES IT (sup_ok stays 1 - unlike the E6 windows, the supervisor
+    treats the duty stream as legitimate traffic). Cyclic duty alone does not earn the grant.
+  - THE MIRROR LAW DISCOVERED (E9 analysis): the stock's live cyclic word = 8E91/8E81 (bits
+    7+0 held, BIT 4 toggling - the 2026-10-31 capture; sup_app_pattern3 encoded it in
+    October but it was never wired). The 0x22 echo MIRRORS the sent word - the awaited
+    "grant" can never arrive unsolicited; the stock SENDS bit 0 continuously. E1-E8 ran the
+    boot shape (base 0x00, bit 2 toggling) - bit 7 never sent. Every prior bypass attempt
+    was a word shape the stock never uses.
+  - E9 m4ab (engaged word 0x8E90/0x8E80 base): ACCEPTED AND MIRRORED - the echo reads AA90
+    (first stock-shaped echo ever), exchange healthy, ladder HOLD. But the sub-12 window
+    (stock-exact 0x91/0x81) = INSTANT RESET (~5 ms; ctr=0/up=0s at the first frame).
+  - E10 m4ac (job-2 register 0x90 data 0x21 - we had sent 0x20 since E1): rides
+    transparently (job2/3 replies unchanged). The complete-stock-word window with 0x9021
+    present = INSTANT RESET again. FINAL VERDICT: the cyclic conversation is now stock-
+    exact in every observable byte except the withheld bit - the 0x8E bit-0 acceptance is
+    gated on INTERNAL SUPERVISOR STATE the SPI conversation cannot reach (candidates: the
+    boot-time handshake path, the supervisor's own power-up sequencing with the mechatronic,
+    hardware lines, the 0xFFF90944 state-letter machinery).
+  - TWO ENFORCEMENT PATHS now mapped: ~5 ms hard reject on the 8E bit-0 word; ~4 s trip on
+    sustained setpoints. Both fire with the ammeter flat - protocol-level, not current-level.
+  - Images: m4aa (FCCF5DD0), m4ab (E9 word), m4ac (C7087523, E10 = CURRENT). Install chain:
+    /tmp/install_e10.py, sigs /tmp/e10_sigs.json. 19/19 host tests green at every build.

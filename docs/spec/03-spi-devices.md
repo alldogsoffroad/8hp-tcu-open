@@ -916,3 +916,43 @@ Remaining differences from the stock's stream, in suspicion order: the duty job'
 notes: mode-3 reads need the UDS session held (`7F317F` after expiry — keep tester-present
 running); a `Uds.request` flushes the CAN receive queue, so never interleave UDS polls
 with CAN-frame observation of the same window.
+
+### 6.2g The mirror law, the engaged word, and the final gate (2026-11-04, evening) [O]
+
+**The mirror law.** The `0x22` echo mirrors the sent control word (established §6.2b);
+combined with the driving dump's live word `0x8E91`/`0x8E81` (bits 7 + 0 held, **bit 4**
+alternating — the 2026-10-31 engaged capture, encoded then in `sup_app_pattern3` but never
+wired), this means the awaited bit-0 "grant" can never arrive unsolicited: **the stock
+sends bit 0 continuously and the supervisor echoes it.** E1–E8 ran the boot-software shape
+(base `0x00`, bit 2 toggling) — bit 7 was never sent, and every prior bypass attempt used
+a word shape the stock never uses.
+
+**E9 (`m4ab`): the engaged word accepted.** The cyclic base became `0x8E90`/`0x8E80`
+(bit 7 held, bit 4 toggling, bit 0 still A-law-withheld). The exchange survives it and
+the `0x22` echo mirrors `AA90` — the first stock-shaped echo ever observed. The sub-12
+window on top (the stock-exact `0x91`/`0x81` pair) = **instant reset, ~5 ms** (heartbeat
+counter 0 at the first frame after the window).
+
+**E8 (`m4aa`): the duty stream cyclic (FE13 sub 14).** The 40-word duty job at ~10 Hz
+(HOLD-gated, bench-interlocked): no reset, no grant — and the exchange survives it, unlike
+the E6 windows. The supervisor accepts the duty stream as legitimate traffic. Cyclic duty
+alone does not earn the grant.
+
+**E10 (`m4ac`): register `0x90` data `0x21`.** Our job-2 word had been `0x9020` since E1;
+the stock's live word is `0x9021` (the switch-enable register's bit 0). It rides
+transparently (job-2/3 replies unchanged) — and the complete-stock-word window with
+`0x9021` present still resets instantly.
+
+**Final verdict.** The cyclic conversation is now stock-exact in every observable byte
+except the withheld `0x8E` bit 0, and two enforcement paths are mapped: the ~5 ms hard
+reject on the bit-0 word and the ~4 s trip on sustained setpoints — both protocol-level
+(the ammeter stays flat). The bit-0 acceptance is gated on **internal supervisor state
+the SPI conversation cannot reach**. Remaining candidates, all next-session threads: the
+stock's boot-time handshake internals (the §6.2 mailbox path was ruled out, but the
+supervisor's own power-up sequencing with the mechatronic is unexplored), hardware lines
+unobservable on the sealed TCU, and the `0xFFF90944` state-letter machinery feeding the
+supervisor's switch-enable bits.
+
+Bench notes: E10 = `m4ac` (CRC `C7087523`) is the current image; install chain
+`/tmp/install_e10.py`, sig table `/tmp/e10_sigs.json`; install sequencing rule — storm and
+chain armed in the dark window, the whole install runs in one power state (§6.2f lesson).
