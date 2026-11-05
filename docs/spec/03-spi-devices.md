@@ -1041,3 +1041,37 @@ chain. Our firmware has never written those letters. That is the next decode tar
 Bench scripts: `e13_watch*.py` (delay window + echo), `e14_postreject.py` (storm
 anatomy), `e15_gap.py`, `bootera_dump.py`. Image `m4af` (CRC `E42D0199`), chain
 `/tmp/install_e13.py`, sig `3d58e77515ec10ab`.
+
+### 6.2j The no-disturb engagement — the supervisor powers up ready (2026-11-05) [O]
+
+Two bench observations closed the pace question and opened the real one. Our firmware
+powers on to the 0.167 A idle directly (no current spike) — the rail is not an
+unconditional power-on default; the stock's immediate 1.8 A is conversation-driven. And
+the "minutes-long ladder" note was a myth: `JOB_PERIOD = 60 × 5 ms = 300 ms` per job puts
+the full ramp at ~10–12 s, comparable to the stock.
+
+**The discovery:** the probe job's level echo reads `0x1F` *before we command anything* —
+**the supervisor powers up at level `0x1F`, already engaged-ready** — and the 1→7 ramp
+we have run since the first engage build drags its state cell down and back up. The
+stock's own law (`0x873F0`) arms its enable in one monitor pass with no ramp.
+
+**E14 (`m4ag`, CRC `5ED82461`):** when the probe reads `0x1F`, the ladder commands
+`0x841F` — confirming what is already there — and enters HOLD on the first matching echo;
+the ramp machinery stays for genuine cold starts. The engagement is now **one job cycle
+(~2 s)**. Visible state unchanged (echo still a pure mirror, `0x24/0x2E` steady, ammeter
+at idle).
+
+**Bit-0 on never-disturbed boots:** minutes-age still rejected; +4.2 s (instant-HOLD
+boot, delay-armed window) **tolerated — no reset, no grant**. The tolerance band extends
+down to ~+4 s on clean boots. With the level undisturbed, the commissioning, the
+stock-exact word, instant HOLD, and tolerated bit-0 all assembled, the grant still does
+not come — the echo never mirrors bit 0 and the rail stays off.
+
+**The remaining known difference:** the state-letter machinery — the stock writes
+`'c'` (`0x63`) into `0xFFF90944[]` at engagement, feeding the supervisor's `0x90`
+switch-enable bits (`0x91758`). Our firmware has never written those letters. That
+subsystem is the next decode target (find the writers of `0xFFF90944`, the letter
+sequence, and what conditions each letter).
+
+Bench note (twice learned): mode-3 echo reads require the display mode armed first
+(FE13 sub 9,2); observation runs that skip it lose the echo silently.

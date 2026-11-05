@@ -26,3 +26,35 @@
   0xFFF90944, what sequence), implement, send during the boot band.
 [tooling] bench scripts: e13_watch*.py (delay-window + echo reads), e14_postreject.py
   (storm), e15_gap.py, bootera_dump.py (0x361 boot-era staging). Delay byte = data[4].
+[12:30 USER BENCH OBSERVATION (ground truth), session paused]: with the STOCK firmware, the
+  ammeter goes RIGHT to ~1.8A at power-on - NO DELAY. The driving-class current flows from
+  the earliest moments, BEFORE ANY APP RUNS (the boot manager's reign). My "stock engages at
+  +15s" was an artifact of when the dump could first read (meas up +13s) - the engagement is
+  effectively AT POWER-ON. REFRAME: the boot software hands over an ALREADY-DRIVING system;
+  the stock app CONTINUES the stream; our app enters cold, minutes later, with a fresh ladder
+  = interviewing for a conversation that already happened. THE ENTRY TIMING IS THE GATE.
+  Next-session first move: ammeter telemetry (ACM1 A/P lines) timestamps the 1.8A jump to
+  the millisecond vs power-on; then decode the BOOT MANAGER's driver-side jobs (does the
+  boot run bus-A setpoints? what does the live stream look like at handover?); the state
+  letters remain queued behind that.
+[13:00-13:35 AFTERNOON: E14 - THE NO-DISTURB ENGAGEMENT]
+  - User power-cycle observation: OUR boot powers on to 0.167 directly (no 1.8A spike) ->
+    the rail is NOT an unconditional supervisor power-on default; the stock's 1.8A-from-
+    power-on is conversation-driven after all. Ladder-pace myth corrected: JOB_PERIOD=60x5ms
+    = 300ms/job -> our ladder was ~10-12s all along (not 'minutes' - old note wrong).
+  - THE DISCOVERY in the probe data: the level echo reads 0x1F BEFORE we command anything
+    (boot-era probe +8.05s lvl_echo=1F, then our ramp dragged it 01..07->1F). THE
+    SUPERVISOR POWERS UP AT LEVEL 0x1F - ALREADY ENGAGED-READY - and our 1..7 ramp was an
+    unexplained disturbance of an already-correct state. The stock's own law (0x873F0)
+    arms with no ramp.
+  - E14 m4ag (5ED82461): probe reads 1F -> command 0x841F (confirm, don't disturb) ->
+    HOLD in ONE job cycle (~2.5s including re-arm; boot path ~2s). RAMP MACHINERY STAYS
+    for non-1F cold starts. Result: mechanically perfect, visible state unchanged (echo
+    AA90, 0x24/2E same, ammeter 0.167).
+  - bit-0 windows on the never-disturbed boot: minutes-age = REJECTED (same as disturbed);
+    +4.2s (delay-4 arm, instant-HOLD boot) = TOLERATED, no grant, no reset. The tolerance
+    band extends down to +4s on clean boots. STILL no mirror, no grant, no rail.
+  - REMAINING: the state-letter machinery ('c' at 0xFFF90944 -> the supervisor's 0x90
+    switch bits) - the last known subsystem difference. NEXT ENTRY.
+  - Note-to-self (twice burned): mode-3 echo reads require the display armed (sub 9,2);
+    stripping the sub-9 for 'purity' costs the observation. Arm the display FIRST.
