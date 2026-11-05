@@ -1452,3 +1452,45 @@ measurable behavioral difference — our `plat_mem_read` limits reads to
 flash + RAM 0xFFF80000-0xFFF9FFFF; the stock's allows I/O. For future
 diagnostics: any peripheral state question can be answered by restoring the
 stock and reading through its meas.
+
+**Live-stock I/O sweep + schedule tables (immediately after the deep probe).**
+Full peripheral map + boot/app scheduling infrastructure from the engaged stock.
+NOTE: the I/O sweep script included reply-header bytes (0x2A81) in its word
+parsing — the raw data is sound but some values below are extracted after
+stripping artifacts.
+
+**Peripheral state summary (engaged stock, artifacts stripped):**
+
+| Block | Key readings | Note |
+|---|---|---|
+| RSPI-B | SPCR=0x0800, SPSR=0x0020 | supervisor bus active |
+| CMT timers | CMSTR=0x0001 (running), counters ~0x0B6C/0x1869 | the 5 ms tick source |
+| Port ctrl A | PCR=0x0014, PDR=0xE000 (at 0xFFFE0432) | port direction differs |
+| IRQ control | **IPR05=0xE400** (at 0xFFFE0C04) | **the WDT interrupt priority = 0xE in the high nibble** — the stock's watchdog interrupt IS at priority 0xE |
+| INTC | full vector table populated | ~20 interrupt vectors live |
+| Module-stop | 0xFFFF0802=0x00FF, 0xFFFF0804=0x00FF | both key regs read 0xFF |
+| System ctrl | chip ID 0x0021, SCKCR=0x0007 | |
+| **Mailbox/c counterpart** | **entire 0xFFFC0C00-0xFFFC0C82 block reads 0x07D0** | either open-bus (module stopped) or a uniform data pattern; differs from our 0x000F |
+| Clock gen | RCCR=0x0001, PLL config 0x0F08/0x4412 | matches init-mirror |
+| BSC | active bus state control values | |
+| **WDT** | **WTCR=0x0027, WTCNT=~0x00DE (varying), WRCR=0x0080** | **WTCR 0x27 = watchdog RESET mode (bit 6/ TME = 0)** — the engaged stock does NOT run its WDT in interval mode |
+| ADC | active, multiple channels | |
+| CAN/RCAN | full vector set + control | |
+
+**KEY WDT FINDING: the engaged stock's WTCR = 0x27 (TME = 0, watchdog/reset
+mode).** Our firmware sets WTCR = 0xA567 (low byte 0x67, TME = 1, interval
+mode) and our E21 additionally switches modes on the grant edge. The stock runs
+its WDT in RESET mode even while engaged and granted — §4.4's "enabled → WTCR
+out of reset mode (interval timer)" may describe a momentary edge or a different
+bit field interpretation. The IPR05 = 0xE400 confirms the WDT interrupt is at
+priority 0xE (high nibble of the byte), matching the 0x978A4 decode.
+
+**Schedule tables**: the spec 02 §7 table format did not parse cleanly through
+the 0x361 read path (header-byte contamination in the 20-byte entries). The
+scheduling area 0xFFF80E00-0xFFF81400 shows a large cluster of structured
+18-byte repeating records with constant fields (04 73 0f 00 01 01 f8 00) and
+varying ID fields — likely the CAN transmit schedule or RCAN mailbox table,
+not the cyclic callback table. No obvious flash-pointer callback entries
+(0x0009xxxx / 0x0040xxxx) were found outside the known supervisor scheduler
+area, so **no surviving boot-manager supervisor-service callback was
+identified** in this pass.
