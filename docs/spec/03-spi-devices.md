@@ -1494,3 +1494,22 @@ not the cyclic callback table. No obvious flash-pointer callback entries
 (0x0009xxxx / 0x0040xxxx) were found outside the known supervisor scheduler
 area, so **no surviving boot-manager supervisor-service callback was
 identified** in this pass.
+
+**Final stock grab: schedule tables resolved, cell neighborhood complete, RSPI-B
+detail.** The "cyclic schedule table" at 0xFFF908DC (spec 02 section 7) is
+**individual supervisor state cells, not a callback table** — no
+{enable, period, callback} structure exists there. **No surviving boot-manager
+supervisor-service callback was found** — the boot's service stops cleanly at
+handover. Two new discoveries in the full 0xFFF90600-0xFFF90A00 sweep:
+- **ASCII identification strings at 0xFFF90980**: "bhie01", "bhjd0701",
+  "bhjx2201" — version/date identifiers in the supervisor cell area
+- **Buffer pointer routing table at 0xFFF909A0-0xFFF909F8**: seven entries
+  pointing into 0xFFF90E84-0xFFF90EFC — the app's internal message routing
+
+RSPI-B peripheral detail (readable through the stock's meas): SPCR=0x0800,
+SSLP=0x0020, SPDCR=0x0500, SPCMD0/1=0x0000 (write-only or DMA-shadowed).
+**SPDCR and SSLP differ from our settings** (ours: 0x0000, 0x0000) — these
+affect the SPI data latching and select polarity, not the wire content.
+
+The fast echo poll (toggle cadence measurement) did not complete — the script
+stalled. This is the one data point not captured from the live stock.
