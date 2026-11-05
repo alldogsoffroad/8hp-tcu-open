@@ -1001,3 +1001,43 @@ Bench infrastructure notes: verify the bus is DARK (4 s of listening) before arm
 install chain — the front door answers while the old app still runs, and two premature
 catches cost 15 min. E12 chain `/tmp/install_e12.py`, block sig `1aa7a9593a1c0e87`,
 image CRC `3ECFBD47`.
+
+### 6.2i The timing axis closed — no age earns bit-0 acceptance (2026-11-05) [O]
+
+**The boot-era capture.** A stock restore plus a measurement-protocol dump from power-on
+(request format `[0x2A, 0x00, addr…]`; `0x0E` bytes = the deny marker) caught the stock
+**fully engaged at boot +15 s**: cyclic word `0x8E91` accepted, echo `0xAAB1` = mirror +
+**supervisor bit 5 — the rail-state telemetry, visible in the echo all along** (our
+echoes read pure mirror = outputs off), the state letter `'c'` (`0x63`) already written at
+`0xFFF90944`, the write job at full `0x8E9F` from the first capture (no level ramp),
+`0xFFF90953 = 1`, `0xFFF93BA1 = 1`. The stock's commissioning is ~15 s end to end; ours
+takes minutes.
+
+**The WDT pairing eliminated** (live, no build): watchdog in interval mode first, then
+the bit-0 window = instant reset — and since our own WDT cannot reset in interval mode,
+**the reject is the supervisor's own hard reset line.**
+
+**E13 (`m4af`): the host-armed window with a live delay byte.** The magic frame's
+`data[4]` selects the delay; results across the day: bit-0 at **+0.2 s** = rejected
+(a 3-second spam window produced a textbook reset storm — heartbeat counter frozen at 0
+while boots cycled every ~0.3 s: arm → bit-0 → reject → reboot); **+3.2 s** (the
+never-tested gap) = no grant; **+6.2 s and +14 s** = **tolerated — the first bit-0 words
+ever not to reset** (the app ran on, 71 s+ continuous); **+23 s** and minutes = rejected.
+The tolerance band is ≈ [+0.5 s … +15 s], matching the stock's own engagement period.
+
+**The rail blip.** Early observations of `AAB0` echoes were a timestamp artifact (script
+time vs app time); the blips were reads of a boot's **first half-second** — during which
+**the supervisor's rail bit is up in every boot**, then drops. Bit-0 inside a boot that
+follows a reject (the storm boots) is rejected all the same — the post-reject window
+hypothesis is dead.
+
+**Verdict.** The age map is complete: there is no age at which bit-0 alone earns
+acceptance. With the word (§6.2g), the buses, the registers, the WDT pairing, and now
+the timing all eliminated, the remaining known difference is subsystem-level: the stock's
+**state-letter machinery** — `'c'` written into `0xFFF90944[]` before/during engagement,
+feeding the supervisor's `0x90` switch-enable bits (`0x91758`) and the `0x6C612` enable
+chain. Our firmware has never written those letters. That is the next decode target.
+
+Bench scripts: `e13_watch*.py` (delay window + echo), `e14_postreject.py` (storm
+anatomy), `e15_gap.py`, `bootera_dump.py`. Image `m4af` (CRC `E42D0199`), chain
+`/tmp/install_e13.py`, sig `3d58e77515ec10ab`.

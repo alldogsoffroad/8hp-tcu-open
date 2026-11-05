@@ -1,0 +1,28 @@
+=== 2026-11-05 MIDDAY: THE TIMING AXIS CLOSED - bit-0 alone earns nothing at ANY age ===
+[WDT-pair eliminated, live] interval mode + bit-0 window = instant reset; the reject =
+  THE SUPERVISOR'S OWN HARD RESET LINE (our WDT was in interval mode - not ours).
+[boot-era capture, the jewel] stock restore + 0x361 dump from power-on (meas up +13s):
+  at boot+15s the stock FULLY ENGAGED - cyclic word 8E91 accepted, echo AAB1 = MIRROR +
+  SUPERVISOR BIT 5 (the rail state - echo bit 5 = rail telemetry all along; our echoes
+  read pure mirror = outputs off), state letter 'c' (0x63) at 0xFFF90944 ALREADY WRITTEN,
+  write job 8E9F at full value from the start (no level ramp), 0xFFF90953=1, 0xFFF93BA1=1.
+  Request format fix: [0x2A, 0x00, addr...]; 0x0E bytes = DENIED marker.
+[E13 m4af E42D0199] host-armed window with live DELAY byte (magic frame data[4]=seconds).
+  Run history: +23s (arm latency pushed 12s delay) = REJECT. +14s (dark-launched arm) =
+  TOLERATED - first bit-0 EVER not to reset (app survived 71s+). +6.2s = tolerated. The
+  tolerance band = [+~0.5s..+15s]; rejected outside (+0.2s storm, +23s, minutes).
+[storm anatomy, e14] delay-0 + 3s spam = RESET STORM (ctr frozen at 0 for 3s = boots every
+  ~0.3s: arm->bit-0->reject->reboot; surviving boot climbs clean after spam stops).
+  Post-reject rail-up hypothesis DEAD: bit-0 in the boot right after a reject = rejected.
+[blip anatomy] the AAB0 echoes were at TRUE app+0.2s (script-vs-app timestamp error in the
+  first watcher) = reads of a boot's FIRST half-second: THE RAIL (bit 5) IS UP in the
+  first ~0.5s of every boot, then drops. Reproducible only when sub-9 lands <0.5s.
+[gap shot, e15] delay-3 (bit-0 at +3.2s, the never-tested +0.5..6s gap): NO GRANT, ammeter
+  flat. THE AGE MAP IS COMPLETE: no age at which bit-0 alone earns acceptance.
+[NEXT SESSION ENTRY] the state-letter machinery: the stock writes 'c' (0x63) into
+  0xFFF90944[] BEFORE/DURING engagement; the letters feed the supervisor's 0x90 switch-
+  enable bits (0x91758) and the 0x6C612 enable chain. Our firmware has NO letters - the
+  last known subsystem-level difference. Decode the letter state machine (who writes
+  0xFFF90944, what sequence), implement, send during the boot band.
+[tooling] bench scripts: e13_watch*.py (delay-window + echo reads), e14_postreject.py
+  (storm), e15_gap.py, bootera_dump.py (0x361 boot-era staging). Delay byte = data[4].
