@@ -69,6 +69,15 @@
 
 static uint8_t s_counter;
 
+/* E17 (spec 03 section 6.2o): the boot-timeline stamps, read post-boot via the
+ * measurement RAM read. g_sched_ms = ms since the scheduler's first 1 ms tick;
+ * g_first_sup_ms = the stamp of the first 5 ms supervisor pass. Together with
+ * g_sup_rx_hist[] in sup.c (the 0x22 echo of the first 64 passes) one power cycle
+ * decides whether the rail is still up when our stream starts and drops after our
+ * words, or is already down at pass one (a boot-manager-reign drop). */
+uint32_t g_sched_ms;
+uint32_t g_first_sup_ms;
+
 /* [I] shaft assignment of the speed channels: confirm on the bench (spec 02 section 4.1) */
 static const sensors_cfg_t s_sensors_cfg = { 0u, 1u, { 60u, 60u, 60u } };
 
@@ -76,6 +85,8 @@ static void task_1ms(void)
 {
     plat_mb_tick_1ms();   /* input-word history + late-window handshake */
     can_frame_t f;
+
+    g_sched_ms++;                   /* E17: the boot-timeline clock (ms since sched start) */
 
     plat_wdt_service();
     sensors_tick_1ms();
@@ -269,6 +280,9 @@ static void task_100ms(void)
 
 static void task_5ms(void)
 {
+    if (g_first_sup_ms == 0u) {     /* E17: ms-stamp of the first supervisor pass */
+        g_first_sup_ms = g_sched_ms;
+    }
     sup_tick_5ms();     /* external supervisor service; output enable stays off */
 }
 

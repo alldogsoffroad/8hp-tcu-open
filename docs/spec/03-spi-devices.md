@@ -1226,3 +1226,28 @@ The three deltas smell like telemetry (the `0x2E` job stores a 10-bit value + fl
 what the `0x24/0x28/0x2E` reads mean (handler `0x93096` for `0x28/0x2E`; the stock's
 `0x92D94` class checks) — if they are rail/downstream telemetry, the cyclic stream is
 CLOSED and the hunt moves entirely to the structural suspects.
+
+### 6.2o The rail is up at our first exchange — and drops mid-ladder (2026-11-05, night) [O]
+
+**E17 (`m4aj`, CRC `0F24DBB1`)**: pure instrumentation — a 64-pass `0x22`-echo ring
+recorded from pass one (`g_sup_rx_hist`, sup.c) plus ms-stamps (`g_sched_ms`,
+`g_first_sup_ms`, main.c), read via `0x2A` after one power cycle. Results:
+**first supervisor pass at +3 ms** of scheduler time (no startup gap — the init chain
+is not the problem), and **the rail bit (echo bit 5) is UP from pass 1 through pass
+63 (+320 ms), every pass `AAB0`** — grant bit never set. By app+1 s the echo reads
+`AA90`: the rail drops between +320 ms and +1 s. §6.2i's "rail up in every boot's
+first half-second then drops" is confirmed at pass resolution — and extended: the
+drop happens DESPITE a live, stock-exact cyclic stream, well into our app's reign.
+
+**The timing correlates with our ladder pacing.** Our register jobs: probe at pass ~2,
+first token job at pass ~62 (~+310 ms — exactly where the ring ends), level-confirm
+and HOLD at ~0.7–1 s. The stock paces its register jobs with calibration dwells
+(`level*200 + 2400` ticks, engine `0x6BF9C`) — milliseconds at engaged level, not our
+bench-era `JOB_PERIOD` = 300 ms; its write job runs at full value `0x8E9F` from the
+first capture. Hypothesis (E18): the supervisor's rail grace expires unless the
+commissioning exchange completes early; our 300 ms ladder dwells run out the clock.
+E18 = the fast ladder (first register job immediately, dwell from the stock's law or
+tens of ms) + the ring extended to 512 passes to place the drop instant against the
+ladder events. Also pending: the user's ammeter AT SWITCH-ON — with E15+'s keep-warm
+commanded and the rail up for ~1 s, a ~0.27 A blip then settle to 0.167 would confirm
+current genuinely flowed.
