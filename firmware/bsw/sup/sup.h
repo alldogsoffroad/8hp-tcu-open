@@ -90,5 +90,8 @@ void sup_app_pattern3(bool on, uint8_t bits8e, uint8_t toggle_bit, uint8_t bits9
  * window is IN THE MIDDLE. `delay_5ms` holds the window that many exchanges before
  * sending bit 0. */
 void sup_bit0_boot_arm(uint16_t cycles, uint16_t delay_5ms);
+/* E23 (spec 03 section 6.2o): the boot-dialect opening phase (state-6 constant
+ * 0x8E40 words) for the first `passes` 5 ms words; 0 = disabled. */
+void sup_phase6_arm(uint16_t passes);
 
 #endif

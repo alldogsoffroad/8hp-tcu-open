@@ -155,3 +155,24 @@
     switch (plat_wdt_mode(true): WTCR interval + IPR 0xE). The WDTOVF pin change is
     the candidate rail-raiser. NEXT RUN: power-cycle + spam, WATCH AMMETER FIRST,
     read ring, do NOT re-arm the display.
+[E21-E23 + RECOVERY: grant law refined; E23 bricked a boot - recovered]
+  - E21 m4ao (A6593396): grant edge -> WDT interval switch. GRANT REPRODUCED
+    deterministically (pass 128, +640ms; ~400ms decision latency after ask start).
+    WDT switch did NOT raise the rail (bit5 stays 0, ammeter .190->.166).
+  - E22 m4ap (85765317): composite first-pass edge (WDT@1 + ask@1): window closes
+    at 64 as always, NO GRANT - asking too early forfeits it. Grant law: full
+    mirror + HOLD complete + ask sustained -> grant ~400ms later. Ask must wait
+    for HOLD (pass 50+).
+  - E23 m4aq (86E710B3): *** FAILED *** 100 passes of constant 0x8E40 (state-6
+    "boot dialect") = the boot's MAT-FLASH-PROGRAMMING word from a non-boot app ->
+    supervisor latched fault: 0.017-0.018A, 5-9A peaks, no CAN, boot loop that
+    power-cycling cannot clear (phase unconditional at init). LESSON: never mirror
+    a boot state word into the app stream without decoding what the state MEANS.
+  - RECOVERY (proven): 30s power-off (rail bleed) -> storm caught the fresh
+    front-door window (short cycles had failed twice) -> install_recovery.py
+    (reinstall m4ap from /tmp/e23_sigs.json) completed clean. Bench back on E22.
+  - The rail question: renewal proven NOT in {words, jobs, letters, level, HOLD,
+    keep-warm, 0x90, nibble, bus-0, WDT timing, ask}. Remaining: the boot
+    manager's own service (bit-2-toggle words + WTCNT@5ms) during handover, or
+    supervisor-internal state. NEXT: stock boot-era dump +0.1-0.5s (its words
+    during the window) - the decisive unread reference.

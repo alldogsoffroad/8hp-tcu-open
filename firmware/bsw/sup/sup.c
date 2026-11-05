@@ -27,6 +27,14 @@ static bool s_wdt_interval;            /* E21: the grant edge switched the MCU w
                                         * (stock 0x920A4: enabled -> WTCR interval mode,
                                         * IPR05 low nibble 0xE — the WDTOVF pin change is
                                         * the observable; the supervisor watches it) */
+static bool s_wdt_edge_early;          /* E22: the stock's first-pass enable edge is
+                                        * COMPOSITE — 0x6C612(1) sets the shadow AND
+                                        * fires 0x920A4 in the same first monitor pass,
+                                        * INSIDE the ~320 ms rail window. E21 fired the
+                                        * WDT switch at the grant (+640 ms, post-window)
+                                        * — no rail. E22 fires it at the first 5 ms pass
+                                        * (app start), mirroring the stock's edge timing;
+                                        * the ask rides the host-armed window as before. */
 
 void sup_init(void)
 {
@@ -39,6 +47,8 @@ void sup_init(void)
     s_suspended = false;
     s_app8e = 0u;
     s_app90 = 0u;
+    s_wdt_interval = false;
+    s_wdt_edge_early = false;
     plat_sup_init();
 }
 
@@ -127,11 +137,39 @@ void sup_bit0_boot_arm(uint16_t cycles, uint16_t delay_5ms)
     s_boot_bit0_delay = delay_5ms;
 }
 
+/* E23 (spec 03 section 6.2o): arm the boot-dialect opening phase - the first
+ * `passes` 5 ms words are the state-6 constant 0x8E40 (the boot manager's own
+ * dialect, matching the stock app's state-6 composer branch), before the
+ * engaged pattern takes over. 0 = disabled. */
+static uint16_t s_phase6_len;
+
+void sup_phase6_arm(uint16_t passes)
+{
+    s_phase6_len = passes;
+}
+
 /* One 5 ms pass of the stock application's supervisor exchange: the three cyclic jobs of
  * spec 03 section 4.4, frames alternating SSLB1 (even) / SSLB0 (odd) through the
  * two-command SPCMD sequence. */
 static void app_pattern_tick(void)
 {
+    static uint16_t s_phase6_n;        /* E23 (spec 03 section 6.2o): the stock app's
+                                        * first phase is STATE 6 — the boot manager's
+                                        * dialect: constant bit-6 word 0x8E40 (the
+                                        * app composer's own state-6 branch = bit 6,
+                                        * and the boot 0x30E40's state 6 = bits 0x40).
+                                        * We entered straight into the ENGAGED dialect
+                                        * (0x8E80/0x8E90) = a dialect break at the
+                                        * handover; the rail window closes 320 ms later
+                                        * in every build. Hold the boot dialect for the
+                                        * first 100 passes, then go engaged. */
+    if (!s_wdt_edge_early) {           /* E22: the stock's first-pass enable edge —
+                                        * the WDT switch fires at app start, inside
+                                        * the rail window (0x6C612+0x920A4 composite) */
+        s_wdt_edge_early = true;
+        s_wdt_interval = true;
+        plat_wdt_mode(true);
+    }
     /* Bit 2 must ALTERNATE every frame: it is the supervisor watchdog's life sign. The
      * stock derives it as the complement of the 0x22 echo's bit 2 (0x91C86 with
      * 0xFFF907D5), which equals self-toggling while the echo works - but on the bench
@@ -162,9 +200,17 @@ static void app_pattern_tick(void)
         s_boot_bit0_left--;
         bits |= SUP_BIT_ENABLE;      /* the window: bit 0 at the stock's engagement age */
     }
-    const uint16_t job1[4] = {
+    uint16_t job1[4] = {
         (uint16_t)(SUP_CMD_CONTROL | bits), 0xC900u, 0x2200u, 0x0900u,
     };
+    if (s_phase6_n < s_phase6_len) {   /* E23: boot-dialect phase — constant 0x8E40,
+                                        * no toggle (state 6 = bit 6 only, both in the
+                                        * boot's law and the app composer's). Length
+                                        * set by the bench build via sup_phase6_arm();
+                                        * 0 = disabled (library/tests). */
+        s_phase6_n++;
+        job1[0] = (uint16_t)(SUP_CMD_CONTROL | 0x40u);
+    }
     const uint16_t job2[2] = { (uint16_t)(0x9000u | s_app90), 0x2400u };
     const uint16_t job3[2] = { 0x2800u, 0x2E00u };
     const uint16_t job4[1] = { 0x00FFu };           /* SSLB2, stock job 0x40C74 */

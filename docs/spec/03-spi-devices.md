@@ -1304,3 +1304,44 @@ should self-sustain once granted; do not re-arm while observing it. **E21
 the grant latch — WTCR to interval mode, IPR 0xE — the WDTOVF pin change the
 supervisor may need to raise the rail** (§4.4: "while outputs are active the
 external supervisor is the watchdog that matters").
+
+**E21–E23 (2026-11-05, late evening) — the grant's law refined; a wrong dialect bricked a boot.**
+
+**E21 (`m4ao`, CRC `A6593396`):** the grant edge fires the stock's enable-edge WDT
+switch (0x920A4 → WTCR interval + IPR 0xE). Result: grant **reproduced deterministically**
+— pass 128 (+640 ms), one pass earlier than E20's 129; ~400 ms decision latency after
+the ask starts, every time. **The WDT switch did not raise the rail** (echo bit 5
+stays 0; ammeter 0.190 → 0.166). **E22 (`m4ap`, CRC `85765317`):** the composite
+first-pass edge (WDT switch at pass 1 + ask at pass 1) — window still closes at 64,
+**and no grant at all**: asking too early forfeits it. The grant's law is now:
+**full mirror + HOLD complete + ask sustained** → grant ~400 ms later; the ask must
+wait for HOLD (~pass 50+). E13's old "tolerance band" [+0.5…15 s] = the acceptance
+window under exactly these conditions.
+
+**E23 (`m4aq`, CRC `86E710B3`) — FAILED, bench recovered.** Hypothesis: the stock
+app's first phase is state 6 (bit 6, constant `0x8E40`), matching the boot manager's
+dialect for a gap-free handover. Implementation: 100 passes of constant `0x8E40`
+(`sup_phase6_arm`). Result: **the TCU dropped to 0.017–0.018 A with 5–9 A peaks, no
+CAN, no heartbeat — an unrecoverable boot loop** (the supervisor holds the box in a
+power-on-class reset; every boot re-enters the phase). **The error: state 6 is the
+boot's MAT-FLASH-PROGRAMMING state, not a benign opening dialect** — §4.4 said it
+all along ("bit 6 = 0x40 … in special boot states"). Sending 100 passes of
+"programming flash" from a non-boot app is a fault condition. Recovery proved the
+discipline: 30 s power-off (rail bleed), storm caught the fresh front-door window,
+recovery chain (reinstall m4ap) completed clean. **Lesson recorded: never mirror a
+boot state word into the app stream without decoding what the state MEANS; the
+supervisor punishes role confusion with a latched fault.** Bench state after
+recovery: E22 (m4ap) running healthy.
+
+**Where the grant question stands:** grant achieved and deterministic (mirror +
+HOLD + ask); rail still not re-raised (bit 5 stays 0; the window closes at +320 ms
+before the grant can arrive — the ask cannot start before HOLD at pass ~49, and the
+grant decision takes ~400 ms, landing at pass ~128, always past the window). The
+rail's renewal is now proven NOT to be: word content, job set, letters, level, HOLD,
+keep-warm, 0x90 word, nibble poll, bus-0 cadence, WDT-mode timing, or the ask
+itself. The stock keeps its rail from power-on continuously — the difference must
+be in what the BOOT MANAGER's service does before/during handover (its bit-2-toggle
+normal words + WTCNT every 5 ms, vs our app's engaged dialect), or in
+supervisor-internal state that no app wire can reproduce. The stock's own words
+during the window (boot-era dump at +0.1–0.5 s) remain the decisive unread
+reference.
