@@ -1345,3 +1345,36 @@ normal words + WTCNT every 5 ms, vs our app's engaged dialect), or in
 supervisor-internal state that no app wire can reproduce. The stock's own words
 during the window (boot-era dump at +0.1–0.5 s) remain the decisive unread
 reference.
+
+### 6.2p The wire-content axis closed — our granted stream IS the stock's stream (2026-11-05, night) [O]
+
+**The stock boot-era cell dump** (stock restored one-block; meas responder up at
+**+5.6 s** — not +13 s; `stockboot_dump.py`), reading the supervisor cells, letters,
+enable shadow, and all four bus-1 staging windows while the stock runs engaged
+(ammeter 1.755 A, rail continuously up since power-on):
+
+| Cell / staging | Stock at +5.6 s (engaged) | Ours (E20/E21 granted) | Match |
+|---|---|---|---|
+| cyclic job1 TX | `8E91 C900 2200 0900` | `8E91 C900 2200 0900` | **exact** |
+| job1 echo (0x22 reply) | `AAB1` (grant+rail) | `AA91` (grant, rail=0) | word matches; bit 5 is the supervisor's own output |
+| enables TX | `9020 2400` | `9020 2400` | **exact** |
+| word-out cell 0xFFF907D4 | `0x91` | `0x91` | **exact** |
+| echo cell 0xFFF907D5 | `0xB1` | `0x91`+bit5 | **exact** modulo rail |
+| letters 0xFFF90944 | `63 00 00` | (hardcoded in 0x90 word) | **exact** |
+| ID job staging | `0600 0300 0000 0000` | same | **exact** |
+| status/nibble staging | `1800 0C00 1E00 0600 1400` | same | **exact** |
+
+**Every byte on the wire matches.** Once granted, our stream IS the stock's
+engaged stream — there is no additional word, job, or content to send. The rail
+bit (echo bit 5) is the supervisor's own output state, not something we command.
+**The renewal of the ~320 ms rail window is not a wire behavior.**
+
+The stock's commissioning completes in **under 5.6 s** from power-on with the rail
+up continuously. The remaining difference is structural: the stock app inherits a
+supervisor conditioned by ~1–2 s of **boot-manager service** (bit-2-toggle words +
+WTCNT reload every 5 ms, §4.4) before the app's words take over; our app replaces
+the boot's service from a supervisor that grants exactly 320 ms of rail. The next
+decode target: the boot manager's handover — whether it writes supervisor state
+beyond the wire (via the 0x72EB6 bookkeeping or other MMIO), or whether the rail
+window's renewal is electrical (the WDTOVF pin, supply sequencing) rather than
+protocol.

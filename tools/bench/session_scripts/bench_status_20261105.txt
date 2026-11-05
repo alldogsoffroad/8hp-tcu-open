@@ -176,3 +176,15 @@
     manager's own service (bit-2-toggle words + WTCNT@5ms) during handover, or
     supervisor-internal state. NEXT: stock boot-era dump +0.1-0.5s (its words
     during the window) - the decisive unread reference.
+[THE WIRE-CONTENT AXIS CLOSED: our granted stream IS the stock's stream]
+  - Stock restored (one block), booted engaged (1.755A rail continuously up),
+    meas up at +5.6s (NOT +13s). stockboot_dump.py read the cells + staging.
+  - RESULT: EVERY byte matches our E20/E21 granted state - cyclic word 8E91,
+    enables 9020, letters 63 00 00, ID/status/nibble staging, word-out cell 0x91.
+    The ONLY differing bit = echo bit 5 (the supervisor's own rail output state).
+  - CONCLUSION: the rail window's renewal is NOT a wire behavior. No additional
+    word/job/content exists to send. The difference is structural: the stock
+    inherits a supervisor conditioned by the boot manager's ~1-2s service
+    (bit-2-toggle + WTCNT every 5ms) before the app takes over.
+  - NEXT DECODE: the boot manager's handover - supervisor state written via MMIO
+    (0x72EB6 bookkeeping) or electrical (WDTOVF pin, supply sequencing).
