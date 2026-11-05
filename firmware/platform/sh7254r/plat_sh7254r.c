@@ -594,6 +594,45 @@ bool plat_sup_burst(const uint16_t *tx, uint16_t *rx, uint8_t n)
     return true;
 }
 
+bool plat_sup_burst0(const uint16_t *tx, uint16_t *rx, uint8_t n)
+{
+    /* SSLB0 single-select burst: SPCMD 0xAF01 (16 bit, mode 1), the select of the odd
+     * frames in the two-command jobs - the stock job 0x40BC0's cfg 0x40B76. Otherwise
+     * the same exchange discipline as plat_sup_burst. */
+    SPCRB = 0x00u;
+    RSPIB_DMA_REQ0 = 0u;
+    RSPIB_DMA_REQ1 = 0u;
+    SPSRB = 0u;
+    SPPCRB = 0u;
+    SPBRB = 5u;
+    SPCKDB = 0u;
+    SSLNDB = 0u;
+    SPNDB = 1u;
+    SPSCRB = 0u;                        /* one command: every frame on SPCMD0 */
+    SPCMDB0 = 0xAF01u;                  /* SSLB0: the second system chip */
+    SPCRB = 0x48u;
+    for (uint8_t i = 0u; i < n; i++) {
+        uint32_t guard;
+        for (guard = 20000u; guard != 0u && (SPSRB & SPSR_SPTEF) == 0u; guard--) {
+        }
+        if (guard == 0u) {
+            return false;
+        }
+        (void)SPSRB;
+        SPDRB = tx[i];
+        (void)SPSRB;
+        SPSRB = 0u;                     /* start trigger (manual 17.4.9) */
+        for (guard = 20000u; guard != 0u && (SPSRB & SPSR_SPRF) == 0u; guard--) {
+        }
+        if (guard == 0u) {
+            return false;
+        }
+        rx[i] = SPDRB;
+        SPSRB = (uint8_t)(SPSRB & SPSR_SPTEF);
+    }
+    return true;
+}
+
 /* ---- Solenoid driver chips: RSPI-A, CPU-driven jobs (spec 03 sections 2-4) ----------------
  * Same bus settings as the stock job start (0x96468 with descriptor 0x40CD8): P/12, no extra
  * delays, a five-command sequence SSLA3, SSLA2, SSLA1, SSLA0, SSLA5 (16 bit, MSB first, mode 1),

@@ -185,6 +185,21 @@ bool plat_sup_burst2(const uint16_t *tx, uint16_t *rx, uint8_t n)
     return true;
 }
 
+bool plat_sup_burst0(const uint16_t *tx, uint16_t *rx, uint8_t n)
+{
+    if (stub.sup_xfer_fail) {
+        return false;
+    }
+    for (uint8_t i = 0u; i < n; i++) {
+        rx[i] = sup_reply_word(tx[i]);
+        if (!stub.sup_busy) {
+            stub.sup_tx[stub.sup_n % 64u] = tx[i];
+            stub.sup_n++;
+        }
+    }
+    return true;
+}
+
 void plat_wdt_mode(bool interval)
 {
     stub.wdt_interval = interval;

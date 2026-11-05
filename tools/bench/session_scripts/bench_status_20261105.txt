@@ -70,3 +70,30 @@
     0x92742 need a clean decode; the stock runs the SETPOINT job (0x2D05!) in its cyclic
     schedule - WE SEND SETPOINTS ONLY VIA bench/one-shot paths. E15: add 0x40BC0 + the
     setpoint job to the cyclic rotation per the stock schedule order.
+[EVENING: THE SCHEDULER DECODED - E15 BUILT, READY TO INSTALL]
+  - The 0x92718 "schedule table" = the bus-0 job-builder's literal pool, NOT a schedule.
+    The real law: 5ms task 0x8EE82 composes the word (0x91C86) then QUEUES
+    status(0x40BA0) -> control(0x40BE8) -> ID(0x40B80) -> engine kick (0x921A0, which
+    also queues the bus-0 ID job). No per-job timers: cadence = queue drain, busy jobs
+    are skipped by check-free. Starters: 0x92A84/0x92B82/0x92D38/0x92E80/0x93198.
+  - Job 0x40BC0 pinned from the LIVE driving dump: TX staging = 0x0000, RX = 0x0000.
+    One word 0x0000 -> SSLB0 alone (SPCMD 0xAF01 via cfg 0x40B76). Handler 0x92CC8:
+    (rx&0xF)^0xF -> 0xFFF90958. The STOCK'S OWN REPLY FAILS ITS AA-header check
+    (0x0000) and the stock tolerates that - error bit only, poll re-sent every
+    rotation. We mirror: send it, count classes, never fault.
+  - Setpoint note CORRECTED: our sol_drv has sent the full 45-frame cyclic setpoint
+    job every 10ms since M4 (the handoff's "one-shot only" was stale). The real delta
+    = VALUES: stock stages keep-warm 0x53 (49.8mA) on chip0-ch0 + chip3-ch0 (live
+    cells 0xFFF90586/8A = {11,53},{11,47}) + DRIVING 0x589-class (~855mA x2 = the
+    1.8A hum, NOT replicated). Also: stock's 0x90 word staged 0x9020 in the dump but
+    read 0x9021 live Nov-5 -> the tail bit is dynamic, source open.
+  - E15 m4ah (CRC E36A4BDA, gap-keep 0x50000, ONE block 0x40000 from E14):
+    (1) job7 = 0x40BC0 nibble poll appended to the full-fidelity 5ms pass
+        (new plat_sup_burst0, SSLB0-only SPCMD 0xAF01);
+    (2) keep-warm 498 (setpoint 0x53) on ch0 + ch6.
+    19/19 host tests green (new job7 test included). Chain /tmp/install_e15.py
+    (clone of e14, SIGS from /tmp/e14_sigs.json, block 0x40000 nulled).
+  - BENCH NEXT: verify DARK (4s listen) -> arm storm mode 5 -> 5s -> launch chain ->
+    ONE power state, catch on the fresh boot -> power-cycle -> watch: echo (sub 9,2
+    armed FIRST), ammeter (announce ~0.27A IF the rail closes: keep-warm 100mA class),
+    heartbeat. Prediction: grant/rail inside ~15s if either delta was the gate.

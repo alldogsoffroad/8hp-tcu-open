@@ -228,6 +228,14 @@ bool plat_sup_burst2(const uint16_t *tx, uint16_t *rx, uint8_t n)
     return true;
 }
 
+bool plat_sup_burst0(const uint16_t *tx, uint16_t *rx, uint8_t n)
+{
+    for (uint8_t i = 0u; i < n; i++) {
+        rx[i] = (uint16_t)(0xAA00u | (tx[i] & 0x00FFu));   /* SSLB0 AA-class mirror */
+    }
+    return true;
+}
+
 void plat_wdt_mode(bool interval) { (void)interval; }
 
 void plat_drv_init(void) { }

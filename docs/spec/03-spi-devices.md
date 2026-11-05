@@ -1123,3 +1123,61 @@ stock's full rotation includes a poll we have never sent. The stock's dispatcher
 (the function-pointer schedule around `0x92740`) also remains undecoded — our
 interleave order is ad hoc. E15 candidate: add the `0x40BC0` word to the rotation and
 verify the stock's job order/cadence against the schedule table.
+
+### 6.2m The scheduler decoded — and E15 (2026-11-05, evening) [O]
+
+**The "schedule table" 0x92718–0x9273C resolved.** It is not a walked schedule: it is the
+literal pool of the bus-0 job-descriptor builder (`0x9263C`, 72-byte control blocks at
+`0xFFF94148+72·idx`), whose first three words also serve a tail-call. The dispatcher
+question dissolves into three small helpers every module shares — `0x93B68(desc,flag)`
+clear the status cell / bump a use counter at `0xFFF94178+2·desc[0]`, `0x93B8E(desc)`
+check-free, `0x937F8(desc)` queue — plus per-job **starters** that re-stage the template
+and queue: `0x92A84` (ID `0x40B80`), `0x92B82` (status `0x40BA0`), `0x92D38` (control
+`0x40BE8`), `0x92E80` (enables `0x40C0C`), `0x93198` (SSLB2 `0x40C74`). The 5 ms task
+`0x8EE82` = compose the control word (`0x91C86` → `0xFFF907D4`, the `0xC9` byte via
+`0x93126`) → queue **status → control → ID** (`0x91DAA`, `0x91E12`) → kick the RSPI/DMA
+engine (`0x90ACC`→`0x921A0`, which also queues the bus-0 ID job `0x40A98` every pass).
+There are no per-job timers: **cadence = queue drain**; a busy job is simply skipped by
+the next check-free. The enables-job starter lives behind the letter machinery (called
+via pool `0x9187C`), its word = `0xFFF907D6 & ~(0xFFF907D1 & 0xE0) | template` (faulted
+outputs masked off, §4.4) — queued when that state changes, not every pass [I].
+
+**Job `0x40BC0` pinned.** Descriptor `0x40BC0` = 1 frame → SSLB0, select cfg `0x40B76`
+(= SPCMD `0xAF01`, the odd-frame select), TX `0xFFF885E0`, RX `+2`, status cell
+`0xFFF908E0`, handler `0x92CC8`. The driving dump's live staging: **TX `0x0000`, RX
+`0x0000`** — the word is `0x0000`, and the real chip's reply is *not* AA-class; the
+handler (`0x92CC8`) stores `(rx & 0x0F) ^ 0x0F → 0xFFF90958` and `rx & 0xFF →
+0xFFF90979`, setting only an error bit on the failed header — **the stock sends this
+poll every rotation and tolerates its failing reply check**. No code references the
+descriptor at all ("built inline"); its queuer was not found (candidates: the `0xC9`
+machinery at `0x93126`) — cadence taken as every-pass from the live staging [I].
+
+**The setpoint question corrected.** The stock's setpoint job (`0x40B48`, header
+`{reg 0x2D, 5 chips}` = the handoff's "0x2D05") is cyclic, and so is **ours** —
+`sol_drv.job_cyclic()` has sent the full 45-frame job every 10 ms since M4 (the
+handoff's "one-shot bench paths" note was stale). The real deltas: (1) **values** — the
+driving stock stages `881A/881A/881A/8812/8815` mode rows with E8/F0 setpoints
+`053,589,58A,053,000` / `589,589,053,000,000`: two `0x53`-class **keep-warm** channels
+(chip 0 ch 0, chip 3 ch 0 — the keep-warm machine's live cells `0xFFF90586/8A` = `{11,
+53}/{11, 47}`) plus `0x589`-class *driving* currents (≈855 mA each — the bench's 1.8 A
+hum). We send zeros. (2) the keep-warm **value cycle** (`0x90586` walks
+41/34/3A/27/0E/1F/3C/26/44) is not decoded [I]. The `0x90` register word is also
+dynamic in the stock — the driving dump stages `0x9020` while the Nov-5 echo read saw
+`0x9021` (the composer tail bit 0 varies; source not pinned) — our hardcoded `0x9021`
+is a snapshot, noted open.
+
+**E15 (`m4ah`, CRC `E36A4BDA`, gap-keep `0x50000`, one block from E14):**
+1. The missing seventh job: one word `0x0000` to SSLB0 alone (new `plat_sup_burst0`,
+   SPCMD `0xAF01`) appended to the full-fidelity 5 ms pass after the mixed jobs; the
+   reply is class-counted (`nib_aa`/`nib_other`), never faulted — the stock tolerates
+   the failing header too.
+2. Keep-warm setpoints: chip 0 ch 0 and chip 3 ch 0 commanded `498` (0.1 mA units →
+   setpoint `0x53` = 49.8 mA) instead of 0 — matching the stock's staged keep-warm
+   class. The `0x589` driving currents are deliberately NOT replicated: if the rail
+   ever closes, the bench sees ~100 mA (announce-class), not 1.8 A.
+
+Prediction: if the missing poll or the keep-warm staging is what the supervisor's
+grant conditions on, the echo gains bit 0 (grant) / bit 5 (rail) within the stock's
+~15 s commissioning window. If nothing changes, both additive deltas are eliminated and
+the remaining suspects are the `0x90` tail bit, the keep-warm value cycle, and the
+aux-job cadences (enables/SSLB2/nibble queuers, [I] above).

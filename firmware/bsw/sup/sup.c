@@ -167,6 +167,27 @@ static void app_pattern_tick(void)
             s_st.busy++;
             return;
         }
+        /* E15 (spec 03 section 6.2m): the stock's seventh cyclic job 0x40BC0 - one
+         * word 0x0000 to SSLB0 alone (select cfg 0x40B76 = SPCMD 0xAF01), the
+         * status-nibble poll. Live staging 0xFFF885E0 = 0x0000; the completion
+         * handler 0x92CC8 stores (rx & 0x0F) ^ 0x0F -> 0xFFF90958 and rx ->
+         * 0xFFF90979. The stock's own live reply reads 0x0000 - not AA-class - and
+         * it tolerates that (error bit only), so count classes, never fault. */
+        {
+            const uint16_t job7[1] = { 0x0000u };
+            uint16_t rx7[1];
+
+            if (!plat_sup_burst0(job7, rx7, 1u)) {
+                s_st.busy++;
+                return;
+            }
+            s_st.nib_rx = rx7[0];
+            if ((rx7[0] & 0xFE00u) == 0xAA00u) {
+                s_st.nib_aa++;
+            } else {
+                s_st.nib_other++;
+            }
+        }
     }
     if (sup_engage_active()) {            /* register job riding the cyclic stream:
                                            * single bus owner, the stream never stops */

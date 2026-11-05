@@ -35,6 +35,12 @@ typedef struct {
     uint16_t sslb2_rx;       /* last SSLB2 reply (stock job 0x40C74 sends 0x00FF) */
     uint16_t rx_id[4];       /* last ID-job replies (stock 0x40B80: 06/03/00/00) */
     bool     sslb2_on;       /* pattern includes the cyclic SSLB2 exchange */
+    uint16_t nib_rx;         /* last SSLB0 nibble-poll reply (stock job 0x40BC0
+                              * sends 0x0000; the live stock's reply reads 0x0000
+                              * - the AA-class header check fails on the real chip
+                              * and the stock tolerates it, 0x92CC8) */
+    uint32_t nib_aa;         /* replies in the 0xAA00 class */
+    uint32_t nib_other;      /* replies outside it (expected on the bench) */
 } sup_status_t;
 
 void sup_init(void);

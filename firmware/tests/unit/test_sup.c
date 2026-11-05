@@ -300,6 +300,32 @@ int main(void)
         CHECK(dv->drv_jobs == 0u);                    /* retired: no jobs ever */
     }
 
+    /* ---- E15: the missing seventh job 0x40BC0 (spec 03 section 6.2m) ----
+     * The stock's rotation includes a one-word 0x0000 poll of SSLB0 alone (select
+     * cfg 0x40B76 = SPCMD 0xAF01, the status-nibble poll, handler 0x92CC8); our
+     * pass never sent it. In the full-fidelity pass it rides after the mixed
+     * jobs; the reply is counted, never faulted (the live stock's own reply
+     * reads 0x0000 - not AA-class - and the stock tolerates that). */
+    {
+        const uint32_t aa0 = s->nib_aa, oth0 = s->nib_other;
+
+        stub.sup_n = 0u;                          /* re-arm the stub's 1024-frame ring */
+        stub.sup_reply_fn = 0;
+        stub.sup_xfer_rx = 0xA800u;               /* not AA-class */
+        sup_app_pattern2(true, 0x00u, 0x20u, true);
+        sup_tick_5ms();
+        CHECK(s->nib_aa == aa0 && s->nib_other == oth0 + 1u && s->nib_rx == 0xA800u);
+        CHECK(back(0) == 0x0000u && back(1) == 0x1400u);   /* after job6's 0x14 */
+        stub.sup_xfer_rx = 0xAA05u;               /* AA-class reply */
+        sup_tick_5ms();
+        CHECK(s->nib_aa == aa0 + 1u && s->nib_other == oth0 + 1u && s->nib_rx == 0xAA05u);
+        stub.sup_xfer_fail = true;                /* transport failure: pass lost, no fault */
+        sup_tick_5ms();
+        CHECK(s->nib_aa == aa0 + 1u && s->nib_other == oth0 + 1u);
+        stub.sup_xfer_fail = false;
+        sup_app_pattern(false, 0u, 0u);
+    }
+
     if (fails == 0) {
         printf("test_sup: ok\n");
     }

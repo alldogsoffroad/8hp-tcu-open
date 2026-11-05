@@ -83,6 +83,10 @@ bool plat_sup_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n);
 bool plat_sup_burst(const uint16_t *tx, uint16_t *rx, uint8_t n);
 /* SSLB2 (third RSPI-B device, SPI mode 0) burst - the stock's cyclic [0x00FF] job. */
 bool plat_sup_burst2(const uint16_t *tx, uint16_t *rx, uint8_t n);
+/* SSLB0 single-select burst (SPCMD 0xAF01, mode 1 - the odd-frame select of the
+ * two-command jobs). E15 (spec 03 section 6.2m): the stock's cyclic job 0x40BC0
+ * sends its one-word status-nibble poll to SSLB0 alone (select cfg 0x40B76). */
+bool plat_sup_burst0(const uint16_t *tx, uint16_t *rx, uint8_t n);
 /* Five-select rotation (SSLB3/2/1/0/5, select cfg 0x40CE4 = AF31/AF21/AF11/AF01/AF51).
  * CORRECTED 2026-11-04 (spec 03 section 6.2e): 0x40CE4 is the stock's BUS-0 five-select —
  * the ID/write/setpoint commissioning jobs run on RSPI-A (SSLA3/2/1/0/5, driver chips;

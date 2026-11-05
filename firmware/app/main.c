@@ -335,10 +335,17 @@ int main(void)
     sup_drv_sync(true);
     /* Engaged channel staging (spec 03 section 6.2e): the live 0x88 mode flags of
      * the driving stock = the six pressure channels + line pressure in CURRENT
-     * mode at zero setpoint, park release DISABLED, unused channels OFF. Zero
-     * setpoints drive nothing; FE10 overrides the currents during bench tests. */
+     * mode, park release DISABLED, unused channels OFF. E15 (spec 03 section
+     * 6.2m): the stock's keep-warm machine commands two of the CURRENT channels
+     * continuously (live cells 0xFFF90586/0xFFF9058A = {11,53}/{11,47}; the
+     * driving dump stages E853 on chips 0 and 3) - chip 0 ch 0 and chip 3 ch 0
+     * carry setpoint 0x53 (498 = 49.8 mA), every other current stays 0. If the
+     * rail ever closes, that is ~100 mA total - announce-class, nowhere near the
+     * stock's 1.8 A drive (which we do NOT replicate); FE10 still overrides the
+     * currents during bench tests. The stock's keep-warm VALUE CYCLE (0x90586
+     * walks 41/34/3A/27/0E/1F/3C/26/44) is not decoded - static snapshot. */
     for (uint8_t ch = 0u; ch < 7u; ch++) {
-        sol_set(ch, SOL_MODE_CURRENT, 0u);
+        sol_set(ch, SOL_MODE_CURRENT, (ch == 0u || ch == 6u) ? 498u : 0u);
     }
     sol_set(7u, SOL_MODE_DISABLED, 0u);
     sol_set(8u, SOL_MODE_OFF, 0u);
