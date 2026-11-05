@@ -330,8 +330,16 @@ int main(void)
      * by the A-law; the stock's live pair 0x91/0x81 = this base plus bit 0.
      * E10: the job-2 register-0x90 data = the stock's live 0x21 (we sent 0x20
      * since E1 — the switch-enable register's bit 0, the last known cyclic
-     * word delta). */
-    sup_app_pattern3(true, 0x90u, 0x10u, 0x21u);
+     * word delta).
+     * E16 (spec 03 section 6.2n): the composer decode settles it — the word's
+     * bit 0 comes only from the base cell 0xFFF90963 (flash const 0x1918EF =
+     * 0x00 on this unit), so the stock's STEADY word is 0x9020 (driving dump:
+     * TX 0x9020, 0x24 read-back 0xAA20); the boot-era 0x9021 was the transient
+     * pre-calibration base. Our 0x9021 made SSLB1's 0x24 read-back answer
+     * 0xAAFF instead of 0xAA20 (E15 RAM read, rx_words[5]) — the register did
+     * not hold what we wrote. Back to 0x20 = the stock's steady composition
+     * (slot-0 'c' bit 5, tail bit clear). */
+    sup_app_pattern3(true, 0x90u, 0x10u, 0x20u);
     sup_drv_sync(true);
     /* Engaged channel staging (spec 03 section 6.2e): the live 0x88 mode flags of
      * the driving stock = the six pressure channels + line pressure in CURRENT

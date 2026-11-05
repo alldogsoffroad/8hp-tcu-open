@@ -110,3 +110,16 @@
     aux-job cadences; then structural (power-up mechatronic relationship).
   - Image m4ah (E36A4BDA) stays installed; E14 restore path = reinstall m4ag block
     (sig 6de1830bb5cc517b in e14_sigs.json). Stock restore = /tmp/install_stock.py.
+[E16: 0x90 TAIL BIT SETTLED - no grant, 0x24 reply INVARIANT to our byte]
+  - Composer 0x91758 decoded: 0x90 word = base(0x1918EF=0 on this unit) | letters
+    (bits 5/6/7) | calib | bit3(0xFFF90952==1); word bit 0 = base bit 0 ONLY = 0 in
+    steady state. Stock steady = 0x9020 (dump TX + 0x24 reply AA20); boot-era 0x9021
+    = transient base. Our 0x9021 since E10 matched the transient.
+  - E16 m4ai (C77D67BE, 1 block sig b83313bc14c9887d): 0x9021->0x9020. Boot: HOLD +5s,
+    echo AA90 pure mirror through +70s, idle. *** 0x24 READ-BACK STILL AAFF ***
+    -> SSLB1's 0x24 answer is its OWN state word, not a mirror of reg 0x90; the
+    AA20/AAFF delta is upstream of the byte. 0x90 tail bit ELIMINATED.
+  - Reply ledger ours-idle vs stock-driving: 24: AAFF vs AA20; 28: AA45 vs AA46;
+    2E: ABFF vs AA05 (class change bit 11). Likely rail telemetry (0x2E stores a
+    10-bit value+flag -> 0xFFF907CC). NEXT: decode 0x24/0x28/0x2E read meanings
+    (handler 0x93096) - if telemetry, cyclic stream is CLOSED, hunt goes structural.

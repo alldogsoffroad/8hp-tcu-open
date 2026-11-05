@@ -1195,3 +1195,34 @@ word's dynamic tail bit (staged `0x9020` in the dump vs `0x9021` read live), the
 keep-warm value cycle, and the aux-job cadences (enables/SSLB2/nibble queuers) [I]; past
 those, the difference is structural (the supervisor–mechatronic power-up relationship,
 hardware lines).
+
+### 6.2n The 0x90 tail bit settled — and the reply ledger mapped (2026-11-05, night) [O]
+
+**The composer decode (0x91758).** The `0x90` register's data byte = `0xFFF90963 &
+0x1D` (the flash constant `0x1918EF` = **0x00** on this unit — the base contributes
+nothing) | letter bits (slots 0/1/2 → bits 5/6/7, table `0x1918E8`) | calib `0x1918EB
+<< 5` | bit 3 = (`0xFFF90952` == 1), with `0x1918EC << 5` as an AND-mask applied only
+when the helper `0x9209C` returns nonzero, and a second `0x9209C` call deciding
+`0xFFF90965` (= cell & ~1, or 1). **The word's bit 0 comes only from the base cell —
+0 in steady state.** The enables starter `0x92E80` stages `template(0x40C08) |
+(0xFFF907D6 & ~(0xFFF907D1 & 0xE0))` — the fault mask clears letter bits of faulted
+outputs. So the stock's steady `0x90` word = **`0x9020`** (driving dump: TX `0x9020`,
+`0x24` reply `0xAA20`); the boot-era `0x9021` was the transient pre-settling base.
+The `0x9021` we hard-coded since E10 (matching that transient) is corrected.
+
+**E16 (`m4ai`, CRC `C77D67BE`, one block, sig `b83313bc14c9887d`):** the one-word
+change `0x9021 → 0x9020`. Result: no grant (echo `AA90` pure mirror through +70 s) and
+**the `0x24` read-back is still `0xAAFF`, invariant to our written byte** — SSLB1's
+`0x24` answer is its own state word, not a mirror of register `0x90`; the
+AA20-vs-AAFF delta is upstream of our data. **The `0x90` tail bit is eliminated as a
+grant condition.**
+
+**The full cyclic reply ledger (ours at idle vs the stock driving):** `8E`→AA00 both;
+`C9`→AA00 both; `22`→AA90 ours (pure mirror) vs `AAB1` stock (mirror+rail); `09`→AA00
+both; `90`→AA00 both; `24`→**AAFF ours vs AA20 stock**; `28`→**AA45 ours vs AA46
+stock**; `2E`→**ABFF ours vs AA05 stock** (different reply class — bit 11 flag + data).
+The three deltas smell like telemetry (the `0x2E` job stores a 10-bit value + flag →
+`0xFFF907CC`, §4.3) — plausibly effects of the dead rail, not causes. Decode targets:
+what the `0x24/0x28/0x2E` reads mean (handler `0x93096` for `0x28/0x2E`; the stock's
+`0x92D94` class checks) — if they are rail/downstream telemetry, the cyclic stream is
+CLOSED and the hunt moves entirely to the structural suspects.
