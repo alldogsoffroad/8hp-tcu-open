@@ -1378,3 +1378,33 @@ decode target: the boot manager's handover — whether it writes supervisor stat
 beyond the wire (via the 0x72EB6 bookkeeping or other MMIO), or whether the rail
 window's renewal is electrical (the WDTOVF pin, supply sequencing) rather than
 protocol.
+
+**Live-stock comprehensive dump (2026-11-05 night; stock engaged at 1.755 A).**
+Six phases read while the stock drove: boot-handover bookkeeping, supervisor
+cells, keep-warm, state-letter machinery, full bus-0 staging, and 60 s of
+2-second dynamic intervals. Key findings:
+
+1. **The engaged steady state is stable**: over 60 s, ONLY the challenge
+   selector (0xFFF907D2 area, rolling 0x1130–0x1144 / 0x381D–0x384B) and the
+   10-bit telemetry (0xFFF907CC, 373–380) moved. Word-out 0x91, echo 0xB1, the
+   0x90 data 0x20, letters 63 00 00, staging — all frozen. **The 0x90 tail bit
+   is NOT dynamic in steady state** (0x20 constant).
+2. **Keep-warm values cycle on a >60 s period**: 0x53→0x3A and 0x47→0x30
+   between two dumps 20 min apart — both in the known list (41/34/3A/.../44).
+   Genuine dynamic, bus-0 (not the rail's gate).
+3. **The boot-handover bookkeeping cells** (Phase 1): the `0xA5`-magic at
+   `0xFFF80CE4/CE6 = A5A5 A5A5`, `DEA7/FADE/DEA6` markers, and the boot-managed
+   counter at `0xFFF80CD4 = 0` (consumed by the app). These are the cells the
+   0x72EB6 bookkeeping writes at the enable edge — present and live.
+4. **THE MAILBOX INPUT WORD DIFFERS**: `0xFFF80D00 = 0x0000` in the engaged
+   stock — vs **`15` (0x000F) on every one of OUR boots**, same bench, same
+   hardware. The stock's running software drives the input word to 0; ours
+   reads 15 from power-on and it never changes. E4's init-mirror did not
+   reproduce this. While the handshake itself was ruled out as the rail's gate
+   (the stock drives with letter 0x01 = handshake never ran), the input-word
+   difference is a genuine unexplained state delta between the stock's software
+   and ours.
+5. The state cell `0xFFF90950 = 0x0119` — state 0x19 (engaged) in the high
+   byte. The enable-shadow cell `0xFFF90952 = 0x0001` (bit-3 source active).
+   The composed `0x90` data cell `0xFFF90964 = 0x0020` (letter bit only —
+   confirms the E16 value from the source side).
