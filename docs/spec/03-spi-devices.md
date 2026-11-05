@@ -1251,3 +1251,21 @@ tens of ms) + the ring extended to 512 passes to place the drop instant against 
 ladder events. Also pending: the user's ammeter AT SWITCH-ON — with E15+'s keep-warm
 commanded and the rail up for ~1 s, a ~0.27 A blip then settle to 0.167 would confirm
 current genuinely flowed.
+
+**E18 (`m4ak`, CRC `4F0754BA`) — the drop is on film.** Fast ladder (`JOB_PERIOD`
+60→2 passes, 10 ms rungs) + the ring at 512 passes with a per-pass ladder-state
+track. Result: rail UP from pass 1, **HOLD reached at pass 49 (+245 ms) with the
+rail still up** — the ladder beat the window — and **the rail dropped at pass 64
+(+320 ms), ~15 passes after HOLD**. The ladder-completes-in-time hypothesis is
+dead in the cleanest way: completion changes nothing. Combined with E17 (rail up
+through pass 63, drop at the same boundary), the law is: **a ~320 ms rail window
+opens at our first word and expires regardless of content** — word shape, jobs,
+letters, level, HOLD, keep-warm, `0x90` word all eliminated as renewal
+conditions. User ammeter ground truth: **0.180 A during the window** (the rail
+stage's own ~14 mA — NOT our 100 mA keep-warm, which never flowed), settling to
+0.166 the moment it drops: the echo's rail bit ≠ power delivery; the output stage
+never closes without the grant. The stock's window never expires — its renewal
+lives outside the mirrored conversation. Remaining un-mirrored 5 ms behavior from
+the scheduler decode: the stock queues the **bus-0 ID job every pass**
+(`0x921A0`); ours runs it once at init. The boot manager's own supervisor service
+(word rate/content, §4.4: bit 6 = 0x40) is the other open door.

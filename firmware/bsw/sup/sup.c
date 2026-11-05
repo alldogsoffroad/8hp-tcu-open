@@ -11,8 +11,9 @@ static bool s_toggle;
  * = the grant. One power cycle decides whether the rail is up when our stream starts
  * (and drops after our words) or already down at pass one (the drop is pre-app, in
  * the boot manager's reign). Read post-boot via the measurement RAM read. */
-uint16_t g_sup_rx_hist[64];
+uint16_t g_sup_rx_hist[512];
 uint32_t g_sup_rx_hist_n;
+uint8_t  g_sup_state_hist[512];  /* E18: the ladder state per pass, beside the echo */
 static uint8_t s_enable_req;             /* SUP_EN_* source bits currently requesting */
 static bool s_flash_mode;
 static bool s_pattern;
@@ -223,8 +224,10 @@ static void app_pattern_tick(void)
     }
     s_st.last_tx = job1[0];
     s_st.last_rx = rx1[2];             /* the 0x22 control echo drives the next toggle */
-    if (g_sup_rx_hist_n < 64u) {       /* E17: the first-exchange evidence ring */
-        g_sup_rx_hist[g_sup_rx_hist_n++] = rx1[2];
+    if (g_sup_rx_hist_n < 512u) {      /* E17/E18: the first-exchange evidence ring */
+        g_sup_rx_hist[g_sup_rx_hist_n] = rx1[2];
+        g_sup_state_hist[g_sup_rx_hist_n] = sup_engage_status()->state;
+        g_sup_rx_hist_n++;
     }
     s_st.enable = (job1[0] & SUP_BIT_ENABLE) != 0u;
     for (uint8_t i = 0u; i < 4u; i++) {

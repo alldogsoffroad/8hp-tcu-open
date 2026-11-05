@@ -19,10 +19,14 @@ static uint32_t token(uint8_t sel)
     return ~(S_TOKEN_TABLE[sel & 0xFu] ^ 0xAAAAu ^ S_TOKEN_CONST);
 }
 
-/* One register job every 60 passes = 300 ms. The stock paces its jobs with
- * calibration dwells (level*200 + 2400 timer ticks, engine 0x6BF9C); the bench
- * exchanges ran clean at 0.3-1.1 s cadences (2026-10-31 v2/v3 traces). */
-#define JOB_PERIOD 60u
+/* One register job every N passes. E18 (spec 03 section 6.2o): the stock paces its
+ * register jobs with calibration dwells (level*200 + 2400 timer ticks, engine
+ * 0x6BF9C) - millisecond-class, and its commissioning exchange completes in the
+ * first passes. Our bench-era 300 ms pacing put HOLD at ~0.7-1 s, exactly where
+ * the rail drops (E17: rail up through +320 ms of our stream, down by +1 s).
+ * 2 passes = 10 ms per rung: probe/token/level/confirm complete inside the
+ * proven rail-up window. */
+#define JOB_PERIOD 2u
 #define SYNC_JOBS  2u
 #define LEVEL_MAX  7u      /* the stock's target cell caps at 7 (0x6C542) */
 #define LEVEL_RUN  31u     /* the engaged commanded level: 0x1F, live-observed
