@@ -106,10 +106,12 @@ void sup_app_pattern3(bool on, uint8_t bits8e, uint8_t toggle_bit, uint8_t bits9
  * trip counter in main caps the total attempts, so a rejecting supervisor produces a short
  * reset storm and then a normal A-law boot). */
 static uint16_t s_boot_bit0_left;
+static uint16_t s_boot_bit0_delay;
 
-void sup_bit0_boot_arm(uint16_t cycles)
+void sup_bit0_boot_arm(uint16_t cycles, uint16_t delay_5ms)
 {
     s_boot_bit0_left = cycles;
+    s_boot_bit0_delay = delay_5ms;
 }
 
 /* One 5 ms pass of the stock application's supervisor exchange: the three cyclic jobs of
@@ -131,9 +133,12 @@ static void app_pattern_tick(void)
                              (s_toggle ? s_app_toggle : 0u));
     if (sup_engage_active() && sup_engage_enable_bit()) {
         bits |= SUP_BIT_ENABLE;
+    } else if (s_boot_bit0_delay != 0u) {
+        s_boot_bit0_delay--;         /* E13: hold until the supervisor's own power-up is
+                                      * done (stock engages at ~+15s, spec 03 6.2i) */
     } else if (s_boot_bit0_left != 0u) {
         s_boot_bit0_left--;
-        bits |= SUP_BIT_ENABLE;      /* the boot window: bit 0 from the first exchanges */
+        bits |= SUP_BIT_ENABLE;      /* the window: bit 0 at the stock's engagement age */
     }
     const uint16_t job1[4] = {
         (uint16_t)(SUP_CMD_CONTROL | bits), 0xC900u, 0x2200u, 0x0900u,

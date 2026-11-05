@@ -83,9 +83,10 @@ static void task_1ms(void)
         for (uint8_t n = 0u; n < 8u && plat_can_recv((can_bus_t)bus, &f); n++) {
             if (f.id == 0x7F4u && f.dlc == 8u && f.data[0] == 0xE1u && f.data[1] == 0x12u &&
                 f.data[2] == 0xB0u && f.data[3] == 0x0Bu) {
-                /* E12: the host-armed boot window — exactly one shot per power-on
-                 * (the host sends this once; spec 03 section 6.2h) */
-                sup_bit0_boot_arm(200u);
+                /* E13: the host-armed window, now at the stock's engagement age —
+                 * data[4] = delay seconds (default 12, the boot-era capture's ~+15s
+                 * minus the app's own start lag; spec 03 section 6.2i) */
+                sup_bit0_boot_arm(200u, (uint16_t)(f.data[4] * 200u));
                 continue;
             }
             if (!uds_rx((can_bus_t)bus, &f) && !meas_rx((can_bus_t)bus, &f)) {

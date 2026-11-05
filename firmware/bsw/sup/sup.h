@@ -76,7 +76,13 @@ void sup_app_pattern3(bool on, uint8_t bits8e, uint8_t toggle_bit, uint8_t bits9
  * shadow-poll), so bit 0 rides the word from cycle one in the stock; every forced bit-0
  * word of ours was minutes late. If the echo mirrors it once, the A-law sustains it. The
  * caller bounds the total boot attempts (a rejecting supervisor = short reset storm, then
- * a normal A-law boot). */
-void sup_bit0_boot_arm(uint16_t cycles);
+ * a normal A-law boot).
+ * E13 (spec 03 section 6.2i): the boot-era capture showed the stock FULLY ENGAGED at
+ * boot+15s (word 0x8E91 accepted, echo AAB1 = mirror + supervisor bit 5, rail live) —
+ * while our E12 arm fired at +25ms (rejected: before the supervisor's own power-up) and
+ * every earlier window was minutes late (rejected: after its acceptance closed). The
+ * window is IN THE MIDDLE. `delay_5ms` holds the window that many exchanges before
+ * sending bit 0. */
+void sup_bit0_boot_arm(uint16_t cycles, uint16_t delay_5ms);
 
 #endif
