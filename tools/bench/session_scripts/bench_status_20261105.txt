@@ -58,3 +58,15 @@
     switch bits) - the last known subsystem difference. NEXT ENTRY.
   - Note-to-self (twice burned): mode-3 echo reads require the display armed (sub 9,2);
     stripping the sub-9 for 'purity' costs the observation. Arm the display FIRST.
+[14:00-14:30 LETTERS CLOSED + SCHEDULE FOUND]
+  - Letter composition: 0x90 base = flash 0x1918EF (0x00 on this unit); the register data
+    IS the letters (slot0->bit5, slot1->bit6, slot2->bit7); the driving stock = ONE 'c'
+    (letters 63 00 00) -> 0x9021 = slot-0 'c' + tail bit0 = OUR HARDCODED VALUE. CLOSED.
+  - THE MISSING JOB: 0x40BC0 (1 word 0x0000 -> SSLB0, status-nibble poll, handler
+    0x92CC8) - in the stock rotation, NEVER sent by us. Every other cyclic job covered.
+  - THE STOCK'S CYCLIC SCHEDULE (table 0x92718-0x9273C, handler/table pairs, ends
+    45B9F72D): (0x93B68, 0x40B48=THE SETPOINT JOB!), (0x93B8E, 0x40D0C), (0x937F8,
+    0x92060?), (0x40CE4, 0x40B68), (0x40CDE, 0x40CD8) - the structure + dispatcher
+    0x92742 need a clean decode; the stock runs the SETPOINT job (0x2D05!) in its cyclic
+    schedule - WE SEND SETPOINTS ONLY VIA bench/one-shot paths. E15: add 0x40BC0 + the
+    setpoint job to the cyclic rotation per the stock schedule order.
