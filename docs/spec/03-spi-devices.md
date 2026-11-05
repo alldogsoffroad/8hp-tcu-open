@@ -1103,3 +1103,23 @@ The remaining consumer is inside the control-word composer (`0x91C8A`, reading t
 `0xFFF9094A` cell block via GBR) — i.e., the letters may gate the WORD composition
 itself through the state cells. That composer path is the next decode: what the word
 builder does with `0xFFF90962/63` (the cells downstream of the letters).
+
+### 6.2l The letters close — and a missing job surfaces (2026-11-05) [O]
+
+**The letter composition completes.** The `0x90` register's base byte is a flash
+constant: `0x1918EF → 0xFFF90963`, value `0x00` on this unit — the base contributes
+nothing. The whole register data = the letter bits (identity-mapped: slot 0→bit 5, slot
+1→bit 6, slot 2→bit 7) plus continuation bits (bit 3 from `0xFFF90952`, bit 0 from the
+composer's tail). **The driving dump's letters = `63 00 00` — exactly one `'c'`, slot 0.**
+The stock's live `0x9021` = slot-0's `'c'` (bit 5) + the tail's bit 0. Our hardcoded
+`0x9021` matches the complete composition; the letters are not a `0x90` delta.
+
+**The gap that surfaced instead: job `0x40BC0` is missing from our stream.** The stock's
+§4.3 table includes it — a one-word job (`0x0000`) to **SSLB0** (the second system
+chip), the SSLB0 status-nibble poll (completion handler `0x92CC8`), staged at
+`0xFFF885E0`. Our cyclic stream sends job1/job2/job3 (=`0x40BE8`/`0x40C0C`/`0x40C54`),
+job4 (`0x40C74`, SSLB2) and job5/job6 (`0x40B80`/`0x40BA0`) — **never `0x40BC0`**. The
+stock's full rotation includes a poll we have never sent. The stock's dispatcher order
+(the function-pointer schedule around `0x92740`) also remains undecoded — our
+interleave order is ad hoc. E15 candidate: add the `0x40BC0` word to the rotation and
+verify the stock's job order/cadence against the schedule table.
