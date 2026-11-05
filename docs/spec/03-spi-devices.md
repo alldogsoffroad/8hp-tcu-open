@@ -956,3 +956,48 @@ supervisor's switch-enable bits.
 Bench notes: E10 = `m4ac` (CRC `C7087523`) is the current image; install chain
 `/tmp/install_e10.py`, sig table `/tmp/e10_sigs.json`; install sequencing rule — storm and
 chain armed in the dark window, the whole install runs in one power state (§6.2f lesson).
+
+### 6.2h The boot-window hypothesis — tested and dead (2026-11-05) [O]
+
+**The stock's own enable law** (monitor `0x873F0`, decoded from the flash): the enable
+setter `0x6C612(1)` fires when a state byte at `0xFFF93BA1` is ≤ 6 — state 0 in the
+driving dump, i.e. always true in normal running; the surrounding monitor is a
+timing-consistency check (free-running counter vs calibration `0x1912D4`, fault 547 on
+drift). The setter runs at raised IPL, does boot-handover bookkeeping (`0x72EB6`: the
+boot-managed `0xFFF80CD4` counter and `0xFFF80D19` `0xA5`-magic cells), latches bit 6 of
+`0xFFFF1001` (`0x68BE0`), then sets `0xFFF90953 = 1`. The app-side gate is weak — the
+stock arms its enable in the first monitor pass, and the 2026-10-31 shadow-poll saw the
+echo bit 0 latched at the first readable instant. Hypothesis: acceptance is a
+boot-transition window, and every bit-0 word we ever forced was minutes late.
+
+**E11 (`m4ad`): the self-armed window — and the no-RAM finding.** A `.noinit` trip
+counter (3 boots × 200 exchanges of unconditional bit 0) produced a **silent reset
+loop**: no heartbeat ever, ammeter at idle, power-off to kill. Two findings: early bit 0
+rejects (or cannot even be observed unbounded), and **no RAM state survives the reject
+reset** — the counter never capped the loop, so the boot clears user RAM on every
+handover or the reject is power-on-class. Any cross-reset bounding in RAM is dead on
+this bench.
+
+**E12 (`m4ae`): the host-armed window — bounded by construction.** No self-arm: a magic
+CAN frame (id `0x7F4`, `E1 12 B0 0B`), handled in the 1 ms task, arms the 200-exchange
+window; the bench host spams it from power-on until the first heartbeat or 10 s. Reset
+boots never see the frame again (RCAN mailboxes latch once), so a rejecting supervisor
+produces a bounded silent storm and then a clean observable boot. Result: exactly that —
+~10 s of silent cycling, then a normal boot with the A-law holding and the ammeter flat
+at idle throughout.
+
+**Verdict.** The boot-window hypothesis is dead: early bit 0 (from the first exchanges,
+~25–50 ms into the app) is rejected exactly like late bit 0. Bit 0 has now been refused
+in every word shape (E7–E10), every timing (25 ms to minutes), and every context we can
+construct. The supervisor's bit-0 acceptance is **not temporal and not reachable through
+the SPI conversation**. The remaining candidates live outside our app's behavior: the
+supervisor–counterpart (mechatronic) relationship at power-up, hardware lines
+unobservable on the sealed TCU, or supervisor-internal state conditioned by the Bosch
+boot software's own supervisor service — the next decode targets are the boot programs'
+word shapes (§4.4: bit 6 = `0x40`, bits 7/4 in special boot states) and whether the boot
+manager's service differs by boot path.
+
+Bench infrastructure notes: verify the bus is DARK (4 s of listening) before arming any
+install chain — the front door answers while the old app still runs, and two premature
+catches cost 15 min. E12 chain `/tmp/install_e12.py`, block sig `1aa7a9593a1c0e87`,
+image CRC `3ECFBD47`.
