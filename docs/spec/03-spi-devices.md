@@ -1408,3 +1408,47 @@ cells, keep-warm, state-letter machinery, full bus-0 staging, and 60 s of
    byte. The enable-shadow cell `0xFFF90952 = 0x0001` (bit-3 source active).
    The composed `0x90` data cell `0xFFF90964 = 0x0020` (letter bit only —
    confirms the E16 value from the source side).
+
+**Deep probe of the live stock (immediately after the comprehensive dump).**
+Four more phases: boot-residue sweep (0xFFF80400-0xFFF81400), supervisor
+neighborhood, **peripheral I/O reads via the stock's meas** (the stock ALLOWS
+I/O reads where our firmware denies them — first live peripheral state ever),
+and setpoint staging with live keep-warm. Key findings:
+
+**I/O reads (the stock's meas allows them):**
+| Register | Stock (engaged) | Ours | Note |
+|---|---|---|---|
+| 0xFFFC0D00 (mailbox input) | **0x07D0** | 0x000F | **REAL hardware state delta** |
+| 0xFFFC0D04 (mailbox output) | 0x07D0 | 0x0000 | output reflects input |
+| 0xFFFF1000 (chip ID) | 0x0021 | 0x0021 | same |
+| 0xFFFE0000 (WTCR) | **0x0027** | varies | watchdog config differs |
+| 0xFFFE0002 (WTCNT) | 0x00E5 | varies | being serviced (snapshot) |
+| 0xFFFE0006 (WRCR) | 0x0080 | 0x0080 | same |
+| 0xFFFE0802 (module-stop val) | 0x0000 | 0x0000 | same (0x5555 doesn't persist) |
+| 0xFFFC1400 (RCCR) | 0x0001 | — | matches init-mirror write |
+| 0xFFFE0400 (port ctrl A) | 0x0014 | — | differs from raw state |
+
+**The mailbox input word delta is the sharpest hardware-state difference:**
+0x07D0 (2000) vs 15 (0x000F). Neither is in the handshake's valid set {9,10,13,14},
+so the handshake still wouldn't fire — but the peripheral is genuinely configured
+differently. The stock's software drives the input register to 0x07D0 through a
+mechanism E4's init-mirror didn't reproduce (the module-stop 0x5555 write doesn't
+land in either system).
+
+**Keep-warm cycle confirmed ongoing**: the cell at 0xFFF90586 read 0x53 → 0x3A →
+0x2B across three snapshots (~minutes apart) — all from the cycle list
+(41/34/3A/27/0E/1F/3C/26/44, note 0x2B=43 ≈ the 0x2C=44 entry). The setpoint
+rows also show the low-nibble ticking (E853→E854).
+
+**Boot-residue**: the sweep found the 0xA5A5 magic + DEA7/FADE markers at
+0xFFF80CD6-0xFFF80CE6, and a large cluster of structured data at
+0xFFF80E00-0xFFF81200 (timer/callback tables, the cyclic schedule structures of
+spec 02 §7, counters) — the boot manager's and app's shared scheduling
+infrastructure, live while engaged.
+
+**THE I/O READ CAPABILITY**: the stock's meas protocol reads peripheral
+registers (0xFFFC0000-0xFFFFFFFF range) that our meas denies. This is itself a
+measurable behavioral difference — our `plat_mem_read` limits reads to
+flash + RAM 0xFFF80000-0xFFF9FFFF; the stock's allows I/O. For future
+diagnostics: any peripheral state question can be answered by restoring the
+stock and reading through its meas.
