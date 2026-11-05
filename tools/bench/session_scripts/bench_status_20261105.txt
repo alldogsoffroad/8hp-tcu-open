@@ -97,3 +97,16 @@
     ONE power state, catch on the fresh boot -> power-cycle -> watch: echo (sub 9,2
     armed FIRST), ammeter (announce ~0.27A IF the rail closes: keep-warm 100mA class),
     heartbeat. Prediction: grant/rail inside ~15s if either delta was the gate.
+[E15 RESULT: MECHANICALLY PERFECT, NO GRANT - both additive deltas eliminated]
+  - Install clean: 1 block (0x40000, sig a523e40219207134), 21/21 verify. Watcher from
+    dark: instant HOLD +5s, tokens ~3.3/s, echo AA90 pure mirror through app+70s,
+    ammeter 0.167A flat.
+  - Nibble job verified from RAM counters: nib_aa=43937 ~= sent=43932, nib_other=0,
+    nib_rx=AABB. SSLB0 ANSWERS the 0x0000 poll AA-class every pass on our bench (the
+    driving stock's captured reply was 0x0000 - state-dependent nibble).
+  - sshlb2_rx=0E1F->0E23 (SSLB2 wanders as ever). echo_ok ~ sent/2 (toggle phase).
+  - ELIMINATED: 0x40BC0-missing and zero-setpoints as SUFFICIENT conditions. Next
+    suspects: 0x90 tail bit (0x9020 vs 0x9021 dynamic), keep-warm value cycle law,
+    aux-job cadences; then structural (power-up mechatronic relationship).
+  - Image m4ah (E36A4BDA) stays installed; E14 restore path = reinstall m4ag block
+    (sig 6de1830bb5cc517b in e14_sigs.json). Stock restore = /tmp/install_stock.py.

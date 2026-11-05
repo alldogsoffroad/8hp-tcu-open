@@ -1181,3 +1181,17 @@ grant conditions on, the echo gains bit 0 (grant) / bit 5 (rail) within the stoc
 ~15 s commissioning window. If nothing changes, both additive deltas are eliminated and
 the remaining suspects are the `0x90` tail bit, the keep-warm value cycle, and the
 aux-job cadences (enables/SSLB2/nibble queuers, [I] above).
+
+**E15 bench result (2026-11-05, evening).** Install: one block (0x40000, sig
+`a523e40219207134`), all 21 verified. Boot: instant HOLD intact (+5 s), tokens at the
+stock cadence, ammeter flat at 0.167 A, echo a pure mirror (`0xAA90`) through app+70 s —
+**no grant, no rail**. The nibble poll is mechanically perfect: RAM counters
+(`0xFFF846EC..F4`) read `nib_aa = 43937 ≈ sent = 43932`, `nib_other = 0`,
+`nib_rx = 0xAABB` — job 7 ran every pass and SSLB0 answered AA-class every time (on our
+bench SSLB0's status reads 0xBB-data, where the driving stock's captured reply was
+0x0000 — the nibble differs by state, worth remembering when comparing dumps). **Both
+additive deltas are eliminated as sufficient.** Remaining known differences: the `0x90`
+word's dynamic tail bit (staged `0x9020` in the dump vs `0x9021` read live), the
+keep-warm value cycle, and the aux-job cadences (enables/SSLB2/nibble queuers) [I]; past
+those, the difference is structural (the supervisor–mechatronic power-up relationship,
+hardware lines).
