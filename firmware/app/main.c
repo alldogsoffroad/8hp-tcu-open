@@ -81,6 +81,13 @@ static void task_1ms(void)
     sensors_tick_1ms();
     for (uint8_t bus = 0u; bus < (uint8_t)CAN_BUS_COUNT; bus++) {
         for (uint8_t n = 0u; n < 8u && plat_can_recv((can_bus_t)bus, &f); n++) {
+            if (f.id == 0x7F4u && f.dlc == 8u && f.data[0] == 0xE1u && f.data[1] == 0x12u &&
+                f.data[2] == 0xB0u && f.data[3] == 0x0Bu) {
+                /* E12: the host-armed boot window — exactly one shot per power-on
+                 * (the host sends this once; spec 03 section 6.2h) */
+                sup_bit0_boot_arm(200u);
+                continue;
+            }
             if (!uds_rx((can_bus_t)bus, &f) && !meas_rx((can_bus_t)bus, &f)) {
                 vehicle_rx((can_bus_t)bus, &f);
             }
@@ -294,18 +301,21 @@ int main(void)
     plat_can_rx_commit();       /* ascending-id mailboxes: the RCAN ID-reorder hardware
                                  * drops ids whose search crosses an unsorted inversion (bench
                                  * 2026-11-03: 0x361 dead while all other ids received) */
+    (void)plat_can_rx_register(CAN_BUS1, 0x7F4u);   /* E12 host-armed boot window (spec 03
+                                                     * section 6.2h): no self-arm — the bench
+                                                     * host arms the early bit-0 window with
+                                                     * ONE magic frame at power-on; reset boots
+                                                     * never see it again, so a rejecting
+                                                     * supervisor cannot loop (E11 lesson) */
+    plat_can_rx_commit();
 #if defined(TCU_AUTOENGAGE)
-    /* E11 boot trip counter (spec 03 section 6.2h): RAM in .noinit survives watchdog
-     * resets and is cleared only by power-off. The first BIT0_TRIES boots after power-on
-     * send bit 0 in the cyclic word from the first exchange (the stock's own law); a
-     * rejecting supervisor produces a bounded reset storm and then normal A-law boots. */
-    typedef struct { uint32_t magic; uint8_t tries; uint8_t pad[3]; } trip_t;
-    static trip_t s_trip __attribute__((section(".noinit"), used));
-#define TRIP_MAGIC 0xE11B0E11u
-    if (s_trip.magic != TRIP_MAGIC || s_trip.tries > 3u) {
-        s_trip.magic = TRIP_MAGIC;
-        s_trip.tries = 0u;
-    }
+    /* E12 (spec 03 section 6.2h): NO self-armed bit-0 window. E11's self-arm looped
+     * silently — no state survives the supervisor's reject reset (the boot clears user
+     * RAM each handover, or the reject is POR-class; bench 2026-11-05, the loop ran
+     * unbounded with the ammeter at idle). The boot window is armed from the bench
+     * host instead: one magic frame (id 0x7F4, E1 12 B0 0B) in the first ~50 ms,
+     * handled in task_1ms — reset boots never see it again, so the loop is
+     * structurally impossible. */
     /* Bench build (m4 series): the supervisor's acceptance window is a BOOT
      * phenomenon — the engaged stock's echo bit0 is already latched at the
      * first readable instant after power-up (shadow-poll campaign 2026-10-31).
@@ -334,10 +344,6 @@ int main(void)
     sol_set(9u, SOL_MODE_OFF, 0u);
     sup_engage_arm(true);
     sup_engage_request_enable(true);
-    if (s_trip.tries < 3u) {
-        s_trip.tries++;
-        sup_bit0_boot_arm(200u);   /* 200 exchanges = 1 s at 5 ms (spec 03 section 6.2h) */
-    }
 #endif
     sched_init(s_tasks, (uint8_t)(sizeof s_tasks / sizeof s_tasks[0]));
 
