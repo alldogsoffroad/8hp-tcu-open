@@ -1531,3 +1531,16 @@ over extended runtime — 1.755 A at power-on → **1.932 A after ~15 minutes**
 engaged. The stock actively manages its output currents (thermal compensation
 or pressure-control strategy). This confirms the stock is performing live
 closed-loop control on the mechatronic.
+
+**DMA + SPDR resolution (final two unknowns).** The RSPI-B DMA request
+registers (`0xFFFE6074/76`) read **zero** in the engaged stock — **the stock
+does NOT use DMA for its supervisor-bus exchanges**. The "DMA-driven
+architecture" assumption is corrected: the stock's normal app drives RSPI-B from
+the CPU, same as our firmware. **The DMA-timing hypothesis (different exchange
+timing causing the rail window difference) is eliminated.** SPDR
+(`0xFFFFB804`) reads `0x0000` through the meas across 100 fast polls — the
+register is write-only/clear-on-read through the memory path; the toggle
+cadence is known from the disassembly (5 ms) and our wire matches. The DMAC
+channel registers (0xFFFEC400-0xFFFEC700) also read zero through the meas
+(likely write-only); the DMAC OR/status at 0xFFFE4400 shows active interrupt
+vectors matching the INTC data.
