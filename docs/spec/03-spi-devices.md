@@ -1075,3 +1075,31 @@ sequence, and what conditions each letter).
 
 Bench note (twice learned): mode-3 echo reads require the display mode armed first
 (FE13 sub 9,2); observation runs that skip it lose the echo silently.
+
+### 6.2k The state-letter machinery decoded (2026-11-05) [O]
+
+**The letters are binary flags.** The setter at `0x8C7A8` (`set_letter(slot, value,
+cond)`): `LETTERS[slot] = (cond ? 'c' (0x63) : 0)` — a byte array at `0xFFF90944[]`,
+each slot either the letter `'c'` or zero, plus a parallel state array written at
+`0xFFF93A8E[slot]` and per-slot state at `0xFFF94FD0/0xFFF94FCE`. The initializer at
+`0x093298` clears letters[0..1] at start-up.
+
+**The consumer** (the supervisor's register-`0x90` composer, `0x91758`): the base data =
+`0xFFF90963 & 0x1D`, then three letter lookups — slot indices from flash tables at
+`0x1918E8[0..2]` — each `'c'` sets one bit: **bit 5, bit 6, bit 7 of the `0x90` register
+data, one per switch-output letter**. The stock's live `0x9021` = base `0x21` with letter
+slot 0's `'c'` set (bit 5). *Our E10+ hardcoded `0x9021` already equals this engaged
+composition* — the letter's effect on the `0x90` word is not the missing piece.
+
+**The condition sources** (the caller state machine at `0x85B00-0x85CC0`): the letter
+slot for each switch output derives from a vehicle-state classifier — code 17 (`0x11`)
+and code 68 (`0x44`), code 51/102, code 34 — with per-slot cells at `0xFFF90947` and
+condition bits from a calibration-indexed table (`0x1914AA`, bit tests per slot). This is
+the stock's **switch-output arbitration**: which outputs the state letters certify as
+allowed. The `'c'` letter = the certification that our `0x9021` bit 5 represents.
+
+**Implication:** the letters feed MORE than the `0x90` word (which we already match).
+The remaining consumer is inside the control-word composer (`0x91C8A`, reading the
+`0xFFF9094A` cell block via GBR) — i.e., the letters may gate the WORD composition
+itself through the state cells. That composer path is the next decode: what the word
+builder does with `0xFFF90962/63` (the cells downstream of the letters).
