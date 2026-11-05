@@ -1283,3 +1283,24 @@ window.** The renewal lives at the boot→app handover or inside the supervisor'
 own conditions. Next: restore the stock and dump its TX staging + echo cells at
 +0.1–0.5 s (the bootera dump tooling) — the stock's own words during the window
 are the remaining reference; then the boot manager's supervisor service (§4.4).
+
+**E20 (`m4an`, CRC `A0AE3359`) — THE GRANT.** The E13 host-armed window extended
+with pass-granular delay (magic frame `data[5]` = 5 ms passes): bit 0 fired from
+pass 50 (+250 ms, just after HOLD, ~70 ms of rail window left), 2000 cycles, held
+on. Film: rail up 1–63, drop at 64 as always — and at **pass 129 (+645 ms) the
+echo's bit 0 went high: `0xAA91`, the first GRANT ever, latched through the end of
+the ring (+2.5 s)**. Not a mirror — a mirror would answer at pass 51; the ~400 ms
+hold-back is a decision, and +645 ms sits square inside the old "tolerance band"
+[+0.5…15 s], which we now understand was never tolerance: it was the ACCEPTANCE
+WINDOW, gated on the ask coming from the fully-mirrored stream (E13's +6.2/+14 s
+asks got no grant because the stream then carried 0x9021, no nibble poll, no bus-0
+poll, slow ladder, zero setpoints — the context, not the bit, was refused).
+**Both conditions were necessary: the full mirror AND the ask.** The rail bit
+itself stayed 0 (the window had closed at 320 ms, before the grant arrived) and
+the ammeter read idle — grant without rail. A display re-arm later unlatched the
+sustained grant (the known lab quirk: sub 9,2 memsets the ladder) — the A-law
+should self-sustain once granted; do not re-arm while observing it. **E21
+(`m4ao`, CRC `A6593396`): the stock's enable-edge WDT switch (0x920A4) fires on
+the grant latch — WTCR to interval mode, IPR 0xE — the WDTOVF pin change the
+supervisor may need to raise the rail** (§4.4: "while outputs are active the
+external supervisor is the watchdog that matters").

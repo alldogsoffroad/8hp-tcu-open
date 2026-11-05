@@ -23,6 +23,10 @@ static uint16_t s_pat_word, s_pat_toggle;
 static uint8_t s_app8e, s_app90;       /* stock-pattern data bytes (FE13) */
 static uint8_t s_app_toggle = SUP_BIT_TOGGLE;   /* life-sign bit the pattern alternates */
 static bool s_app_sslb2;               /* pattern includes the SSLB2 exchange */
+static bool s_wdt_interval;            /* E21: the grant edge switched the MCU watchdog
+                                        * (stock 0x920A4: enabled -> WTCR interval mode,
+                                        * IPR05 low nibble 0xE — the WDTOVF pin change is
+                                        * the observable; the supervisor watches it) */
 
 void sup_init(void)
 {
@@ -142,6 +146,15 @@ static void app_pattern_tick(void)
                              (s_toggle ? s_app_toggle : 0u));
     if (sup_engage_active() && sup_engage_enable_bit()) {
         bits |= SUP_BIT_ENABLE;
+        if (!s_wdt_interval) {         /* E21 (spec 03 section 6.2o): the stock's
+                                        * enable-edge switch (0x920A4) — the MCU's own
+                                        * watchdog moves to interval mode exactly when
+                                        * the enable goes out. The supervisor watches
+                                        * the WDTOVF pin; the rail's next bit may hang
+                                        * on it. */
+            s_wdt_interval = true;
+            plat_wdt_mode(true);
+        }
     } else if (s_boot_bit0_delay != 0u) {
         s_boot_bit0_delay--;         /* E13: hold until the supervisor's own power-up is
                                       * done (stock engages at ~+15s, spec 03 6.2i) */

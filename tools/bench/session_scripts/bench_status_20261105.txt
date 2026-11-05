@@ -138,3 +138,20 @@
     supervisor service decode (word shape/rate at handover, the bit-6 word);
     (3) the ammeter fine-trace tooling (Ammeter stream stalls after ~1s - use raw
     serial + periodic A1 re-arm).
+[E20: *** THE GRANT *** - echo bit 0 latched at +645ms, first ever]
+  - E20 m4an (A0AE3359, sig 80dbb2ed6b1f5d9b): E13 magic frame extended, data[5]=raw
+    pass delay; spam E1 12 B0 0B 00 32 from dark; bit 0 from pass 50 (+250ms, post-
+    HOLD, inside the rail window), 2000 cycles held.
+  - Film: rail 1-63, drop 64 (as always) ... GRANT AT PASS 129 (+645ms): echo AA91
+    bit0=1 through ring end (+2.5s). NOT a mirror (would answer pass 51) - a
+    ~400ms DECISION. The old "tolerance band" [+0.5..15s] = the ACCEPTANCE WINDOW,
+    gated on the full-mirror context (E13's asks got nothing with the old stream).
+    BOTH CONDITIONS NECESSARY: full mirror AND the ask.
+  - Rail bit stayed 0 (window closed before the grant arrived); ammeter 0.166.
+    Grant-without-rail: one bit short of the stock's AAB1.
+  - A LATER DISPLAY RE-ARM (9,2) unlatched the sustained grant - the lab quirk
+    (re-arm memsets the ladder). Once granted, DON'T re-arm; the A-law sustains.
+  - E21 m4ao (A6593396): the grant edge fires the stock's 0x920A4 enable-edge WDT
+    switch (plat_wdt_mode(true): WTCR interval + IPR 0xE). The WDTOVF pin change is
+    the candidate rail-raiser. NEXT RUN: power-cycle + spam, WATCH AMMETER FIRST,
+    read ring, do NOT re-arm the display.

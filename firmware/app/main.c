@@ -96,8 +96,14 @@ static void task_1ms(void)
                 f.data[2] == 0xB0u && f.data[3] == 0x0Bu) {
                 /* E13: the host-armed window, now at the stock's engagement age —
                  * data[4] = delay seconds (default 12, the boot-era capture's ~+15s
-                 * minus the app's own start lag; spec 03 section 6.2i) */
-                sup_bit0_boot_arm(200u, (uint16_t)(f.data[4] * 200u));
+                 * minus the app's own start lag; spec 03 section 6.2i).
+                 * E20 (spec 03 section 6.2o): data[5] != 0 = the delay in RAW
+                 * 5 ms passes — pass-granular arming so bit 0 can fire INSIDE the
+                 * ~320 ms rail window (e.g. 0x32 = pass 50, just after HOLD at
+                 * pass 49), the one cell never tested: the fully-mirrored stream
+                 * asking while the rail is still up. Cycles raised to 2000
+                 * (10 s of asking; the stock never stops). */
+                sup_bit0_boot_arm(2000u, f.data[5] != 0u ? f.data[5] : (uint16_t)(f.data[4] * 200u));
                 continue;
             }
             if (!uds_rx((can_bus_t)bus, &f) && !meas_rx((can_bus_t)bus, &f)) {
