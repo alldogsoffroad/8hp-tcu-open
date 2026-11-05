@@ -161,6 +161,16 @@ void sup_engage_replies(const uint16_t *rx, uint8_t n)
         }
         harvest_fb(rx[1]);
         s.lvl_echo = (uint8_t)(rx[0] & 0x3Fu);
+        if (s.lvl_echo == LEVEL_RUN) {
+            /* E14 (spec 03 section 6.2j): the supervisor powers up at 0x1F —
+             * already engaged-ready (boot-era probe reads 1F BEFORE any level
+             * command, 2026-11-05). Do NOT disturb it with the 1..7 ramp: the
+             * stock's own law arms its enable in one monitor pass with no ramp
+             * (0x873F0, state <= 6 ~always true). Command 0x841F — confirm
+             * what is already there — and the HOLD transition follows on the
+             * first matching echo. */
+            s.lvl_cmd = LEVEL_RUN;
+        }
         s.state = ST_RAMP;               /* the exchange IS the sequence: the
                                           * fb nibble wanders (reads 7 cold) —
                                           * the stock always runs the loop */
