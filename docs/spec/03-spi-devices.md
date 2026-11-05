@@ -1513,3 +1513,21 @@ affect the SPI data latching and select polarity, not the wire content.
 
 The fast echo poll (toggle cadence measurement) did not complete — the script
 stalled. This is the one data point not captured from the live stock.
+
+**Gap sweep of the never-read RAM (0xFFF91000-0xFFF93C00) + ammeter drift.**
+117 nonzero regions found in the previously-unexamined area. Key discoveries:
+- **A VIN at 0xFFF93BDA**: ASCII "1C6RR7FT9JS284765" — the vehicle
+  identification number, stored in RAM from the mechatronic communication
+- **ASCII version strings**: "c01026" at 0xFFF91B88 (build/date?)
+- **Calibration/configuration structures**: pointers into 0xFFF90Axx, float
+  values (~3.6, ~3.99, ~3.98 — voltage or current measurements), structured
+  config blocks with repeated patterns
+- **Lookup table at 0xFFF917F8**: `01 05 09 0b 13 00` (repeated twice)
+The sweep covered ~0xFFF91000-0xFFF93C00; the remaining gap to 0xFFF9E000 and
+the DMA/SPDR reads were not completed.
+
+**Ammeter drift observation (user)**: the stock's driving current climbs slowly
+over extended runtime — 1.755 A at power-on → **1.932 A after ~15 minutes**
+engaged. The stock actively manages its output currents (thermal compensation
+or pressure-control strategy). This confirms the stock is performing live
+closed-loop control on the mechatronic.
