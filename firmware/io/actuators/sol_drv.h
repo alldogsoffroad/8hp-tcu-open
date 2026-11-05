@@ -50,6 +50,8 @@ typedef struct {
     uint16_t   cfg_mismatch;    /* config/cyclic read-back words that did not echo; the reply
                                  * format is open (bench 2026-10-30) — logged, not faulted */
     uint32_t   cycles;
+    uint32_t   id_poll_ok;      /* E19: 5 ms ID polls with clean headers */
+    uint32_t   id_poll_bad;     /* transport loss or bad headers (never faulted) */
     sol_chip_t chip[SOL_CHIPS];
     ma10_t     current[SOL_CHANNELS];
     uint8_t    mode[SOL_CHANNELS];
@@ -64,6 +66,9 @@ void sol_set(uint8_t ch, sol_mode_t mode, ma10_t current);
 /* All channels off. */
 void sol_all_off(void);
 void sol_tick_10ms(void);
+/* E19 (spec 03 section 6.2o): the stock queues the bus-0 ID job EVERY 5 ms pass
+ * (engine kick 0x921A0). One 10-frame poll: no retries, no fault latch. */
+bool sol_id_poll(void);
 const sol_status_t *sol_status(void);
 
 /* Engaged re-configuration (spec 03 section 6.2e): the stock's commissioning write job is a

@@ -284,6 +284,10 @@ static void task_5ms(void)
         g_first_sup_ms = g_sched_ms;
     }
     sup_tick_5ms();     /* external supervisor service; output enable stays off */
+    /* E19 (spec 03 section 6.2o): the stock's 5 ms engine also queues the bus-0
+     * ID job every pass (0x921A0) — the one 5 ms behavior we never mirrored. The
+     * RSPI-A lines run to the mechatronic connector; keep them alive. */
+    (void)sol_id_poll();
 }
 
 static const task_t s_tasks[] = {

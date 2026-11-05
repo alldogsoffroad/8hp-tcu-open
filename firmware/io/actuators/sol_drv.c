@@ -192,6 +192,27 @@ static void job_cyclic(void)
     }
 }
 
+bool sol_id_poll(void)
+{
+    /* E19 (spec 03 section 6.2o): the stock's 5 ms task queues the bus-0 ID job
+     * EVERY pass (engine kick 0x921A0 -> descriptor 0x40A98) - we ran it once at
+     * init. The RSPI-A lines run to the mechatronic connector: bus-0 activity is
+     * electrically observable even though the supervisor never sees the frames.
+     * No retries, no fault latch - a lost poll is just counted. */
+    put_cmd(0u, 0x0600u);
+    put_cmd(1u, 0x0000u);
+    if (!xfer(10u)) {
+        return false;
+    }
+    const bool ok = real_chip_headers(10u);
+    if (ok) {
+        s_st.id_poll_ok++;
+    } else {
+        s_st.id_poll_bad++;
+    }
+    return ok;
+}
+
 void sol_init(void)
 {
     memset(&s_st, 0, sizeof s_st);

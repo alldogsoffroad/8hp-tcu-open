@@ -1269,3 +1269,17 @@ lives outside the mirrored conversation. Remaining un-mirrored 5 ms behavior fro
 the scheduler decode: the stock queues the **bus-0 ID job every pass**
 (`0x921A0`); ours runs it once at init. The boot manager's own supervisor service
 (word rate/content, §4.4: bit 6 = 0x40) is the other open door.
+
+**E19 (`m4al`, CRC `3F2C767D`) — the last 5 ms behavior eliminated.** The bus-0 ID
+job queued every pass (`sol_id_poll`, mirroring `0x921A0`). Result: the ring is
+**identical to E18** — rail up passes 1–63, HOLD at 49, drop at exactly pass 64
+(+320 ms). The window is not renewed by bus-0 activity. The ammeter ground truth
+changed though: **0.217 A during the window** (idle + ~50 mA ≈ exactly one
+keep-warm channel) vs 0.180 in E18 — with bus-0 alive the rail delivered real load
+current for the first time, then still closed at +320 ms. **Conclusion: every
+app-side behavior — cyclic words, register jobs, ladder timing, bus-0 cadence,
+setpoints, `0x90` word, nibble poll — is stock-mirrored and none renews the
+window.** The renewal lives at the boot→app handover or inside the supervisor's
+own conditions. Next: restore the stock and dump its TX staging + echo cells at
++0.1–0.5 s (the bootera dump tooling) — the stock's own words during the window
+are the remaining reference; then the boot manager's supervisor service (§4.4).

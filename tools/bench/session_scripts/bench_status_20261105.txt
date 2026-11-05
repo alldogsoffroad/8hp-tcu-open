@@ -123,3 +123,18 @@
     2E: ABFF vs AA05 (class change bit 11). Likely rail telemetry (0x2E stores a
     10-bit value+flag -> 0xFFF907CC). NEXT: decode 0x24/0x28/0x2E read meanings
     (handler 0x93096) - if telemetry, cyclic stream is CLOSED, hunt goes structural.
+[E19: BUS-0 ID HEARTBEAT - window NOT renewed, but the rail DELIVERED]
+  - E19 m4al (3F2C767D, block sig 0585d76d06e2d78f): sol_id_poll = the bus-0 ID job
+    every 5ms pass (the stock's 0x921A0 engine behavior, never mirrored before).
+  - Ring IDENTICAL to E18: rail up passes 1-63, HOLD at 49, drop at exactly pass 64
+    (+320ms). Bus-0 activity does NOT renew the window.
+  - USER AMMETER: 0.217A during the window (was 0.180 in E18) = idle + ~50mA =
+    EXACTLY ONE keep-warm channel (49.8mA). First boot where the rail delivered
+    real load current. Then closes at +320ms as always.
+  - THE APP SIDE IS NOW EXHAUSTED: every stock behavior mirrored, none renews.
+    NEXT SESSION: (1) stock restore + boot-era dump at +0.1-0.5s (0x361 reads of
+    0xFFF88100-0xFFF88600 staging + echo cells 0xFFF907C8-block) = the stock's own
+    words DURING the window - the reference we never captured; (2) boot manager's
+    supervisor service decode (word shape/rate at handover, the bit-6 word);
+    (3) the ammeter fine-trace tooling (Ammeter stream stalls after ~1s - use raw
+    serial + periodic A1 re-arm).
