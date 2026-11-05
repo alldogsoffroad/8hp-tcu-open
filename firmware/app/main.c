@@ -295,6 +295,17 @@ int main(void)
                                  * drops ids whose search crosses an unsorted inversion (bench
                                  * 2026-11-03: 0x361 dead while all other ids received) */
 #if defined(TCU_AUTOENGAGE)
+    /* E11 boot trip counter (spec 03 section 6.2h): RAM in .noinit survives watchdog
+     * resets and is cleared only by power-off. The first BIT0_TRIES boots after power-on
+     * send bit 0 in the cyclic word from the first exchange (the stock's own law); a
+     * rejecting supervisor produces a bounded reset storm and then normal A-law boots. */
+    typedef struct { uint32_t magic; uint8_t tries; uint8_t pad[3]; } trip_t;
+    static trip_t s_trip __attribute__((section(".noinit"), used));
+#define TRIP_MAGIC 0xE11B0E11u
+    if (s_trip.magic != TRIP_MAGIC || s_trip.tries > 3u) {
+        s_trip.magic = TRIP_MAGIC;
+        s_trip.tries = 0u;
+    }
     /* Bench build (m4 series): the supervisor's acceptance window is a BOOT
      * phenomenon — the engaged stock's echo bit0 is already latched at the
      * first readable instant after power-up (shadow-poll campaign 2026-10-31).
@@ -323,6 +334,10 @@ int main(void)
     sol_set(9u, SOL_MODE_OFF, 0u);
     sup_engage_arm(true);
     sup_engage_request_enable(true);
+    if (s_trip.tries < 3u) {
+        s_trip.tries++;
+        sup_bit0_boot_arm(200u);   /* 200 exchanges = 1 s at 5 ms (spec 03 section 6.2h) */
+    }
 #endif
     sched_init(s_tasks, (uint8_t)(sizeof s_tasks / sizeof s_tasks[0]));
 

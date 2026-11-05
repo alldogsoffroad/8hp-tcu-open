@@ -44,6 +44,14 @@ SECTIONS
         __bss_end = .;
     } > RAM
 
+    .noinit (NOLOAD) : {          /* survives watchdog resets (cleared only by power-off):
+                                    * the E11 boot-window trip counter (spec 03 section 6.2h) */
+        __noinit_start = .;
+        *(.noinit .noinit.*)
+        . = ALIGN(4);
+        __noinit_end = .;
+    } > RAM
+
     .app_tail : { KEEP(*(.app_tail)) } > APPTAIL
     .app_end : { KEEP(*(.app_end)) } > APPEND
 

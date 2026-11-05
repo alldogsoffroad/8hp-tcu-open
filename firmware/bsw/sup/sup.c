@@ -96,6 +96,22 @@ void sup_app_pattern3(bool on, uint8_t bits8e, uint8_t toggle_bit, uint8_t bits9
     sup_app_pattern2(on, bits8e, bits90, true);
 }
 
+/* E11 (spec 03 section 6.2h): the BOOT bit-0 window. The stock's own enable fires within
+ * its first monitor pass (monitor 0x873F0: state 0xFFF93BA1 <= 6, ~always true in normal
+ * running) and the Oct-31 shadow-poll saw the echo's bit 0 latched at the first readable
+ * instant after power-up — the stock sends bit 0 from its first cycles and it is ACCEPTED.
+ * Every bit-0 word we ever forced was minutes late (all windows ran at ladder-complete).
+ * This window sends bit 0 unconditionally for the first exchanges after boot; if the
+ * echo mirrors it once, the A-law sustains it naturally. Bounded by the caller (the .noinit
+ * trip counter in main caps the total attempts, so a rejecting supervisor produces a short
+ * reset storm and then a normal A-law boot). */
+static uint16_t s_boot_bit0_left;
+
+void sup_bit0_boot_arm(uint16_t cycles)
+{
+    s_boot_bit0_left = cycles;
+}
+
 /* One 5 ms pass of the stock application's supervisor exchange: the three cyclic jobs of
  * spec 03 section 4.4, frames alternating SSLB1 (even) / SSLB0 (odd) through the
  * two-command SPCMD sequence. */
@@ -115,6 +131,9 @@ static void app_pattern_tick(void)
                              (s_toggle ? s_app_toggle : 0u));
     if (sup_engage_active() && sup_engage_enable_bit()) {
         bits |= SUP_BIT_ENABLE;
+    } else if (s_boot_bit0_left != 0u) {
+        s_boot_bit0_left--;
+        bits |= SUP_BIT_ENABLE;      /* the boot window: bit 0 from the first exchanges */
     }
     const uint16_t job1[4] = {
         (uint16_t)(SUP_CMD_CONTROL | bits), 0xC900u, 0x2200u, 0x0900u,

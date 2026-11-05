@@ -70,5 +70,13 @@ void sup_app_pattern2(bool on, uint8_t bits8e, uint8_t bits90, bool with_sslb2);
  * engaged application alternates BIT 4 with bit 7 held (word 0x8E91/0x8E81, stock RAM
  * 0xFFF907D4 capture 2026-10-31), not the boot software's bit 2. */
 void sup_app_pattern3(bool on, uint8_t bits8e, uint8_t toggle_bit, uint8_t bits90);
+/* E11 boot bit-0 window (spec 03 section 6.2h): send bit 0 unconditionally for the first
+ * `cycles` exchanges after boot — the stock's own enable fires in its first monitor pass
+ * (0x873F0) and the echo bit 0 is latched at the first readable instant (2026-10-31
+ * shadow-poll), so bit 0 rides the word from cycle one in the stock; every forced bit-0
+ * word of ours was minutes late. If the echo mirrors it once, the A-law sustains it. The
+ * caller bounds the total boot attempts (a rejecting supervisor = short reset storm, then
+ * a normal A-law boot). */
+void sup_bit0_boot_arm(uint16_t cycles);
 
 #endif
