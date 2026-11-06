@@ -316,3 +316,17 @@ writer / boot handover state.
 Restored E31b (m4av) @10:38, heartbeat verified. Images: m4au E31, m4av
 E31b (GOOD), m4aw E32 (dead), m4ax E32r (loops). Sig files all in /tmp.
 Ammeter tooling final: bulk read(4000) only, alone on ACM1, ~900Hz A-lines.
+
+=== 2026-11-06 AFTERNOON (E32-E35r, commit e268878) ===
+SPCMD AUDIT: all 5 transport patterns match ours. NO framing errors.
+BOOT-DEATH ROOT CAUSE: unreverted E32r 0x91 constant — 6 builds died from
+the same supervisor reset class, NOT from pool shifts or code corruption.
+LESSON: git diff working tree vs last proven build BEFORE binary forensics.
+E35r: startup handshake (8800s + commit + reads) SAFE — boots, HOLD reached,
+rail window normal, 0x24 still FF. Supervisor engagement independent of
+startup sequence.
+Job decode: stock's job table order = SSLB1 startup FIRST → bus-0 → cyclic.
+Boot manager: ZERO RSPI-B references (never talks to supervisor).
+Letter classifier (0x85B00/0x8C7A8): decoded — stock's internal permission
+gate, invisible to supervisor. The refusal is supervisor-state.
+Bench left on E35r (m4bd), heartbeat alive, HOLD, .16x.
