@@ -211,3 +211,26 @@ BSS map (m4ar): bit0 delay/left = FFF84698/FFF8469A, state hist FFF846AC,
 ring FFF848B0, n FFF848AC, s_st FFF84CB4, engage s FFF84D14 (12B H 4B:
 state sel lvl lvl_cmd rot jobs bad echo_ok echo_bad lvl_echo retries status
 tokens enable_req efs echo_grant enable_sent).
+
+=== E26 + E27 (18:37-18:55) — commit 5b2724c ===
+E26 d2 (ask pass 3, inside window): REFUSED through pass 2002. Late re-ask
+(delay 150) on same instance: GRANT in 1 pass => NO POISON; supervisor has a
+READY moment after each start (varies ~pass 100-200+); early asks ignored.
+Recipe 5/5: wait >=1s, then ask. Ask-during-window never grants (grant x rail
+overlap dead).
+Grant lease: 160s / 122s / 324-417s (3 grants) — finite, variable, ends in
+warm MCU reset (rail window re-opens each time). Grant-3 death coincided with
+UDS session probing — cadence sensitivity suspected, unproven.
+RAIL BIT = 0x22 echo bit5. Stock cached echo 0xA1 = grant+RAIL; ours 0x91 =
+grant, rail clear, ALWAYS. Rail = sole remaining prize.
+E27: grant @1s (recipe), session 03 + FE13 14,1 ACCEPTED => app RESTARTED at
+that exact second (g_sched_ms/sol-cycles confirm; no fault latch). The 40-word
+duty job + 45-word cyclic + sup stream in one tick = WDT reset. STOCK's ring
+scheduler (spec 02 7) is the answer — our inline scheduler is the bench-proven
+blocker. E28 = interleave the duty job across passes.
+UDS notes: 0x7E1/0x7E9; session 10 03 is load-bearing (raw 31 without session
+=> no reply); after a 7F 78 (respPending) the next request can be eaten.
+Ammeter: E27 boot .211 blip (restart rail window) -> .166.
+Scripts: /tmp/e26_run.py (sweep), /tmp/e27_run.py (grant+duty+rail watch),
+/tmp/e25_retry.py. Map (m4ar): duty_runs@FFF850D4+88, s_duty_cyc@FFF851FB,
+sol s_st@FFF850D4, g_sched_ms@FFF8D9C4.

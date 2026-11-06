@@ -19,6 +19,7 @@ int main(void)
     CHECK(sol_setpoint(20000u) == 2047u);
 
     /* start-up: ID + configuration with the stock bytes */
+    sol_stream_gate(true);      /* E29: tests exercise the legacy always-on stream */
     sol_init();
     CHECK(s->ready && s->faults == 0u);
     CHECK(s->chip[0].id[0] == 0x12u);
@@ -99,12 +100,14 @@ int main(void)
     }
 
     /* header fault, bus fault, and start-up failure */
+    sol_stream_gate(true);      /* E29: tests exercise the legacy always-on stream */
     sol_init();
     stub.drv_bad_header = true;
     sol_tick_10ms();
     CHECK((s->faults & SOL_F_HEADER) != 0u);
     stub.drv_bad_header = false;
     stub.drv_fail = true;
+    sol_stream_gate(true);      /* E29: tests exercise the legacy always-on stream */
     sol_init();
     CHECK(!s->ready && (s->faults & (SOL_F_BUS | SOL_F_NOT_READY)) == (SOL_F_BUS | SOL_F_NOT_READY));
     stub.drv_fail = false;

@@ -1658,3 +1658,44 @@ a properly loaded stream.
 Ammeter note (E27 power-on): .211 blip → .166 — higher than the usual .19
 settle; consistent with the restart's rail window (E25: every restart re-opens
 ~320 ms of rail) stacked near the boot window.
+
+### 6.2s E28/E29 — the supervisor's reset law, the stall threshold, and the pure stream (2026-11-05, late night) [O]
+
+**E28 (m4as, WTCR = 0xA527 interval from init): the reset was never ours.**
+The hardware manual (R01UH0480EJ0400 s14.3.1) corrected a core decode: bit 6
+WT/IT — 1 = watchdog (overflow = internal reset via WRCR + 64-cycle WDTOVF
+pin pulse), 0 = interval timer (masked ITI only, no reset, no pin). Our
+wdt_init had run 0xA567 = WATCHDOG since E1; the engaged stock reads 0x27 =
+INTERVAL. E28 ships interval mode (the stock's engaged word) — our self-reset
+path is gone entirely. CKS=111 overflow budget 104-210 ms; plat_wdt_service
+gives ~15-30 ms headroom per call; plat_drv_xfer's guard loops never service.
+
+**E28 bench: the duty-cyclic under grant STILL reset the MCU at the exact
+duty-fire second (g_sched_ms dates the instance to it) — with our watchdog
+disarmed. THE SUPERVISOR RESET THE MCU.** It owns the reset line; a stalled
+5 ms stream while granted = immediate reset. Ungranted + duty = NO reset
+(n=2, E27-era and E28). The law: **after the grant the supervisor enforces
+the stream; before it, hiccups are tolerated.** This retroactively explains
+the grant-lease "expiries" (variable 122-417 s lifetimes = accumulated
+stream hiccups under grant) and the heavy-read-burst death of grant-1.
+
+**E29 (m4at, the bus-0 stream gate): purity is exonerated for the rail.**
+First boot ever with a pure supervisor stream (sol_drv gated OFF at init;
+FE13 sub 15 toggles live; tests open the gate explicitly). Grant recipe 7/7
+(delay 150). Results:
+- **Rail bit NEVER set on the granted pure stream** (30 s watch, tokens
+  flowing, echo AA91 throughout).
+- **Rail window closes at pass 65** — identical to every noisy boot. The
+  window is not shortened by our bus-0 traffic, and not extended by purity.
+- **The cyclic under a live grant is TOLERATED** (gate opened mid-grant:
+  instance continuous, grant survived) — the stall threshold sits between
+  ~11 ms (cyclic alone) and ~20 ms+ (cyclic+duty stacked). The duty job
+  remains the only fatal stall (n=2 under grant).
+- Live first: granted enable stream + cyclic driver jobs simultaneously —
+  the stock's engaged wire shape, running.
+
+**Rail suspects remaining (both hardware-config):** SPDCR (stock 0x0500 vs
+our 0x0000) and SSLP (stock 0x0020 vs our 0x0000) — the RSPI-B electrical
+config; SSLP bit 5 is plausibly the SUPERVISOR'S OWN SELECT-LINE POLARITY
+(SSL1P). E30 = match them (manual-checked bit decode first). Also open: the
+boot handover gap timing (continuity theory's dead gap).

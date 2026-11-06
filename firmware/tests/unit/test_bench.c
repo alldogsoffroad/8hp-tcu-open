@@ -109,6 +109,7 @@ int main(void)
     vehicle_init();
     uds_init(&app);
     sup_init();
+    sol_stream_gate(true);      /* E29: tests exercise the legacy always-on stream */
     sol_init();
     bench_init();
     stub.sup_reply = 0xA800u;
@@ -181,6 +182,7 @@ int main(void)
     CHECK(!bench_active() && sol->mode[1] == SOL_MODE_OFF);
     stub.drv_bad_header = false;
     CHECK(!start(1u, 300u, 5u) && last_nrc() == 0x22u);     /* latched until re-init */
+    sol_stream_gate(true);      /* E29: tests exercise the legacy always-on stream */
     sol_init();
     run_10ms(1u);
 

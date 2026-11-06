@@ -103,6 +103,7 @@ static void reset_all(void)
     s_prev_release = false;
     s_violations = 0u;
     vehicle_init();
+    sol_stream_gate(true);      /* E29: tests exercise the legacy always-on stream */
     sol_init();
     sup_init();
     plat_toe_out_init();

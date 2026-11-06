@@ -543,6 +543,16 @@ static int sup_lab_start(const uint8_t *in, uint16_t n)
         s_duty_div = 0u;
         return 0;
     }
+    if (in[0] == 15u) {                                    /* E29 (spec 03 section 6.2s):
+                                                             * bus-0 stream gate - the
+                                                             * pure-stream A/B. Opening
+                                                             * runs the commissioning. */
+        if (n != 2u || in[1] > 1u) {
+            return -NRC_ROOR;
+        }
+        sol_stream_gate(in[1] != 0u);
+        return 0;
+    }
     if (in[0] == 9u) {                                     /* engage sequence: arm /
                                                              * [1 = enable req] /
                                                              * [2 = stock order: enable

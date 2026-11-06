@@ -52,12 +52,25 @@ static void port_init(void)
 }
 
 /* ---- Watchdog (spec 05 section 2) ------------------------------------------ */
+/* E28 (spec 03 section 6.2r): WTCR bit decode CORRECTED against the hardware
+ * manual (R01UH0480EJ0400 s14.3.1) — bit 6 WT/IT: 1 = WATCHDOG (overflow =
+ * internal reset via WRCR + a 64-cycle WDTOVF pin pulse), 0 = INTERVAL TIMER
+ * (overflow = masked ITI interrupt only, no reset, no pin). The old comment
+ * had the two modes swapped. The engaged stock's live WTCR reads 0x27 = bit 6
+ * CLEAR = INTERVAL, TME=1, CKS=111 (spec 03 section 6.2p) — the stock disables
+ * its own reset while engaged, and so do we now, from init. E27 proved the
+ * watchdog mode's cost: the duty job + cyclic job + supervisor pass in one
+ * 10 ms tick sum to ~20-25 ms against a ~15-30 ms service budget (the xfer
+ * guard loops never service) — watchdog overflow, chip reset, grant lost.
+ * Interval mode removes the internal reset entirely; a hang is recoverable
+ * only by power cycle (storm catch works — bench build, accepted). */
 static void wdt_init(void)
 {
     WDT_WTCR  = 0xA547u;    /* stop (TME = 0) before changing the clock select */
-    WDT_WRCR  = 0x5A80u;    /* overflow resets the chip                        */
+    WDT_WRCR  = 0x5A80u;    /* kept: irrelevant in interval mode (no reset path) */
     WDT_WTCNT = 0x5AB7u;    /* first overflow after ~60 ms                     */
-    WDT_WTCR  = 0xA567u;    /* watchdog mode, running, P/16384                 */
+    WDT_WTCR  = 0xA527u;    /* E28: INTERVAL mode, running, P/16384 — the stock's
+                             * engaged word (live 0x27), no self-reset */
 }
 
 void plat_wdt_service(void)
@@ -65,11 +78,14 @@ void plat_wdt_service(void)
     WDT_WTCNT = 0x5ADBu;    /* ~30 ms to overflow */
 }
 
-/* Watchdog mode switch, the stock enable-edge behavior (0x978A4 / 0x97850): on the
- * output-enable edge the app moves its own watchdog from reset mode into interval-
- * timer mode with the interrupt priority raised to 0xE; on disable back to reset
- * mode with WRCR = 0x5A80. Interrupts stay globally masked in this firmware, so the
- * interval-mode IRQ only pends; the WDTOVF pin behaviour is the observable. */
+/* Watchdog mode switch (unused since E24; kept for the lab). Manual-corrected
+ * decode: bit 6 WT/IT — 1 = watchdog, 0 = interval. The stock enable-edge
+ * behavior (0x978A4 / 0x97850): on the output-enable edge the app moves its
+ * own watchdog into interval-timer mode with the interrupt priority raised to
+ * 0xE; on disable back to reset mode with WRCR = 0x5A80. Interrupts stay
+ * globally masked in this firmware, so the interval-mode IRQ only pends; in
+ * interval mode the WDTOVF pin stays quiet (manual s14.1: the pin output is a
+ * watchdog-mode feature). */
 void plat_wdt_mode(bool interval)
 {
     uint32_t sr;

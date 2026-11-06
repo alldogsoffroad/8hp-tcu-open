@@ -61,6 +61,10 @@ typedef struct {
 
 /* Run identification and configuration; all channels off. */
 void sol_init(void);
+/* E29 (spec 03 section 6.2s): bus-0 traffic gate. OFF at boot = the pure supervisor
+ * stream (no cyclic / status / ID polls interleaved with the 5 ms pass); opening the
+ * gate lazily runs the start-up commissioning. FE13 sub 15 toggles it live. */
+void sol_stream_gate(bool on);
 /* Request a channel's mode and current (0.1 mA). Takes effect with the next cyclic job. */
 void sol_set(uint8_t ch, sol_mode_t mode, ma10_t current);
 /* All channels off. */

@@ -23,6 +23,15 @@ static ma10_t s_req_cur[SOL_CHANNELS];
 static uint8_t s_div;
 static uint8_t s_eng_level;      /* supervisor ladder level mirrored into the 0x8E row */
 static bool    s_cfg_pending;    /* sol_engage_config() staged a re-send               */
+static bool    s_stream_on;      /* E29 (spec 03 section 6.2s): bus-0 traffic gate. Every
+                                  * boot we have ever run interleaved the 45-word cyclic
+                                  * (10 ms slot) and the ID polls with the 5 ms supervisor
+                                  * pass - the RSPI-A burst can push one pass ~20 ms late,
+                                  * and E28 proved the supervisor RESETS the MCU for a
+                                  * stalled pass once granted. Default OFF: the pure
+                                  * supervisor stream from boot (the rail bit has never
+                                  * been observed on any stream that carried bus-0 noise).
+                                  * FE13 sub 15 toggles it live for the A/B. */
 
 static uint16_t s_tx[45];
 static uint16_t s_rx[45];
@@ -194,6 +203,9 @@ static void job_cyclic(void)
 
 bool sol_id_poll(void)
 {
+    if (!s_stream_on) {              /* E29: gated with the rest of bus-0 */
+        return false;
+    }
     /* E19 (spec 03 section 6.2o): the stock's 5 ms task queues the bus-0 ID job
      * EVERY pass (engine kick 0x921A0 -> descriptor 0x40A98) - we ran it once at
      * init. The RSPI-A lines run to the mechatronic connector: bus-0 activity is
@@ -224,6 +236,10 @@ void sol_init(void)
     s_div = 0u;
     s_eng_level = 0u;
     s_cfg_pending = false;
+    if (!s_stream_on) {              /* E29: pure-stream boot - commission the drivers
+                                      * lazily when the gate opens (sol_stream_gate) */
+        return;
+    }
     job_id();
     if (s_st.faults == 0u) {
         job_config(CFG_8E);
@@ -231,6 +247,23 @@ void sol_init(void)
     s_st.ready = s_st.faults == 0u;
     if (!s_st.ready) {
         s_st.faults |= SOL_F_NOT_READY;
+    }
+}
+
+void sol_stream_gate(bool on)
+{
+    if (on && !s_stream_on) {
+        s_stream_on = true;
+        job_id();                    /* first commissioning now that bus-0 is live */
+        if (s_st.faults == 0u) {
+            job_config(CFG_8E);
+        }
+        s_st.ready = s_st.faults == 0u;
+        if (!s_st.ready) {
+            s_st.faults |= SOL_F_NOT_READY;
+        }
+    } else {
+        s_stream_on = on;
     }
 }
 
@@ -269,6 +302,9 @@ void sol_tick_10ms(void)
                                   * climbs, 0x8E row = 0x80 | level (live 0x9F at HOLD) */
         s_cfg_pending = false;
         job_config((uint8_t)(0x80u | s_eng_level));
+    }
+    if (!s_stream_on) {          /* E29: pure supervisor stream - no bus-0 traffic */
+        return;
     }
     job_cyclic();
     if (++s_div >= 10u) {
