@@ -141,6 +141,22 @@ static void task_10ms(void)
     park_tick_10ms();       /* M4a: decisions only, no outputs */
     bench_tick_10ms();      /* safety interlocks first, then the driver job */
     sol_tick_10ms();
+#if defined(TCU_AUTOENGAGE)
+    /* E37 (spec 03 6.2aa): the stock's keep-warm VALUE CYCLE. The stock's
+     * cells 0xFFF90586/8A walk a 9-value table: 41/34/3A/27/0E/1F/3C/26/44
+     * (hex, driver setpoint units). Two channels cycle: ch0 (chip 0) and
+     * ch6 (chip 3). The cycle advances every 10ms tick. Values in 0.1mA:
+     * setpoint × 6 (spec 12 section 2b). */
+    {
+        static const uint8_t KEEPWARM[9] = {
+            0x41u, 0x34u, 0x3Au, 0x27u, 0x0Eu, 0x1Fu, 0x3Cu, 0x26u, 0x44u
+        };
+        static uint8_t kw_idx = 0u;
+        sol_set(0u, SOL_MODE_CURRENT, (ma10_t)(KEEPWARM[kw_idx] * 6u));
+        sol_set(6u, SOL_MODE_CURRENT, (ma10_t)(KEEPWARM[(kw_idx + 4u) % 9u] * 6u));
+        kw_idx = (uint8_t)((kw_idx + 1u) % 9u);
+    }
+#endif
     meas_table_update();
     meas_tick_10ms();
 }
@@ -388,17 +404,23 @@ int main(void)
      * mode, park release DISABLED, unused channels OFF. E15-E19 ran the stock's
      * keep-warm pair (2 x 49.8 mA); E31 supersedes: full-family setpoints from
      * app start (below). FE10 still overrides during bench tests. */
-    /* E31 (spec 03 section 6.2w): the load-latch test - the rail window has only
-     * ever seen keep-warm class draw (~50-100 mA, E15-E19) and always closed at
-     * pass ~65. The stock draws the 1.7-1.9 A family through the window from
-     * +200 ms. Race it: 7 channels x 250 mA = 1.75 A from the first cyclic
-     * tick. If the supervisor latches the rail on real load, the ammeter holds
-     * the stock-driving family past +370 ms; if not, the window closes on the
-     * same clock as every build (drivers idle at zero actual current with the
-     * rail open - the E15-E19 keep-warm behavior, no new failure mode). */
+    /* E37 (spec 03 section 6.2aa): match the stock's EXACT channel assignments
+     * and keep-warm setpoint cycling. The stock's engaged driving dump:
+     *   chips 0-2 mode byte 0x1A (both channels CURRENT)
+     *   chip 3 mode byte 0x12 (ch0 CURRENT, ch1 DISABLED)
+     *   chip 4 mode byte 0x15 (both OFF — no chip on bench)
+     *   keep-warm on ch0 (chip 0) and ch6 (chip 3): cycling setpoints
+     *   from the stock's value table (spec 03 6.2m)
+     * We had been driving all 7 channels at a static 250mA — completely
+     * different from the stock's pattern. Now: exact mode match + cycling. */
     for (uint8_t ch = 0u; ch < 7u; ch++) {
-        sol_set(ch, SOL_MODE_CURRENT, 2500u);   /* 250.0 mA per channel */
+        /* stock mode assignments: ch0-5 = CURRENT (pressure solenoids),
+         * ch6 = CURRENT (line pressure), ch7 = DISABLED (park release) */
+        sol_set(ch, SOL_MODE_CURRENT, 0u);  /* start at zero; cycling below */
     }
+    sol_set(7u, SOL_MODE_DISABLED, 0u);
+    sol_set(8u, SOL_MODE_OFF, 0u);
+    sol_set(9u, SOL_MODE_OFF, 0u);
     sol_set(7u, SOL_MODE_DISABLED, 0u);
     sol_set(8u, SOL_MODE_OFF, 0u);
     sol_set(9u, SOL_MODE_OFF, 0u);
