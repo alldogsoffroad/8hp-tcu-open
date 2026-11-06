@@ -295,3 +295,24 @@ leftover capture processes before reopening); raw stream ~1.9kHz; steady
 1.88A = fast PWM (A swings 1.5-2.5A, P peaks 8.9A on RSPI spikes).
 Script: /tmp/switchon4.py (proven). Bench on STOCK engaged ~1.89A.
 GOOD NIGHT.
+
+=== 2026-11-06 MORNING (E30-E32r, commits 6fa89cf 61a684a 7b6e893) ===
+E30: '3-7s boot delay' = MEASUREMENT ARTIFACT. Anchored captures (/tmp/e30b.py
+- ammeter power-on anchor + CAN-only-ACM0 listen-only + ammeter-ACM1-thread):
+stock first-CAN +88ms, OURS +42ms. Both apps live <100ms.
+E31: load-latch test sabotaged by bench_channels_off() IDLE WIPE (forced
+ch0-6 OFF every 10ms in every build since Oct — keep-warm NEVER flowed, E19
+attribution corrected). E31b guards it (AUTOENGAGE).
+E31b verdict: setpoints staged+flowing (mode=CURRENT, 250mA x7, engaged 0x9F
+row active, mismatch counter exploded, drivers answer status) — ZERO current.
+VS refusal LOAD-INDEPENDENT. 0x24 = AAFF still (free instrument).
+E32 (m4aw): code-block bit0 patch DIED PRE-CAN twice (m4w boot-death class,
+31KB code shift) — restored E31b.
+E32r (m4ax): ONE-BYTE delta (bits8e 0x90->0x91 = 0x8E91/0x8E81 pair from
+word one) — BOOTED and RESET-LOOPED (Oct-31's reset class reproduced: bit7+
+bit0 from word one without context = supervisor reset). Stock's identical
+word is context-legitimized — next decode: mode-0x31 chain / 0xFFF90951
+writer / boot handover state.
+Restored E31b (m4av) @10:38, heartbeat verified. Images: m4au E31, m4av
+E31b (GOOD), m4aw E32 (dead), m4ax E32r (loops). Sig files all in /tmp.
+Ammeter tooling final: bulk read(4000) only, alone on ACM1, ~900Hz A-lines.
