@@ -1909,3 +1909,31 @@ engagement requires something the startup words don't carry.
 haven't reached. The mode-0x31 chain (0xFFF90951 writer, Oct-31's lead)
 and the ring-buffer scheduler architecture (spec 02 §7) are the last
 decode targets.
+
+### 6.2aa E36 — the CAN schedule: active, transmitted, and eliminated (2026-11-06, afternoon) [O]
+
+**E36 (m4be, 6573E57B): the stock's full CAN transmit schedule enabled.**
+All 8 vehicle IDs (037/2F9 at ~730 frames, 144/170/1A0/2A8 at ~375, 178 at
+76, 3D1 at 16) transmitting at stock rates alongside the heartbeat. App
+alive at +0.053s, HOLD reached, rail window normal (close at ~350ms),
+peak 431 mA. **0x24 still reads FF, grant not earned, rail not latched.**
+The CAN schedule is NOT the output gate.
+
+**Complete elimination table for the supervisor's engagement:**
+| Hypothesis | Eliminated by |
+|---|---|
+| Wire content (byte-identical cyclic) | 6.2p |
+| Transport framing (SPCMD audit) | 6.2z |
+| Boot timing (both <100ms) | 6.2w |
+| Load in window (1.75A, zero delivered) | 6.2w |
+| Startup handshake (safe, no effect) | 6.2z |
+| Register writes (accepted, don't latch) | 6.2v |
+| Grant alone (earned 7/7, no rail) | 6.2q |
+| Engagement heartbeat (already in stream) | 6.2z |
+| CAN schedule (stock IDs at stock rates) | this section |
+
+**Remaining hypotheses (architectural):**
+1. Bus-0 88-mode byte match — stock writes {1A,1A,1A,12,15}, ours differ on chips 3-4
+2. Ring-buffer scheduler — the stock NEVER blocks the 5ms cadence; we do
+3. Mode-0x31 chain — the stock's internal state manager (0xFFF90951 writer)
+4. An unobserved hardware signal (GPIO, voltage, current sense)

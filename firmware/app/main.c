@@ -327,6 +327,17 @@ int main(void)
     park_init();
     sensors_init(&s_sensors_cfg);
     fca_tx_init();
+#if defined(TCU_AUTOENGAGE)
+    /* E36 (spec 03 section 6.2aa): enable the stock's CAN transmit schedule.
+     * The stock sends 8 vehicle IDs (037/144/170/178/1A0/2A8/2F9/3D1) at stock
+     * rates; we've been sending only the heartbeat. The supervisor (or SSLB0)
+     * may monitor CAN activity through the MCU — the vehicle-bus silence could
+     * be the output gate. Data is zero (no sensors); the IDs at proper rates
+     * are the test. */
+    for (uint8_t m = 0u; m < (uint8_t)FCA_TX_MSG_COUNT; m++) {
+        fca_tx_enable((fca_tx_msg_t)m, true);
+    }
+#endif
     uds_init(&s_uds_app);
     meas_table_init();
     (void)com_register_hw();
