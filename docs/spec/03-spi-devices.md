@@ -1734,3 +1734,40 @@ pattern); CAN census captured the stock schedule boot (037/2F9/144/170/1A0/
 2A8/178/639) but no current profile. The user's observation carries the
 result. Bench left on STOCK, engaged ~1.86 A — power off to rest; restores
 on resume: /tmp/install_e29.py (E29), or any prior build from /tmp/eNN sigs.
+
+### 6.2v The 1 kHz switch-on profile — the stock drives at 250 ms; our boot manager takes 3-7 s (2026-11-05, final) [O]
+
+**The stock's switch-on current, captured at ~1 kHz (ACS712 raw A-line
+stream, bulk-read pattern — readline() hangs on this port; see tooling
+note):** logic phase ~190 mA from t+0 to t+0.20 s; the output rail LEAPS at
+t+0.20 s (1225 mA bin) to FULL ENGAGED CURRENT 1910 mA by t+0.25 s; two
+control-transition dips (~1620 mA at 0.6-0.95 s, ~1550 mA at 1.15-1.75 s —
+the user's eyes saw exactly these as "dip to 1.5"); rock-steady 1875-1890 mA
+from t+2.1 s onward. No idle phase, no window, no drop — the rail delivers
+solenoid current at 250 ms and never stops.
+
+**The decisive comparison:** the stock's app is ALIVE AND DRIVING by ~250 ms.
+Our app's first exchange lands at +2.9 to +7 s (heartbeat timing across
+tonight's boots — VARIABLE), i.e. our BOOT MANAGER REIGNS 10-30x longer
+before handing to the app. Same boot code, same stock ident, same-size app
+region. By the time our engaged dialect (byte-identical to the stock's
+engaged stream) finally starts, the supervisor has held the rail through
+seconds of boot-manager words — and drops it 64 of OUR passes later (the
+~320 ms "window"). The stock hands over gap-free at 250 ms and the rail
+never knows a transition.
+
+**E30 (redefined): find why the boot manager is slow for our image.**
+Candidates: the app-region verification path (gap-keep body vs the stock's
+uniform body), a boot-side wait our image answers late or never, or
+state the boot reads from the app block. If our app can start at ~250 ms
+and open the engaged dialect gap-free behind the boot's words, the rail may
+never drop. (The E23 lesson stands: never blind-copy the boot's own 0x8E40
+state-6 word from the app — decode its meaning first.)
+
+**Tooling (banked the hard way):** the ACS712 stream needs BULK
+`ser.read(4000)` parsing (the Ammeter class's pattern) — `readline()` hangs
+indefinitely on this 1.5 Mbaud port; the ammeter must run ALONE on ACM1
+(any second opener - Buses(bus2) or another process - silently kills the
+reader); the raw stream is ~1.9 kHz combined A/P (A ≈ 900 Hz) — the
+"steady" 1.88 A is fast PWM modulation (A-lines swing 1.5-2.5 A; P-peaks
+~8.9 A on RSPI exchange spikes).
