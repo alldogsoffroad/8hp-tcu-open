@@ -261,3 +261,20 @@ SPND decode - the never-measured select-timing registers):
 NEXT (E30): decode the table via the stock's RSPI-init code (offline, fresh
 context); candidates: SPCKD/SSLND/SPND select-timing match + the stock
 switch-on ammetry observation (restore stock, watch ammeter at power-on).
+
+=== FINALE: stock switch-on ammetry (19:52-20:05) — commit 153c82a ===
+USER OBSERVATION AT SWITCH-ON (ground truth): 1.7A -> dip 1.5 -> 1.812A.
+THE RAIL NEVER OPENS. No idle phase, no .166, no visible window. The dip =
+plausibly the boot->app handover perturbing one channel.
+Instrument verify (minutes later, live): ACS712 1.865A stable (n=10) vs
+user 1.812 => ~3% agreement, both trustworthy.
+Capture-script lesson: raw ammeter reader died because Buses() opened ACM1
+as bus2 (collision) - ammeter must run ALONE on ACM1 (E6-era pattern). CAN
+census did capture the stock boot schedule (037/2F9/144/170/1A0/2A8/178/639).
+BENCH LEFT ON STOCK, engaged ~1.86A. Power off to rest. Resume restores:
+/tmp/install_e29.py (E29 m4at) or any /tmp/eNN_sigs build.
+NEXT SESSION (E30): decode stock RSPI config table 0x40D40-90 (SPCKD/SSLND/
+SPND select timing) via the stock's RSPI-init code; the earliest-boot hunt
+(the rail hold lives in the first moments - boot manager's supervisor words
++ immediate app engagement); open mysteries: s_duty_cyc self-clear, run-1
+IDLE@76 + echo silence.
