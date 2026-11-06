@@ -346,3 +346,15 @@ KEY LESSONS TODAY:
    registers, grant, heartbeat, CAN, mode bytes, keep-warm cycling
 5. Build system: cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE=$(pwd)/firmware/cmake/toolchain-sh2a.cmake
 GOOD NIGHT.
+
+=== 2026-11-06 PARTING DISCOVERY (16:33) ===
+Full-context retest on E37 revealed: THE GRANT DOESN'T COME when the CAN
+schedule is active (magic frame delay=150, waited 10s, echo stayed AA90).
+The grant worked 7/7 on E31b WITHOUT the CAN schedule. E36 and E37 both
+had the CAN schedule active and both showed grant=0 — we attributed the
+failure to "CAN irrelevant to rail" but actually the CAN schedule PREVENTS
+the grant from being earned (RCAN hardware busy processing 12 IDs?).
+One-shot 8820 and 9020 still accepted (0471) but 24 still FF.
+TOMORROW'S FIRST TEST: disable CAN schedule, keep mode bytes + keep-warm,
+verify grant returns. Then isolate which addition (CAN vs mode vs keep-warm)
+breaks it.
