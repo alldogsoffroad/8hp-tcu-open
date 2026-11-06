@@ -1869,3 +1869,43 @@ stock's first exchanges establish BEFORE the enable becomes legal. Next
 decode targets: the mode-0x31 chain / 0xFFF90951 writer (Oct-31's lead),
 the boot-manager-to-app handover state, and the first-400 ms choreography
 difference. Restored E31b; bench healthy.
+
+### 6.2z The E32r constant — six boot-deaths, one root cause; the startup handshake is safe (2026-11-06, afternoon) [O]
+
+**ROOT CAUSE OF ALL BOOT-DEATHS (E32 through E35n): a single unreverted constant.**
+E32r changed `sup_app_pattern3(true, 0x90u, ...)` to `0x91u` — sending
+`0x8E91/0x8E81` (bit 0 from word one) = the supervisor's context-gated
+RESET class (Oct-31's finding). The constant was never reverted. Every
+subsequent build (E32, E33, E34, E35, E35m, E35n) inherited it, and every
+"boot-death" was the same supervisor reset loop — NOT a pool-shift, NOT a
+code-size issue, NOT a build artifact. The "pool shift" theory wasted hours
+of binary comparison that all came back clean because the code WAS correct;
+the supervisor was rejecting the word content. **Lesson: `git diff` the
+working tree against the last proven build BEFORE hypothesizing about
+binary corruption.**
+
+**E35r (m4bd, A980A925): the startup handshake — finally on a clean baseline.**
+With 0x90 reverted, E35r sends the stock's startup jobs (`8800×4 + 1200 +
+0C00 + 0A00`, then `841F + 0A00 + 1200 + 0C00`) through the existing
+alternating transport, after the first cyclic exchange, before the
+scheduler starts. **THE APP BOOTS.** First CAN at +0.062s, 688 frames,
+ladder reaches HOLD (state=3, 0x1F confirmed), rail window normal (drop at
+pass 65), 0x24 still reads FF (output refused).
+
+**The startup handshake is SAFE but INSUFFICIENT.** The supervisor accepts
+the words without consequence — no reset, no state change, no rail latch.
+The stock's startup sequence alone doesn't unlock the output stage. The
+engagement requires something the startup words don't carry.
+
+**What we know the supervisor's engagement DOESN'T depend on:**
+- Wire content (byte-identical cyclic, spec 6.2p)
+- Timing (both apps live <100 ms, spec 6.2w)
+- Load (1.75 A commanded in-window, zero delivered, spec 6.2w)
+- Register values (0x88/0x90 accepted, don't latch, spec 6.2v)
+- Startup handshake (safe, no effect, this section)
+- Grant alone (earned 7/7, no rail)
+- Driver chip commissioning (identical framing, SPCMD audit clean)
+**What remains:** the supervisor's internal state machine has a state we
+haven't reached. The mode-0x31 chain (0xFFF90951 writer, Oct-31's lead)
+and the ring-buffer scheduler architecture (spec 02 §7) are the last
+decode targets.

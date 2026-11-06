@@ -370,7 +370,7 @@ int main(void)
      * 0xAAFF instead of 0xAA20 (E15 RAM read, rx_words[5]) — the register did
      * not hold what we wrote. Back to 0x20 = the stock's steady composition
      * (slot-0 'c' bit 5, tail bit clear). */
-    sup_app_pattern3(true, 0x91u, 0x10u, 0x20u);   /* E32-redo (spec 03 6.2x): bits8e 0x91 = the stock's engaged pair 0x8E91/0x8E81 - bit 0 from word one (the m4aw build's code-block version died pre-CAN; this is the one-immediate delta) */
+    sup_app_pattern3(true, 0x90u, 0x10u, 0x20u);   /* E32-redo (spec 03 6.2x): bits8e 0x91 = the stock's engaged pair 0x8E91/0x8E81 - bit 0 from word one (the m4aw build's code-block version died pre-CAN; this is the one-immediate delta) */
     sup_drv_sync(true);
     /* Engaged channel staging (spec 03 section 6.2e): the live 0x88 mode flags of
      * the driving stock = the six pressure channels + line pressure in CURRENT
@@ -393,6 +393,21 @@ int main(void)
     sol_set(9u, SOL_MODE_OFF, 0u);
     sup_engage_arm(true);
     sup_engage_request_enable(true);
+#endif
+#if defined(TCU_AUTOENGAGE)
+    /* E35m (spec 03 section 6.2z): minimal startup handshake — the stock's
+     * first SSLB1 jobs, sent through the EXISTING alternating transport.
+     * No new functions, no new platform code — just two plat_sup_xfer calls
+     * with inline data. Even-frame words land on SSLB1 (the supervisor);
+     * odd-frame words land on SSLB0 (harmless extra reads). */
+    {
+        static const uint16_t w1[7] = {0x8800u, 0x8800u, 0x8800u, 0x8800u,
+                                        0x1200u, 0x0C00u, 0x0A00u};
+        static const uint16_t w2[4] = {0x841Fu, 0x0A00u, 0x1200u, 0x0C00u};
+        uint16_t rx[8];
+        (void)plat_sup_xfer(w1, rx, 7u);
+        (void)plat_sup_xfer(w2, rx, 4u);
+    }
 #endif
     sched_init(s_tasks, (uint8_t)(sizeof s_tasks / sizeof s_tasks[0]));
 
