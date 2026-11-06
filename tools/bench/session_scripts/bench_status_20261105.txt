@@ -278,3 +278,20 @@ SPND select timing) via the stock's RSPI-init code; the earliest-boot hunt
 (the rail hold lives in the first moments - boot manager's supervisor words
 + immediate app engagement); open mysteries: s_duty_cyc self-clear, run-1
 IDLE@76 + echo silence.
+
+=== TRUE FINALE: 1 kHz switch-on capture (20:08-20:15) — commit 6e03252 ===
+Stock switch-on profile (/tmp/stock_switchon4.log, ~1.9kHz A+P):
+  +0.00-0.20s ~190mA logic | +0.20s leap 1225 | +0.25s 1910 FULL ENGAGED
+  dips 1620 (0.6-0.95s) + 1550 (1.15-1.75s) = the user's "1.5"
+  +2.1s onward 1875-1890 steady. RAIL NEVER OPENS. No window.
+DECISIVE: stock app drives at ~250ms; OUR app first speaks at +2.9-7s
+(tonight's heartbeats) - boot manager reigns 10-30x longer for our image.
+E30 = why is our boot slow (app-region verify path? boot-side wait?) ->
+then gap-free engaged dialect at ~250ms.
+AMMETER TOOLING (three failures tonight, final working recipe): bulk
+ser.read(4000) ONLY (readline() HANGS on this 1.5Mbaud port); ammeter ALONE
+on ACM1 (Buses(bus2) or any 2nd opener silently kills the reader; also kill
+leftover capture processes before reopening); raw stream ~1.9kHz; steady
+1.88A = fast PWM (A swings 1.5-2.5A, P peaks 8.9A on RSPI spikes).
+Script: /tmp/switchon4.py (proven). Bench on STOCK engaged ~1.89A.
+GOOD NIGHT.
