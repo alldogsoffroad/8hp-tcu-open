@@ -1771,3 +1771,44 @@ indefinitely on this 1.5 Mbaud port; the ammeter must run ALONE on ACM1
 reader); the raw stream is ~1.9 kHz combined A/P (A ≈ 900 Hz) — the
 "steady" 1.88 A is fast PWM modulation (A-lines swing 1.5-2.5 A; P-peaks
 ~8.9 A on RSPI exchange spikes).
+
+### 6.2w E30/E31/E31b — the boot-delay artifact, the bench-layer assassin, and the VS convergence (2026-11-06, morning) [O]
+
+**E30: the "3-7 s boot delay" never existed.** Anchored captures (ammeter
+power-on anchor + passive CAN, listen-only): the STOCK's first CAN frame at
++0.088 s, OURS at +0.042 s — both apps live within 100 ms of power-on. The
+3-7 s heartbeat timings of 2026-11-05 were measured from script launch, and
+the delta was the operator's hand reaching the switch. E30's premise
+dissolved; the boot-manager architecture decoded along the way (RAM init +
+copy tables at 0x22444; main = 8-state flash-session server + ms timer
+engine at 0x270bc vs the 0xFFFFF200 tick) stands as context.
+**Anchored boot profiles (50 ms bins, ammeter):** stock ~190 mA to +0.20 s
+then the solenoid leap (1.9 A at +0.25 s, dips = engagement choreography,
+steady 1.88 A); ours ~199-209 mA to ~+0.37 s then decay to the .16x idle.
+Same window clock, opposite rail outcome.
+
+**E31/E31b: the load-latch test — twice sabotaged, then the convergence.**
+E31 (m4au): drivers commissioned at init + 7×250 mA from the first cyclic —
+NO delivery; post-boot read: mode[]=OFF, current[]=0. Cause:
+`bench_channels_off()` in the idle bench tick has been forcing channels 0-6
+OFF every 10 ms in every build — **keep-warm never flowed either** (the
+2026-11-05 ".217 blip = keep-warm delivery" attribution is CORRECTED: it
+was rail-up logic current). E31b (m4av): idle wipe compiled out under
+AUTOENGAGE — setpoints now stage and flow (mode[]=CURRENT, current[]=250×7,
+the engaged 0x9F row active — cfg_mismatch exploded from 36 to 38004 = the
+engaged row's read-backs), drivers return live status bytes (12 BD) —
+**and STILL zero current.**
+
+**The convergence (spec 12 §2c's October blocker, now explained):** the
+driver chips have never had VS (their switched supply). VS is asserted by
+SUPERVISOR registers 0x84/0x88/0x90 bits 5-7 — written by the stock app at
+start-up through RSPI-B (the 0x91DD2 area, staging 0xFFF907D4/D6, AAxx/A8xx
+replies — the supervisor's bus, which is why E5's bus-0 five-select write
+was ignored: right registers, wrong bus). Our E2-era FE13 probes read
+0x84/0x88/0x90 = AA00 (never initialized) vs 0x96 = AAFF — the evidence was
+banked in November. Strong unification hypothesis: the ~370 ms "rail window"
+IS the VS switch's power-on default grace; the stock's register init latches
+it on inside the window (solenoids at +250 ms); our missing init = VS off at
++370 ms — and no dialect/ask/grant experiment could ever have mattered.
+**E32 = decode the exact init words (0x91DD2 + the driving dump) and send
+them through our RSPI-B cyclic from app start.**

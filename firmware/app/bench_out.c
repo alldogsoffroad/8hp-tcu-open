@@ -110,7 +110,15 @@ void bench_tick_10ms(void)
         }
     }
     if (!s_active) {
+#if !defined(TCU_AUTOENGAGE)   /* E31b (spec 03 section 6.2w): the idle wipe erased
+                                * the engage load every 10 ms - keep-warm NEVER flowed
+                                * (the .217-era blips were rail-up logic current, not
+                                * delivery; E19's attribution corrected). In the
+                                * AUTOENGAGE bench build the stream owns channels 0-6
+                                * from boot; a bench test still reclaims them at start
+                                * and the stop() cleanup still clears on test end. */
         bench_channels_off();
+#endif
         sup_enable_clear(SUP_EN_BENCH);
         return;
     }

@@ -312,6 +312,13 @@ int main(void)
                                  * mailbox input word may depend on the module-stop state */
     (void)plat_mb_poll_init();  /* the valid window may open between capture and here */
     sup_init();
+#if defined(TCU_AUTOENGAGE)
+    sol_stream_gate(true);  /* E31 (spec 03 section 6.2w): the load-latch test - the
+                             * drivers commission and deliver from the first 10 ms
+                             * cyclic, racing the ~370 ms rail window (the stock's
+                             * solenoid leap lands at +200-250 ms, anchored capture
+                             * 2026-11-06). Bus-0 runs from app start. */
+#endif
     sol_init();             /* identification + configuration; all channels off */
     (void)plat_mb_poll_init();
     bench_init();
@@ -367,17 +374,19 @@ int main(void)
     sup_drv_sync(true);
     /* Engaged channel staging (spec 03 section 6.2e): the live 0x88 mode flags of
      * the driving stock = the six pressure channels + line pressure in CURRENT
-     * mode, park release DISABLED, unused channels OFF. E15 (spec 03 section
-     * 6.2m): the stock's keep-warm machine commands two of the CURRENT channels
-     * continuously (live cells 0xFFF90586/0xFFF9058A = {11,53}/{11,47}; the
-     * driving dump stages E853 on chips 0 and 3) - chip 0 ch 0 and chip 3 ch 0
-     * carry setpoint 0x53 (498 = 49.8 mA), every other current stays 0. If the
-     * rail ever closes, that is ~100 mA total - announce-class, nowhere near the
-     * stock's 1.8 A drive (which we do NOT replicate); FE10 still overrides the
-     * currents during bench tests. The stock's keep-warm VALUE CYCLE (0x90586
-     * walks 41/34/3A/27/0E/1F/3C/26/44) is not decoded - static snapshot. */
+     * mode, park release DISABLED, unused channels OFF. E15-E19 ran the stock's
+     * keep-warm pair (2 x 49.8 mA); E31 supersedes: full-family setpoints from
+     * app start (below). FE10 still overrides during bench tests. */
+    /* E31 (spec 03 section 6.2w): the load-latch test - the rail window has only
+     * ever seen keep-warm class draw (~50-100 mA, E15-E19) and always closed at
+     * pass ~65. The stock draws the 1.7-1.9 A family through the window from
+     * +200 ms. Race it: 7 channels x 250 mA = 1.75 A from the first cyclic
+     * tick. If the supervisor latches the rail on real load, the ammeter holds
+     * the stock-driving family past +370 ms; if not, the window closes on the
+     * same clock as every build (drivers idle at zero actual current with the
+     * rail open - the E15-E19 keep-warm behavior, no new failure mode). */
     for (uint8_t ch = 0u; ch < 7u; ch++) {
-        sol_set(ch, SOL_MODE_CURRENT, (ch == 0u || ch == 6u) ? 498u : 0u);
+        sol_set(ch, SOL_MODE_CURRENT, 2500u);   /* 250.0 mA per channel */
     }
     sol_set(7u, SOL_MODE_DISABLED, 0u);
     sol_set(8u, SOL_MODE_OFF, 0u);
