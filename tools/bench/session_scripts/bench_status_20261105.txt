@@ -330,3 +330,19 @@ Boot manager: ZERO RSPI-B references (never talks to supervisor).
 Letter classifier (0x85B00/0x8C7A8): decoded — stock's internal permission
 gate, invisible to supervisor. The refusal is supervisor-state.
 Bench left on E35r (m4bd), heartbeat alive, HOLD, .16x.
+
+=== 2026-11-06 DAY CLOSE (E30-E37, commits through 6ed3c5a) ===
+TEN hypotheses eliminated in one day. Every wire-level and behavioral
+difference tested and ruled out. Complete elimination table in spec 03 6.2aa.
+Remaining: ring-buffer scheduler, mode-0x31 chain, unobserved hardware.
+Bench left on E37 (m4bf, mode bytes + keep-warm cycling + CAN schedule).
+Restore: /tmp/install_e31b.py (E31b) or any /tmp/eNN_sigs.json build.
+KEY LESSONS TODAY:
+1. Boot-delay was measurement artifact (anchored captures are the standard)
+2. bench_channels_off() idle wipe (keep-warm NEVER flowed before E31b)
+3. ALL boot-deaths = ONE unreverted E32r 0x91 constant (git diff BEFORE
+   binary forensics!)
+4. Supervisor engagement independent of: wire, timing, load, handshake,
+   registers, grant, heartbeat, CAN, mode bytes, keep-warm cycling
+5. Build system: cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE=$(pwd)/firmware/cmake/toolchain-sh2a.cmake
+GOOD NIGHT.
