@@ -1812,3 +1812,34 @@ it on inside the window (solenoids at +250 ms); our missing init = VS off at
 +370 ms — and no dialect/ask/grant experiment could ever have mattered.
 **E32 = decode the exact init words (0x91DD2 + the driving dump) and send
 them through our RSPI-B cyclic from app start.**
+
+### 6.2x E32 — the build-death class strikes; the morning's ledger (2026-11-06, morning) [O]
+
+**E32 (m4aw, D6E69D61): bit 0 from word one + E31b's driver load — never
+ran.** Two boots, both dead: the app never transmitted (zero CAN, meas dead,
+front door dead, ammeter .165 = logic only) — the m4w BOOT-DEATH CLASS
+(spec 06 §7 4b era): a build-level crash pre-CAN, reproducible, power-cycle
+immune. The E32 tree shifted ~31 kB of code (literal-pool realignment); the
+bit-0 semantics are UNIMPEACHED (E22's pass-1 bit 0 survived) — the cell
+"the stock's exact wire from word one" remains UNTESTED. Restored E31b
+(heartbeat verified). NEXT BUILD RULE: after any bench build, byte-diff the
+.text against the last proven build and eyeball the entry/init path before
+installing — the m4w archaeology (byte-exact toolchain, only source deltas
+matter) applies: something in the E32 source delta (the `#if` block's pool
+shift?) broke init. Rebuild E32 as a MINIMAL delta (arm the raw shape via a
+one-byte static, not a code block).
+
+**Morning ledger (all banked):** (1) the "3-7 s boot delay" was a
+measurement artifact — anchored captures: stock first-CAN +88 ms, ours
++42 ms; (2) `bench_channels_off()` idle wipe found — keep-warm NEVER flowed
+in any prior build (E19's delivery attribution corrected); (3) E31b: with
+the wipe fixed, setpoints stage and flow, the engaged 0x9F row active,
+drivers answer status — and still ZERO current: **the VS-supply refusal is
+confirmed load-independent** (commanded 1.75 A in-window made no difference)
+— consistent with the Nov-2 decomposition (refusal downstream of the rail);
+(4) the full supervisor enable-path was re-walked on-spec: 0x40C0C output-
+enable job, letters→0x90-bits matched, 0x24 = the free FF→20 instrument
+(still FF in every state incl. granted). The rail latch's remaining unknowns
+narrow to: the supervisor's first-400 ms state machine (what it expects
+BEFORE its grace expires) — the stock's first passes carry the enable bit
+from word one; E32 was that test.
