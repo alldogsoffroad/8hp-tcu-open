@@ -1843,3 +1843,29 @@ enable job, letters→0x90-bits matched, 0x24 = the free FF→20 instrument
 narrow to: the supervisor's first-400 ms state machine (what it expects
 BEFORE its grace expires) — the stock's first passes carry the enable bit
 from word one; E32 was that test.
+
+### 6.2y E32r — the reset class reproduced, pinned to word one (2026-11-06, morning close) [O]
+
+**E32r (m4ax, B2431638): the one-immediate build — bits8e 0x90→0x91, a
+ONE-BYTE .text delta vs E31b (plus 4 CRC bytes; verified before install).
+The minimal-delta discipline worked: the build booted, the rail window ran
+its normal course (~350 ms, ammeter 169→195→155 mA) — and the app CAME UP
+DEAD: zero CAN, meas dead, ammeter settling ~155 mA = the average of a
+RESET LOOP.** October's finding is reproduced as a clean boot loop: the
+word shape `0x8E91/0x8E81` (bit 7 held + bit 4 toggle + BIT 0 ON) sent from
+WORD ONE, before any ladder/token/context, is the supervisor's reset class
+("bit 7 held (word shape 0x91) reboots the TCU, uptime-verified" — bench
+2026-10-31). The stock sends the identical pair from its first exchange and
+is NOT reset — its legitimacy is contextual (the 0xFFF90951-status /
+mode-chain legitimization Oct-31 named as the next lead, or the handover
+state the boot manager leaves behind).
+
+**Eliminations this morning, final form:** (1) boot timing — identical,
+both <100 ms; (2) load in window — no effect (1.75 A commanded, zero
+delivered: VS off, refusal load-independent); (3) the engaged word from
+word one — RESET LOOP (context-gated, not shape-gated). The rail latch's
+remaining space: the supervisor's context/legitimization state — what the
+stock's first exchanges establish BEFORE the enable becomes legal. Next
+decode targets: the mode-0x31 chain / 0xFFF90951 writer (Oct-31's lead),
+the boot-manager-to-app handover state, and the first-400 ms choreography
+difference. Restored E31b; bench healthy.

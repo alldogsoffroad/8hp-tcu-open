@@ -187,20 +187,6 @@ static void app_pattern_tick(void)
         s_boot_bit0_left--;
         bits |= SUP_BIT_ENABLE;      /* the window: bit 0 at the stock's engagement age */
     }
-#if defined(TCU_AUTOENGAGE)
-    /* E32 (spec 03 section 6.2x): the stock's own wire, from word one. The
-     * stock's first cyclic word is the ENGAGED shape - bit 0 (enable) ON from
-     * its very first exchange (staging 0xFFF8841C: 8E81 C9.., driving dump
-     * 2026-11-04; the anchored captures: its solenoid leap at +250 ms). Our
-     * A-law withheld bit 0 until a post-ready ask - and the ask has never once
-     * landed inside the ~370 ms VS grace. E22 sent bit 0 from pass 1 once via
-     * the window arm and SURVIVED (refused, no reset) - the shape is not the
-     * Oct-30 reset class. Now: bit 0 always, racing the window with the stock's
-     * exact wire, on top of E31b's driver load. Observables: the 0x24 reply
-     * (AAFF = refusal, AA20 = the output stage live - spec 03 6.2v's free
-     * instrument), the 0x22 echo bit 5 (rail), the ammeter. */
-    bits |= SUP_BIT_ENABLE;
-#endif
     uint16_t job1[4] = {
         (uint16_t)(SUP_CMD_CONTROL | bits), 0xC900u, 0x2200u, 0x0900u,
     };

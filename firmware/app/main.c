@@ -370,7 +370,7 @@ int main(void)
      * 0xAAFF instead of 0xAA20 (E15 RAM read, rx_words[5]) — the register did
      * not hold what we wrote. Back to 0x20 = the stock's steady composition
      * (slot-0 'c' bit 5, tail bit clear). */
-    sup_app_pattern3(true, 0x90u, 0x10u, 0x20u);
+    sup_app_pattern3(true, 0x91u, 0x10u, 0x20u);   /* E32-redo (spec 03 6.2x): bits8e 0x91 = the stock's engaged pair 0x8E91/0x8E81 - bit 0 from word one (the m4aw build's code-block version died pre-CAN; this is the one-immediate delta) */
     sup_drv_sync(true);
     /* Engaged channel staging (spec 03 section 6.2e): the live 0x88 mode flags of
      * the driving stock = the six pressure channels + line pressure in CURRENT
