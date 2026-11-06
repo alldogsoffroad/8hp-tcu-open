@@ -188,3 +188,26 @@
     (bit-2-toggle + WTCNT every 5ms) before the app takes over.
   - NEXT DECODE: the boot manager's handover - supervisor state written via MMIO
     (0x72EB6 bookkeeping) or electrical (WDTOVF pin, supply sequencing).
+
+=== E24 + E25 evening (post-stock-marathon) — 18:13-18:33 ===
+E24 (m4ar 2F056AF9) refused: wire identical to E20 (diff vs 495129c = post-grant
+WDT switch + inert leftovers only), ask fired fully (delay=0 left=0), ladder
+HOLD@49, rail 1-63/64. => boot-to-boot variability near the rail window.
+E25 run 1 (power cycle, same ask): GRANT at ~pass 150, ONE pass after window
+opened (left froze 1999). Echo had gone SILENT @48 + ladder self-demoted IDLE@76
+(both unexplained; run 2 clean). Grant lived ~160s rail-down then MCU RESET
+(warm, fast handover). g_sched_ms/sent date the restart exactly.
+Post-reset run 2: rail window RE-OPENED (echo B0 pass 2, drop 65 = 325ms);
+ladder HOLD@50, stayed HOLD.
+In-place magic frame on 7.5-min-old run-2: GRANT in one pass (pass ~94k).
+E12 mailbox-latch claim wrong for warm resets. AGE DOES NOT GATE.
+Grant 2 lived ~122s -> MCU reset again (run 3 now, ungranted, stable).
+Lease law: grant + rail-down ~2min -> supervisor resets MCU. Ungranted = no resets ever.
+Grant telemetry: only 0x22 bit0 changes (AA91/81); 24/28/2E unchanged.
+Duty-cyclic UDS attempt: rejected 7F31/7F (session request got no rsp - needs
+proper session first; TODO). 
+NEXT: E26 ask-inside-window sweep via data[5] (2 -> 10 -> 20), no reflash.
+BSS map (m4ar): bit0 delay/left = FFF84698/FFF8469A, state hist FFF846AC,
+ring FFF848B0, n FFF848AC, s_st FFF84CB4, engage s FFF84D14 (12B H 4B:
+state sel lvl lvl_cmd rot jobs bad echo_ok echo_bad lvl_echo retries status
+tokens enable_req efs echo_grant enable_sent).

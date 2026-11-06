@@ -364,7 +364,6 @@ int main(void)
      * not hold what we wrote. Back to 0x20 = the stock's steady composition
      * (slot-0 'c' bit 5, tail bit clear). */
     sup_app_pattern3(true, 0x90u, 0x10u, 0x20u);
-    sup_phase6_arm(100u);           /* E23: boot-dialect opening (state-6 0x8E40) */
     sup_drv_sync(true);
     /* Engaged channel staging (spec 03 section 6.2e): the live 0x88 mode flags of
      * the driving stock = the six pressure channels + line pressure in CURRENT

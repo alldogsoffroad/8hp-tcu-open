@@ -163,13 +163,6 @@ static void app_pattern_tick(void)
                                         * handover; the rail window closes 320 ms later
                                         * in every build. Hold the boot dialect for the
                                         * first 100 passes, then go engaged. */
-    if (!s_wdt_edge_early) {           /* E22: the stock's first-pass enable edge —
-                                        * the WDT switch fires at app start, inside
-                                        * the rail window (0x6C612+0x920A4 composite) */
-        s_wdt_edge_early = true;
-        s_wdt_interval = true;
-        plat_wdt_mode(true);
-    }
     /* Bit 2 must ALTERNATE every frame: it is the supervisor watchdog's life sign. The
      * stock derives it as the complement of the 0x22 echo's bit 2 (0x91C86 with
      * 0xFFF907D5), which equals self-toggling while the echo works - but on the bench
@@ -184,15 +177,9 @@ static void app_pattern_tick(void)
                              (s_toggle ? s_app_toggle : 0u));
     if (sup_engage_active() && sup_engage_enable_bit()) {
         bits |= SUP_BIT_ENABLE;
-        if (!s_wdt_interval) {         /* E21 (spec 03 section 6.2o): the stock's
-                                        * enable-edge switch (0x920A4) — the MCU's own
-                                        * watchdog moves to interval mode exactly when
-                                        * the enable goes out. The supervisor watches
-                                        * the WDTOVF pin; the rail's next bit may hang
-                                        * on it. */
-            s_wdt_interval = true;
-            plat_wdt_mode(true);
-        }
+        /* E24 (spec 03 section 6.2p): the stock's engaged WTCR = 0x27 = RESET
+         * mode (bit 6/TME clear, live I/O read). E21/E22 switched to interval
+         * mode (TME set) — REMOVED: we stay in reset mode like the stock. */
     } else if (s_boot_bit0_delay != 0u) {
         s_boot_bit0_delay--;         /* E13: hold until the supervisor's own power-up is
                                       * done (stock engages at ~+15s, spec 03 6.2i) */

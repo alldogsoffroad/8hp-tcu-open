@@ -1544,3 +1544,64 @@ cadence is known from the disassembly (5 ms) and our wire matches. The DMAC
 channel registers (0xFFFEC400-0xFFFEC700) also read zero through the meas
 (likely write-only); the DMAC OR/status at 0xFFFE4400 shows active interrupt
 vectors matching the INTC data.
+
+### 6.2q E24/E25 — the grant law rewritten: ask anytime; the grant is a lease that ends in an MCU reset; every MCU restart re-opens the rail window (2026-11-05, late) [O]
+
+**E24 (m4ar, CRC 2F056AF9): WDT switches removed — refused.** The E21/E22
+runtime WDT-mode switches were deleted (the stock's engaged WTCR = 0x27, live
+I/O read 6.2p — the switches moved the wrong way). `wdt_init` still writes
+0xA567/0x67. The boot executed E20's wire exactly: ladder RAMP→HOLD at pass 49
+(state hist), rail up 1-63, drop at 64, ask fired and completed
+(`s_boot_bit0_delay=0`, `s_boot_bit0_left=0` — all 2000 bit-0 passes sent,
+addresses 0xFFF84698/0xFFF8469A per tcu_app.map). No grant through any of it.
+Diff against the E20 commit (495129c): only the post-grant WDT switch and
+inert E23 leftovers — the wire was byte-identical to E20's granted run.
+**Conclusion: boot-to-boot variability near the rail window** (grants at
+identical timing: E20 ✓, E21 ✓, E24 ✗).
+
+**E25 (same image, power cycle + identical ask): granted — twice, and the
+picture changed completely.**
+
+- **Run 1**: heartbeat +7.0 s (the boot manager reigns ~7 s after power-on).
+  Ladder SYNC@1 → RAMP → HOLD@49. The echo went B0 (rail+toggle) passes 2-47,
+  then **fully silent (0x0000) at pass 48** — rail window closed early AND the
+  mirror stopped; the ladder demoted itself to IDLE at pass 76 (no code path
+  found that calls `sup_engage_arm(false)`; run 2 did not reproduce it — open).
+  The spam's last magic frame opened the window at ~pass 150: **one bit-0
+  word, grant on the next pass** (`left` froze at 1999 — the engage enable
+  branch took over bit 0 the pass after the first ask).
+- **The lease**: the grant lived ~160 s (run 1) / ~122 s (in-place, run 2) with
+  the rail down, then **the MCU was reset** — warm handover, fast (≪1 s; no
+  boot-manager reign), and `g_sched_ms`/`sent` of the new instance date the
+  restart to the second. Every ungranted boot we have ever run sat for hours
+  with no reset; resets have only ever followed a granted period.
+  Operational law: *grant + rail-down ≈ 2 min → the supervisor gives up on the
+  app and resets it.* (Lease length not constant: 160 vs 122 s — not a fixed
+  timer, not a pass counter; possibly its own debounce period.)
+- **Every MCU restart re-opens the rail window**: the post-reset instance's
+  ring shows echo 0x80 → **0xB0 at pass 2** (rail UP) → 0x90 from pass 65
+  (325 ms — the classic window). The supervisor raises the rail at each app
+  restart un-prompted and closes it ~320 ms later. The stock's rail never
+  drops; whatever holds it lives inside that window.
+- **In-place ask (E12's mailbox-latch claim does not hold on warm resets)**:
+  ONE magic frame sent to a 7.5-minute-old HOLD instance armed the window;
+  the ask fired, **grant landed within one pass, at pass ~94,000**. Age does
+  not gate acceptance. The E13-era "asks at minutes never granted" was a
+  stream-shape problem, not age. Refined law: *full mirror + ladder HOLD +
+  bit-0 ask = grant in one pass, at any age* — asks launched during the rail
+  window itself are unreliable (E24 ✗, E20 slow at +78 passes).
+- Grant-state telemetry: the grant changes ONLY the 0x22 echo bit 0
+  (AA91/AA81 pair while granted, live 8E95/8E91 tx). 0x24=AAFF, 0x28=AA45,
+  0x2E=ABFF are unchanged from the ungranted state. `echo_ok`/`echo_bad`
+  alternate 1:1 (toggle-bit check artifact, expected).
+- **Nobody has yet held the grant while the rail is up** (E20's grant came at
+  pass 129, post-drop; E25's grants were minutes in). The rail window opens at
+  every restart — an ask timed inside it (the stock asks from its first words)
+  is the next cell. The magic frame's `data[5]` makes ask-delay a bench
+  parameter: E26 = delay 2 (ask at pass 3, one mirror exchange first, inside
+  the window), no reflash needed.
+
+**Instrument note**: E25's run-1 early rail close at pass 48 with echo silence
+(vs 65 + mirror-continues in run 2 and 64 in E24) — the close point and the
+echo's survival vary boot to boot. Open items: the IDLE@76 demotion, the echo
+silence, the lease-length variance.
