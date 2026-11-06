@@ -1506,8 +1506,17 @@ handover. Two new discoveries in the full 0xFFF90600-0xFFF90A00 sweep:
 - **Buffer pointer routing table at 0xFFF909A0-0xFFF909F8**: seven entries
   pointing into 0xFFF90E84-0xFFF90EFC — the app's internal message routing
 
-RSPI-B peripheral detail (readable through the stock's meas): SPCR=0x0800,
-SSLP=0x0020, SPDCR=0x0500, SPCMD0/1=0x0000 (write-only or DMA-shadowed).
+RSPI-B peripheral detail (readable through the stock's meas): 16-bit words
+at B800=0x0800, B802=0x0020, B80A=0x0500, SPCMD0/1=0x0000. *** CORRECTED
+2026-11-05 (spec 03 6.2t): the sweep's register LABELS were wrong — the
+manual's map (17.3) has SPCR@B800, SPPCR@B802, SPSR@B803, SPDR@B804 (8-bit
+regs), SPBR@B80A. The reads decode as SPPCR=0x00 + SPSR=0x20 (status), and
+SPBR=0x05 + zero — the bit rate MATCHES ours (SPBRB=5). There is no SSLP or
+SPDCR in this map at those offsets; the "SSLP/SPDCR deltas" were artifacts.
+Never-measured as a result: SPCKD@B80C / SSLND@B80D / SPND@B80E (the RSPI-B
+select/clock TIMING registers — ours 0/0/1, minimum select negation). Their
+stock values sit in the flash config table at 0x40D60+ (raw dump banked in
+bench status 20261105) — decode offline before E30.
 **SPDCR and SSLP differ from our settings** (ours: 0x0000, 0x0000) — these
 affect the SPI data latching and select polarity, not the wire content.
 

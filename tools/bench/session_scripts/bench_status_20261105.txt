@@ -234,3 +234,30 @@ Ammeter: E27 boot .211 blip (restart rail window) -> .166.
 Scripts: /tmp/e26_run.py (sweep), /tmp/e27_run.py (grant+duty+rail watch),
 /tmp/e25_retry.py. Map (m4ar): duty_runs@FFF850D4+88, s_duty_cyc@FFF851FB,
 sol s_st@FFF850D4, g_sched_ms@FFF8D9C4.
+
+=== E29 boot + the artifact catch (19:24-19:40) — commit 9e0073b + this ===
+E29 (m4at) boot: PURE STREAM (bus-0 gated off). Grant recipe 7/7 (delay 150).
+Rail bit NEVER set on the granted pure stream (30s watch). Rail window: drop
+at pass 65 - IDENTICAL to every noisy boot. Purity exonerated for the rail.
+A/B: bus-0 gate OPENED under live grant -> NO reset, grant SURVIVED with the
+full cyclic running (first time ever: grant + cyclic coexist). Stall
+threshold: ~11ms (cyclic) tolerated, ~20ms+ (cyclic+duty) fatal.
+LEASE WATCH: grant alive 276s+ at last check (19:33), cyclic running, no duty
+ever fired - longest grant ever; E28+ interval-mode builds may have NO lease
+at all (all previous deaths stall-confounded: duty job, read bursts, or our
+own pre-E28 watchdog).
+*** SWEEP-LABEL ARTIFACT (specs-first catch): "SSLP=0x0020/SPDCR=0x0500
+deltas" were MY mislabeled 16-bit reads (sweep used a wrong register model).
+Real map: B802=SPPCR(0x00)+SPSR(0x20 status), B80A=SPBR(0x05 = MATCHES ours).
+The SPDCR/SSLP rail-lever premise EVAPORATES; spec 03 text corrected.
+Stock RSPI-B config table raw bytes 0x40D40-0x40DA0 (for E30's SPCKD/SSLND/
+SPND decode - the never-measured select-timing registers):
+040D40: 60 00 60 00 60 00 60 00 C0 00 C0 00 C0 00 C0 00
+040D50: C0 00 66 00 66 00 66 00 66 00 66 00 D8 00 D8 00
+040D60: D8 00 D8 00 D8 00 05 00 00 00 00 8C 05 00 00 01
+040D70: 00 8D 05 00 00 01 00 CC 18 00 0C 00 1E 00 06 00
+040D80: 14 00 0C 00 05 00 00 00 00 90 AF 20 00 FF 00 01
+040D90: 02 C8 C9 CB CA 65 0A 0B 12 00 01 13 02 03 14 04
+NEXT (E30): decode the table via the stock's RSPI-init code (offline, fresh
+context); candidates: SPCKD/SSLND/SPND select-timing match + the stock
+switch-on ammetry observation (restore stock, watch ammeter at power-on).
