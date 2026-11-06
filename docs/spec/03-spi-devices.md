@@ -1605,3 +1605,56 @@ picture changed completely.**
 (vs 65 + mirror-continues in run 2 and 64 in E24) — the close point and the
 echo's survival vary boot to boot. Open items: the IDLE@76 demotion, the echo
 silence, the lease-length variance.
+
+### 6.2r E26/E27 — the ask law closed; the rail bit decoded; the scheduler collision (2026-11-05, night) [O]
+
+**E26 (delay sweep, no reflash — the magic frame's data[5] IS the ask delay).**
+- **delay=2 (ask from pass 3, inside the rail window): REFUSED.** Rail up 2-64,
+  drop 65 (325 ms, standard), ladder HOLD@50, ask ran pass 3→2002 — the
+  supervisor ignored 2000 consecutive bit-0 words.
+- **The unification — the supervisor has a READY moment.** After each MCU
+  (re)start the supervisor ignores bit-0 asks for a variable period (~pass
+  100-200+, boot-dependent); the first bit-0 word sent after ready = grant in
+  one pass. Evidence: E20/E21 granted at 128/129 (ready came early under their
+  running ask); E22/E24/E26-d2's asks expired before ready; a late RE-ask on
+  the E26-d2 instance (first ask pass 3, 2000 ignored asks) granted instantly
+  — **no poison: early asks are ignored, not penalized.** Bench recipe (5/5):
+  wait ≥1 s after boot, then ask. Ask-during-the-rail-window never grants and
+  the grant×rail overlap theory is dead — the supervisor will not grant while
+  its window is still open.
+- **Grant lifetime is finite and variable: 160 s, 122 s, 324-417 s (three
+  measurements), ending in a warm MCU reset** (fast handover; the rail window
+  re-opens each time). One 5 s-interval poller ran through the 324 s+ lease —
+  a heavy read burst (~90 reads/s for 1.5 s) coincided with grant-1's death —
+  cadence sensitivity suspected but unproven.
+
+**The rail bit decoded (spec correction).** The stock's cached 0x22 echo byte
+(0xFFF907D5 = 0xA1, captured while driving 1.773 A) = bit 0 GRANT **and bit 5
+RAIL, both set**. Our granted echo (0x91/0x81 pattern): grant set, **bit 5
+clear — the supervisor grants acceptance and never raises the rail.** Nobody
+has observed bit 5 set on our stream outside the power-on window. The rail is
+the sole remaining prize; the grant is solved.
+
+**E27 (the duty-stream test — and the scheduler collision).** Fresh boot, ask
+delay=150: grant at ~1 s (recipe 5/5). UDS session 03 (0x7E1; the session
+request is load-bearing — raw routine sends without it get no reply) then
+RoutineControl 0xFE13 in[0]=14 in[1]=1: **accepted (71 01 FE13), and the app
+RESTARTED at that exact second** (g_sched_ms dates the new instance to the
+duty-cyclic acceptance; sol cycles confirm; no fault latch — faults 0x00 on
+the fresh instance). Mechanism: the 40-word duty job lands in the same 10 ms
+tick as the 45-word cyclic job (and the 5 ms supervisor stream) — the tick
+overruns, the watchdog resets the MCU. The grant "loss" was the restart. The
+stock runs all of these concurrently through its ring-buffer scheduler (spec
+02 §7 enqueue/consume split) — **our inline scheduler is now a bench-proven
+blocker for any sustained duty stream.**
+
+**E28 (next): interleave the duty job** — spread the 40 words across passes
+(the stock's model) or slot them into the stream's idle gaps, keeping the
+5 ms supervisor cadence and the WDT serviced. Then the duty-stream rail
+hypothesis (the supervisor may want to SEE the duty traffic before raising
+the rail) finally becomes testable, and the grant lease can be watched under
+a properly loaded stream.
+
+Ammeter note (E27 power-on): .211 blip → .166 — higher than the usual .19
+settle; consistent with the restart's rail window (E25: every restart re-opens
+~320 ms of rail) stacked near the boot window.
