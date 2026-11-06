@@ -1708,3 +1708,29 @@ our 0x0000) and SSLP (stock 0x0020 vs our 0x0000) — the RSPI-B electrical
 config; SSLP bit 5 is plausibly the SUPERVISOR'S OWN SELECT-LINE POLARITY
 (SSL1P). E30 = match them (manual-checked bit decode first). Also open: the
 boot handover gap timing (continuity theory's dead gap).
+
+### 6.2u The stock switch-on ammetry — the rail never opens (2026-11-05, night close) [O]
+
+**The continuity theory's missing observation, delivered by the user's eyes at
+switch-on (instrument-verified minutes later): the STOCK goes 1.7 A → dip
+1.5 A → 1.812 A.** The rail never opens — there is no idle phase, no .166
+state, no visible window. Full solenoid-class current flows from essentially
+the first instant, with one dip (plausibly the boot→app handover perturbing
+one channel) and immediate recovery to the engaged level. Automated ACS712
+minutes later: 1.865 A stable (vs the user's 1.812 bench ammeter — ~3%
+instrument agreement, both trustworthy).
+
+**Consequence for the hunt:** our firmware and the stock are in different
+REGIMES, not different states of the same machine. Our rail window (up at
+every MCU start, ~320 ms, down) has no stock counterpart at power-on — the
+stock's rail-hold mechanism acts within the first moments (the boot
+manager's own supervisor words + the app's immediate engagement) and never
+lapses. The re-raise/hold mechanism lives in the earliest boot sequence.
+
+Instrument note: the switch-on capture script's raw ammeter reader died
+silently (tcu_bench Buses opened ACM1 as bus2 and collided with the raw
+serial open — the ammeter must be used ALONE on ACM1 per the E6-era
+pattern); CAN census captured the stock schedule boot (037/2F9/144/170/1A0/
+2A8/178/639) but no current profile. The user's observation carries the
+result. Bench left on STOCK, engaged ~1.86 A — power off to rest; restores
+on resume: /tmp/install_e29.py (E29), or any prior build from /tmp/eNN sigs.
