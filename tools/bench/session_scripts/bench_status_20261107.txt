@@ -131,3 +131,16 @@ latch. Remaining deltas: RSPI-A transport params (SPBRA bit rate, SSLNDA/
 SPNDA delays, SPCRA mode, DMA framing). Stock's RSPI-A init via literal
 0xFFFFB000 @ROM 0x40E74 <- code near 0x963EC. NEXT: decode those params
 and match them. Bench on E53 (m4by, sig 2ac5cf74129d001f... see e14_sigs).
+
+=== 2026-11-08 EVENING CLOSE (E54/E55, sections 6.2aj-6.2al) ===
+E54: bit rate ELIMINATED (mismatch 4/cycle at SPBRA 2..0xFF).
+E55: SPCRA=0x08 (stock's live value, both buses) ZEROES both buses under
+our polled transport — bit 6 is load-bearing for polled framing; the
+stock's 0x08 requires its interrupt/DMA engine. Reverted; E55b (m4c1,
+CRC 8AE06AB9-ish, 19/19) built for next-session bench restore.
+LIVE-STOCK GRABS (6.2ak, all banked): SPCR=0x08 BOTH buses; engaged
+echo 0xB1 (grant+rail!); af01 0x24 shadow = 0x20 engaged; mode cell
+0x19 not time-flipped; cyclic setpoints walk ±1 LSB (closed loop).
+CONVERGENCE: every hypothesis names the SAME next build — the stock's
+DMA/interrupt RSPI transaction engine (descriptor structure 0xFFF90630,
+spec 02 §7's ring). That is the solenoid path.
