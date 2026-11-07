@@ -1937,3 +1937,75 @@ The CAN schedule is NOT the output gate.
 2. Ring-buffer scheduler — the stock NEVER blocks the 5ms cadence; we do
 3. Mode-0x31 chain — the stock's internal state manager (0xFFF90951 writer)
 4. An unobserved hardware signal (GPIO, voltage, current sense)
+
+### 6.2ab E38/E39 — the grant-breaker is the CAN schedule; the grant recipe is the latch age (2026-11-07, morning) [O]
+
+**E38 (m4bg, 39B1D5CE): E37 minus the startup handshake.** The handshake
+theory died: with the handshake removed and CAN schedule + mode bytes +
+keep-warm + bus-0 all retained, the proven ask (magic frame, spam→hb5,
+delay=150) was refused. The install itself validated a new flow: the
+bootloader HELD its plant session ~3 minutes (storm catch → chain attach
+with no re-cycle; sig-first install green, app block 165 units).
+
+**E39 (m4bh, 755A96D4): E38 minus the CAN schedule enable loop.** The
+grant returned IMMEDIATELY — and was cancelled at `left=1999`, i.e.
+accepted on the FIRST bit-0 word (the E25 law, verbatim). Combined with
+the parting observation (E31b granted 7/7 with bus-0 traffic from app
+start, no CAN), the matrix closes:
+
+| Config | bus-0 | CAN | mode/kw | Grant |
+|---|---|---|---|---|
+| E31b | ON | off | no | ✅ 7/7 |
+| E38 | ON | ON | yes | ❌ |
+| E38 + live bus-0 quiet (FE13 sub-15=0) | off | ON | inert | ❌ |
+| E39 | ON | off | yes | ✅ word-one |
+
+**The CAN transmit schedule prevents the grant from being earned.** Bus-0
+traffic, the {1A,1A,1A,12,15} mode bytes and keep-warm cycling are all
+exonerated. Mechanism undecoded (RCAN TX activity vs the supervisor's
+monitor is the suspicion — the supervisor never sees CAN frames, so the
+interference is at the MCU: mailbox/IRQ load or a shared clock domain).
+Until decoded: **the engagement build must not enable fca_tx messages.**
+
+**The grant recipe (the latch age), pinned by a runner bug turned probe:**
+the magic-frame spam must continue to the FIFTH heartbeat (latch ≈ pass
+85+). hb1-break latches (pass ≤20) were refused for the FULL 2000-pass
+ask, at every ask start tried (72, 150) — while spam→hb5 granted 3/3 on
+E39 and matches every grant in project history (E25's 7/7 all used it).
+The ask's landing pass is NOT the discriminator (137 ✓ vs 140 ✗ observed);
+the latch moment is. Every magic frame re-arms (resets) the delay, so the
+spam pattern IS part of the ritual — treat spam→hb5, delay=150 as the
+recipe and do not "optimize" it until the acceptance law is decoded.
+
+**E39window (delay=52, hb1-break): bit 0 inside the rail window is dead.**
+The ring (rx1[2] per pass) shows the rail UP passes 2–64 (echo low byte
+0xB0, bit 5) and dropped at 65 (~320 ms into our stream = the ~370 ms
+power-on window) on every boot, granted or not. An early ask was refused
+outright (and poisoned the whole 10 s ask). Since acceptance requires a
+late latch and the window closes at pass 65, **the ask can never be both
+accepted and inside the window — the rail is not earned by ask timing.**
+The stock keeps its rail without bit 0 (engages at ~+15 s), so the
+window-era hold signal is something else in the stock's stream.
+
+**The cyclic reply rows on a granted vs refused stream (E39, both read):**
+| row | refused | granted | stock engaged |
+|---|---|---|---|
+| ctrl echo (rx1[0]→last_rx) | AA90 | AA91 | AA91-class |
+| job2[0] "0x90 rb" | AA90 | AA91 | — |
+| job2[1] **0x24 switch echo** | AA00 | **AA00** | **AA20** |
+| job3[1] 0x2E | AAFF | AAFF | cross-checked |
+
+1. The grant does NOT move 0x24 — the switch stage is a separate
+   supervisor output. 0x24 is the measurable distance-to-goal (stock
+   engaged 0x20, ours 0x00 granted).
+2. Our job2[0] reply mirrors the CONTROL word (AA90/AA91), not the 0x90
+   register data — in the stock, job2 writes 0x9020 and the 0x24 read
+   answers AA20 (E16 era: ours answered AA20 once; the current stream's
+   register write is not taking, or the reply rows are shifted a frame).
+   The stock's job2/job3 cross-check `(reply ^ word) & 0x15` (handlers
+   0x92ED4/0x92FD0) is the loop that gates its switch confirmation —
+   decoding why our 0x90 register data does not stick is the active lead.
+3. Ring note: the 0x22 row (rx1[2]) never carries bit 0 even when granted
+   (rx22 stays AA00) — the grant bit lives in the ctrl echo only. Ring
+   scans for "first echo-bit0" are therefore unreliable on that row (one
+   boot showed a stray 0x??1 at pass 230; not reproducible evidence).

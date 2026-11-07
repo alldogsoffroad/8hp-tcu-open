@@ -343,13 +343,14 @@ int main(void)
     park_init();
     sensors_init(&s_sensors_cfg);
     fca_tx_init();
-#if defined(TCU_AUTOENGAGE)
-    /* E36 (spec 03 section 6.2aa): enable the stock's CAN transmit schedule.
-     * The stock sends 8 vehicle IDs (037/144/170/178/1A0/2A8/2F9/3D1) at stock
-     * rates; we've been sending only the heartbeat. The supervisor (or SSLB0)
-     * may monitor CAN activity through the MCU — the vehicle-bus silence could
-     * be the output gate. Data is zero (no sensors); the IDs at proper rates
-     * are the test. */
+#if 0 && defined(TCU_AUTOENGAGE)
+    /* E36 (spec 03 section 6.2aa): enable the stock's CAN transmit schedule. DISABLED
+     * in E39: the grant (E25 law: mirror + HOLD + one bit-0 word) came 7/7 on E31b
+     * with the schedule OFF and failed on every schedule-ON build since (E36, E37,
+     * E38 — the latter with the startup handshake removed, exonerating it; bus-0
+     * traffic is exonerated too, E31b carried it from app start). E39 = E38 minus
+     * this loop: mode bytes + keep-warm cycling stay. If the grant returns, the
+     * schedule is the breaker; if not, mode bytes / keep-warm are next. */
     for (uint8_t m = 0u; m < (uint8_t)FCA_TX_MSG_COUNT; m++) {
         fca_tx_enable((fca_tx_msg_t)m, true);
     }
@@ -426,21 +427,6 @@ int main(void)
     sol_set(9u, SOL_MODE_OFF, 0u);
     sup_engage_arm(true);
     sup_engage_request_enable(true);
-#endif
-#if defined(TCU_AUTOENGAGE)
-    /* E35m (spec 03 section 6.2z): minimal startup handshake — the stock's
-     * first SSLB1 jobs, sent through the EXISTING alternating transport.
-     * No new functions, no new platform code — just two plat_sup_xfer calls
-     * with inline data. Even-frame words land on SSLB1 (the supervisor);
-     * odd-frame words land on SSLB0 (harmless extra reads). */
-    {
-        static const uint16_t w1[7] = {0x8800u, 0x8800u, 0x8800u, 0x8800u,
-                                        0x1200u, 0x0C00u, 0x0A00u};
-        static const uint16_t w2[4] = {0x841Fu, 0x0A00u, 0x1200u, 0x0C00u};
-        uint16_t rx[8];
-        (void)plat_sup_xfer(w1, rx, 7u);
-        (void)plat_sup_xfer(w2, rx, 4u);
-    }
 #endif
     sched_init(s_tasks, (uint8_t)(sizeof s_tasks / sizeof s_tasks[0]));
 

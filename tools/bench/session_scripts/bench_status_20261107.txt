@@ -1,0 +1,26 @@
+=== 2026-11-07 MORNING (E38/E39, section 6.2ab) ===
+THE GRANT-BREAKER IS THE CAN SCHEDULE. E38 (handshake removed, CAN on):
+refused. E39 (CAN loop disabled, everything else kept): grant on the
+FIRST bit-0 word. Bus-0 traffic, mode bytes, keep-warm: exonerated.
+Bench left on E39 (m4bh, sig 2a06a679c917ca2b).
+GRANT RECIPE (do not optimize until decoded): magic-frame spam until the
+FIFTH heartbeat (latch ~pass 85+), delay=150. hb1-break latches refused
+0/2 for the full 10s ask; spam->hb5 granted 3/3 today and matches every
+grant in project history. The ask's landing pass is irrelevant; the
+LATCH moment is the discriminator. Every frame re-arms the delay - the
+spam pattern is part of the ritual.
+RAIL: window closes at pass 65 every boot (ring: 0xB0 -> 0x90). Early
+ask = refused AND poisons the rest of the ask. Ask-inside-window is
+mechanically dead; rail != ask timing. The stock holds its rail without
+bit 0 (engages ~+15s) - the window-era hold signal is something else.
+0x24 SWITCH ECHO = the distance-to-goal metric: AA00 on refused AND
+granted streams; stock engaged = AA20. Grant != switch stage. Our
+job2[0] (0x90 reg) reply mirrors the ctrl word (AA90/AA91), not the
+register data (0x20) - the stock's write->0x24-readback loop (0x92ED4,
+cross-check (reply^word)&0x15) is the active lead.
+NEXT: decode why our 0x90 register write does not stick (E16 era it did:
+AA20) - reply-row shift vs register semantics; then mode-0x31 chain,
+ring scheduler.
+INSTALL FLOW NOTE: the bootloader HELD its plant session 3 minutes
+(storm catch -> chain attach, no re-cycle needed). Two green installs on
+this flow today.
