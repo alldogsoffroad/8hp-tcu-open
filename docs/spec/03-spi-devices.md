@@ -2050,3 +2050,52 @@ Also today: two reader-side struct-address errors caught and corrected (rx_words
 at s_st+22 not +18; fca_tx's s_st at 0xFFF84DD0 vs sol_drv's at 0xFFF850D8) —
 always take live-struct addresses from the build's map file, not from memory
 of a previous build.
+
+### 6.2ad E40–E42d — the bus-B feeders, the withdrawal class, and the five-select wall (2026-11-07, afternoon) [O]
+
+**The arc.** E40 (magic data[6], RSPI-A re-send): starved by a per-call divider
+reset (no-op stages), then E40b transmitted at 100 ms and the grant died —
+first sight of the "withdrawal". E41/E41b moved the write job to bus B
+(sup_drv_poll revived, four-select, ~2 s cadence, grant-gated): TRANSMITTED
+cleanly (drv_writes at the 2 s cadence), grant held, af01 AA-acknowledged
+every frame — and 0x24 stayed AAFF. The commissioning write values are
+exonerated: af01 hears them and does not care. E42 (45-word cyclic-companion
+on the five-select) and E42c/E42d (dump-exact 10-word 0x2D, five-select)
+both ended in **supervisor-initiated MCU resets** — caught at 250 ms
+resolution by E42d's sample train: arm lands (armed=1, ask re-armed) →
+divider elapses → job fires → next sample reads BSS wiped, ask 0/0, and
+**mirror AAB0 with the rail bit UP = the fresh power-on window**.
+
+**The five-select wall (law):** register-class words on the supervisor's
+select — outside the engage/token context — reset the MCU immediately.
+plat_sup_xfer4's design comment ("the supervisor stays in the read
+rotation") is absolute; the stock's 0x2D broadcast (88-mode rows to all
+five selects) is context-legitimized like its 0x8E9F. The 10-word shape
+proves it is the SELECT, not the burst length: 40-word four-select jobs
+are stream-safe, 10-word five-select jobs reset. Any further af01 feeding
+must ride the four-select.
+
+**The boot-manager handover wipes .noinit** (E42c's boot-trip counter read
+1 both before and after a confirmed reset — the boot manager's RAM init
+covers it). A noinit survivor must live where the boot manager does not
+clear, or the counter is only a power-cycle counter.
+
+**Two distinct grant-death classes, both mapped:**
+- RESET: supervisor-initiated MCU reset (register-words-in-its-select;
+  the E28 stall class). Signature: BSS wipe + mirror returns to the
+  window shape (AAB0, rail bit up) + hb gap. Ammeter: a ~370 ms .2x
+  blip as the window reopens (bench-confirmed pending user report).
+- WITHDRAWAL (12:21:43 event): no reset, no BSS wipe, hb continuous —
+  the mirror simply drops bit 0 (~55 s into that grant), and the resumed
+  ask is REFUSED for its full 2000 passes (poisoned, like the early-ask
+  refusal). Cause unknown; the arm frames of that run apparently never
+  landed (e42_armed stayed 0 — no code path clears it), making it
+  spontaneous from our side. ONE observation; do not build on it until
+  reproduced.
+
+**Bench state: E42c image (m4bn, 03773801). The 2 s four-select write job
+is proven stream-safe and ack'd — it remains available for combined tests.**
+Next candidates: the four-select setpoint shape (af01's 0x12 + A000 minus
+the supervisor — low expectation, af01 already ignored the same bytes in
+the write job), the withdrawal/ask-refusal law (reproduce, then decode),
+mode-0x31 chain, ring scheduler.
