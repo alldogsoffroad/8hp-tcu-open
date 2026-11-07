@@ -57,11 +57,21 @@ static uint8_t mode_byte(uint8_t chip)
 
 static bool xfer(uint8_t n)
 {
+#if defined(TCU_AUTOENGAGE)
+    /* E56 (spec 03 6.2am): the stock's own unconditional feed — SPCR=0x08,
+     * packed register pair store + SPDR write per frame, no SPTEF polling. */
+    if (!plat_drv_xfer_stock(s_tx, s_rx, n)) {
+        s_st.faults |= SOL_F_BUS;
+        return false;
+    }
+    return true;
+#else
     if (!plat_drv_xfer(s_tx, s_rx, n)) {
         s_st.faults |= SOL_F_BUS;
         return false;
     }
     return true;
+#endif
 }
 
 /* fill frames [5k .. 5k+4] with command cmd for every chip */

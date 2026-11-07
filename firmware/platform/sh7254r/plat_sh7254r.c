@@ -734,6 +734,45 @@ bool plat_drv_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n)
     return true;
 }
 
+bool plat_drv_xfer_stock(const uint16_t *tx, uint16_t *rx, uint8_t n)
+{
+    /* E56 (spec 03 section 6.2am): THE STOCK'S OWN FEED — decoded from the frame
+     * pump at 0x93C30: per frame, ONE unconditional 32-bit store of the packed
+     * {SPCR, pad, SPSR, pad} pair at the register base, then the 16-bit SPDR
+     * write. NO SPTEF polling anywhere in the loop. The stock runs SPCR = 0x08
+     * in this mode (E55 proved our polled transport dead under 0x08 — the poll
+     * waits for a flag that never comes; the stock never waits). The 2026-10-30
+     * "must poll" lesson was a property of 0x48-polled mode, not the hardware.
+     * Reply: read SPDR right back per frame (one-frame lag acceptable if any). */
+    SPCRA = 0x00u;
+    RSPIA_DMA_REQ0 = 0u;
+    RSPIA_DMA_REQ1 = 0u;
+    SPSRA = 0u;
+    SPPCRA = 0u;
+    SPBRA = s_drv_spbr;
+    SPCKDA = 0u;
+    SSLNDA = 0u;
+    SPNDA = 1u;
+    SPSCRA = 4u;
+    for (uint32_t i = 0u; i < 5u; i++) {
+        SPCMDA(i) = s_drv_cmd[i];
+    }
+    {
+        /* the packed per-frame register store: SPCR = 0x08 at +0, SPSR = 0x20
+         * (the stock's ISR entry value: clears OVRF/idle flags) at +2 */
+        volatile uint32_t *const pair = (volatile uint32_t *)0xFFFFB000u;
+        volatile uint16_t *const spdr = (volatile uint16_t *)0xFFFFB004u;
+
+        for (uint8_t i = 0u; i < n; i++) {
+            *pair = 0x20000008u;         /* SPCR=0x08 | SPSR=0x20 packed */
+            *spdr = tx[i];
+            rx[i] = *spdr;               /* immediate read; lag tolerated */
+        }
+    }
+    SPCRA = 0x00u;
+    return true;
+}
+
 /* ---- Park hold output: timer E sub-block 3 channel 1 = TOE31 on PL6 ----------------
  * (spec 02 section 3.1, manual 13.22 / 22.1.22). 2 MHz count clock (clock-bus line 1,
  * PSCR1 = 4 -> 4 MHz, PSCRE3 = 1 -> divide by 2), cycle 2000 ticks = 1 kHz, counter
