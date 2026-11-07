@@ -111,3 +111,23 @@ NEXT SESSION (the platform build): DMA/linked-job SPI transport for bus B +
 the mirrored-model read (stock 0xFFF88518, record 2, live engaged).
 Bench on E49 (m4bu, sig 9beecbe2e21df08a). Grant recipe: spam-hb5/delay150,
 data[7]=2 arms the companion. ALL PUSHED.
+
+=== 2026-11-08 SESSION (E50-E53, section 6.2ai) ===
+GOAL: solenoids operating. THE MIRRORED CAPTURE: stock restored, read while
+engaged at 1.786A - the live 45-frame cyclic verbatim (modes {1A,1A,1A,12,15},
+setpoints {53,589,589,53,0}/{589,589,53,0,0}); mode cell 0x19 even engaged.
+E50/E50b: THE BIT0-FREE LAW - register jobs survive bit0-free (15/15), die
+with bit0 in play. E51/E52: hundreds/thousands of jobs bit0-free, zero
+resets (row-per-pass AND full 45-frame 10ms bursts both safe); rail bit
+only in the window; THE GRANT WAS NEVER THE RAIL'S PREREQUISITE.
+E53: TOPOLOGY CORRECTED - the driver cyclic rides RSPI-A (peripheral-
+relative SPCMD values; bus-B has no A2 chips); supervisor never gets
+register jobs (the reset mechanism explained: bit0 collision faults its
+parser). Our RSPI-A cyclic with the stock's VERBATIM words: headers pass,
+no faults - BUT WRITES DON'T STICK (all 4 chips mismatch every cycle,
+400/s, ammeter .166).
+THE LIVE LEAD: writes-don't-stick - reads/ID/headers work, writes never
+latch. Remaining deltas: RSPI-A transport params (SPBRA bit rate, SSLNDA/
+SPNDA delays, SPCRA mode, DMA framing). Stock's RSPI-A init via literal
+0xFFFFB000 @ROM 0x40E74 <- code near 0x963EC. NEXT: decode those params
+and match them. Bench on E53 (m4by, sig 2ac5cf74129d001f... see e14_sigs).
