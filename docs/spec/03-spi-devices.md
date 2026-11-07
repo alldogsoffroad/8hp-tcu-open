@@ -1987,25 +1987,27 @@ accepted and inside the window — the rail is not earned by ask timing.**
 The stock keeps its rail without bit 0 (engages at ~+15 s), so the
 window-era hold signal is something else in the stock's stream.
 
-**The cyclic reply rows on a granted vs refused stream (E39, both read):**
-| row | refused | granted | stock engaged |
+**The cyclic reply rows on a granted vs refused stream (E39, both read;
+CORRECTED 2026-11-07 afternoon — the first read mis-mapped the struct:
+rx_words starts at s_st+22, not +18, and last_rx IS rx_words[2]):**
+| field (correct) | refused | granted | stock driving (6.2b/6.2d) |
 |---|---|---|---|
-| ctrl echo (rx1[0]→last_rx) | AA90 | AA91 | AA91-class |
-| job2[0] "0x90 rb" | AA90 | AA91 | — |
-| job2[1] **0x24 switch echo** | AA00 | **AA00** | **AA20** |
-| job3[1] 0x2E | AAFF | AAFF | cross-checked |
+| rx_words[0] ctrl reply | AA00 | AA00 | AA00 |
+| rx_words[2] **0x22 mirror (= last_rx = ring)** | AA90 | **AA91** | AAA1 (grant+RAIL) |
+| rx_words[4] 0x90-register reply | AA00 | AA00 | AA00 |
+| rx_words[5] **0x24 switch echo** | AAFF | **AAFF** | **AA20** |
+| rx_words[7] 0x2E | AAFF | AAFF | AA05 |
 
-1. The grant does NOT move 0x24 — the switch stage is a separate
-   supervisor output. 0x24 is the measurable distance-to-goal (stock
-   engaged 0x20, ours 0x00 granted).
-2. Our job2[0] reply mirrors the CONTROL word (AA90/AA91), not the 0x90
-   register data — in the stock, job2 writes 0x9020 and the 0x24 read
-   answers AA20 (E16 era: ours answered AA20 once; the current stream's
-   register write is not taking, or the reply rows are shifted a frame).
-   The stock's job2/job3 cross-check `(reply ^ word) & 0x15` (handlers
-   0x92ED4/0x92FD0) is the loop that gates its switch confirmation —
-   decoding why our 0x90 register data does not stick is the active lead.
-3. Ring note: the 0x22 row (rx1[2]) never carries bit 0 even when granted
-   (rx22 stays AA00) — the grant bit lives in the ctrl echo only. Ring
-   scans for "first echo-bit0" are therefore unreliable on that row (one
-   boot showed a stray 0x??1 at pass 230; not reproducible evidence).
+1. Our cyclic is stock-exact on every row we control — granted or
+   refused. NO row regression vs the E17 ledger (the apparent "0x22 went
+   AA90→AA00" was the offset mis-read; s_st holds busy/enable/app_pattern
+   at +16..+21 before rx_words).
+2. The grant bit appears in rx_words[2] (the 0x22 mirror) — the same
+   slot the ring and sup_engage_echo_bit0 consume. The ring IS
+   grant-reliable: g3's first mirror-bit0 at pass 230 = latch(~80) +
+   delay(150) exactly; the mirror carries rail in bit 5 (stock AAB1).
+3. The remaining true deltas are the supervisor's own state words —
+   0x24 AAFF-vs-AA20 (E16 already proved it invariant to our written
+   data: its own switch-state word), 0x2E, 0x28 — consistent with E16's
+   "effects of the dead rail, not causes." The wire side is CLOSED; the
+   gap lives in supervisor state upstream of the cyclic stream.
