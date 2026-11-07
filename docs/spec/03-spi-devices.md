@@ -2228,3 +2228,49 @@ the bus-B exchange path to DMA-driven descriptor chains (the 0xFFF90630
 structure class), eliminating inter-frame gaps. This is the architectural
 close of the E40-E49 arc. Pairs with: the mirrored-model read (stock's
 0xFFF88518 + record 2 live values).
+
+### 6.2ai E50–E53 — the bit-0-free law, the mirrored capture, the topology correction, and the writes-don't-stick signature (2026-11-08) [O]
+
+**The mirrored-model capture (the stock restored and read while ENGAGED at
+1.786 A, park target 8):** the live 45-frame cyclic TX buffer (0xFFF88518)
+= modes {881A, 881A, 881A, 8812, 8815}, ch0 setpoints {E853, ED89, ED89,
+E853, E800}, ch1 {F589, F589, F053, F000, F000}, dithers zero, read rows
+6000/C000/6600/D800; the chip records mirror it; the mode cell reads 0x19
+EVEN WHILE ENGAGED (the 0x31 flip is not the engaged state); the echo
+cells read 0x81/0xA1 (grant+rail live). Frame 2 of the rotation carries
+0x881A + 855 mA + 50 mA — captured verbatim, banked at
+/tmp/stock_cells_dump.bin.
+
+**E50/E50b: THE BIT-0-FREE LAW.** The verbatim words on our bus-B companion
+reset with the ask in play — but with the ask delayed 30 s, the companion's
+register jobs ran 15-for-15 SURVIVED bit0-free, and the job that landed
+with the grant live reset the TCU. Register-class words are fatal ONLY
+while bit 0 is in play. E51 (row-per-pass from app start) and E52 (the
+full 45-frame contiguous burst every 10 ms) then streamed HUNDREDS and
+THOUSANDS of jobs bit0-free with zero resets — the burst shape and cadence
+are safe; the E45-era "stall" attribution is dead; and the mirror's rail
+bit appears only in the normal window. The grant was never the rail's
+prerequisite (the stock's rail is up at +250 ms, 15 s before any bit 0).
+
+**E53: THE TOPOLOGY CORRECTION.** Our bus-B probe found NO A2-class chips,
+yet the stock's ID job reports four from its five-select — the 0x40CE4
+table values are PERIPHERAL-RELATIVE and the stock's driver cyclic rides
+RSPI-A (where our own sol_drv polls A2 chips today). The supervisor never
+receives register-class driver jobs at all; our bus-B companion words are
+ignored bit0-free and fault its parser when bit 0 collides (the reset
+mechanism, finally explained). Our RSPI-A cyclic now sends the stock's
+captured words VERBATIM (E53, m4by): the drivers receive them — headers
+pass, no faults, cycles at the 10 ms cadence — **but the writes do not
+stick: all four chips' read-backs mismatch EVERY cycle (400/s), the
+ammeter stays .166.**
+
+**The live lead: the writes-don't-stick signature.** Reads work, ID works,
+headers work, writes never latch — same words, same SPCMD values, one
+contiguous burst. The remaining deltas are the RSPI-A TRANSPORT PARAMETERS:
+SPBRA (the bit rate — ours 5, verified only for bus B; driver chips often
+latch writes only below a max clock), SSLNDA/SPNDA (the AE next-command
+delays), the SPCRA mode bits, and the DMA-driven framing. The stock's RSPI-A
+init writes these through computed addresses (literal 0xFFFFB000 at ROM
+0x40E74, referenced from 0x963EC-class code) — the next decode session's
+first target. One of these parameters is why every write since October has
+been silently dropped — and with it, very plausibly, the rail itself.
