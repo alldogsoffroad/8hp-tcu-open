@@ -257,6 +257,8 @@ static bool     s_wj_on;
 static uint8_t  s_wj_v8e;
 static uint16_t s_wj_div;
 static bool     s_sp_on;       /* E42: the bus-B setpoint job (magic data[7]) */
+static bool     s_cc_on;       /* E45: the bus-B cyclic companion (magic data[7]=2) */
+static uint16_t s_cc_sp;       /* E45: its setpoint value (staged by the caller) */
 
 void sup_drv_write_arm(bool on, uint8_t v8e)
 {
@@ -268,6 +270,12 @@ void sup_drv_write_arm(bool on, uint8_t v8e)
     }
     s_wj_on = on;
     s_wj_v8e = v8e;
+}
+
+void sup_drv_cyclic_arm(bool on, uint16_t sp)
+{
+    s_cc_on = on;
+    s_cc_sp = sp & 0x7FFu;
 }
 
 void sup_drv_setpoint_arm(bool on)
@@ -295,6 +303,47 @@ const sup_drv_status_t *sup_drv_status(void)
 
 bool sup_drv_poll(uint16_t *words, uint8_t *n)
 {
+    /* E45 (spec 03 section 6.2af): the bus-B CYCLIC COMPANION — the stock's 45-frame
+     * driver cyclic (template 0x40D0C) rides THE SUPERVISOR'S OWN BUS on the five-select
+     * rotation af31/af21/af11/af01/af51 = SSLB3/2/1/0/5 — FRAME INDEX 2 GOES TO THE
+     * SUPERVISOR (0x88|mode, A0, E8|setpoint, A6, F0|setpoint, 60, C0, 66, D8), every
+     * 10 ms from app start. OUR driver cyclic rides RSPI-A where the supervisor sees
+     * nothing — it has never witnessed a setpoint. The E42 "five-select wall" was a
+     * dialect error, not a wall: the lone burst's 0x881A told the supervisor its own
+     * "channels" were in current control; the stock's frame-2 mode is its chip-record
+     * mode (flag-only, 0x10-class) and its rhythm is continuous from app start.
+     * Setpoints: the E43 window-load staging (250 mA class per channel, the park-hold
+     * fail-safe magnitude) mirrored by the caller; frame 2 (supervisor) carries zero
+     * setpoints and the benign 0x10 mode. Grant-independent like the stock's. */
+    static uint8_t s_cc_div;
+    if (s_cc_on) {
+        if (++s_cc_div >= 2u) {          /* every 2nd pass = the stock's 10 ms cadence */
+            static const uint8_t MODE5[5] = { 0x10u, 0x10u, 0x10u, 0x10u, 0x10u };
+            const uint16_t sp = s_cc_sp;
+            s_cc_div = 0u;
+            for (uint8_t r = 0u; r < 9u; r++) {
+                for (uint8_t c = 0u; c < 5u; c++) {
+                    uint16_t w;
+                    switch (r) {
+                    case 0u: w = (uint16_t)(0x8800u | MODE5[c]); break;
+                    case 2u: w = (uint16_t)(0xE800u | (c == 2u ? 0u : (sp & 0x7FFu))); break;
+                    case 4u: w = (uint16_t)(0xF000u | (c == 2u ? 0u : (sp & 0x7FFu))); break;
+                    case 1u: w = 0xA000u; break;
+                    case 3u: w = 0xA600u; break;
+                    case 5u: w = 0x6000u; break;
+                    case 6u: w = 0xC000u; break;
+                    case 7u: w = 0x6600u; break;
+                    default: w = 0xD800u; break;
+                    }
+                    words[5u * r + c] = w;
+                }
+            }
+            *n = 45u;                    /* nine rows x five selects -> xfer5 */
+            s_drv.drv_jobs++;
+            return true;
+        }
+        return false;
+    }
     if ((!s_wj_on && !s_sp_on) || s.state == ST_IDLE || !s.echo_grant) {
         return false;
     }

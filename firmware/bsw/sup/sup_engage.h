@@ -101,5 +101,12 @@ void sup_drv_write_arm(bool on, uint8_t v8e);
  * Same grant gating and ~2 s cadence inside sup_drv_poll; supersedes the
  * write job when both are armed (write takes priority). */
 void sup_drv_setpoint_arm(bool on);
+/* E45 (spec 03 section 6.2af): arm the bus-B CYCLIC COMPANION — the stock's
+ * 45-frame driver cyclic on the five-select rotation with the supervisor's
+ * select at frame 2, at the stock's 10 ms cadence, grant-independent. The
+ * supervisor witnesses the setpoint rows; frame 2 carries the benign 0x10
+ * mode and zero setpoints (the E42 reset was the 0x881A dialect error).
+ * sp = the 11-bit setpoint mirrored to the four real chips' frames. */
+void sup_drv_cyclic_arm(bool on, uint16_t sp);
 
 #endif

@@ -84,6 +84,7 @@ static bool s_e40_armed;        /* E40 (spec 03 6.2ac): repeating engaged write 
                                  * by the magic frame's data[6]; grant-gated in task_10ms */
 static uint8_t s_e40_v8e;       /* E40: its live 0x8E row value (0x9F = stock constant) */
 static bool s_e42_armed;        /* E42: the bus-B setpoint job armed by data[7] */
+static bool s_e45_cyclic;       /* E45: data[7]=2 selects the cyclic companion */
 
 static void task_1ms(void)
 {
@@ -121,8 +122,13 @@ static void task_1ms(void)
                     s_e40_v8e = f.data[6];
                 }
                 if (f.data[7] != 0u) {   /* E42: the bus-B setpoint job (nine-row
-                                          * five-select, keep-warm cycling) */
+                                          * five-select, keep-warm cycling).
+                                          * E45 (6.2af): data[7] == 2 arms the bus-B
+                                          * CYCLIC COMPANION instead — the stock's
+                                          * 45-frame driver cyclic with the supervisor
+                                          * witnessing the setpoints at frame 2. */
                     s_e42_armed = true;
+                    s_e45_cyclic = f.data[7] >= 2u;
                 }
                 continue;
             }
@@ -160,7 +166,10 @@ static void task_10ms(void)
          * directly); the magic frame's arms are forwarded there. E40's RSPI-A re-send
          * is gone — it never reached af01 and its burst withdrew the grant (6.2ac). */
         sup_drv_write_arm(s_e40_armed, s_e40_v8e);
-        sup_drv_setpoint_arm(s_e42_armed);
+        sup_drv_setpoint_arm(s_e42_armed && !s_e45_cyclic);
+        /* E45: the cyclic companion mirrors the E43 window-load staging (the
+         * park-hold class magnitude); 250 mA -> setpoint 417 (0.6 mA steps). */
+        sup_drv_cyclic_arm(s_e45_cyclic, 417u);
     }
     vehicle_update_10ms();
     sensors_update_10ms();
