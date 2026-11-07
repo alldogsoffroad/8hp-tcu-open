@@ -367,3 +367,5 @@ const plat_mb_status_t *plat_mb_status(void)
 
     return &s_mb_zero;
 }
+
+void plat_drv_spbr_set(uint8_t spbr) { (void)spbr; }  /* host stub */

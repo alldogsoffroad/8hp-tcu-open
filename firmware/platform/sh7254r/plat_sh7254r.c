@@ -708,7 +708,7 @@ bool plat_drv_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n)
     for (uint32_t i = 0u; i < 5u; i++) {
         SPCMDA(i) = s_drv_cmd[i];
     }
-    SPCRA = 0x08u;                      /* E55 (6.2aj): the stock's live value while engaged (read 0xFFFFB000 = 0x08); our 0x48 set bit 6 — the one-byte transport delta behind writes-don't-stick */
+    SPCRA = 0x48u;                      /* E55 verdict (6.2ak): 0x08 (the stock's live value) zeroes BOTH buses with our polled transport — bit 6 is load-bearing for polled framing; the stock's 0x08 belongs to its interrupt/DMA transaction engine. Restore until the DMA transport exists. */
     for (uint8_t i = 0u; i < n; i++) {
         uint32_t guard;
         for (guard = DRV_WAIT_LOOPS; guard != 0u && (SPSRA & SPSR_SPTEF) == 0u; guard--) {
