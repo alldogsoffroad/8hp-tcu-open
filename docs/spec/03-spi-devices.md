@@ -2011,3 +2011,42 @@ rx_words starts at s_st+22, not +18, and last_rx IS rx_words[2]):**
    data: its own switch-state word), 0x2E, 0x28 — consistent with E16's
    "effects of the dead rail, not causes." The wire side is CLOSED; the
    gap lives in supervisor state upstream of the cyclic stream.
+
+### 6.2ac E40/E40b — the engaged write job, twice wrong-bus; the grant withdraws under burst load (2026-11-07, afternoon) [O]
+
+**E40 (m4bi, EC903279) / E40b (m4bj, 34D2FF06): a repeating engaged write job,
+armable live.** Magic frame data[6] != 0 arms a 100 ms re-send of the 40-word
+configuration job with the 0x8E row = data[6] (0x9E = the stock constant minus
+bit 0; 0x9F = stock-exact), grant-gated in task_10ms (the arm lands at hb5,
+bit 0 must flow first). Three lessons, in order:
+
+1. **E40's stages were no-ops** — sol_engage_resend() reset its divider on every
+   10 ms gate call, starving the 100 ms counter (frozen div=1, zero mismatch
+   step). E40b fixes the reset to state-transitions only.
+2. **Both stage values are SAFE on a granted stream when not transmitting**
+   (E40: grant held 45 s through both arms, 0x24 = AAFF throughout).
+3. **E40b transmitted — and the grant WITHDREW within 3 s** (mirror AA91 →
+   AA90, no reset, heartbeat alive). Root cause chain: the re-send rides
+   sol_drv / plat_drv_xfer = **RSPI-A**, a bus the supervisor and af01 never
+   see — so the engaged values went nowhere useful, while the extra 40-frame
+   burst (on top of the 45-frame cyclic, every 100 ms) stressed the 5 ms
+   cadence; one late mirror pass flips echo_grant off, the A-law shadow stops,
+   and the supervisor withdraws the grant. First observation of a WITHDRAWAL
+   (vs reset) class.
+
+**Topology corollary (settles a standing ambiguity): af01 and the supervisor
+are RSPI-B devices; sol_drv's commissioning (the identical 8-register shape)
+rides RSPI-A to the mechatronic driver chips and cannot reach them.** The
+correct feeder is the retired bus-B driver-job layer (sup_drv_poll, §6.2e
+"wrong-bus emitters retired"): DRV_WRITE_WORDS = 40 (8 regs x five selects,
+**the supervisor's select INCLUDED** — its 0x84/0x88/0x90 read empty when we
+skip select 4, bench 2026-11-04), DRV_SP_WORDS = 36 (setpoints, supervisor
+excluded — the four-select write transport plat_sup_xfer4). E41 = revive the
+write job on RSPI-B, post-grant, v8e live-settable, at a cadence that does
+not stress the 5 ms pass (the m4r era ran it ~every 2 s without stream
+damage).
+
+Also today: two reader-side struct-address errors caught and corrected (rx_words
+at s_st+22 not +18; fca_tx's s_st at 0xFFF84DD0 vs sol_drv's at 0xFFF850D8) —
+always take live-struct addresses from the build's map file, not from memory
+of a previous build.
