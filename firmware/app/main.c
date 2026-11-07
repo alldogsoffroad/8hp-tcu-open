@@ -496,6 +496,26 @@ int main(void)
     sup_engage_arm(true);
     sup_engage_request_enable(true);
 #endif
+#if defined(TCU_AUTOENGAGE)
+    /* E49 (spec 03 section 6.2ag): the STARTUP COMMISSIONING restored (E35r's
+     * proven-safe handshake, removed in E38 on a theory that collapsed). The
+     * stock's first SSLB1 jobs (transport 0x40CA0) commission the supervisor's
+     * driver interface — the 0x8800 mode-register writes (channels disabled)
+     * and the commit/read sequence — BEFORE the cyclic stream begins. The
+     * E45-E48 wall (register jobs to the supervisor's select = reset under
+     * every content/cadence/mode variation) is hypothesized to be the MISSING
+     * commissioning: the stock's register writes ride on top of this startup
+     * handshake; ours arrived uncommissioned. Sent through the existing
+     * alternating transport (even frames -> SSLB1, odd -> SSLB0 reads). */
+    {
+        static const uint16_t w1[7] = {0x8800u, 0x8800u, 0x8800u, 0x8800u,
+                                        0x1200u, 0x0C00u, 0x0A00u};
+        static const uint16_t w2[4] = {0x841Fu, 0x0A00u, 0x1200u, 0x0C00u};
+        uint16_t rx[8];
+        (void)plat_sup_xfer(w1, rx, 7u);
+        (void)plat_sup_xfer(w2, rx, 4u);
+    }
+#endif
     sched_init(s_tasks, (uint8_t)(sizeof s_tasks / sizeof s_tasks[0]));
 
     for (;;) {
