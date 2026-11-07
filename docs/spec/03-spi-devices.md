@@ -2304,3 +2304,31 @@ Five one-shot reads off the engaged stock (1.789 A) before the E55 install:
 matching both stock buses. If bit 6 is the clock-output mode, the driver
 chips have been latching our frames on the wrong edge since October:
 reads decode, writes never do — the writes-don't-stick signature, one byte.
+
+### 6.2al E54/E55 verdicts — the transport wall is the ACCESS MODEL (2026-11-08, evening) [O]
+
+**E54 (the bit-rate sweep, live-settable SPBRA):** mismatch held at exactly
+4/cycle across SPBRA 2..0xFF — the bit rate is ELIMINATED as the
+writes-don't-stick cause.
+
+**E55 (SPCRA 0x48 -> 0x08, the stock's live value on BOTH buses):** zeroes
+EVERYTHING — mirror 0000, 0x24 = AA00, no boot spike, bus B (config
+untouched) also dead. Bit 6 of SPCR is load-bearing for OUR POLLED
+transport: the 2026-10-30 bench lesson (the peripheral accepts writes but
+never shifts without the full-setup discipline) extends — the polled
+framing needs bit 6 set. The stock runs 0x08 because its transaction
+engine is interrupt/DMA-driven (the 0xFFF90630 descriptor structure, the
+ring scheduler of spec 02 §7).
+
+**The convergence:** every surviving hypothesis now names the SAME build —
+the stock's DMA/interrupt transaction engine for RSPI (the "ring
+transport"). The stock's access model (0x08 + descriptors + DMA) is why
+its writes latch; our polled model (0x48 + per-frame CPU framing) is why
+ours never have. That is the next major build: replace the polled
+per-exchange loop with the descriptor-driven engine on bus A first (the
+driver cyclic — the ammeter path), bus B second.
+
+Bench state: E55 image was NOT reinstalled after the verdict boot; the
+revert (E55b = 0x48 restored, 19/19) is built (m4c1) — install it next
+session start to return the bench to the E54-equivalent baseline before
+the DMA work.
