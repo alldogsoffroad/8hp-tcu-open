@@ -2274,3 +2274,33 @@ init writes these through computed addresses (literal 0xFFFFB000 at ROM
 0x40E74, referenced from 0x963EC-class code) — the next decode session's
 first target. One of these parameters is why every write since October has
 been silently dropped — and with it, very plausibly, the rail itself.
+
+### 6.2ak The live-stock transport read — SPCR=0x08 on BOTH buses; the engaged echo shape (2026-11-08, evening) [O]
+
+Five one-shot reads off the engaged stock (1.789 A) before the E55 install:
+
+1. **RSPI register blocks (both buses, live):** SPCRA = SPCRB = **0x08** — bit 6
+   CLEAR on both; our transports have run 0x48 (bit 6 set) on both since
+   October. The +A byte = 5 on both (our SPBR offset/value match). The
+   stock's SPCMD registers read ZERO while running — its select configs
+   live in the RAM shadow (0xFFF90630+0x7E), reloaded per transaction,
+   the same discipline as our per-exchange re-init.
+2. **The engaged echo shape (never before read live at these cells):**
+   word shadow 0xFFF907D4 = **0x91**; echo 0xFFF907D5 = **0xB1** —
+   grant (bit 0) AND rail (bit 5) both live — the engaged mirror we have
+   never reproduced (ours: 0x90 no-grant / 0x91 grant-only).
+3. **af01's cross-check shadow 0xFFF907D7 = 0x20** — the engaged
+   switch-state echo, live-confirmed (ours reads AAFF = refusal).
+4. **Mode cell 0xFFF90951 still 0x19** minutes into engagement, counter
+   0xFFF907D8 = 0 — the 0x31 flip is NOT time-based; its trigger stays
+   unknown (and non-essential: the stock drives at 0x19).
+5. **The cyclic setpoints WALK:** second buffer read vs first —
+   E853→E854, ED89→ED8A/ED8B, F053→F054 — a ±1-LSB closed-loop
+   regulation walk (pressure control), not static values. The E53
+   verbatim replay freezes one snapshot; the walk's magnitude is tiny
+   and benign for replay.
+
+**E55 (m4c0, B3DEF2F7): SPCRA 0x48 → 0x08 on the driver transport** —
+matching both stock buses. If bit 6 is the clock-output mode, the driver
+chips have been latching our frames on the wrong edge since October:
+reads decode, writes never do — the writes-don't-stick signature, one byte.
