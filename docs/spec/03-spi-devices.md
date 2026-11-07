@@ -2168,3 +2168,31 @@ OWN chip-record values (0xFFF91108+0x1C*2: mode +0x07, setpoints +0x0C/+0x14,
 maintained by the app), not zeros — the app mirrors a model OF the supervisor
 back to it. **NEXT DECODE: who writes record 2's fields, and what values it
 holds across phases — the mirrored-model hypothesis.**
+
+### 6.2ag E46–E48 — the companion wall: content, cadence and mode eliminated; the ring remains (2026-11-07, afternoon) [O]
+
+**E46 (0x881A + real setpoints at frame 2, 10 ms)**: reset loop during the
+spam phase (cc_on=0, ask 0/0, counters wiped). **E47 (same shape, 2 s)**:
+the companion fired ONCE with the grant live (mirror AA91, drv jobs=1) and
+the TCU reset within a second — 2 s cadence exonerated (E41b's four-select
+40-framer is stream-safe at the same rate). **E48 (E47 + the 0x9021 switch-
+word bit, E16's "transient" re-read as the driver-comms mode)**: identical
+reset. Content (0x10 vs 0x1A, zero vs real setpoints), cadence (10 ms vs
+2 s), and the mode bit are ALL eliminated.
+
+**The surviving differentiator is the transport.** The stock's whole RSPI-B
+conversation runs as ONE continuous hardware-sequenced ring (spec 02 §7):
+the SPCMD/job tables are walked by the RSPI engine with no CPU blocking and
+no bus-idle between jobs — supervisor frames, register frames and reads
+arrive as one unbroken choreography. Our stream is blocking job-by-job with
+full peripheral re-init between exchanges; the companion's register frames
+reach the supervisor's select as a standalone burst whose bus-level framing
+(select assert/release pattern, inter-frame gaps, clock restarts) differs
+from the stock's ring in ways no word value can replicate.
+
+**NEXT (major): the ring-transport build** — restructure the SPI layer to a
+hardware-sequenced job ring (the stock's architecture), starting with the
+cyclic jobs 1-3 + the companion as one linked sequence. This supersedes the
+per-job xfer model for bus B. (Also pending from 6.2af: the mirrored-model
+read — capture the stock's 0xFFF88518 cyclic buffer + record 2 live while
+engaged, for the frame-2 values; both tasks pair naturally.)
