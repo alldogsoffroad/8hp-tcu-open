@@ -29,3 +29,19 @@ chain, ring scheduler.
 INSTALL FLOW NOTE: the bootloader HELD its plant session 3 minutes
 (storm catch -> chain attach, no re-cycle needed). Two green installs on
 this flow today.
+
+=== 2026-11-07 AFTERNOON (E40/E40b, section 6.2ac) ===
+E40: repeating engaged write job armable live (magic data[6]; 9E/9F stages).
+Both stages SAFE but NO-OPS (divider reset starvation). E40b fixed -> the
+re-send transmitted and THE GRANT WITHDREW within 3s (AA91->AA90, no reset,
+hb alive). Root cause: sol_drv = RSPI-A; af01+supervisor = RSPI-B. The
+engaged values went nowhere and the extra 40-frame burst stressed the 5ms
+cadence (one late mirror pass -> echo_grant off -> shadow stops -> withdrawn).
+TOPOLOGY SETTLED: feed af01 via the RETIRED bus-B layer (sup_drv_poll,
+DRV_WRITE_WORDS=40 incl. supervisor select; setpoints 4-select excl.).
+E41 DESIGN: revive the write job on RSPI-B (plat_sup_xfer4), post-grant,
+v8e live-settable, ~2s cadence (m4r precedent). Bench on E40b (m4bj,
+grants with the recipe, withdrawal reproducible). Restore: /tmp/install_e39.py
+for the last no-re-send image.
+READER LESSONS x2 today: take live struct addresses from the CURRENT build's
+map file (rx_words s_st+22; sol_drv s_st 0xFFF850D8 vs fca_tx 0xFFF84DD0).
