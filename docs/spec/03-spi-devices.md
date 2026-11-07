@@ -2099,3 +2099,39 @@ Next candidates: the four-select setpoint shape (af01's 0x12 + A000 minus
 the supervisor — low expectation, af01 already ignored the same bytes in
 the write job), the withdrawal/ask-refusal law (reproduce, then decode),
 mode-0x31 chain, ring scheduler.
+
+### 6.2ae E43/E44 — the window-load race, the delivery cap, and the primed-rail reading (2026-11-07, evening) [O]
+
+**E43 (m4bo, 4A63ACA2): channels 0-6 at 250 mA each for the first 500 ms**
+(re-testing 6.2w's load-in-window elimination, which ran with the
+bench_channels_off assassin active). Anchored ammeter: the window era shows
+a sustained +10-75 mA elevation over the .165 idle, ending exactly at the
+rail close — **current flowed in the window for the first time** — but at
+~50-75 mA REGARDLESS of the 1750 mA commanded. The keep-warm-era boots
+(78 mA commanded) showed the same ~+45 mA. The cap does not scale with
+command.
+
+**E44 (m4bp, 34E75D21): the drivers' 0x8E config = 0x9F** (the stock's
+engaged constant, no level ramp) from init and at every engaged re-send —
+same ~50 mA cap, same profile. The 0x9F output-enable theory is exonerated;
+the 0x80|level law and the 0x00 initial value are both retired (tests
+updated).
+
+**Synthesis — the primed-rail reading.** The stock's anchored profile
+(6.2w): ~190 mA through its window era (SAME baseline as ours), then the
+leap to 1.9 A at +0.25 s, steady 1.88 A. The fork at +250 ms cannot be a
+current limit we fail to satisfy (we cannot exceed ~75 mA at any command —
+if the closure needed current first, the stock's own pre-leap era could not
+open it either). The economical reading: **the mirror's bit-5 window state
+(echo 0xB0, passes 2-64) means PRIMED, not CONDUCTING — our rail never
+closes at any command level; the +40 mA is board logic.** The stock's rail
+closes at ~+250 ms because its app EARNS the closure then; the leap flows
+after, not as the cause.
+
+**Tomorrow's headline decode target: the stock's +200-250 ms leap gate.**
+Something in the stock app times or conditions its first large setpoint
+write at +200-250 ms after power-on. The composer/sender paths are known
+(0x924B0, cells 0xFFF90586/8A); the GATE that holds them until +250 ms is
+the undecoded piece — it is the condition we have never replicated, and
+every surviving hypothesis (mode-0x31 chain, ring scheduler, an elapsed-time
+or task-sequence condition) lives behind it. Static decode, no bench cost.
