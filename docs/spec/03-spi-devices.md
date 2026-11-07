@@ -2135,3 +2135,36 @@ write at +200-250 ms after power-on. The composer/sender paths are known
 the undecoded piece — it is the condition we have never replicated, and
 every surviving hypothesis (mode-0x31 chain, ring scheduler, an elapsed-time
 or task-sequence condition) lives behind it. Static decode, no bench cost.
+
+### 6.2af The leap-gate decode and the E45 companion (2026-11-07, evening) [O]
+
+**The static session settled three unknowns:**
+1. **The +250 ms leap** = the park arbiter's power-on fail-safe (spec 14 §4.2,
+   `0xA57DA` mode 4: stationary + no valid lever request -> park target 8 =
+   ENGAGE, reason 0x17). Our park module is decisions-only; we never engage.
+2. **The mode-0x31 chain** (Oct-31's lead): `0xFFF90951` flips 0x19 -> 0x31
+   when it reads 0x19, clears on bit 6 + counter>2, and caps 0x31 at 120 s
+   (0xFFF907D8, 120000 ms ticks) — long-term engaged maintenance, not the gate.
+3. **The bus topology error**: the stock's 45-frame driver cyclic (template
+   0x40D0C = 8800/A000/E800/A600/F000/6000/C000/6600/D800 rows, per-chip ORs
+   from records 0xFFF91108+0x1C*chip) rides **bus B** on the five-select
+   rotation `0x40CE4` = af31/af21/**af11(SUPERVISOR at frame 2)**/af01/af51 —
+   the supervisor WITNESSES THE SETPOINTS every 10 ms from app start. Our
+   driver cyclic rode RSPI-A: the supervisor never saw a setpoint.
+
+**E45 (m4bq, 28D907B1): the cyclic companion on bus B** (frame 2 = benign
+0x10 mode + zero setpoints, real setpoints to the other four frames, 10 ms
+cadence, grant-independent, magic data[7]=2). Result: the arm LANDS and the
+companion TRANSMITS (drv_jobs=50 in 0.5 s) — and the TCU RESETS within ~1 s.
+On the E45 boot the spam-phase arm produced a reset loop (five heartbeats =
+up to five cycles; the surviving boot reads cc_on=0, ask 0/0, clean).
+
+**REFINED LAW (supersedes "five-select wall" as stated):** register-class
+words on the supervisor's select reset the TCU **while bit 0 is in play**
+(asked or granted). Every companion reset (E42, E42d, E45) had bit 0 live or
+counting; the reset timing matches the ask's delay elapsing. The stock runs
+the identical cyclic while engaged — its frame 2 carries the SUPERVISOR'S
+OWN chip-record values (0xFFF91108+0x1C*2: mode +0x07, setpoints +0x0C/+0x14,
+maintained by the app), not zeros — the app mirrors a model OF the supervisor
+back to it. **NEXT DECODE: who writes record 2's fields, and what values it
+holds across phases — the mirrored-model hypothesis.**
