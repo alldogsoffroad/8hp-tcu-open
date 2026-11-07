@@ -12,7 +12,13 @@
 
 /* Stock driver configuration bytes (calibration 0x1918B4..0x1918BC, spec 12 section 2b). The
  * 0x8E dither-divider byte keeps its initial value in the stock software [I]; dither is not used. */
-#define CFG_8E          0x00u
+#define CFG_8E          0x9Fu    /* E44 (spec 03 6.2ae): the stock's engaged write job
+                                  * carries 0x8E = 0x9F from the first capture — the
+                                  * 1 kHz PWM divider + the chips' output-enable class.
+                                  * The old 0x00 ("the divider keeps its initial value
+                                  * [I]; dither not used") was an inference; the ~50 mA
+                                  * delivery cap at any commanded load (E43) says the
+                                  * outputs were never enabled. */
 #define CFG_90          0x21u
 #define CFG_96          0x55u
 #define MODE_FLAG_BIT4  0x10u       /* calibration 0x1918B9 */
@@ -298,10 +304,18 @@ void sol_tick_10ms(void)
         s_st.current[i] = allowed && s_req_mode[i] == SOL_MODE_CURRENT ? s_req_cur[i] : 0u;
     }
     if (s_cfg_pending) {         /* engaged re-configuration (spec 03 section 6.2e): the
-                                  * stock repeats the commissioning write job as the ladder
-                                  * climbs, 0x8E row = 0x80 | level (live 0x9F at HOLD) */
+                                  * stock's write job carries 0x8E = 0x9F from the first
+                                  * capture, NO level ramp (the 0x1F is the 1 kHz PWM
+                                  * divider, spec 12 section 2b). E44 (spec 03 section
+                                  * 6.2ae): the drivers' 0x8E register is their OWN
+                                  * output-enable/PWM config — 0x86 (our old level law)
+                                  * may leave the outputs un-enabled; the ~50 mA delivery
+                                  * cap at any commanded load (E43) points here. 0x9F
+                                  * constant, the stock's exact value, at the existing
+                                  * per-level-change cadence (no new bursts — the E40b
+                                  * lesson). */
         s_cfg_pending = false;
-        job_config((uint8_t)(0x80u | s_eng_level));
+        job_config(0x9Fu);
     }
     if (!s_stream_on) {          /* E29: pure supervisor stream - no bus-0 traffic */
         return;

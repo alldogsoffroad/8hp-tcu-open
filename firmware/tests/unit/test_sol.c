@@ -23,7 +23,7 @@ int main(void)
     sol_init();
     CHECK(s->ready && s->faults == 0u);
     CHECK(s->chip[0].id[0] == 0x12u);
-    CHECK(stub.drv_reg[0][0x90] == 0x21u && stub.drv_reg[4][0x96] == 0x55u && stub.drv_reg[2][0x8E] == 0x00u);
+    CHECK(stub.drv_reg[0][0x90] == 0x21u && stub.drv_reg[4][0x96] == 0x55u && stub.drv_reg[2][0x8E] == 0x9Fu);  /* E44: the stock's engaged constant from init */
     CHECK(stub.drv_reg[3][0x88] == (0x10u | 0x01u | 0x04u));      /* both channels off */
 
     /* idle cycle: all channels off, setpoints 0 */
@@ -79,9 +79,9 @@ int main(void)
     CHECK(stub.drv_reg[0][0x8E] == 0x9Fu && stub.drv_reg[2][0x8E] == 0x9Fu &&
           stub.drv_reg[3][0x8E] == 0x9Fu);  /* 0x80 | 0x1F on every chip */
     CHECK(stub.drv_reg[1][0x90] == 0x21u && stub.drv_reg[4][0x96] == 0x55u);
-    sol_engage_config(3u);                  /* mid-ramp level mirrors too */
+    sol_engage_config(3u);                  /* E44: constant 0x9F, no level ramp */
     sol_tick_10ms();
-    CHECK(stub.drv_reg[2][0x8E] == 0x83u);
+    CHECK(stub.drv_reg[2][0x8E] == 0x9Fu);
 
     /* ---- E7: the 40-word duty job (slot-2 = SSLA1 gets 0xD0 | duty[r]) ---- */
     {
