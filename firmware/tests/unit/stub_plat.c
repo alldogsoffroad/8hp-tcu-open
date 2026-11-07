@@ -239,6 +239,7 @@ static uint16_t drv_read(uint8_t chip, uint8_t cmd)
 }
 
 void plat_drv_init(void) { }
+void plat_drv_spbr_set(uint8_t spbr) { (void)spbr; }
 
 /* Park hold PWM output: the stub records the requested duty so tests can assert it. */
 void plat_toe_out_init(void)

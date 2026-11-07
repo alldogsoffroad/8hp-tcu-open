@@ -655,6 +655,21 @@ bool plat_sup_burst0(const uint16_t *tx, uint16_t *rx, uint8_t n)
  * so frame n goes to chip n mod 5. Each job restarts the sequence by toggling SPE. */
 static const uint16_t s_drv_cmd[5] = { 0xAF31u, 0xAF21u, 0xAF11u, 0xAF01u, 0xAF51u };
 
+/* E54 (spec 03 section 6.2aj): the driver-bus bit rate, live-settable from the bench.
+ * The stock's RSPI-A transport parameters are the writes-don't-stick suspect; the
+ * stock's init writes SPBRA from a per-bus config object (worker 0x96468: config+0 ->
+ * base+0x0A). Our 5 was chosen, never decoded for bus A — and driver chips often
+ * latch writes only below a max clock. plat_drv_spbr_set() takes effect at the next
+ * exchange (the full re-init per exchange re-writes it). */
+static uint8_t s_drv_spbr = 5u;
+
+void plat_drv_spbr_set(uint8_t spbr)
+{
+    if (spbr != 0u) {           /* 0 = leave as-is */
+        s_drv_spbr = spbr;
+    }
+}
+
 void plat_drv_init(void)
 {
     SPCRA = 0x00u;
@@ -662,7 +677,7 @@ void plat_drv_init(void)
     RSPIA_DMA_REQ1 = 0u;
     SPSRA = 0u;
     SPPCRA = 0u;
-    SPBRA = 5u;
+    SPBRA = s_drv_spbr;
     SPCKDA = 0u;
     SSLNDA = 0u;
     SPNDA = 1u;
@@ -685,7 +700,7 @@ bool plat_drv_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n)
     RSPIA_DMA_REQ1 = 0u;
     SPSRA = 0u;
     SPPCRA = 0u;
-    SPBRA = 5u;
+    SPBRA = s_drv_spbr;
     SPCKDA = 0u;
     SSLNDA = 0u;
     SPNDA = 1u;

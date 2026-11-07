@@ -116,6 +116,13 @@ static void task_1ms(void)
                  * sending bit 0, so the engaged values cannot precede the grant.
                  * data[6] = 0 leaves it unarmed (this frame does not disarm a
                  * running re-send — power cycle to clear). */
+                if (f.data[4] == 0xFEu) {     /* E54 (spec 03 6.2aj): data[6] = the
+                                              * driver-bus bit rate override (the
+                                              * writes-don't-stick sweep). Does not
+                                              * re-arm the ask. */
+                    plat_drv_spbr_set(f.data[6]);
+                    continue;
+                }
                 sup_bit0_boot_arm(2000u, f.data[5] != 0u ? f.data[5] : (uint16_t)(f.data[4] * 200u));
                 if (f.data[6] != 0u) {
                     s_e40_armed = true;

@@ -105,6 +105,8 @@ void plat_wdt_mode(bool interval);
  * false on a bus timeout. */
 void plat_drv_init(void);
 bool plat_drv_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n);
+/* E54: live-set the driver-bus (RSPI-A) bit rate; takes effect at the next exchange. */
+void plat_drv_spbr_set(uint8_t spbr);
 
 /* ---- Park hold PWM output: TOE31 on PL6 (spec 02 section 3.1, spec 12 section 1.1) ----
  * A 1 kHz PWM switch output for the park hold magnet (low-side driver, terminal C7).
