@@ -317,40 +317,33 @@ bool sup_drv_poll(uint16_t *words, uint8_t *n)
      * setpoints and the benign 0x10 mode. Grant-independent like the stock's. */
     static uint16_t s_cc_div;
     if (s_cc_on) {
-        /* E47: 2 s cadence — E46's 10 ms cadence reset the TCU (pass-stall class:
-         * our blocking 45-frame transport stacks on jobs 1-3; the stock's ring-
-         * buffered scheduler never stalls). E41b proved 40-frame jobs stream-safe
-         * at 2 s. If the engaged-shape frame 2 survives here, row-splitting gets
-         * us toward the stock's cadence without the stall. */
+        /* E47: 2 s cadence — the proven-survivable rate for a standalone job. */
         if (++s_cc_div >= 400u) {
-            const uint16_t sp = s_cc_sp;
+            /* E50 (spec 03 section 6.2ai): THE VERBATIM REPLAY. The stock's live
+             * 45-frame cyclic TX buffer (0xFFF88518), captured 2026-11-08 while
+             * engaged at 1.786 A (park target 8, self-engaged P-hold):
+             *   row0 881A 881A 881A 8812 8815   (modes — frame 2 = the supervisor,
+             *                                     BOTH channels current control)
+             *   row2 E853 ED89 ED89 E853 E800   (ch0 setpoints: frame 2 = 0x589
+             *                                     = 855 mA on the supervisor's C)
+             *   row4 F589 F589 F053 F000 F000   (ch1: frame 2 = 0x53 = 50 mA TCC)
+             * If THIS resets, the exact values are eliminated and the transport
+             * (wire timing) is definitively the wall; if it survives, the specific
+             * P-hold distribution was the missing piece. */
+            static const uint16_t STOCK_CYCLIC[45] = {
+                0x881Au, 0x881Au, 0x881Au, 0x8812u, 0x8815u,
+                0xA000u, 0xA000u, 0xA000u, 0xA000u, 0xA000u,
+                0xE853u, 0xED89u, 0xED89u, 0xE853u, 0xE800u,
+                0xA600u, 0xA600u, 0xA600u, 0xA600u, 0xA600u,
+                0xF589u, 0xF589u, 0xF053u, 0xF000u, 0xF000u,
+                0x6000u, 0x6000u, 0x6000u, 0x6000u, 0x6000u,
+                0xC000u, 0xC000u, 0xC000u, 0xC000u, 0xC000u,
+                0x6600u, 0x6600u, 0x6600u, 0x6600u, 0x6600u,
+                0xD800u, 0xD800u, 0xD800u, 0xD800u, 0xD800u,
+            };
             s_cc_div = 0u;
-            /* E46 (spec 03 section 6.2af): the supervisor IS chip 2 of the driver
-             * rotation — a two-channel current driver (channels 4 = C solenoid and
-             * 5 = TCC per the spec 12 channel map) plus the supervisor functions.
-             * Frame 2 therefore carries the supervisor's OWN channel commands: mode
-             * 0x1A (calib flag + both channels CURRENT CONTROL) with REAL setpoints
-             * on both rows — the stock's engaged shape. E45's reset was the walking
-             * contradiction (mode 0x10 = "my channels disabled" + zero setpoints,
-             * while the ask begged for enable); E42d's was mode-without-setpoints.
-             * All five frames carry the same engaged shape — the stock's engaged
-             * dump shows every select's mode byte with live current control. */
-            for (uint8_t r = 0u; r < 9u; r++) {
-                for (uint8_t c = 0u; c < 5u; c++) {
-                    uint16_t w;
-                    switch (r) {
-                    case 0u: w = (uint16_t)(0x8800u | 0x1Au); break;
-                    case 2u: w = (uint16_t)(0xE800u | (sp & 0x7FFu)); break;
-                    case 4u: w = (uint16_t)(0xF000u | (sp & 0x7FFu)); break;
-                    case 1u: w = 0xA000u; break;
-                    case 3u: w = 0xA600u; break;
-                    case 5u: w = 0x6000u; break;
-                    case 6u: w = 0xC000u; break;
-                    case 7u: w = 0x6600u; break;
-                    default: w = 0xD800u; break;
-                    }
-                    words[5u * r + c] = w;
-                }
+            for (uint8_t i = 0u; i < 45u; i++) {
+                words[i] = STOCK_CYCLIC[i];
             }
             *n = 45u;                    /* nine rows x five selects -> xfer5 */
             s_drv.drv_jobs++;
