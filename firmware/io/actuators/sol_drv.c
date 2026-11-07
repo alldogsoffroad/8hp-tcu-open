@@ -171,6 +171,34 @@ static void job_status(void)
 
 static void job_cyclic(void)
 {
+#if defined(TCU_AUTOENGAGE)
+    /* E53 (spec 03 section 6.2aj): THE STOCK'S OWN WORDS on the driver cyclic.
+     * The 2026-11-08 capture (0xFFF88518, engaged at 1.786 A) — the driver
+     * cyclic rides THIS bus (RSPI-A): our bus-B probe found no A2-class chips
+     * there, the stock's ID job reports four — the 0x40CE4 table values are
+     * peripheral-relative and the job belongs to the A-peripheral's five
+     * selects. Our invented values (mode staging, 0x86-class 0x8E rows,
+     * keep-warm staging) never matched; the ~50 mA delivery cap at any
+     * command (E43/E44) was our config, not the rail. VERBATIM rows: the
+     * stock's modes {1A,1A,1A,12,15} and setpoints {53,589,589,53,0}/
+     * {589,589,53,0,0} per chip. */
+    {
+        static const uint16_t STOCK_CYC[45] = {
+            0x881Au, 0x881Au, 0x881Au, 0x8812u, 0x8815u,
+            0xA000u, 0xA000u, 0xA000u, 0xA000u, 0xA000u,
+            0xE853u, 0xED89u, 0xED89u, 0xE853u, 0xE800u,
+            0xA600u, 0xA600u, 0xA600u, 0xA600u, 0xA600u,
+            0xF589u, 0xF589u, 0xF053u, 0xF000u, 0xF000u,
+            0x6000u, 0x6000u, 0x6000u, 0x6000u, 0x6000u,
+            0xC000u, 0xC000u, 0xC000u, 0xC000u, 0xC000u,
+            0x6600u, 0x6600u, 0x6600u, 0x6600u, 0x6600u,
+            0xD800u, 0xD800u, 0xD800u, 0xD800u, 0xD800u,
+        };
+        for (uint8_t i = 0u; i < 45u; i++) {
+            s_tx[i] = STOCK_CYC[i];
+        }
+    }
+#else
     for (uint8_t c = 0u; c < SOL_CHIPS; c++) {
         const uint8_t a = (uint8_t)(2u * c), b = (uint8_t)(a + 1u);
         const uint16_t spa = s_st.mode[a] == SOL_MODE_CURRENT ? sol_setpoint(s_st.current[a]) : 0u;
@@ -186,6 +214,7 @@ static void job_cyclic(void)
     put_cmd(6u, 0xC000u);
     put_cmd(7u, 0x6600u);
     put_cmd(8u, 0xD800u);
+#endif
     if (!xfer(45u)) {
         return;
     }
