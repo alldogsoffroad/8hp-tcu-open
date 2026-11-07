@@ -45,3 +45,18 @@ grants with the recipe, withdrawal reproducible). Restore: /tmp/install_e39.py
 for the last no-re-send image.
 READER LESSONS x2 today: take live struct addresses from the CURRENT build's
 map file (rx_words s_st+22; sol_drv s_st 0xFFF850D8 vs fca_tx 0xFFF84DD0).
+
+=== 2026-11-07 LATE AFTERNOON (E40-E42d, section 6.2ad) ===
+FIVE-SELECT WALL: register-class words on the supervisor's select (outside
+engage/token context) = immediate MCU reset. Proven by 10-word 0x2D (the
+burst-length theory died: 40-word four-select safe, 10-word five-select
+resets). E42d caught it live: mirror AAB0 rail-bit-UP = fresh boot window.
+The stock's 0x2D/8E9F broadcasts are context-legitimized; ours are not.
+TWO grant-death classes: RESET (BSS wipe + window mirror + hb gap + ~370ms
+ammeter blip) vs WITHDRAWAL (12:21 event: no reset, hb continuous, ~55s
+into a grant, cause unknown, ask-then-refused - ONE observation).
+BOOT MANAGER WIPES .noinit (trip counter useless across handovers).
+af01 exonerated of caring about write values: E41b's 2s write job
+transmitted cleanly (grant held), af01 AA-acked every frame, 0x24 = AAFF.
+Bench on E42c (m4bn). NEXT: four-select setpoint (low expectation),
+withdrawal reproduction/law, mode-0x31, ring scheduler.
