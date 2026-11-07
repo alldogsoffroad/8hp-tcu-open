@@ -57,8 +57,8 @@ static uint8_t mode_byte(uint8_t chip)
 
 static bool xfer(uint8_t n)
 {
-#if defined(TCU_AUTOENGAGE)
-    /* E58 (spec 03 6.2ap): the stock feed with the FULL ISR protocol —
+#if 0 && defined(TCU_AUTOENGAGE)
+    /* E58b verdict (6.2ap): CPU-loop feed DEFINITIVELY dead even with correct
      * SPSR=0x20 + the clock-gate ENABLE at 0xFFFE6030=0xF3. */
     if (!plat_drv_xfer_stock(s_tx, s_rx, n)) {
         s_st.faults |= SOL_F_BUS;
