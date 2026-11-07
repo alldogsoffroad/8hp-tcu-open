@@ -57,11 +57,9 @@ static uint8_t mode_byte(uint8_t chip)
 
 static bool xfer(uint8_t n)
 {
-#if 0 && defined(TCU_AUTOENGAGE)
-    /* E57 verdict (6.2ao): minimal SPSR ack INSUFFICIENT — the stock ISR also
-     * manages the clock-gate block (0xFFFE6000+0x30) on every entry; without it
-     * the shared clock domain drops and BOTH buses die (mirror 0000, +109s to
-     * first answer). Requires the full ISR protocol decode. */
+#if defined(TCU_AUTOENGAGE)
+    /* E58 (spec 03 6.2ap): the stock feed with the FULL ISR protocol —
+     * SPSR=0x20 + the clock-gate ENABLE at 0xFFFE6030=0xF3. */
     if (!plat_drv_xfer_stock(s_tx, s_rx, n)) {
         s_st.faults |= SOL_F_BUS;
         return false;
