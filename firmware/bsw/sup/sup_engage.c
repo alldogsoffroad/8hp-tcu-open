@@ -256,6 +256,7 @@ static sup_drv_status_t s_drv;
 static bool     s_wj_on;
 static uint8_t  s_wj_v8e;
 static uint16_t s_wj_div;
+static bool     s_sp_on;       /* E42: the bus-B setpoint job (magic data[7]) */
 
 void sup_drv_write_arm(bool on, uint8_t v8e)
 {
@@ -267,6 +268,14 @@ void sup_drv_write_arm(bool on, uint8_t v8e)
     }
     s_wj_on = on;
     s_wj_v8e = v8e;
+}
+
+void sup_drv_setpoint_arm(bool on)
+{
+    if (on != s_sp_on) {
+        s_wj_div = 0u;        /* transition-only reset, same discipline */
+    }
+    s_sp_on = on;
 }
 
 void sup_drv_sync(bool on)
@@ -286,35 +295,77 @@ const sup_drv_status_t *sup_drv_status(void)
 
 bool sup_drv_poll(uint16_t *words, uint8_t *n)
 {
-    if (!s_wj_on || s.state == ST_IDLE || !s.echo_grant) {
+    if ((!s_wj_on && !s_sp_on) || s.state == ST_IDLE || !s.echo_grant) {
         return false;
     }
     if (++s_wj_div < 400u) {              /* ~2 s at the 5 ms pass */
         return false;
     }
     s_wj_div = 0u;
+    if (s_wj_on) {
+        {
+            static const uint8_t MODE[4] = { 0x1Au, 0x1Au, 0x12u, 0x15u };
+            for (uint8_t r = 0u; r < 10u; r++) {
+                for (uint8_t c = 0u; c < 4u; c++) {
+                    uint16_t w;
+                    switch (r) {
+                    case 0u: case 8u: w = (uint16_t)(0x8E00u | s_wj_v8e); break;
+                    case 1u: case 9u: w = (uint16_t)(0x9000u | 0x21u);   break;
+                    case 2u: w = (uint16_t)(0x9600u | 0x55u);   break;
+                    case 3u: w = (uint16_t)(0x8800u | MODE[c]); break;
+                    case 4u: w = 0x2800u; break;
+                    case 5u: w = 0x3000u; break;
+                    case 6u: w = 0x2E00u; break;
+                    default: w = 0x3600u; break;
+                    }
+                    words[4u * r + c] = w;
+                }
+            }
+        }
+        *n = DRV_WRITE_WORDS;
+        s_drv.drv_jobs++;
+        s_drv.drv_writes++;
+        return true;
+    }
+    /* E42: the nine-row five-select setpoint job (template 0x40D0C, the stock's
+     * continuous keep-warm carrier on bus B — the job our stream never sent).
+     * Rows [88|modes, A000, E800|sp, A600, F000|sp, 6000, C000, 6600, D800]
+     * x the SSLB3/2/1/0/5 rotation (the supervisor's select INCLUDED, exactly
+     * as the stock runs it; 0x88xx to SSLB1 is the routine challenge class).
+     * Mode row = the stock's setpoint values {1A,1A,1A,12,15} in rotation
+     * order; the setpoints cycle the stock's nine-value keep-warm table
+     * (0x90586: 41/34/3A/27/0E/1F/3C/26/44), advancing one step per job,
+     * the two channels offset by four like the E37 ch0/ch6 pair. */
     {
-        static const uint8_t MODE[4] = { 0x1Au, 0x1Au, 0x12u, 0x15u };
-        for (uint8_t r = 0u; r < 10u; r++) {
-            for (uint8_t c = 0u; c < 4u; c++) {
+        static const uint8_t MODE5[5] = { 0x1Au, 0x1Au, 0x1Au, 0x12u, 0x15u };
+        static const uint8_t KEEPWARM[9] = {
+            0x41u, 0x34u, 0x3Au, 0x27u, 0x0Eu, 0x1Fu, 0x3Cu, 0x26u, 0x44u
+        };
+        static uint8_t kw_idx;
+        const uint16_t spa = KEEPWARM[kw_idx];
+        const uint16_t spb = KEEPWARM[(kw_idx + 4u) % 9u];
+        kw_idx = (uint8_t)((kw_idx + 1u) % 9u);
+        for (uint8_t r = 0u; r < 9u; r++) {
+            for (uint8_t c = 0u; c < 5u; c++) {
                 uint16_t w;
                 switch (r) {
-                case 0u: case 8u: w = (uint16_t)(0x8E00u | s_wj_v8e); break;
-                case 1u: case 9u: w = (uint16_t)(0x9000u | 0x21u);   break;
-                case 2u: w = (uint16_t)(0x9600u | 0x55u);   break;
-                case 3u: w = (uint16_t)(0x8800u | MODE[c]); break;
-                case 4u: w = 0x2800u; break;
-                case 5u: w = 0x3000u; break;
-                case 6u: w = 0x2E00u; break;
-                default: w = 0x3600u; break;
+                case 0u: w = (uint16_t)(0x8800u | MODE5[c]); break;
+                case 2u: w = (uint16_t)(0xE800u | (spa & 0x7FFu)); break;
+                case 4u: w = (uint16_t)(0xF000u | (spb & 0x7FFu)); break;
+                case 1u: w = 0xA000u; break;
+                case 3u: w = 0xA600u; break;
+                case 5u: w = 0x6000u; break;
+                case 6u: w = 0xC000u; break;
+                case 7u: w = 0x6600u; break;
+                default: w = 0xD800u; break;
                 }
-                words[4u * r + c] = w;
+                words[5u * r + c] = w;
             }
         }
     }
-    *n = DRV_WRITE_WORDS;
+    *n = 45u;                              /* nine rows x five selects -> xfer5 */
     s_drv.drv_jobs++;
-    s_drv.drv_writes++;
+    s_drv.drv_sp++;
     return true;
 }
 

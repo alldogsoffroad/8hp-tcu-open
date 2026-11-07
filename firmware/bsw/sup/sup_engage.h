@@ -95,5 +95,11 @@ const sup_drv_status_t *sup_drv_status(void);
  * gating and the ~2 s cadence live inside sup_drv_poll; the arm alone is
  * inert until the mirror carries bit 0. */
 void sup_drv_write_arm(bool on, uint8_t v8e);
+/* E42 (spec 03 section 6.2ad): arm the bus-B nine-row five-select setpoint
+ * job (template 0x40D0C — the stock's continuous keep-warm carrier, the job
+ * our stream never sent; supervisor's select included as the stock runs it).
+ * Same grant gating and ~2 s cadence inside sup_drv_poll; supersedes the
+ * write job when both are armed (write takes priority). */
+void sup_drv_setpoint_arm(bool on);
 
 #endif

@@ -83,6 +83,7 @@ static const sensors_cfg_t s_sensors_cfg = { 0u, 1u, { 60u, 60u, 60u } };
 static bool s_e40_armed;        /* E40 (spec 03 6.2ac): repeating engaged write job armed
                                  * by the magic frame's data[6]; grant-gated in task_10ms */
 static uint8_t s_e40_v8e;       /* E40: its live 0x8E row value (0x9F = stock constant) */
+static bool s_e42_armed;        /* E42: the bus-B setpoint job armed by data[7] */
 
 static void task_1ms(void)
 {
@@ -119,6 +120,10 @@ static void task_1ms(void)
                     s_e40_armed = true;
                     s_e40_v8e = f.data[6];
                 }
+                if (f.data[7] != 0u) {   /* E42: the bus-B setpoint job (nine-row
+                                          * five-select, keep-warm cycling) */
+                    s_e42_armed = true;
+                }
                 continue;
             }
             if (!uds_rx((can_bus_t)bus, &f) && !meas_rx((can_bus_t)bus, &f)) {
@@ -150,11 +155,12 @@ static void task_10ms(void)
             s_sol_lvl = lvl;
             sol_engage_config(lvl);
         }
-        /* E41 (spec 03 section 6.2ad): the bus-B write job's gating and ~2 s cadence
-         * live inside sup_drv_poll (it reads the engage state directly); the magic
-         * frame's arm is forwarded there. E40's RSPI-A re-send is gone — it never
-         * reached af01 and its burst withdrew the grant (6.2ac). */
+        /* E41/E42 (spec 03 section 6.2ad): the bus-B write and setpoint jobs' gating
+         * and ~2 s cadence live inside sup_drv_poll (it reads the engage state
+         * directly); the magic frame's arms are forwarded there. E40's RSPI-A re-send
+         * is gone — it never reached af01 and its burst withdrew the grant (6.2ac). */
         sup_drv_write_arm(s_e40_armed, s_e40_v8e);
+        sup_drv_setpoint_arm(s_e42_armed);
     }
     vehicle_update_10ms();
     sensors_update_10ms();
