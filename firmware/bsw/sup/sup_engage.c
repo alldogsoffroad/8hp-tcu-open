@@ -327,43 +327,25 @@ bool sup_drv_poll(uint16_t *words, uint8_t *n)
         s_drv.drv_writes++;
         return true;
     }
-    /* E42: the nine-row five-select setpoint job (template 0x40D0C, the stock's
-     * continuous keep-warm carrier on bus B — the job our stream never sent).
-     * Rows [88|modes, A000, E800|sp, A600, F000|sp, 6000, C000, 6600, D800]
-     * x the SSLB3/2/1/0/5 rotation (the supervisor's select INCLUDED, exactly
-     * as the stock runs it; 0x88xx to SSLB1 is the routine challenge class).
-     * Mode row = the stock's setpoint values {1A,1A,1A,12,15} in rotation
-     * order; the setpoints cycle the stock's nine-value keep-warm table
-     * (0x90586: 41/34/3A/27/0E/1F/3C/26/44), advancing one step per job,
-     * the two channels offset by four like the E37 ch0/ch6 pair. */
+    /* E42c: the dump-exact engaged setpoint job (driving dump 0x2D): TEN words
+     * on the five-select rotation — the 88 mode row {1A,1A,1A,12,15} then
+     * A000 x5 (dither zero). E42's 45-word cyclic-companion burst reset the
+     * TCU (stall > 20 ms when stacked on the same tick, the E28 law —
+     * BSS-wipe forensics: armed statics zeroed, ladder re-climbed, drv_sp
+     * cleared). The 10-word shape is ID-poll length: stream-safe by
+     * construction. The cycling keep-warm VALUES (E8/F0 rows) ride the
+     * RSPI-A cyclic as since E37; this job feeds af01 the mode/dither rows
+     * it never saw. */
     {
         static const uint8_t MODE5[5] = { 0x1Au, 0x1Au, 0x1Au, 0x12u, 0x15u };
-        static const uint8_t KEEPWARM[9] = {
-            0x41u, 0x34u, 0x3Au, 0x27u, 0x0Eu, 0x1Fu, 0x3Cu, 0x26u, 0x44u
-        };
-        static uint8_t kw_idx;
-        const uint16_t spa = KEEPWARM[kw_idx];
-        const uint16_t spb = KEEPWARM[(kw_idx + 4u) % 9u];
-        kw_idx = (uint8_t)((kw_idx + 1u) % 9u);
-        for (uint8_t r = 0u; r < 9u; r++) {
-            for (uint8_t c = 0u; c < 5u; c++) {
-                uint16_t w;
-                switch (r) {
-                case 0u: w = (uint16_t)(0x8800u | MODE5[c]); break;
-                case 2u: w = (uint16_t)(0xE800u | (spa & 0x7FFu)); break;
-                case 4u: w = (uint16_t)(0xF000u | (spb & 0x7FFu)); break;
-                case 1u: w = 0xA000u; break;
-                case 3u: w = 0xA600u; break;
-                case 5u: w = 0x6000u; break;
-                case 6u: w = 0xC000u; break;
-                case 7u: w = 0x6600u; break;
-                default: w = 0xD800u; break;
-                }
-                words[5u * r + c] = w;
-            }
+        for (uint8_t c = 0u; c < 5u; c++) {
+            words[c] = (uint16_t)(0x8800u | MODE5[c]);
+        }
+        for (uint8_t c = 0u; c < 5u; c++) {
+            words[5u + c] = 0xA000u;
         }
     }
-    *n = 45u;                              /* nine rows x five selects -> xfer5 */
+    *n = 10u;                              /* two rows x five selects -> xfer5 */
     s_drv.drv_jobs++;
     s_drv.drv_sp++;
     return true;
