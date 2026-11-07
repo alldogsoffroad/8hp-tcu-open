@@ -315,9 +315,14 @@ bool sup_drv_poll(uint16_t *words, uint8_t *n)
      * Setpoints: the E43 window-load staging (250 mA class per channel, the park-hold
      * fail-safe magnitude) mirrored by the caller; frame 2 (supervisor) carries zero
      * setpoints and the benign 0x10 mode. Grant-independent like the stock's. */
-    static uint8_t s_cc_div;
+    static uint16_t s_cc_div;
     if (s_cc_on) {
-        if (++s_cc_div >= 2u) {          /* every 2nd pass = the stock's 10 ms cadence */
+        /* E47: 2 s cadence — E46's 10 ms cadence reset the TCU (pass-stall class:
+         * our blocking 45-frame transport stacks on jobs 1-3; the stock's ring-
+         * buffered scheduler never stalls). E41b proved 40-frame jobs stream-safe
+         * at 2 s. If the engaged-shape frame 2 survives here, row-splitting gets
+         * us toward the stock's cadence without the stall. */
+        if (++s_cc_div >= 400u) {
             const uint16_t sp = s_cc_sp;
             s_cc_div = 0u;
             /* E46 (spec 03 section 6.2af): the supervisor IS chip 2 of the driver
