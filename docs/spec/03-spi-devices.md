@@ -2380,3 +2380,33 @@ Every address is known (0x96590's entry sequence disassembled; the
 workers at 0x93A08/0x93A74 decoded in 6.2am); the work is the careful
 transplant, not more discovery. E57b (m4c5, 69A843F8) restores the
 polled-0x48 healthy baseline; install it at next-session start.
+
+### 6.2ap The deep-decode findings — the DMA revelation (2026-11-08, night) [O]
+
+**The complete call chain, traced end to end (zero bench cost):**
+
+The frame processor (0x90DA2) per bus: (1) 0x97444 config from ROM,
+(2) **0x93C42 the buffer pump** — fills 8-byte-per-frame RAM slots
+{32-bit SPCR/pad, 16-bit SPDR data}, NOT the SPI registers —,
+(3) 0x93E6C executor → 0x93FE0 hardware setup → **0x980E0 the DMA
+configurator**.
+
+**0x980E0 decoded: the actual hardware driver is DMA.** It writes SPCMD
+registers with computed offsets, configures per-SPCMD DMA enable bits in
+tables at 0xFFF94588/0xFFF9457C/0xFFF94570/0xFFF94564, writes the SPBNDT
+bound register, and sets **SPCMD bit 13 (0x2000) = the DMA-enable bit**.
+The frames are clocked by the DMA controller from the RAM buffer,
+gaplessly, with zero CPU per-frame involvement.
+
+**The SPCR state machine (0x93DBE):** the stock cycles SPCR through
+0x09 (MSTR+SPE, active), 0x08 (MSTR only, armed), 0x06 (SPMS+TXMD,
+transmit), 0x05 (SPE+SPMS), 0x00 (idle) — a per-frame state machine,
+not a fixed value. The workers (0x93A74) set 0x09 on transaction start.
+
+**Our E56/E58 approach is architecturally different:** CPU-loop direct
+SPCR+SPDR writes vs the stock's buffer-then-DMA. The two fixed bugs
+(byte order: 0x20000008 → 0x09000020; SPCR: 0x08 → 0x09) were severe
+enough to fully explain the dead bus. E58b (m4c7, 4FB56F0F) tests the
+corrected CPU-loop — one cycle answers whether the peripheral accepts
+CPU-fed frames in 0x09 mode. If not, the DMA path is the confirmed
+next build with every address already decoded.
