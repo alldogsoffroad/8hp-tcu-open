@@ -331,12 +331,21 @@ bool sup_drv_poll(uint16_t *words, uint8_t *n)
             0x6600u, 0x6600u, 0x6600u, 0x6600u, 0x6600u,
             0xD800u, 0xD800u, 0xD800u, 0xD800u, 0xD800u,
         };
-        static uint8_t s_cb_row;
-        for (uint8_t c = 0u; c < 5u; c++) {
-            words[c] = STOCK_CYCLIC[5u * s_cb_row + c];
+        static uint8_t s_cb_div;
+        /* E52: the stock's exact shape — all 45 frames as ONE burst every
+         * 10 ms (every 2nd pass), bit0-free. E51's row-per-pass survived
+         * indefinitely (hundreds of jobs, zero resets) proving content and
+         * cadence safe; the remaining shape delta vs the stock is the
+         * CONTIGUOUS burst. E45's 10 ms resets all had bit0 in play — the
+         * stall attribution was never clean; this settles it. */
+        if (++s_cb_div < 2u) {
+            return false;
         }
-        s_cb_row = (uint8_t)((s_cb_row + 1u) % 9u);
-        *n = 5u;                       /* one row per pass -> xfer5 */
+        s_cb_div = 0u;
+        for (uint8_t i = 0u; i < 45u; i++) {
+            words[i] = STOCK_CYCLIC[i];
+        }
+        *n = 45u;                      /* nine rows x five selects, one burst */
         s_drv.drv_jobs++;
         return true;
     }
