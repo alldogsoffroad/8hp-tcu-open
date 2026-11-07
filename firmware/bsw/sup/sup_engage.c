@@ -259,9 +259,14 @@ static uint16_t s_wj_div;
 
 void sup_drv_write_arm(bool on, uint8_t v8e)
 {
+    if (on != s_wj_on || v8e != s_wj_v8e) {
+        s_wj_div = 0u;        /* reset ONLY on a state change — task_10ms re-asserts the
+                               * arm every tick and a per-call reset starves the 400-pass
+                               * cadence counter (the E40 lesson, reborn; caught live:
+                               * div pinned at ~2 with on=1, drv_writes frozen at 0) */
+    }
     s_wj_on = on;
     s_wj_v8e = v8e;
-    s_wj_div = 0u;            /* re-arm restarts the 2 s cadence */
 }
 
 void sup_drv_sync(bool on)
