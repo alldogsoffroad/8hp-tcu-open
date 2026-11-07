@@ -64,17 +64,28 @@ static void default_handler(void)
     }
 }
 
-/* E57 (spec 03 section 6.2ao): the RSPI-A interrupt service. The stock's vector 445
- * (handler 0x96590, base 0xFFFFB000 confirmed) arms SPCR = 0x08 ON ENTRY, services the
- * frame, and returns — E56 proved the unconditional feed without this ISR is a reset
- * loop (0x08 mode asserts an interrupt the unvectored table can't service). Our minimal
- * counterpart: acknowledge by clearing the SPSR flags (releases the peripheral's request
- * line), letting the feed loop's next packed store continue. The feed runs in mainline
- * context; the ISR only keeps the request line from wedging the interrupt controller. */
+/* E58 (spec 03 section 6.2ap): the FULL RSPI-A ISR protocol, transplanted from the
+ * stock's vector 445 handler (0x96590, completely disassembled):
+ *   1. SPCR  = 0x08                    (arm the 0x08 mode)
+ *   2. SPSR  = 0x20                    (clear the overrun flag)
+ *   3. gate  = read @(0xFFFE6030)      (the CPG clock-gate status)
+ *      @(0xFFFE6030) = 0xF3            (ENABLE the RSPI clock gates — bits 0-1 clear;
+ *                                        WITHOUT this the shared clock domain drops and
+ *                                        BOTH buses die: E57's verdict)
+ *   The stock's steps 1-2 are already done by our feed's packed store; the gate write
+ *   is the essential addition. The worker dispatch (0x93A08/0x93A74) is the stock's
+ *   mainline transaction machinery — our feed runs from the scheduler instead. The
+ *   timing-instrumentation lock/unlock (0x68F34/0x68F3E) is skippable. */
 __attribute__((interrupt_handler))
 void rspi_a_isr(void)
 {
-    *(volatile uint8_t *)0xFFFFB003u = 0x00u;   /* SPSRA = 0: clear SPTEF/SPRF/OVRF (ack) */
+    volatile uint8_t *const spsr = (volatile uint8_t *)0xFFFFB003u;
+    volatile uint8_t *const gate = (volatile uint8_t *)0xFFFE6030u;
+
+    (void)*spsr;                         /* read: the flags that fired this interrupt */
+    *spsr = 0x20u;                       /* clear the overrun flag (the stock's value) */
+    (void)*gate;                         /* read: the gate status (the stock saves it) */
+    *gate = 0xF3u;                       /* the clock-gate ENABLE: bits 0-1 clear      */
 }
 
 /* Vectors 4..511 (508 entries), at header +0x80.
