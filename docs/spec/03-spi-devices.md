@@ -2196,3 +2196,35 @@ cyclic jobs 1-3 + the companion as one linked sequence. This supersedes the
 per-job xfer model for bus B. (Also pending from 6.2af: the mirrored-model
 read — capture the stock's 0xFFF88518 cyclic buffer + record 2 live while
 engaged, for the frame-2 values; both tasks pair naturally.)
+
+### 6.2ah E49 and the audit that closes the day (2026-11-07, afternoon) [O]
+
+**E49 (m4bu, D91807E2): E35r's startup commissioning restored** (0x8800x4 +
+commit + reads before sched_init, the stock's first SSLB1 jobs per transport
+0x40CA0) on top of E48's full stack. Result: identical — grant live, one
+companion job fired, BSS wipe. SIX hypotheses for the companion wall now
+eliminated: content (mode 0x10/0x1A, setpoints 0/real), cadence (10 ms/2 s),
+the 0x9021 driver-mode bit, the software ring (spec 02 §7 — a work queue,
+not SPI), the startup commissioning, and burst-in-pass placement.
+
+**The audit that settles the premise**: the SPCMD table 0x40CE4's only code
+reference (0x92672) sits in the RSPI descriptor init — five per-chip SPCMD
+copies into a RAM job structure (base 0xFFF90630, SPCMD shadow at +0x7E,
+mode bytes, buffer pointer at +0x10, stride-0x50 records) with a literal
+pool binding to the cyclic sender module (0x924B0's submit path). The stock's
+45-frame cyclic DOES ride the five-select with the supervisor at frame 2 —
+the companion premise was correct, and the register words really do reach
+the supervisor's select every 10 ms without harm.
+
+**The surviving difference — wire-level timing.** The descriptor structure
+is a DMA table: the stock's frames clock out back-to-back (zero inter-frame
+gaps, DMA-fed SPDR); ours are CPU-polled with per-frame SPTEF waits
+(microsecond gaps between all 45 frames). Six eliminated hypotheses leave
+the gap pattern as the discriminator: the supervisor may time inter-frame
+gaps and reject gapped register sequences as protocol violations.
+
+**NEXT (the platform build): the DMA/linked-job SPI transport** — rewrite
+the bus-B exchange path to DMA-driven descriptor chains (the 0xFFF90630
+structure class), eliminating inter-frame gaps. This is the architectural
+close of the E40-E49 arc. Pairs with: the mirrored-model read (stock's
+0xFFF88518 + record 2 live values).
