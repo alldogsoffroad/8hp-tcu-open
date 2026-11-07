@@ -2332,3 +2332,30 @@ Bench state: E55 image was NOT reinstalled after the verdict boot; the
 revert (E55b = 0x48 restored, 19/19) is built (m4c1) — install it next
 session start to return the bench to the E54-equivalent baseline before
 the DMA work.
+
+### 6.2am–an The stock's transaction engine decoded — and its ISR pairing proven (2026-11-08, night) [O]
+
+**The decode chain (static, one evening):** the stock's submit path (0x92758
+region) writes SPCMDs directly at the RSPI base; transactions LAUNCH via
+software IRQ 0x253 into dispatch 0x66F82; the vector table's RSPI family =
+vectors 424-476 (0x954xx-0x95Axx handlers), with **vector 449's ISR
+(0x965E4) arming SPCR = 0x08 ON ENTRY** and calling the frame workers
+(0x93A08/0x93A74); and the frame feed itself (0x93C30) is **a memcpy:
+per frame, one unconditional 32-bit packed {SPCR, SPSR} store at the base
+plus the 16-bit SPDR write — no SPTEF polling anywhere**. The "DMA engine"
+of the convergence is a three-instruction loop in interrupt context.
+
+**E55 (SPCR=0x08, our polled loop): dead. E56 (the exact stock feed,
+unconditional stores): dead the same way** — mirror 0000, jobs=0, reset
+loop. The verdict: **the feed loop and the vector-449 ISR are a PAIR.**
+In 0x08 mode the peripheral asserts an interrupt; our vector table's
+default_handler (hang) meets it with the watchdog resetting the TCU in a
+loop. The stock works because its ISR services the interrupt (resbank,
+arms SPCR=0x08, runs the workers) on every transaction.
+
+**The complete build, now fully specified:** vector-table entry for the
+RSPI interrupt + a minimal ISR (mask/ack, run the unconditional feed from
+the buffer, flag completion) + the E56 feed function — together replacing
+the polled exchange on the driver bus. Every piece is decoded; none of it
+is speculative. E56b (m4c3) restores the polled 0x48 baseline; the bench
+rests healthy.
