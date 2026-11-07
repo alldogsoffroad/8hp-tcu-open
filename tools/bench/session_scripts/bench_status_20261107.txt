@@ -73,3 +73,26 @@ TOMORROW: decode the stock's +200-250ms LEAP GATE (what holds the first
 big setpoint write until +250ms - composer paths known, the gate is the
 missing piece; every remaining hypothesis lives behind it). Static work.
 Bench on E44 (m4bp, sig 0058f28d53774b85). Grant recipe: spam-hb5/delay150.
+
+=== 2026-11-07 FINAL (E45-E48, section 6.2af/6.2ag) ===
+THE BIG DECODES (static session, Ghidra 12.2 on tcu_full project):
+- LEAP GATE: park arbiter 0xA57DA rule 5 (stationary + no lever -> ENGAGE,
+  reason 0x17) = the stock's +250ms leap. We never engage.
+- MODE-0x31 CHAIN: 0xFFF90951 flips 0x19->0x31, bit6+counter>2 clears,
+  120s cap (0xFFF907D8). Maintenance, not the gate.
+- TOPOLOGY: the stock's 45-frame driver cyclic rides BUS B on the five-
+  select af31/af21/af11/af01/af51 - SUPERVISOR AT FRAME 2. Record 2 =
+  channels 4/5 (C + TCC): THE SUPERVISOR IS A TWO-CHANNEL DRIVER CHIP.
+  Our driver cyclic rode RSPI-A: the supervisor never saw a setpoint.
+- 0x40D0C template = our job_cyclic shape exactly (verified from ROM).
+E45-E48: the companion (45-frame five-select with supervisor frame) RESETS
+the TCU under EVERY variation: mode 0x10/0x1A, setpoints 0/real, cadence
+10ms/2s, 0x9020/0x9021. E41b four-select = safe at 2s. CONTENT, CADENCE,
+MODE ALL ELIMINATED -> THE TRANSPORT IS THE WALL: the stock's ring-
+sequenced continuous conversation vs our blocking per-job re-init bursts.
+NEXT: THE RING-TRANSPORT BUILD (SPI layer to a hardware-sequenced job ring,
+spec 02 §7) + the mirrored-model read (stock's 0xFFF88518 buffer + record 2
+live while engaged). Bench on E48 (m4bt, sig 5b15b240e1c32df2).
+Ghidra headless recipe: ~/opt/ghidra_12.2_PUBLIC + project tcu_full/tcu +
+tools/ghidra_scripts (Callers/AddrXref/DecompIn/AsmRange). REA MCP Ghidra
+timed out on the 2.5MB image (30s limit per import) - use headless direct.
