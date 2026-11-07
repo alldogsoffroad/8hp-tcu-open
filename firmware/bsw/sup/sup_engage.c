@@ -318,16 +318,25 @@ bool sup_drv_poll(uint16_t *words, uint8_t *n)
     static uint8_t s_cc_div;
     if (s_cc_on) {
         if (++s_cc_div >= 2u) {          /* every 2nd pass = the stock's 10 ms cadence */
-            static const uint8_t MODE5[5] = { 0x10u, 0x10u, 0x10u, 0x10u, 0x10u };
             const uint16_t sp = s_cc_sp;
             s_cc_div = 0u;
+            /* E46 (spec 03 section 6.2af): the supervisor IS chip 2 of the driver
+             * rotation — a two-channel current driver (channels 4 = C solenoid and
+             * 5 = TCC per the spec 12 channel map) plus the supervisor functions.
+             * Frame 2 therefore carries the supervisor's OWN channel commands: mode
+             * 0x1A (calib flag + both channels CURRENT CONTROL) with REAL setpoints
+             * on both rows — the stock's engaged shape. E45's reset was the walking
+             * contradiction (mode 0x10 = "my channels disabled" + zero setpoints,
+             * while the ask begged for enable); E42d's was mode-without-setpoints.
+             * All five frames carry the same engaged shape — the stock's engaged
+             * dump shows every select's mode byte with live current control. */
             for (uint8_t r = 0u; r < 9u; r++) {
                 for (uint8_t c = 0u; c < 5u; c++) {
                     uint16_t w;
                     switch (r) {
-                    case 0u: w = (uint16_t)(0x8800u | MODE5[c]); break;
-                    case 2u: w = (uint16_t)(0xE800u | (c == 2u ? 0u : (sp & 0x7FFu))); break;
-                    case 4u: w = (uint16_t)(0xF000u | (c == 2u ? 0u : (sp & 0x7FFu))); break;
+                    case 0u: w = (uint16_t)(0x8800u | 0x1Au); break;
+                    case 2u: w = (uint16_t)(0xE800u | (sp & 0x7FFu)); break;
+                    case 4u: w = (uint16_t)(0xF000u | (sp & 0x7FFu)); break;
                     case 1u: w = 0xA000u; break;
                     case 3u: w = 0xA600u; break;
                     case 5u: w = 0x6000u; break;
