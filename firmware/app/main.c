@@ -80,6 +80,9 @@ uint32_t g_first_sup_ms;
 
 /* [I] shaft assignment of the speed channels: confirm on the bench (spec 02 section 4.1) */
 static const sensors_cfg_t s_sensors_cfg = { 0u, 1u, { 60u, 60u, 60u } };
+static bool s_e40_armed;        /* E40 (spec 03 6.2ac): repeating engaged write job armed
+                                 * by the magic frame's data[6]; grant-gated in task_10ms */
+static uint8_t s_e40_v8e;       /* E40: its live 0x8E row value (0x9F = stock constant) */
 
 static void task_1ms(void)
 {
@@ -99,11 +102,23 @@ static void task_1ms(void)
                  * minus the app's own start lag; spec 03 section 6.2i).
                  * E20 (spec 03 section 6.2o): data[5] != 0 = the delay in RAW
                  * 5 ms passes — pass-granular arming so bit 0 can fire INSIDE the
-                 * ~320 ms rail window (e.g. 0x32 = pass 50, just after HOLD at
-                 * pass 49), the one cell never tested: the fully-mirrored stream
-                 * asking while the rail is still up. Cycles raised to 2000
-                 * (10 s of asking; the stock never stops). */
+                 * ~320 ms rail window (e.g. 0x32 = pass 50, just after HOLD at pass
+                 * 49), the one cell never tested: the fully-mirrored stream asking
+                 * while the rail is still up. Cycles raised to 2000 (10 s of asking;
+                 * the stock never stops).
+                 * E40 (spec 03 section 6.2ac): data[6] != 0 arms the REPEATING
+                 * engaged write job with the 0x8E row = data[6] (the stock's job
+                 * 0x28 broadcast 8E9F x5 / 9021 x5, repeating while engaged; af01's
+                 * 0x24 switch echo never sees the engaged values otherwise).
+                 * Grant-gated: the re-send runs only while the A-law shadow is
+                 * sending bit 0, so the engaged values cannot precede the grant.
+                 * data[6] = 0 leaves it unarmed (this frame does not disarm a
+                 * running re-send — power cycle to clear). */
                 sup_bit0_boot_arm(2000u, f.data[5] != 0u ? f.data[5] : (uint16_t)(f.data[4] * 200u));
+                if (f.data[6] != 0u) {
+                    s_e40_armed = true;
+                    s_e40_v8e = f.data[6];
+                }
                 continue;
             }
             if (!uds_rx((can_bus_t)bus, &f) && !meas_rx((can_bus_t)bus, &f)) {
@@ -135,6 +150,11 @@ static void task_10ms(void)
             s_sol_lvl = lvl;
             sol_engage_config(lvl);
         }
+        /* E40 (spec 03 section 6.2ac): the repeating engaged write job is GRANT-GATED
+         * here, every 10 ms — the magic frame arms it at hb5 (~pass 85) but the grant
+         * lands ~pass 230; the engaged 0x8E row must never precede the acceptance. */
+        sol_engage_resend(s_e40_armed && sup_engage_active() &&
+                          sup_engage_status()->echo_grant, s_e40_v8e);
     }
     vehicle_update_10ms();
     sensors_update_10ms();
