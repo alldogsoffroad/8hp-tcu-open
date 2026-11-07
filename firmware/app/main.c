@@ -150,11 +150,11 @@ static void task_10ms(void)
             s_sol_lvl = lvl;
             sol_engage_config(lvl);
         }
-        /* E40 (spec 03 section 6.2ac): the repeating engaged write job is GRANT-GATED
-         * here, every 10 ms — the magic frame arms it at hb5 (~pass 85) but the grant
-         * lands ~pass 230; the engaged 0x8E row must never precede the acceptance. */
-        sol_engage_resend(s_e40_armed && sup_engage_active() &&
-                          sup_engage_status()->echo_grant, s_e40_v8e);
+        /* E41 (spec 03 section 6.2ad): the bus-B write job's gating and ~2 s cadence
+         * live inside sup_drv_poll (it reads the engage state directly); the magic
+         * frame's arm is forwarded there. E40's RSPI-A re-send is gone — it never
+         * reached af01 and its burst withdrew the grant (6.2ac). */
+        sup_drv_write_arm(s_e40_armed, s_e40_v8e);
     }
     vehicle_update_10ms();
     sensors_update_10ms();

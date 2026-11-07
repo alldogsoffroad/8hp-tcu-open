@@ -240,6 +240,30 @@ void sup_engage_replies(const uint16_t *rx, uint8_t n)
 
 static sup_drv_status_t s_drv;
 
+/* E41 (spec 03 section 6.2ad): the bus-B commissioning write job, revived.
+ * The stock's eight-register write (job 0x28 class: the 8E9F/9021 rows plus
+ * mode/config registers) rides the FOUR-select rotation (SSLB3/2/0/5 - the
+ * supervisor stays in the read rotation; register data shaped like control
+ * words resets the TCU from our context, 0x8E55 bench 2026-11-01). af01
+ * (SSLB0) is the target: its 0x24 switch echo (AAFF ours / AA20 stock
+ * driving) never sees the engaged values from our RSPI-A commissioning.
+ * Grant-gated (the engaged 0x8E row must never precede acceptance) and
+ * slow - every 400 passes (~2 s), the m4r cadence that never stressed the
+ * 5 ms stream (E40b's 100 ms RSPI-A burst withdrew the grant). The 0x88
+ * mode row carries the stock's setpoint-row values in rotation order minus
+ * the supervisor: {1A, 1A, 12, 15} - af01 = 0x12. Rows 8/9 repeat the 8E/90
+ * rows, the two the driving dump shows the stock writing. */
+static bool     s_wj_on;
+static uint8_t  s_wj_v8e;
+static uint16_t s_wj_div;
+
+void sup_drv_write_arm(bool on, uint8_t v8e)
+{
+    s_wj_on = on;
+    s_wj_v8e = v8e;
+    s_wj_div = 0u;            /* re-arm restarts the 2 s cadence */
+}
+
 void sup_drv_sync(bool on)
 {
     (void)on;                 /* retired: the bus-0 commissioning runs in sol_drv */
@@ -257,9 +281,36 @@ const sup_drv_status_t *sup_drv_status(void)
 
 bool sup_drv_poll(uint16_t *words, uint8_t *n)
 {
-    (void)words;
-    (void)n;
-    return false;             /* no bus-B driver jobs remain (spec 03 section 6.2e) */
+    if (!s_wj_on || s.state == ST_IDLE || !s.echo_grant) {
+        return false;
+    }
+    if (++s_wj_div < 400u) {              /* ~2 s at the 5 ms pass */
+        return false;
+    }
+    s_wj_div = 0u;
+    {
+        static const uint8_t MODE[4] = { 0x1Au, 0x1Au, 0x12u, 0x15u };
+        for (uint8_t r = 0u; r < 10u; r++) {
+            for (uint8_t c = 0u; c < 4u; c++) {
+                uint16_t w;
+                switch (r) {
+                case 0u: case 8u: w = (uint16_t)(0x8E00u | s_wj_v8e); break;
+                case 1u: case 9u: w = (uint16_t)(0x9000u | 0x21u);   break;
+                case 2u: w = (uint16_t)(0x9600u | 0x55u);   break;
+                case 3u: w = (uint16_t)(0x8800u | MODE[c]); break;
+                case 4u: w = 0x2800u; break;
+                case 5u: w = 0x3000u; break;
+                case 6u: w = 0x2E00u; break;
+                default: w = 0x3600u; break;
+                }
+                words[4u * r + c] = w;
+            }
+        }
+    }
+    *n = DRV_WRITE_WORDS;
+    s_drv.drv_jobs++;
+    s_drv.drv_writes++;
+    return true;
 }
 
 void sup_drv_replies(const uint16_t *rx, uint8_t n)

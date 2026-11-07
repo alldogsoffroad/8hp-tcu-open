@@ -23,10 +23,6 @@ static ma10_t s_req_cur[SOL_CHANNELS];
 static uint8_t s_div;
 static uint8_t s_eng_level;      /* supervisor ladder level mirrored into the 0x8E row */
 static bool    s_cfg_pending;    /* sol_engage_config() staged a re-send               */
-static bool    s_resend_on;      /* E40: repeating engaged write job armed (grant-gated
-                                  * by the caller via sol_engage_resend)               */
-static uint8_t s_resend_v8e;     /* E40: its live 0x8E row value (bench-set, 0x9F stock) */
-static uint8_t s_resend_div;
 static bool    s_stream_on;      /* E29 (spec 03 section 6.2s): bus-0 traffic gate. Every
                                   * boot we have ever run interleaved the 45-word cyclic
                                   * (10 ms slot) and the ID polls with the 5 ms supervisor
@@ -240,9 +236,6 @@ void sol_init(void)
     s_div = 0u;
     s_eng_level = 0u;
     s_cfg_pending = false;
-    s_resend_on = false;
-    s_resend_v8e = 0u;
-    s_resend_div = 0u;
     if (!s_stream_on) {              /* E29: pure-stream boot - commission the drivers
                                       * lazily when the gate opens (sol_stream_gate) */
         return;
@@ -280,19 +273,6 @@ void sol_engage_config(uint8_t level)
     s_cfg_pending = true;
 }
 
-void sol_engage_resend(bool on, uint8_t v8e)
-{
-    if (on != s_resend_on || v8e != s_resend_v8e) {
-        s_resend_div = 0u;    /* reset ONLY on a state change — task_10ms re-asserts the
-                               * gate every tick (grant-gating) and a per-call reset
-                               * starves the 10-tick counter: the re-send never fired
-                               * in E40 stage 9E/9F (both stages no-ops, caught by the
-                               * frozen div + zero cfg_mismatch) */
-    }
-    s_resend_on = on;
-    s_resend_v8e = v8e;
-}
-
 void sol_set(uint8_t ch, sol_mode_t mode, ma10_t current)
 {
     if (ch < SOL_CHANNELS) {
@@ -322,18 +302,6 @@ void sol_tick_10ms(void)
                                   * climbs, 0x8E row = 0x80 | level (live 0x9F at HOLD) */
         s_cfg_pending = false;
         job_config((uint8_t)(0x80u | s_eng_level));
-    }
-    if (s_resend_on) {           /* E40 (spec 03 section 6.2ac): the REPEATING engaged
-                                  * write job — the stock's job 0x28 (8E9F x5, 9021 x5)
-                                  * is a five-select broadcast that repeats while
-                                  * engaged; af01's 0x24 switch echo (AAFF ours, AA20
-                                  * stock driving) never sees the engaged values from
-                                  * our once-per-level re-send. Grant-gated by the
-                                  * caller; every 100 ms. */
-        if (++s_resend_div >= 10u) {
-            s_resend_div = 0u;
-            job_config(s_resend_v8e);
-        }
     }
     if (!s_stream_on) {          /* E29: pure supervisor stream - no bus-0 traffic */
         return;

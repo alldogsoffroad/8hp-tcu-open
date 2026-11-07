@@ -83,12 +83,6 @@ const sol_status_t *sol_status(void);
  * stay zero. Stages one re-send of the 40-word configuration job; runs from the 10 ms task.
  * The rows 0x90 = 0x21, 0x96 = 0x55 and the mode bytes ride the same job / the cyclic job. */
 void sol_engage_config(uint8_t level);
-/* E40 (spec 03 section 6.2ac): the REPEATING engaged write job — the stock's job 0x28
- * (8E9F x5, 9021 x5, five-select broadcast) repeats while engaged; af01's 0x24 switch
- * echo needs the engaged values continuously. Re-sends the 40-word configuration job
- * every 100 ms with the 0x8E row = v8e (0x9F = the stock's constant divider value;
- * bench-set live via the magic frame's data[6] so one image sweeps values). */
-void sol_engage_resend(bool on, uint8_t v8e);
 
 /* One-shot 40-word duty job (spec 03 section 6.2e): eight five-select rotations; the slot-2
  * select (SSLA1) receives 0xD0 | duty[r] in rotation r while the other four selects carry the

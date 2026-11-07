@@ -89,5 +89,11 @@ void sup_drv_setpoint_once(void);/* queue one keep-warm setpoint pass */
 bool sup_drv_poll(uint16_t *words, uint8_t *n);
 void sup_drv_replies(const uint16_t *rx, uint8_t n);
 const sup_drv_status_t *sup_drv_status(void);
+/* E41 (spec 03 section 6.2ad): arm the bus-B commissioning write job (the
+ * stock's job 0x28 shape on the four-select rotation, supervisor excluded).
+ * v8e = the live 0x8E row value (0x9F = the stock constant). Grant/ladder
+ * gating and the ~2 s cadence live inside sup_drv_poll; the arm alone is
+ * inert until the mirror carries bit 0. */
+void sup_drv_write_arm(bool on, uint8_t v8e);
 
 #endif
