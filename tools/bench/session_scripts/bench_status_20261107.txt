@@ -96,3 +96,18 @@ live while engaged). Bench on E48 (m4bt, sig 5b15b240e1c32df2).
 Ghidra headless recipe: ~/opt/ghidra_12.2_PUBLIC + project tcu_full/tcu +
 tools/ghidra_scripts (Callers/AddrXref/DecompIn/AsmRange). REA MCP Ghidra
 timed out on the 2.5MB image (30s limit per import) - use headless direct.
+
+=== 2026-11-07 TRUE FINAL (E49, section 6.2ah) ===
+E49: commissioning restored (E35r handshake before sched_init) - SAME wall
+(grant live, one companion job, wipe). SIX hypotheses eliminated: content,
+cadence, 0x9021, software-ring, commissioning, in-pass placement.
+DESCRIPTOR AUDIT: 0x40CE4's only ref (0x92672) = RSPI DMA descriptor init
+(structure @0xFFF90630: per-chip SPCMD copies, mode bytes, buf ptr +0x10,
+stride 0x50) bound to the cyclic sender - the five-select premise CONFIRMED,
+supervisor at frame 2 receives register words every 10ms unharmed.
+SURVIVING DISCRIMINATOR: WIRE TIMING - the stock's DMA-fed frames are
+gapless; our polled frames have microsecond SPTEF gaps between all 45.
+NEXT SESSION (the platform build): DMA/linked-job SPI transport for bus B +
+the mirrored-model read (stock 0xFFF88518, record 2, live engaged).
+Bench on E49 (m4bu, sig 9beecbe2e21df08a). Grant recipe: spam-hb5/delay150,
+data[7]=2 arms the companion. ALL PUSHED.
