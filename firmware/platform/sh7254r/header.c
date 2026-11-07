@@ -64,16 +64,43 @@ static void default_handler(void)
     }
 }
 
-/* Vectors 4..511 (508 entries), at header +0x80. */
+/* E57 (spec 03 section 6.2ao): the RSPI-A interrupt service. The stock's vector 445
+ * (handler 0x96590, base 0xFFFFB000 confirmed) arms SPCR = 0x08 ON ENTRY, services the
+ * frame, and returns — E56 proved the unconditional feed without this ISR is a reset
+ * loop (0x08 mode asserts an interrupt the unvectored table can't service). Our minimal
+ * counterpart: acknowledge by clearing the SPSR flags (releases the peripheral's request
+ * line), letting the feed loop's next packed store continue. The feed runs in mainline
+ * context; the ISR only keeps the request line from wedging the interrupt controller. */
+__attribute__((interrupt_handler))
+void rspi_a_isr(void)
+{
+    *(volatile uint8_t *)0xFFFFB003u = 0x00u;   /* SPSRA = 0: clear SPTEF/SPRF/OVRF (ack) */
+}
+
+/* Vectors 4..511 (508 entries), at header +0x80.
+ * Layout: 7 x V64 (vectors 4-259) | V16 x3 (260-307) | V4 x3 (308-319)
+ * then the tail: V4, V4 = vectors 320-327... vector 445 = index 441 (0-based). */
 #define V4(x) x, x, x, x
 #define V16(x) V4(x), V4(x), V4(x), V4(x)
 #define V64(x) V16(x), V16(x), V16(x), V16(x)
 __attribute__((section(".app_vectors"), used))
 void (*const app_vectors[508])(void) = {
+    /* vectors 4..259 (indices 0..255): 4 x V64 */
     V64(default_handler), V64(default_handler), V64(default_handler), V64(default_handler),
-    V64(default_handler), V64(default_handler), V64(default_handler),
-    V16(default_handler), V16(default_handler), V16(default_handler), V4(default_handler),
-    V4(default_handler), V4(default_handler),
+    /* vectors 260..307 (indices 256..303): 3 x V16 */
+    V16(default_handler), V16(default_handler), V16(default_handler),
+    /* vectors 308..319 (indices 304..315): 3 x V4 */
+    V4(default_handler), V4(default_handler), V4(default_handler),
+    /* indices 316..440 (125 default entries) — 64 + 48 + 12 + 1 */
+    V64(default_handler),
+    V16(default_handler), V16(default_handler), V16(default_handler),
+    V4(default_handler), V4(default_handler), V4(default_handler),
+    default_handler,
+    /* index 441 = VECTOR 445: the RSPI-A interrupt (stock handler 0x96590) */
+    rspi_a_isr,
+    /* indices 442..507 (66 default entries) — 64 + 2 */
+    V64(default_handler),
+    default_handler, default_handler,
 };
 
 /* Tail record at 0x17FB70 (outside the CRC range): project identification and end marker. */

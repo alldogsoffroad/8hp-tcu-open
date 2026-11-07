@@ -57,11 +57,9 @@ static uint8_t mode_byte(uint8_t chip)
 
 static bool xfer(uint8_t n)
 {
-#if 0 && defined(TCU_AUTOENGAGE)
-    /* E56 verdict (6.2an): the stock feed WITHOUT its ISR = reset loop — 0x08
-     * mode asserts an interrupt our unvectored table can't service (default
-     * handler hangs -> watchdog -> loop). The pump and vector-449 ISR are a
-     * PAIR; restored to polled 0x48 until the ISR is built. */
+#if defined(TCU_AUTOENGAGE)
+    /* E57 (spec 03 6.2ao): the stock feed WITH its ISR — vector 445 armed
+     * (rspi_a_isr acks SPSR), completing the pair the stock runs. */
     if (!plat_drv_xfer_stock(s_tx, s_rx, n)) {
         s_st.faults |= SOL_F_BUS;
         return false;
