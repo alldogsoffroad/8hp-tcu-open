@@ -2410,3 +2410,29 @@ enough to fully explain the dead bus. E58b (m4c7, 4FB56F0F) tests the
 corrected CPU-loop — one cycle answers whether the peripheral accepts
 CPU-fed frames in 0x09 mode. If not, the DMA path is the confirmed
 next build with every address already decoded.
+
+### 6.2aq E58b: the CPU-loop verdict — DMA is mandatory (2026-11-08, final) [O]
+
+**E58b (m4c7, 4FB56F0F): the corrected CPU-loop feed** (byte-order fixed
+to 0x09000020, SPCR=0x09/SPE+MSTR, full ISR with clock-gate enable).
+Result: dead both buses — mirror 0000, jobs=0, no boot spike. Same as
+every 0x08-mode attempt.
+
+**The definitive verdict: the peripheral REQUIRES DMA-driven frames.** No
+combination of CPU-written SPCR+SPDR values works in 0x08/0x09 mode. The
+stock's architecture (buffer in RAM → DMA descriptors → SPCMD bit 13
+enable → hardware clocks frames gaplessly) is the only mechanism this
+peripheral accepts for the register-write class. Our polled 0x48 mode
+works for reads (the interrupt never fires, the peripheral runs in a
+polled subset) but cannot latch writes.
+
+**THE COMPLETE PICTURE:** the DMA build requires:
+1. Frame buffer in RAM (the pump's output — 8-byte slots, already
+   understood)
+2. DMA descriptor setup per-SPCMD (0x980E0's tables at 0xFFF94564-88)
+3. SPCMD with bit 13 (0x2000) = DMA enable
+4. SPCR=0x09 + the ISR pair (v445, clock-gate acknowledge)
+5. The completion callback (the executor 0x93E6C's post-processing)
+
+Every address decoded. E58c (m4c8, 177DE8C4) restores the polled
+baseline.
