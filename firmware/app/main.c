@@ -168,19 +168,38 @@ static void task_10ms(void)
     bench_tick_10ms();      /* safety interlocks first, then the driver job */
     sol_tick_10ms();
 #if defined(TCU_AUTOENGAGE)
-    /* E37 (spec 03 6.2aa): the stock's keep-warm VALUE CYCLE. The stock's
-     * cells 0xFFF90586/8A walk a 9-value table: 41/34/3A/27/0E/1F/3C/26/44
-     * (hex, driver setpoint units). Two channels cycle: ch0 (chip 0) and
-     * ch6 (chip 3). The cycle advances every 10ms tick. Values in 0.1mA:
-     * setpoint × 6 (spec 12 section 2b). */
+    /* E43 (spec 03 section 6.2ae): the window load race. The rail is UP for the
+     * first ~370 ms after power-on (passes 2-64, the ring's 0xB0 era) and gates
+     * all delivery (keep-warm reads flat at .166 with the rail down — no rail,
+     * no current). The stock's solenoid leap lands at +200-250 ms, INSIDE its
+     * window, at real current. 6.2w's load-in-window elimination ("1.75 A
+     * commanded, zero delivered") ran while bench_channels_off() was wiping
+     * every channel every 10 ms — the assassin found later; the test was never
+     * re-run clean. Here: channels 0-6 at 250 mA each (1.75 A total) for the
+     * first 50 ticks (500 ms, spanning the window), then the keep-warm cycle.
+     * If the supervisor's rail-hold decision is current-gated, the rail holds
+     * past pass 65 — the ammeter shows it live. */
     {
-        static const uint8_t KEEPWARM[9] = {
-            0x41u, 0x34u, 0x3Au, 0x27u, 0x0Eu, 0x1Fu, 0x3Cu, 0x26u, 0x44u
-        };
-        static uint8_t kw_idx = 0u;
-        sol_set(0u, SOL_MODE_CURRENT, (ma10_t)(KEEPWARM[kw_idx] * 6u));
-        sol_set(6u, SOL_MODE_CURRENT, (ma10_t)(KEEPWARM[(kw_idx + 4u) % 9u] * 6u));
-        kw_idx = (uint8_t)((kw_idx + 1u) % 9u);
+        static uint8_t s_boot_ticks;
+        if (s_boot_ticks < 50u) {
+            s_boot_ticks++;
+            for (uint8_t ch = 0u; ch <= 6u; ch++) {
+                sol_set(ch, SOL_MODE_CURRENT, (ma10_t)2500u);
+            }
+        } else {
+            /* E37 (spec 03 section 6.2aa): the stock's keep-warm VALUE CYCLE. The
+             * stock's cells 0xFFF90586/8A walk a 9-value table: 41/34/3A/27/0E/1F/
+             * 3C/26/44 (hex, driver setpoint units). Two channels cycle: ch0 and
+             * ch6, the cycle advancing every 10 ms. Values in 0.1 mA: x6 (spec 12
+             * section 2b). */
+            static const uint8_t KEEPWARM[9] = {
+                0x41u, 0x34u, 0x3Au, 0x27u, 0x0Eu, 0x1Fu, 0x3Cu, 0x26u, 0x44u
+            };
+            static uint8_t kw_idx = 0u;
+            sol_set(0u, SOL_MODE_CURRENT, (ma10_t)(KEEPWARM[kw_idx] * 6u));
+            sol_set(6u, SOL_MODE_CURRENT, (ma10_t)(KEEPWARM[(kw_idx + 4u) % 9u] * 6u));
+            kw_idx = (uint8_t)((kw_idx + 1u) % 9u);
+        }
     }
 #endif
     meas_table_update();
