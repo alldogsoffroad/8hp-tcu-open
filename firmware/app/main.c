@@ -459,7 +459,14 @@ int main(void)
      * 0xAAFF instead of 0xAA20 (E15 RAM read, rx_words[5]) — the register did
      * not hold what we wrote. Back to 0x20 = the stock's steady composition
      * (slot-0 'c' bit 5, tail bit clear). */
-    sup_app_pattern3(true, 0x90u, 0x10u, 0x20u);   /* E32-redo (spec 03 6.2x): bits8e 0x91 = the stock's engaged pair 0x8E91/0x8E81 - bit 0 from word one (the m4aw build's code-block version died pre-CAN; this is the one-immediate delta) */
+    /* E48 (spec 03 section 6.2af): bits90 bit 0 (0x21, not 0x20) — the driver-comms
+     * mode bit. E16 read the stock's engaged 0x9021's bit 0 as a "boot-era transient"
+     * and settled us on 0x20; with today's record-2 decode (the supervisor IS chip 2,
+     * a two-channel driver) the 0x21 is the app TELLING the supervisor it will be
+     * addressed as a driver — without it, every register job on its select (E42/E45/
+     * E46/E47's companions) is the reset-class violation. E16's bench: 0x21 alone was
+     * benign (no reset; only the 0x24 read-back anomaly — pre-companion era). */
+    sup_app_pattern3(true, 0x90u, 0x10u, 0x21u);
     sup_drv_sync(true);
     /* Engaged channel staging (spec 03 section 6.2e): the live 0x88 mode flags of
      * the driving stock = the six pressure channels + line pressure in CURRENT
