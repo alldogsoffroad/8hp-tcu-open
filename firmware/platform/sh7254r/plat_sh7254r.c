@@ -764,7 +764,11 @@ bool plat_drv_xfer_stock(const uint16_t *tx, uint16_t *rx, uint8_t n)
         volatile uint16_t *const spdr = (volatile uint16_t *)0xFFFFB004u;
 
         for (uint8_t i = 0u; i < n; i++) {
-            *pair = 0x20000008u;         /* SPCR=0x08 | SPSR=0x20 packed */
+            /* BIG-ENDIAN packed: bits 31-24 = SPCR(+0), bits 7-0 = SPSR(+3).
+             * SPCR = 0x09 = SPE(bit0) + MSTR(bit3) — the workers' active value
+             * (0x93A74 decode: @(desc+0x10) set to 0x09 on transaction start).
+             * SPSR = 0x20 = overrun clear. */
+            *pair = 0x09000020u;
             *spdr = tx[i];
             rx[i] = *spdr;               /* immediate read; lag tolerated */
         }
