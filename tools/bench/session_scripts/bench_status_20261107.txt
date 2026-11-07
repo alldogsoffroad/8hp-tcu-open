@@ -60,3 +60,16 @@ af01 exonerated of caring about write values: E41b's 2s write job
 transmitted cleanly (grant held), af01 AA-acked every frame, 0x24 = AAFF.
 Bench on E42c (m4bn). NEXT: four-select setpoint (low expectation),
 withdrawal reproduction/law, mode-0x31, ring scheduler.
+
+=== 2026-11-07 EVENING (E43/E44, section 6.2ae) ===
+E43: window load (7ch x 250mA, first 500ms) - current FLOWED in the window
+(first time, +10-75mA) but CAPS at ~50-75mA regardless of command; keep-warm
+era showed the same +45. E44: drivers' 0x8E=0x9F (stock engaged constant)
+- same cap. 0x9F-enable theory dead; level law retired.
+PRIMED-RAIL READING: mirror bit5 (0xB0 window era) = primed NOT conducting;
+our rail never closes; the +40mA is board logic. The stock's leap at
++250ms flows AFTER its app EARNS closure - not as the cause.
+TOMORROW: decode the stock's +200-250ms LEAP GATE (what holds the first
+big setpoint write until +250ms - composer paths known, the gate is the
+missing piece; every remaining hypothesis lives behind it). Static work.
+Bench on E44 (m4bp, sig 0058f28d53774b85). Grant recipe: spam-hb5/delay150.
