@@ -515,6 +515,10 @@ int main(void)
         (void)plat_sup_xfer(w1, rx, 7u);
         (void)plat_sup_xfer(w2, rx, 4u);
     }
+    /* E51: the boot companion — the stock's driver cyclic from app start,
+     * bit0-free (the stock's rail is up at +250 ms, 15 s before any bit0;
+     * E50b proved our register jobs survive bit0-free). No ask is armed. */
+    sup_drv_cyclic_boot(true);
 #endif
     sched_init(s_tasks, (uint8_t)(sizeof s_tasks / sizeof s_tasks[0]));
 

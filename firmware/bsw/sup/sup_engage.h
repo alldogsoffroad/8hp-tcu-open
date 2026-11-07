@@ -108,5 +108,8 @@ void sup_drv_setpoint_arm(bool on);
  * mode and zero setpoints (the E42 reset was the 0x881A dialect error).
  * sp = the 11-bit setpoint mirrored to the four real chips' frames. */
 void sup_drv_cyclic_arm(bool on, uint16_t sp);
+/* E51 (spec 03 section 6.2ai): the boot companion — the captured cyclic streams
+ * one row (5 words) per pass from app start, bit0-free, no ask. */
+void sup_drv_cyclic_boot(bool on);
 
 #endif

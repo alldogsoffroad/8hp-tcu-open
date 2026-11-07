@@ -259,6 +259,7 @@ static uint16_t s_wj_div;
 static bool     s_sp_on;       /* E42: the bus-B setpoint job (magic data[7]) */
 static bool     s_cc_on;       /* E45: the bus-B cyclic companion (magic data[7]=2) */
 static uint16_t s_cc_sp;       /* E45: its setpoint value (staged by the caller) */
+static bool     s_cb_on;       /* E51: the boot companion — row-per-pass from app start */
 
 void sup_drv_write_arm(bool on, uint8_t v8e)
 {
@@ -276,6 +277,11 @@ void sup_drv_cyclic_arm(bool on, uint16_t sp)
 {
     s_cc_on = on;
     s_cc_sp = sp & 0x7FFu;
+}
+
+void sup_drv_cyclic_boot(bool on)
+{
+    s_cb_on = on;
 }
 
 void sup_drv_setpoint_arm(bool on)
@@ -303,6 +309,37 @@ const sup_drv_status_t *sup_drv_status(void)
 
 bool sup_drv_poll(uint16_t *words, uint8_t *n)
 {
+    /* E51 (spec 03 section 6.2ai): the BOOT COMPANION — the stock's order, complete.
+     * E50b proved register jobs on the supervisor's select SURVIVE bit0-free (15
+     * jobs, no reset) and die only with bit0 in play — and the stock's own rail is
+     * UP at +250 ms with its leap, 15 s BEFORE any bit0 exists. The grant was never
+     * the rail's prerequisite; the rail is earned by the bit0-free driver jobs.
+     * Here: the captured cyclic (0xFFF88518, engaged stock 2026-11-08) streams as
+     * ONE ROW (5 words, every select incl. the supervisor's frame 2) PER 5 ms
+     * PASS from app start — nibble-poll scale, stream-safe, in the rail window,
+     * rotating through all 9 rows every 45 ms. No ask, no bit0, ever (unless the
+     * bench magic-arms one). */
+    if (s_cb_on) {
+        static const uint16_t STOCK_CYCLIC[45] = {
+            0x881Au, 0x881Au, 0x881Au, 0x8812u, 0x8815u,
+            0xA000u, 0xA000u, 0xA000u, 0xA000u, 0xA000u,
+            0xE853u, 0xED89u, 0xED89u, 0xE853u, 0xE800u,
+            0xA600u, 0xA600u, 0xA600u, 0xA600u, 0xA600u,
+            0xF589u, 0xF589u, 0xF053u, 0xF000u, 0xF000u,
+            0x6000u, 0x6000u, 0x6000u, 0x6000u, 0x6000u,
+            0xC000u, 0xC000u, 0xC000u, 0xC000u, 0xC000u,
+            0x6600u, 0x6600u, 0x6600u, 0x6600u, 0x6600u,
+            0xD800u, 0xD800u, 0xD800u, 0xD800u, 0xD800u,
+        };
+        static uint8_t s_cb_row;
+        for (uint8_t c = 0u; c < 5u; c++) {
+            words[c] = STOCK_CYCLIC[5u * s_cb_row + c];
+        }
+        s_cb_row = (uint8_t)((s_cb_row + 1u) % 9u);
+        *n = 5u;                       /* one row per pass -> xfer5 */
+        s_drv.drv_jobs++;
+        return true;
+    }
     /* E45 (spec 03 section 6.2af): the bus-B CYCLIC COMPANION — the stock's 45-frame
      * driver cyclic (template 0x40D0C) rides THE SUPERVISOR'S OWN BUS on the five-select
      * rotation af31/af21/af11/af01/af51 = SSLB3/2/1/0/5 — FRAME INDEX 2 GOES TO THE
