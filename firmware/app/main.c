@@ -347,6 +347,13 @@ static const task_t s_tasks[] = {
 
 int main(void)
 {
+    /* E42c (spec 03 section 6.2ad): the boot-trip counter. Survives every reset the
+     * supervisor can issue (RAM stays powered; the .noinit section is NOLOAD) and is
+     * cleared only by power-off. Read live via 0x2A: a value > 1 on a single power
+     * cycle = the TCU soft-reset mid-run (the E42 forensics question: "withdrawal"
+     * vs the E28 stall-reset — settled by this byte, not by inference). */
+    __attribute__((section(".noinit"))) static uint8_t s_boot_trips;
+    s_boot_trips++;
     plat_mb_capture();     /* counterpart input FIRST: it may be a power-up transient that
                             * is gone before the scheduler runs (spec 03 section 6.2) */
     plat_init();
