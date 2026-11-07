@@ -282,9 +282,15 @@ void sol_engage_config(uint8_t level)
 
 void sol_engage_resend(bool on, uint8_t v8e)
 {
+    if (on != s_resend_on || v8e != s_resend_v8e) {
+        s_resend_div = 0u;    /* reset ONLY on a state change — task_10ms re-asserts the
+                               * gate every tick (grant-gating) and a per-call reset
+                               * starves the 10-tick counter: the re-send never fired
+                               * in E40 stage 9E/9F (both stages no-ops, caught by the
+                               * frozen div + zero cfg_mismatch) */
+    }
     s_resend_on = on;
     s_resend_v8e = v8e;
-    s_resend_div = 0u;
 }
 
 void sol_set(uint8_t ch, sol_mode_t mode, ma10_t current)
