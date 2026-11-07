@@ -369,3 +369,5 @@ const plat_mb_status_t *plat_mb_status(void)
 }
 
 void plat_drv_spbr_set(uint8_t spbr) { (void)spbr; }  /* host stub */
+
+bool plat_drv_xfer_irq(const uint16_t *tx, uint16_t *rx, uint8_t n) { (void)tx; (void)rx; (void)n; return true; }

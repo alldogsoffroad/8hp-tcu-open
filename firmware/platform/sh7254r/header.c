@@ -64,28 +64,42 @@ static void default_handler(void)
     }
 }
 
-/* E58 (spec 03 section 6.2ap): the FULL RSPI-A ISR protocol, transplanted from the
- * stock's vector 445 handler (0x96590, completely disassembled):
- *   1. SPCR  = 0x08                    (arm the 0x08 mode)
- *   2. SPSR  = 0x20                    (clear the overrun flag)
- *   3. gate  = read @(0xFFFE6030)      (the CPG clock-gate status)
- *      @(0xFFFE6030) = 0xF3            (ENABLE the RSPI clock gates — bits 0-1 clear;
- *                                        WITHOUT this the shared clock domain drops and
- *                                        BOTH buses die: E57's verdict)
- *   The stock's steps 1-2 are already done by our feed's packed store; the gate write
- *   is the essential addition. The worker dispatch (0x93A08/0x93A74) is the stock's
- *   mainline transaction machinery — our feed runs from the scheduler instead. The
- *   timing-instrumentation lock/unlock (0x68F34/0x68F3E) is skippable. */
+/* E59 (spec 03 section 6.2aq): the INTERRUPT-DRIVEN FEED ISR — the complete
+ * transplant. Architecture corrected: the stock uses interrupt-driven CPU feeding
+ * (NOT DMA). The ISR fires when the peripheral is ready for the next word, the
+ * handler writes SPDR from the frame buffer, reads the reply, advances, returns.
+ * The buffer and index live in .bss (plat_sh7254r.c owns them). The gate ack
+ * and SPSR clear are from the stock's vector-445 decode (0x96590). */
 __attribute__((interrupt_handler))
 void rspi_a_isr(void)
 {
-    volatile uint8_t *const spsr = (volatile uint8_t *)0xFFFFB003u;
-    volatile uint8_t *const gate = (volatile uint8_t *)0xFFFE6030u;
+    /* volatile: shared with the mainline fill/start code */
+    extern volatile uint16_t rspi_a_tx_buf[64];
+    extern volatile uint16_t rspi_a_rx_buf[64];
+    extern volatile uint8_t  rspi_a_idx;     /* current frame index */
+    extern volatile uint8_t  rspi_a_count;   /* frames in this burst */
 
-    (void)*spsr;                         /* read: the flags that fired this interrupt */
-    *spsr = 0x20u;                       /* clear the overrun flag (the stock's value) */
-    (void)*gate;                         /* read: the gate status (the stock saves it) */
-    *gate = 0xF3u;                       /* the clock-gate ENABLE: bits 0-1 clear      */
+    volatile uint8_t *const spsr  = (volatile uint8_t *)0xFFFFB003u;
+    volatile uint8_t *const spcr  = (volatile uint8_t *)0xFFFFB000u;
+    volatile uint8_t *const gate  = (volatile uint8_t *)0xFFFE6030u;
+    volatile uint16_t *const spdr = (volatile uint16_t *)0xFFFFB004u;
+
+    /* the stock's entry protocol (0x96590 decode) */
+    *spsr = 0x20u;                       /* clear the overrun flag */
+    (void)*gate;
+    *gate = 0xF3u;                       /* clock-gate enable (E57's missing piece) */
+
+    if (rspi_a_idx < rspi_a_count) {
+        /* feed the next frame */
+        *spcr = 0x09u;                   /* SPE+MSTR: the active transaction value */
+        rspi_a_rx_buf[rspi_a_idx] = *spdr;  /* collect the previous reply */
+        *spdr = rspi_a_tx_buf[rspi_a_idx];  /* write the next frame */
+        rspi_a_idx++;
+    } else {
+        /* burst complete: disable the peripheral (stop the interrupt source) */
+        *spcr = 0x00u;
+        rspi_a_count = 0u;
+    }
 }
 
 /* Vectors 4..511 (508 entries), at header +0x80.

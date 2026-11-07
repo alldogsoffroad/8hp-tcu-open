@@ -654,15 +654,78 @@ bool plat_sup_burst0(const uint16_t *tx, uint16_t *rx, uint8_t n)
  * delays, a five-command sequence SSLA3, SSLA2, SSLA1, SSLA0, SSLA5 (16 bit, MSB first, mode 1),
  * so frame n goes to chip n mod 5. Each job restarts the sequence by toggling SPE. */
 static const uint16_t s_drv_cmd[5] = { 0xAF31u, 0xAF21u, 0xAF11u, 0xAF01u, 0xAF51u };
+static uint8_t s_drv_spbr = 5u;   /* declared before first use */
+
+/* E59 (spec 03 section 6.2aq): the interrupt-driven frame feed. The buffer
+ * and index are shared with rspi_a_isr (header.c). The mainline fills the
+ * buffer and starts the burst; the ISR feeds frames on interrupt; the
+ * mainline reads replies after the burst completes (count returns to 0). */
+volatile uint16_t rspi_a_tx_buf[64];
+volatile uint16_t rspi_a_rx_buf[64];
+volatile uint8_t  rspi_a_idx;
+volatile uint8_t  rspi_a_count;
+
+bool plat_drv_xfer_irq(const uint16_t *tx, uint16_t *rx, uint8_t n)
+{
+    if (n > 64u) {
+        return false;
+    }
+    /* copy the frames into the shared buffer */
+    for (uint8_t i = 0u; i < n; i++) {
+        rspi_a_tx_buf[i] = tx[i];
+        rspi_a_rx_buf[i] = 0u;
+    }
+    rspi_a_idx = 0u;
+    rspi_a_count = n;
+
+    /* arm the peripheral: full init then SPCR=0x09 + interrupt */
+    SPCRA = 0x00u;
+    RSPIA_DMA_REQ0 = 0u;
+    RSPIA_DMA_REQ1 = 0u;
+    SPSRA = 0u;
+    SPPCRA = 0u;
+    SPBRA = s_drv_spbr;
+    SPCKDA = 0u;
+    SSLNDA = 0u;
+    SPNDA = 1u;
+    SPSCRA = 4u;
+    for (uint32_t i = 0u; i < 5u; i++) {
+        SPCMDA(i) = s_drv_cmd[i];
+    }
+    /* the clock gate: open before the first interrupt */
+    *(volatile uint8_t *)0xFFFE6030u = 0xF3u;
+
+    /* trigger the first frame: write SPCR=0x09 and the first SPDR */
+    SPCRA = 0x09u;
+    *(volatile uint16_t *)0xFFFFB004u = rspi_a_tx_buf[0];
+    rspi_a_idx = 1u;
+
+    /* wait for the burst to complete (the ISR decrements count to 0) */
+    {
+        uint32_t guard = 100000u;
+        while (rspi_a_count != 0u && guard != 0u) {
+            guard--;
+        }
+        if (guard == 0u) {
+            SPCRA = 0x00u;
+            rspi_a_count = 0u;
+            return false;
+        }
+    }
+    /* copy the replies back */
+    for (uint8_t i = 0u; i < n; i++) {
+        rx[i] = rspi_a_rx_buf[i];
+    }
+    SPCRA = 0x00u;
+    return true;
+}
 
 /* E54 (spec 03 section 6.2aj): the driver-bus bit rate, live-settable from the bench.
  * The stock's RSPI-A transport parameters are the writes-don't-stick suspect; the
- * stock's init writes SPBRA from a per-bus config object (worker 0x96468: config+0 ->
+ * stock's RSPI-A init writes SPBRA from a per-bus config object (worker 0x96468: config+0 ->
  * base+0x0A). Our 5 was chosen, never decoded for bus A — and driver chips often
  * latch writes only below a max clock. plat_drv_spbr_set() takes effect at the next
  * exchange (the full re-init per exchange re-writes it). */
-static uint8_t s_drv_spbr = 5u;
-
 void plat_drv_spbr_set(uint8_t spbr)
 {
     if (spbr != 0u) {           /* 0 = leave as-is */

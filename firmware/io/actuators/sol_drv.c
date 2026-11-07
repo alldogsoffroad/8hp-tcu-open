@@ -57,10 +57,12 @@ static uint8_t mode_byte(uint8_t chip)
 
 static bool xfer(uint8_t n)
 {
-#if 0 && defined(TCU_AUTOENGAGE)
-    /* E58b verdict (6.2ap): CPU-loop feed DEFINITIVELY dead even with correct
-     * SPSR=0x20 + the clock-gate ENABLE at 0xFFFE6030=0xF3. */
-    if (!plat_drv_xfer_stock(s_tx, s_rx, n)) {
+#if defined(TCU_AUTOENGAGE)
+    /* E59 (spec 03 6.2aq): the interrupt-driven feed — the stock's actual
+     * architecture (corrected from DMA): the ISR writes SPDR from the buffer
+     * on every interrupt, paced by the hardware, with SPCR=0x09 and the
+     * clock-gate enable. Closes GAP 4 (feed, not just ack). */
+    if (!plat_drv_xfer_irq(s_tx, s_rx, n)) {
         s_st.faults |= SOL_F_BUS;
         return false;
     }
@@ -182,18 +184,28 @@ static void job_status(void)
 static void job_cyclic(void)
 {
 #if defined(TCU_AUTOENGAGE)
-    /* E53 (spec 03 section 6.2aj): THE STOCK'S OWN WORDS on the driver cyclic.
-     * The 2026-11-08 capture (0xFFF88518, engaged at 1.786 A) — the driver
-     * cyclic rides THIS bus (RSPI-A): our bus-B probe found no A2-class chips
-     * there, the stock's ID job reports four — the 0x40CE4 table values are
-     * peripheral-relative and the job belongs to the A-peripheral's five
-     * selects. Our invented values (mode staging, 0x86-class 0x8E rows,
-     * keep-warm staging) never matched; the ~50 mA delivery cap at any
-     * command (E43/E44) was our config, not the rail. VERBATIM rows: the
-     * stock's modes {1A,1A,1A,12,15} and setpoints {53,589,589,53,0}/
-     * {589,589,53,0,0} per chip. */
+    /* E59 (spec 03 section 6.2aq): THE LEAP — the two-phase cyclic.
+     * Phase 1 (first 25 ticks = 250ms): mode=0x8800 (disabled), setpoints=0.
+     * Phase 2 (+250ms onward): the captured ENGAGED values (the leap).
+     * This mimics the stock's park-arbiter engage at +250ms (0xA57DA, reason
+     * 0x17): the 0→engaged STEP during the rail window (~320ms) is what the
+     * supervisor may need to see to hold the rail. Sending engaged values
+     * from boot would skip the transition. */
     {
-        static const uint16_t STOCK_CYC[45] = {
+        static const uint16_t PHASE1_CYC[45] = {
+            /* mode 0x00 = both channels DISABLED, all setpoints 0 */
+            0x8800u, 0x8800u, 0x8800u, 0x8800u, 0x8800u,
+            0xA000u, 0xA000u, 0xA000u, 0xA000u, 0xA000u,
+            0xE800u, 0xE800u, 0xE800u, 0xE800u, 0xE800u,
+            0xA600u, 0xA600u, 0xA600u, 0xA600u, 0xA600u,
+            0xF000u, 0xF000u, 0xF000u, 0xF000u, 0xF000u,
+            0x6000u, 0x6000u, 0x6000u, 0x6000u, 0x6000u,
+            0xC000u, 0xC000u, 0xC000u, 0xC000u, 0xC000u,
+            0x6600u, 0x6600u, 0x6600u, 0x6600u, 0x6600u,
+            0xD800u, 0xD800u, 0xD800u, 0xD800u, 0xD800u,
+        };
+        static const uint16_t PHASE2_CYC[45] = {
+            /* the captured ENGAGED cyclic (0xFFF88518 @ 1.786A, 2026-11-08) */
             0x881Au, 0x881Au, 0x881Au, 0x8812u, 0x8815u,
             0xA000u, 0xA000u, 0xA000u, 0xA000u, 0xA000u,
             0xE853u, 0xED89u, 0xED89u, 0xE853u, 0xE800u,
@@ -204,8 +216,13 @@ static void job_cyclic(void)
             0x6600u, 0x6600u, 0x6600u, 0x6600u, 0x6600u,
             0xD800u, 0xD800u, 0xD800u, 0xD800u, 0xD800u,
         };
+        static uint8_t s_leap_ticks;    /* counts 10ms cyclic passes */
+        const uint16_t *tbl = (s_leap_ticks < 25u) ? PHASE1_CYC : PHASE2_CYC;
+        if (s_leap_ticks < 25u) {
+            s_leap_ticks++;             /* advance toward the leap */
+        }
         for (uint8_t i = 0u; i < 45u; i++) {
-            s_tx[i] = STOCK_CYC[i];
+            s_tx[i] = tbl[i];
         }
     }
 #else
