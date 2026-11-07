@@ -2359,3 +2359,24 @@ the buffer, flag completion) + the E56 feed function — together replacing
 the polled exchange on the driver bus. Every piece is decoded; none of it
 is speculative. E56b (m4c3) restores the polled 0x48 baseline; the bench
 rests healthy.
+
+### 6.2ao E57 — the minimal-ack verdict: the ISR is a full protocol (2026-11-08, night) [O]
+
+**E57 (m4c4, 86FB0F16): vector 445 armed** (rspi_a_isr: SPSRA = 0 ack,
+verified in-image at slot 0x40764) **+ the unconditional feed.** Result:
+dead both buses again — mirror 0000, jobs=0, +109 s to first app answer.
+The minimal SPSR acknowledge is INSUFFICIENT. The stock's vector-445 ISR
+(0x96590) on every entry also: saves/sets SPSR via the packed store,
+reads AND writes the **clock-gate block at 0xFFFE6000+0x30** (the
+clock-gate acknowledge — without it the shared peripheral clock domain
+drops, killing BOTH RSPI buses), checks the gate status bits, and
+dispatches the frame workers (0x93A08/0x93A74) with register-bank
+(resbank) context.
+
+**The remaining work is now precisely bounded:** the FULL ISR protocol —
+the clock-gate acknowledge sequence at 0xFFFE6030, the resbank context,
+and the worker dispatch — decoded and transplanted as our rspi_a_isr.
+Every address is known (0x96590's entry sequence disassembled; the
+workers at 0x93A08/0x93A74 decoded in 6.2am); the work is the careful
+transplant, not more discovery. E57b (m4c5, 69A843F8) restores the
+polled-0x48 healthy baseline; install it at next-session start.
