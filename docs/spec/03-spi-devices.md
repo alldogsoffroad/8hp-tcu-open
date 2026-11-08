@@ -2731,3 +2731,21 @@ every commit) went to SSLB0. The stock's commissioning job 0x40A14 loads
 ONE SPCMD: {84|value, 0A, 12(commit), 0C} — ALL to SSLB1.
 **E60k = E60j + the handshake via plat_sup_burst (single-select SSLB1),
 stock word order, sent twice.**
+
+### 6.2bc The session ledger — E60l stable, E60m regression, the last byte (2026-11-08, night end) [O]
+
+**E60l verdict:** 0x24 = AA00 (clean ack, data 0x00) with the full-stock
+handshake — mode preamble + commit sequence, all to SSLB1. The certification
+remains ack'd-but-unlatched with every wire word now stock-correct.
+
+**E60m (ladder wire-jobs silenced): REGRESSION — a reset loop** (uptime 0 on
+every heartbeat, 0x361 dead between samples). The engage path depends on the
+ladder's poll/replies somewhere beyond the echo bit (to be mapped — the
+suspect: the ladder's state machine starving breaks a downstream expectation).
+**Rolled back: E60l restored 22:34:28 — the bench's stable reference.**
+
+**THE REMAINING GAP, ONE BYTE: 0x24's data (0x00 vs the stock's 0x20).**
+Undecoded candidates, in order: (1) the 84-write's runtime VALUE (the stock's
+builder 0x91190 — ours is the guessed 0x1F); (2) the classifier letters'
+internal conditions (0x85828/0x8C7A8/0x8C6D4 — what makes letters[0]='c' at
+power-on); (3) the engage-path dependency E60m exposed.
