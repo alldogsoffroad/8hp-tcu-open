@@ -111,6 +111,9 @@ void plat_drv_spbr_set(uint8_t spbr);
 bool plat_drv_xfer_stock(const uint16_t *tx, uint16_t *rx, uint8_t n);
 /* E59 (6.2aq): the interrupt-driven frame feed — fill buffer, arm, ISR feeds. */
 bool plat_drv_xfer_irq(const uint16_t *tx, uint16_t *rx, uint8_t n);
+/* E60b: staged arm — the SR window stays closed until the scheduler has proven
+ * life; arming live separates an init death from a delivery death on the bus. */
+void plat_drv_irq_arm(bool on);
 
 /* ---- Park hold PWM output: TOE31 on PL6 (spec 02 section 3.1, spec 12 section 1.1) ----
  * A 1 kHz PWM switch output for the park hold magnet (low-side driver, terminal C7).

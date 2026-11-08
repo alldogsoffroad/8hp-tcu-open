@@ -5,6 +5,7 @@
  * The Bosch boot manager (0x24FD0) checks: magic 0x876543xx, end pointer (+0x0C) in range and
  * 4-byte aligned, and the word at the end pointer == 0x12345678. */
 #include <stdint.h>
+#include "platform/platform.h"   /* E60b: default_handler's CAN announce */
 
 extern void start(void);            /* _start in start.S */
 extern const uint32_t app_end_marker;
@@ -56,10 +57,16 @@ const struct app_header app_header = {
     .entry       = start,
 };
 
-/* Unexpected exception or interrupt: stop and let the watchdog reset the controller. */
+/* Unexpected exception or interrupt: announce on CAN, then hold.
+ * E60b: E60 booted with zero bus activity — if an unexpected vector is the
+ * killer, this names it. The mailbox registers are safe to write from any
+ * context and the CAN controller transmits autonomously. */
 static void default_handler(void) __attribute__((interrupt_handler));
 static void default_handler(void)
 {
+    can_frame_t f = { .id = 0x7F5u, .dlc = 8u,
+                      .data = { 0xDEu, 0xADu, 0xBAu, 0xBEu, 0, 0, 0, 0 } };
+    (void)plat_can_send(CAN_BUS1, &f);
     for (;;) {
     }
 }

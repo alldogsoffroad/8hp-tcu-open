@@ -665,13 +665,25 @@ volatile uint16_t rspi_a_rx_buf[64];
 volatile uint8_t  rspi_a_idx;
 volatile uint8_t  rspi_a_count;
 
+/* E60b: the staged arm. E60 booted dead-on-CAN with no heartbeat at all — the
+ * death is inside the first interrupt delivery (or init). The window stays
+ * closed until the scheduler has proven life for a second (heartbeat flowing);
+ * arming live then separates "init died" from "delivery kills the app" on the
+ * bus, with the heartbeat's last frame as the timestamp. */
+static volatile bool s_drv_irq_live;
+
+void plat_drv_irq_arm(bool on)
+{
+    s_drv_irq_live = on;
+}
+
 bool plat_drv_xfer_irq(const uint16_t *tx, uint16_t *rx, uint8_t n)
 {
     uint32_t sr;
     uint32_t guard;
     bool ok;
 
-    if (n > 64u || n == 0u) {
+    if (!s_drv_irq_live || n > 64u || n == 0u) {
         return false;
     }
 
