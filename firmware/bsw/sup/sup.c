@@ -148,57 +148,121 @@ void sup_phase6_arm(uint16_t passes)
     s_phase6_len = passes;
 }
 
-/* One 5 ms pass of the stock application's supervisor exchange: the three cyclic jobs of
- * spec 03 section 4.4, frames alternating SSLB1 (even) / SSLB0 (odd) through the
- * two-command SPCMD sequence. */
-static void app_pattern_tick(void)
+/* E60p (spec 22 section 3): the control byte, composed by the stock's law
+ * (0x91C86). Bit 0 = the request cell (forced on every pass once armed);
+ * bit 2 = the complement of the echo's bit 2 (the normal dialect's life sign,
+ * self-toggling when the echo is dead — the 2026-10-30 bench law); bits 3 and
+ * 5 always clear; bit 7 + alternating bit 4 ONLY in the engaged dialect
+ * ((mode & 0x11) == 0x11 — live mode 0x19); bit 6 only in mode 6 (shutdown —
+ * never here). The dialect mode cell is [I]: 0x19 once the walk reaches
+ * steady AND the grant echo is observed. */
+static uint8_t s_dialect_mode;
+static uint32_t s_walk_ms;         /* E60q: the walk's time base (pass count * 5 ms) */
+#ifndef TCU_E60U_DISC
+#define s_walk_silent false
+#else
+static bool s_walk_silent = true;  /* E60u: the discriminator build */
+#endif
+
+static uint8_t compose_ctrl(void)
 {
-    static uint16_t s_phase6_n;        /* E23 (spec 03 section 6.2o): the stock app's
-                                        * first phase is STATE 6 — the boot manager's
-                                        * dialect: constant bit-6 word 0x8E40 (the
-                                        * app composer's own state-6 branch = bit 6,
-                                        * and the boot 0x30E40's state 6 = bits 0x40).
-                                        * We entered straight into the ENGAGED dialect
-                                        * (0x8E80/0x8E90) = a dialect break at the
-                                        * handover; the rail window closes 320 ms later
-                                        * in every build. Hold the boot dialect for the
-                                        * first 100 passes, then go engaged. */
-    /* Bit 2 must ALTERNATE every frame: it is the supervisor watchdog's life sign. The
-     * stock derives it as the complement of the 0x22 echo's bit 2 (0x91C86 with
-     * 0xFFF907D5), which equals self-toggling while the echo works - but on the bench
-     * the echo reads 0x00 and echo-following sent a CONSTANT word, which the supervisor
-     * answered with a reset (2026-10-30: 0x8E44 held for ~600 frames killed the TCU).
-     * The pattern therefore self-toggles unconditionally; the echo is only counted. */
-    s_toggle = !s_toggle;
-    /* The previous pass's 0x22 echo decides this pass's enable bit (stock law:
-     * the supervisor grants acceptance first; the app follows). */
-    sup_engage_echo_bit0((s_st.rx_words[2] & SUP_BIT_ENABLE) != 0u);
-    uint8_t bits = (uint8_t)((s_app8e & (uint8_t)~s_app_toggle) |
-                             (s_toggle ? s_app_toggle : 0u));
+    const uint8_t echo = (uint8_t)(s_st.last_rx & 0xFFu);   /* last 0x22 echo byte */
+    const bool echo_alive = (s_st.last_rx & SUP_REPLY_MASK) == SUP_REPLY_OK;
+    uint8_t b = 0u;
+
+    /* FE13 lab override: an explicit word-shape request passes through as
+     * before (the bench tool); the E60p default flow passes bits8e = 0 and
+     * gets the stock law below. */
+    if (s_app8e != 0u) {
+        s_toggle = !s_toggle;
+        b = (uint8_t)((s_app8e & (uint8_t)~s_app_toggle) |
+                      (s_toggle ? s_app_toggle : 0u));
+        if (sup_engage_active() && sup_engage_enable_bit()) {
+            b |= SUP_BIT_ENABLE;
+        }
+        return b;
+    }
+
     if (sup_engage_active() && sup_engage_enable_bit()) {
-        bits |= SUP_BIT_ENABLE;
-        /* E24 (spec 03 section 6.2p): the stock's engaged WTCR = 0x27 = RESET
-         * mode (bit 6/TME clear, live I/O read). E21/E22 switched to interval
-         * mode (TME set) — REMOVED: we stay in reset mode like the stock. */
+        b |= SUP_BIT_ENABLE;         /* the request cell — NR-1: ask + walk together */
+    } else if (s_enable_req != 0u) {
+        b |= SUP_BIT_ENABLE;         /* legacy bench/park sources */
     } else if (s_boot_bit0_delay != 0u) {
-        s_boot_bit0_delay--;         /* E13: hold until the supervisor's own power-up is
-                                      * done (stock engages at ~+15s, spec 03 6.2i) */
+        s_boot_bit0_delay--;         /* lab windows kept for arming experiments */
     } else if (s_boot_bit0_left != 0u) {
         s_boot_bit0_left--;
-        bits |= SUP_BIT_ENABLE;      /* the window: bit 0 at the stock's engagement age */
+        b |= SUP_BIT_ENABLE;
     }
+
+    if ((s_dialect_mode & 0x11u) == 0x11u) {
+        b |= 0x80u;                  /* the engaged marker */
+        s_toggle = !s_toggle;        /* bit 4 alternates — the engaged life sign */
+        if (s_toggle) {
+            b |= 0x10u;
+        }
+    } else {
+        /* E60s: bit 2 self-toggles UNCONDITIONALLY — the bench law (2026-10-30:
+         * a constant 0x8E word reset the TCU; our chip's echo does NOT mirror
+         * bit 2, so the stock's complement law produces a constant word — the
+         * root cause of the E60p/q/r silent deaths, restored verbatim from the
+         * pre-E60p composer). The echo is counted, never followed. */
+        (void)echo;
+        (void)echo_alive;
+        s_toggle = !s_toggle;
+        if (s_toggle) {
+            b |= SUP_BIT_TOGGLE;
+        }
+    }
+    return b;
+}
+
+/* One 5 ms pass of the stock application's supervisor exchange: the cyclic jobs of
+ * spec 03 section 4.4 / spec 22 section 2.1, frames alternating SSLB1 (even) /
+ * SSLB0 (odd) through the two-command SPCMD sequence. */
+static void app_pattern_tick(void)
+{
+    /* The previous pass's 0x22 echo feeds the walk (grant observation) and the
+     * dialect cell. */
+    sup_engage_echo_bit0((s_st.rx_words[2] & SUP_BIT_ENABLE) != 0u);
+    {
+        const sup_eng_status_t *eng = sup_engage_status();
+        s_dialect_mode = (eng->state == SUP_ENG_STEADY && eng->echo_grant) ? 0x19u : 0u;
+    }
+    /* E60q: the walk rides THIS pass — single bus owner, gapless stream, the
+     * proven E60l frame budget (~23 frames/pass). The stock's timer-ISR
+     * cadence is approximated at one walk job per 5 ms (spec 22 open
+     * question 9: the exact job cadence is [I]; the era DWELLS are [O] and
+     * unchanged). E60p's 1 ms polled bursts starved the stream (NR-5). */
+    if (!s_walk_silent) {          /* E60u discriminator: hypothesis 1 (the
+                                    * pass budget) — the walk+twin are silenced,
+                                    * the engine still tracks state offwire */
+    {
+        uint16_t wj[SUP_ENG_JOB_MAX], wrx[SUP_ENG_JOB_MAX];
+        uint8_t wn = 0u;
+        if (sup_engage_active()) {
+            s_walk_ms += 5u;   /* the walk's clock counts ARMED passes only */
+        } else {
+            s_walk_ms = 0u;    /* held at zero while disarmed */
+        }
+        if (sup_engage_tick(s_walk_ms, wj, &wn)) {
+            if (plat_sup_burst(wj, wrx, wn)) {
+                sup_engage_replies(wrx, wn);
+            } else {
+                sup_engage_tx_failed();
+            }
+        }
+    }
+    }
+    uint8_t bits = compose_ctrl();
     uint16_t job1[4] = {
         (uint16_t)(SUP_CMD_CONTROL | bits), 0xC900u, 0x2200u, 0x0900u,
     };
-    if (s_phase6_n < s_phase6_len) {   /* E23: boot-dialect phase — constant 0x8E40,
-                                        * no toggle (state 6 = bit 6 only, both in the
-                                        * boot's law and the app composer's). Length
-                                        * set by the bench build via sup_phase6_arm();
-                                        * 0 = disabled (library/tests). */
-        s_phase6_n++;
-        job1[0] = (uint16_t)(SUP_CMD_CONTROL | 0x40u);
-    }
-    const uint16_t job2[2] = { (uint16_t)(0x9000u | s_app90), 0x2400u };
+    /* E60p: the enables word is fault-masked before sending (0x91758 +
+     * 0x92E80: outputs whose 0x14 fault bits read set get their letter bits
+     * cleared). s_reg14_live is the previous pass's 0x14 byte. */
+    const uint8_t reg14 = s_st.reg14;
+    const uint8_t en90 = (uint8_t)(s_app90 & ~(reg14 & 0xE0u));
+    const uint16_t job2[2] = { (uint16_t)(0x9000u | en90), 0x2400u };
     const uint16_t job3[2] = { 0x2800u, 0x2E00u };
     const uint16_t job4[1] = { 0x00FFu };           /* SSLB2, stock job 0x40C74 */
     const uint16_t job5[4] = { 0x0600u, 0x0300u, 0x0000u, 0x0000u };  /* stock 0x40B80 */
@@ -228,6 +292,22 @@ static void app_pattern_tick(void)
             s_st.busy++;
             return;
         }
+        /* E60p (spec 22 section 4.2): the 0x14 harvest — bits 5..7 are the
+         * per-switch-output fault flags; reading any set, the stock's handler
+         * 0x92BBE queues the fault-path enables twin F (0x40C30, same wire
+         * shape as J2 with the fault-masked enables word). Our bench chip
+         * permanently reports bits 6/7 (unpopulated outputs 1/2), so on the
+         * real bench this job runs every pass — exactly like the stock's. */
+        s_st.reg14 = (uint8_t)(rx6[4] & 0xFFu);
+        if (!s_walk_silent && (s_st.reg14 & 0xE0u) != 0u) {
+            const uint16_t jf[2] = {
+                (uint16_t)(0x9000u | (s_app90 & ~(s_st.reg14 & 0xE0u))), 0x2400u,
+            };
+            uint16_t rxf[2];
+            if (plat_sup_burst(jf, rxf, 2u)) {
+                s_st.fault_jobs++;
+            }
+        }
         /* E15 (spec 03 section 6.2m): the stock's seventh cyclic job 0x40BC0 - one
          * word 0x0000 to SSLB0 alone (select cfg 0x40B76 = SPCMD 0xAF01), the
          * status-nibble poll. Live staging 0xFFF885E0 = 0x0000; the completion
@@ -250,23 +330,10 @@ static void app_pattern_tick(void)
             }
         }
     }
-    if (sup_engage_active()) {            /* register job riding the cyclic stream:
-                                           * single bus owner, the stream never stops.
-                                           * E60m tried silencing this — REGRESSION
-                                           * (reset loop): the jobs are the stock's
-                                           * own register conversation (the rolling
-                                           * challenge!) and the pass-21 self-ask
-                                           * REQUIRES them (spec 03 6.2bc/6.2bd). */
-        uint16_t ej[SUP_ENG_JOB_MAX], erx[SUP_ENG_JOB_MAX];
-        uint8_t en = 0u;
-        if (sup_engage_poll(ej, &en)) {
-            if (plat_sup_burst(ej, erx, en)) {
-                sup_engage_replies(erx, en);
-            } else {
-                s_st.busy++;
-            }
-        }
-    }
+    /* E60p: the walk jobs NO LONGER ride this 5 ms pass — the engine runs from
+     * the 1 ms tick (main.c task_1ms), mirroring the stock's timer ISR 0x9106C
+     * cadence (spec 22 NR-2: the era-floor 10 ms ladder of E60n reset). The
+     * 5 ms stream keeps its own jobs only, gap-free. */
     {   /* five-select driver read: the stock's commissioning traffic, witnessed
          * by the supervisor (its select is in the rotation) */
         uint8_t dn = 0u;

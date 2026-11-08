@@ -162,7 +162,8 @@ static void task_10ms(void)
          * level change re-runs the configuration job with the 0x8E row = 0x80 | level,
          * the stock's live law (0x9F at HOLD). Runs before sol_tick so the job leaves
          * in the same pass. */
-        const uint8_t lvl = sup_engage_status()->lvl_cmd;
+        const sup_eng_status_t *eng = sup_engage_status();
+        const uint8_t lvl = eng->pending ? eng->pending : eng->value;
 
         if (lvl != s_sol_lvl) {
             s_sol_lvl = lvl;
@@ -405,17 +406,13 @@ int main(void)
                              * stock commissions the drivers from its first 10 ms
                              * pass, BEFORE bit 0 flows; we replicate that order. */
 #endif
-#if defined(TCU_E60I_RECIPE)
-    /* E60i: the companion stays OFF (Law C, spec 03 6.2au - the bus-B boot
-     * companion's frame-2 register words prevented every grant for seven
-     * builds). Replaces the E60G_QUIET gate: bus A is safe to run. */
-    /* THE SELF-ASK (the stock's decoded choreography, 0x873F0 one-shot ->
-     * 0x91C86): the stock's bit 0 first flows ~10-20 ms after app start and
-     * never stops - NOT bench-armed, NOT gated on engage. We arm internally:
-     * delay 20 mirror passes = ask beginning ~+100 ms after the mirror starts,
-     * inside the ~320 ms rail window - "the one cell never tested" (E20,
-     * spec 03 6.2o note) now executed as the stock executes it. */
-    sup_bit0_boot_arm(2000u, 20u);
+#if defined(TCU_E60P)
+    /* E60p (spec 22 NR-1): the ask and the walk are ONE system — the request
+     * cell is armed by the walk's boot (sup_engage_boot, above via arm) and
+     * rides the 5 ms word from the first passes, exactly as the stock's
+     * first-monitor-pass one-shot (0x6C612(1)) does. The pass-21 self-ask of
+     * the E60i recipe is retired: it was a workaround for our incomplete
+     * conversation. The companion stays OFF (Law C, spec 03 6.2au). */
 #endif
     sol_init();             /* identification + configuration; all channels off */
     (void)plat_mb_poll_init();
@@ -517,7 +514,7 @@ int main(void)
     sup_engage_arm(true);
     sup_engage_request_enable(true);
 #endif
-#if defined(TCU_AUTOENGAGE)
+#if defined(TCU_AUTOENGAGE) && !defined(TCU_E60P)
     /* E49 (spec 03 section 6.2ag): the STARTUP COMMISSIONING restored (E35r's
      * proven-safe handshake, removed in E38 on a theory that collapsed). The
      * stock's first SSLB1 jobs (transport 0x40CA0) commission the supervisor's
@@ -527,7 +524,10 @@ int main(void)
      * every content/cadence/mode variation) is hypothesized to be the MISSING
      * commissioning: the stock's register writes ride on top of this startup
      * handshake; ours arrived uncommissioned. Sent through the existing
-     * alternating transport (even frames -> SSLB1, odd -> SSLB0 reads). */
+     * alternating transport (even frames -> SSLB1, odd -> SSLB0 reads).
+     * E60p: RETIRED — the walk engine owns the W1/W2 jobs now, at the stock's
+     * timer cadence; a boot-time burst of the same words is a non-stock
+     * re-sequencing (NR-2's umbrella: never a word outside the frame). */
     {
         /* E60l (spec 03 6.2ba): the FULL stock handshake, ALL frames to
          * SSLB1 (single-select). E60k dropped the 0x8800x4 mode-register
@@ -553,7 +553,7 @@ int main(void)
      * ONLY live wire on either bus: bit0-free they poison grants, with bit0
      * they reset. The stock never sends driver-cyclic words on bus B at all
      * (its driver cyclic is bus-A only; the two buses never cross). OFF. */
-#if !defined(TCU_E60I_RECIPE)
+#if !defined(TCU_E60P)
     sup_drv_cyclic_boot(true);
 #endif
 #endif

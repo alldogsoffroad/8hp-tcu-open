@@ -41,6 +41,10 @@ typedef struct {
                               * and the stock tolerates it, 0x92CC8) */
     uint32_t nib_aa;         /* replies in the 0xAA00 class */
     uint32_t nib_other;      /* replies outside it (expected on the bench) */
+    uint8_t  reg14;          /* E60p: the supervisor's 0x14 switch-status byte (J6
+                              * rx[4], handler 0x92BBE) — bits 5..7 = per-output
+                              * fault flags; any set queues the fault twin F */
+    uint32_t fault_jobs;     /* E60p: fault-path enables twin F (0x40C30) sent */
 } sup_status_t;
 
 void sup_init(void);

@@ -1,10 +1,17 @@
-/* Supervisor commissioning (engage) sequence — spec 03 "challenge-response decoded"
- * (2026-10-31). The stock's register jobs ride the 5 ms cyclic stream: the duty job
- * answers the supervisor's rolling challenge — selector = low nibble of the 0x0C read
- * reply — with ~(table[sel] ^ 0xAAAA ^ const), and the level job steps the commanded
- * level up the ramp. This module schedules those jobs FROM the 5 ms tick (single bus
- * owner: no host one-shot bursts — they stop the cyclic stream and with it the
- * acceptance echo) and harvests the replies. */
+/* Supervisor commissioning walk — E60p (spec 22, the unified protocol).
+ *
+ * REWRITE of the E60n engine: the walk is the STOCK's machine, verbatim from
+ * the top-down decode — driven from a 1 ms tick (the stock's timer ISR 0x9106C
+ * class), era dwells = value*200 + 2400 ms, the outer FSM 0 -> 8 -> 0x12 ->
+ * 0x23 (duty era: token with context cycling 0 -> 7 -> 0x19 while level==0,
+ * context 0x19 sends ~token) -> 0x1F era when the reported level reaches 0 ->
+ * 0x45 proceed gate (level >= 5) -> 0x34 -> steady. Jobs are one-in-flight;
+ * every level reply is checked three ways (0x0A echo == staged value, 0x12
+ * commit & 5 vs the phase mask, expected vs reported level) with the stock's
+ * bump-and-resend resync (0x6C742 / 0x6C720).
+ *
+ * The 10 ms era-floor engine of E60n (spec 03 6.2be) is RETIRED: its cadence
+ * broke never-rule NR-2 (level words outside the stock's timer frame). */
 #ifndef TCU_SUP_ENGAGE_H
 #define TCU_SUP_ENGAGE_H
 
@@ -13,105 +20,107 @@
 
 #define SUP_ENG_JOB_MAX 8u
 
+/* Walk states (the outer FSM 0xFFF95010, spec 22 section 6.3) */
+enum {
+    SUP_ENG_IDLE = 0u,     /* not armed */
+    SUP_ENG_S0 = 1u,       /* boot flag -> stage the 0x06 era */
+    SUP_ENG_S8 = 2u,       /* mode_transition_supervise: budget to target >= 5 */
+    SUP_ENG_S12 = 3u,      /* re-arm target 5 */
+    SUP_ENG_S23 = 4u,      /* DUTY era: token + drag-down; level==0 -> 0x1F era */
+    SUP_ENG_S45 = 5u,      /* proceed gate: level >= 5 */
+    SUP_ENG_S34 = 6u,      /* advance (re-request 0x1F once) or steady */
+    SUP_ENG_STEADY = 7u,   /* certified steady state (duty token continues) */
+};
+
 typedef struct {
-    uint8_t  state;        /* 0 idle, 1 sync, 2 ramp, 3 hold */
+    uint8_t  state;        /* SUP_ENG_* above */
     uint8_t  sel;          /* current challenge selector (0x0C reply low nibble) */
-    uint8_t  lvl;          /* achieved level (0x0C reply high nibble, & 7) */
-    uint8_t  lvl_cmd;      /* commanded level (the ramp) */
-    uint8_t  rot;          /* challenge rotations observed */
-    uint8_t  jobs;         /* register jobs sent */
-    uint8_t  bad;          /* register-job replies outside the 0xA8 class */
-    uint8_t  echo_ok;      /* level echo (0x0A reply) matched the command */
-    uint8_t  echo_bad;     /* level echo mismatches */
-    uint8_t  lvl_echo;     /* last 0x0A echo value (the supervisor's commanded) */
-    uint8_t  retries;      /* consecutive echo mismatches at this level */
-    uint8_t  status;       /* last 0x1200 commit status byte */
+    uint8_t  lvl;          /* reported/achieved level (0x0C reply high nibble, & 7) */
+    uint8_t  lvl_exp;      /* expected level (the stock's 0xFFF93BA2 - bumps toward 7) */
+    uint8_t  value;        /* staged 84-value (0x3F init / 0x06 / 0x1F) */
+    uint8_t  pending;      /* the ping-pong's pending slot value (0 = none) */
+    uint8_t  ctx;          /* duty context (0 -> 7 -> 0x19 while level 0; 0x1E steady) */
+    uint8_t  mode;         /* job mode cell (0 = duty W1, 7 = level W2) */
+    uint8_t  lvl_echo;     /* last 0x0A echo value */
+    uint8_t  status;       /* last 0x12 commit status byte */
+    uint8_t  retries;      /* ping-pong confirm retries at this value */
+    uint8_t  jobs;         /* walk jobs sent */
     uint16_t tokens;       /* duty jobs answered */
-    bool     enable_req;   /* host-gated enable request (the shadow) */
-    bool     enable_from_start;  /* stock order: the enable shadow latched at arm
-                                  * (monitor 0x873F0 one-shot), never asserted
-                                  * before the grant */
+    uint16_t echo_ok;      /* level echo confirmed */
+    uint16_t echo_bad;
+    uint16_t commit_bad;   /* 0x12 mask mismatches */
+    uint8_t  bad;          /* replies outside the 0xA8 class */
+    uint16_t era_ms;       /* ms elapsed in the current era (live view) */
+    bool     staged;       /* the pending value has been promoted (sent) */
+    bool     enable_req;   /* the request cell 0xFFF90953: forced on once armed */
+    bool     enable_kill;  /* lab kill-switch (magic/FE13 override) */
     bool     echo_grant;   /* supervisor's 0x22 echo bit 0 observed (acceptance) */
     bool     enable_sent;  /* enable bit included in the 8E word */
+    bool     in_flight;    /* a walk job awaits its reply */
+    uint16_t last_words[8]; /* the most recent walk job composed */
+    uint8_t  last_n;       /* its frame count */
 } sup_eng_status_t;
 
-/* Driver register sync (the stock's five-select jobs, spec 03 job registry
- * 2026-11-01): twelve read registers x the SSLB3/2/1/0/5 rotation = 60 words
- * per pass on RSPI-B, the supervisor's select IN the rotation — the traffic it
- * has never witnessed from us (our solenoid path is RSPI-A). */
+/* Driver register sync (retired emitters kept for the lab readout) */
 #define SUP_DRV_READ_WORDS 60u
-#define DRV_WRITE_WORDS 40u   /* 8 regs x all five selects: the stock's commissioning
-                                * write includes the supervisor (bench 2026-11-04: its
-                                * 0x84/0x88/0x90 read empty because we skipped select 4) */
-#define DRV_SP_WORDS 36u      /* 9 regs x 4 chips, the setpoint job */
-#define DRV_ID_WORDS 10u      /* 0x06 + 0x00 reads x 5 selects */
+#define DRV_WRITE_WORDS 40u
+#define DRV_SP_WORDS 36u
+#define DRV_ID_WORDS 10u
 
 typedef struct {
-    uint8_t  drv_jobs;     /* driver jobs sent (read + write) */
-    uint8_t  drv_writes;   /* commissioning write jobs sent */
-    uint8_t  drv_sp;       /* setpoint jobs sent (keep-warm class) */
-    uint8_t  drv_id;       /* ID-poll jobs sent (the 0x0A pass) */
-    uint16_t drv_a2;       /* chip ID-class (0xA2xx) replies seen */
-    uint8_t  drv_bad;      /* words whose reply fits no known class */
-    uint16_t drv_a8;       /* supervisor-class (0xA8xx) replies seen */
-    uint16_t drv_aa;       /* other-chip-class (0xAAxx) replies seen */
+    uint8_t  drv_jobs;
+    uint8_t  drv_writes;
+    uint8_t  drv_sp;
+    uint8_t  drv_id;
+    uint16_t drv_a2;
+    uint8_t  drv_bad;
+    uint16_t drv_a8;
+    uint16_t drv_aa;
 } sup_drv_status_t;
 
-void sup_engage_arm(bool on);
-void sup_engage_request_enable(bool on);
-void sup_engage_force_enable(bool on);     /* BENCH ONLY (FE13 sub 11, 2026-11-04): put the
-                                            * enable bit into the cyclic control word for a
-                                            * bounded window regardless of the echo grant -
-                                            * the deliberate A-law bypass experiment; the
-                                            * stock itself sends 0x8E81 while engaged */
-void sup_engage_enable_from_start(bool on);
-/* The supervisor grants acceptance (0x22 echo bit 0) spontaneously; the stock
- * app answers by putting bit 0 in the word — NEVER the other way round. Every
- * unilateral enable attempt has reset the TCU (bench 2026-10-30..11-01). Feed
- * the observed echo bit here every 5 ms pass; the word's bit 0 follows it. */
-void sup_engage_echo_bit0(bool echo_set);
-bool sup_engage_active(void);
-bool sup_engage_enable_bit(void);
-/* Called from the 5 ms pattern tick: returns true and fills words and *n when a
- * register job is due this pass; the caller transmits it and hands the replies
- * to sup_engage_replies(). */
-bool sup_engage_poll(uint16_t *words, uint8_t *n);
+/* E60p API --------------------------------------------------------------- */
+
+/* Boot the walk (the stock's fault_manager_init -> park_pwm_init 0x6C12C):
+ * value 0x3F, period 0x3138, expected/reported level 7, outer FSM S0. Also
+ * arms the enable request cell (the stock's first-monitor-pass one-shot —
+ * NR-1: the ask and the walk are one system). */
+void sup_engage_boot(void);
+
+/* One 1 ms tick of the walk service (the stock's timer-ISR 0x9106C class).
+ * Returns true and fills words[0..*n) when a walk job is due NOW (one in
+ * flight; the caller transmits it and hands the replies to
+ * sup_engage_replies() — or calls sup_engage_tx_failed() when the bus was
+ * busy, which clears the in-flight flag without counting a reply). */
+bool sup_engage_tick(uint32_t now_ms, uint16_t *words, uint8_t *n);
 void sup_engage_replies(const uint16_t *rx, uint8_t n);
+void sup_engage_tx_failed(void);
+
+/* The enable request cell (0xFFF90953): on from boot unless killed. The
+ * mirror's bit 0 follows the CELL (stock law 0x91C86 — forced on every pass
+ * once armed), no longer echo-gated: the reset class was bit 0 WITHOUT the
+ * conversation (NR-1), never bit 0 with it. */
+bool sup_engage_enable_bit(void);
+void sup_engage_kill(bool on);        /* lab: suppress the request cell */
+void sup_engage_echo_bit0(bool echo_set);
 const sup_eng_status_t *sup_engage_status(void);
 
-/* Read-only driver sync interleaved into the same 5 ms tick (independent of the
- * engage state machine); sup_drv_poll() returns true when the 60-word read job
- * is due this pass — the caller transmits it via the five-select transport and
- * hands the replies to sup_drv_replies(). */
+/* Legacy entry points kept for the lab/build plumbing (adapters) */
+void sup_engage_arm(bool on);
+void sup_engage_request_enable(bool on);
+void sup_engage_force_enable(bool on);
+void sup_engage_enable_from_start(bool on);
+bool sup_engage_active(void);
+
+/* Driver sync (unchanged, retired emitters) */
 void sup_drv_sync(bool on);
-void sup_drv_write_once(void);   /* queue one zero-value write pass */
-void sup_drv_setpoint_once(void);/* queue one keep-warm setpoint pass */
+void sup_drv_write_once(void);
+void sup_drv_setpoint_once(void);
 bool sup_drv_poll(uint16_t *words, uint8_t *n);
 void sup_drv_replies(const uint16_t *rx, uint8_t n);
 const sup_drv_status_t *sup_drv_status(void);
-/* E41 (spec 03 section 6.2ad): arm the bus-B commissioning write job (the
- * stock's job 0x28 shape on the four-select rotation, supervisor excluded).
- * v8e = the live 0x8E row value (0x9F = the stock constant). Grant/ladder
- * gating and the ~2 s cadence live inside sup_drv_poll; the arm alone is
- * inert until the mirror carries bit 0. */
 void sup_drv_write_arm(bool on, uint8_t v8e);
-/* E42 (spec 03 section 6.2ad): arm the bus-B nine-row five-select setpoint
- * job (template 0x40D0C — the stock's continuous keep-warm carrier, the job
- * our stream never sent; supervisor's select included as the stock runs it).
- * Same grant gating and ~2 s cadence inside sup_drv_poll; supersedes the
- * write job when both are armed (write takes priority). */
 void sup_drv_setpoint_arm(bool on);
-/* E45 (spec 03 section 6.2af): arm the bus-B CYCLIC COMPANION — the stock's
- * 45-frame driver cyclic on the five-select rotation with the supervisor's
- * select at frame 2, at the stock's 10 ms cadence, grant-independent. The
- * supervisor witnesses the setpoint rows; frame 2 carries the benign 0x10
- * [E60i note, spec 03 6.2aw: on BUS B, frame 2 (SSLB1) IS the supervisor — the
- *  frame-2 register words are the Law-C grant poison. This companion is OFF.]
- * mode and zero setpoints (the E42 reset was the 0x881A dialect error).
- * sp = the 11-bit setpoint mirrored to the four real chips' frames. */
 void sup_drv_cyclic_arm(bool on, uint16_t sp);
-/* E51 (spec 03 section 6.2ai): the boot companion — the captured cyclic streams
- * one row (5 words) per pass from app start, bit0-free, no ask. */
 void sup_drv_cyclic_boot(bool on);
 
 #endif

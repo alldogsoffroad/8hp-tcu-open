@@ -2,10 +2,20 @@
 
 #include <string.h>
 
-/* Scrambler table read from the stock ELF (flash 0x4526C, 16 entries) and the
- * constant (flash 0x7F424 ^ 0xAAAA == flash 0x8D20C) — the duty job payload is
- * ~(table[sel] ^ 0xAAAA ^ const). Stock walker 0x7EE8A, reply parsers 0x910EE /
- * 0x911D8, harvest 0x6C1EA. */
+/* E60p (spec 22): the commissioning walk, verbatim from the top-down decode.
+ *
+ * Stock machinery mirrored here (addresses in comments are the stock's):
+ *   - init          fault_manager_init 0x87732 -> park_pwm_init 0x6C12C
+ *   - outer FSM     0xFFF95010: 0 -> 8 -> 0x12 -> 0x23 -> 0x45 -> 0x34 -> steady
+ *   - era staging   park_pwm_learn_value 0x6C48C + confirm 0x6C742 (ping-pong)
+ *   - reply check   park_monitor_feedback 0x6C1EA (echo / commit mask / expected)
+ *   - timer cadence ISR 0x9106C -> park_pwm_service 0x6C1BA, one-in-flight
+ *                     (check-free 0x93B8E), era dwell = value*200 + 2400 ms
+ *   - duty token    ~(table[sel] ^ 0xAAAA ^ 0xB32F8A6A), contexts 0->7->0x19
+ *                     while level==0 (0x19 sends ~token), 0x1E steady (0x6BF9C)
+ *
+ * Scrambler table read from the stock ELF (flash 0x4526C). */
+
 static const uint32_t S_TOKEN_TABLE[16] = {
     0xB3DF2F3Fu, 0xFC906070u, 0xA5C93929u, 0xEA867666u,
     0x3955A5B5u, 0x761AEAFAu, 0x2F43B3A3u, 0x600CFCECu,
@@ -19,75 +29,64 @@ static uint32_t token(uint8_t sel)
     return ~(S_TOKEN_TABLE[sel & 0xFu] ^ 0xAAAAu ^ S_TOKEN_CONST);
 }
 
-/* One register job every N passes. E18 (spec 03 section 6.2o): the stock paces its
- * register jobs with calibration dwells (level*200 + 2400 timer ticks, engine
- * 0x6BF9C) - millisecond-class, and its commissioning exchange completes in the
- * first passes. Our bench-era 300 ms pacing put HOLD at ~0.7-1 s, exactly where
- * the rail drops (E17: rail up through +320 ms of our stream, down by +1 s).
- * 2 passes = 10 ms per rung: probe/token/level/confirm complete inside the
- * proven rail-up window. */
-#define JOB_PERIOD 2u
-#define SYNC_JOBS  2u
-#define LEVEL_MAX  7u      /* the stock's target cell caps at 7 (0x6C542) */
-#define LEVEL_RUN  31u     /* the engaged commanded level: 0x1F, live-observed
-                            * (2026-10-30 shadow 0x9054E/F = 1f 1f; the 841F
-                            * one-shot latched AA1F on the bench) */
-#define ECHO_RETRY 3u     /* 0x6C742: resend the level job while the 0x0A echo
-                           * disagrees with the command */
-/* E60n (spec 03 6.2be): the stock's commissioning walk — the monitor ALWAYS
- * walks the 84-value eras: 0x06 (state 0, dwell 6*200+0x960 ticks) then 0x1F
- * (state 0x23, dwell 31*200+0x960), checking the 0x0A echo == value and the
- * 0x12 commit word's bits &5 against the per-phase mask (0 settling, 1|4
- * re-targeting), restarting the level on mismatch. Our chip is boot-warm
- * (probe echo 0x1F, level nibble 7) so the eras run at confirm-plus-floor
- * dwell; the E14 fast path remains the fallback when the chip refuses 0x06. */
-#define ERA_06_FLOOR 100u   /* 10 ms ladder runs: >=1 s at 0x06 (stock ~3.6 s cold) */
-#define ERA_1F_FLOOR 200u   /* >=2 s at 0x1F (stock ~8.6 s cold) */
-static uint16_t s_era_runs;     /* dwell counter for the current 84-era */
-static uint8_t  s_commit_bad;   /* 0x12 mask mismatches this level */
+/* Era arithmetic (0x6C48C): dwell_ms = value*200 + 2400 (the 0x960 tick tail) */
+static uint32_t era_dwell_ms(uint8_t value)
+{
+    return (uint32_t)value * 200u + 2400u;
+}
 
-enum { ST_IDLE = 0u, ST_SYNC = 1u, ST_RAMP = 2u, ST_HOLD = 3u };
+/* Stock constants */
+#define VAL_INIT 0x3Fu      /* 0x6C12C boot init */
+#define VAL_06   0x06u      /* outer-FSM state 0 stages this (0x4B0 period) */
+#define VAL_1F   0x1Fu      /* state 0x23 stages this (0x1838 period) */
+#define LVL_TARGET_S0  5u   /* mode_req_set(5) at states 0 and 0x12 */
+#define LVL_PROCEED    5u   /* state 0x45 proceed gate */
+#define LVL_MAX        7u
+#define S8_BUDGET_MS   20000u   /* mode_transition_supervise budget [I: length] */
+#define S23_TIMEOUT_MS 20000u   /* 0x8D1BA duty-era timeout [I: length] */
+#define CONFIRM_RETRY  3u       /* 0x6C742 retry bound */
+#define TX_TIMEOUT_MS  10u      /* in-flight safety clear (one pass + slack) */
+#define ZERO_ROUNDS    5u       /* S23: duty rounds at level 0 before staging 0x1F [I] */
+#define ASK_PASS       21u      /* the ask's proven timing (E60i); the stock arms on
+                                 * the monitor's first pass — one variable at a time */      /* E60r: the request cell arms at pass 21 (+105 ms) —
+                                 * the E60i-proven ask timing, the ONLY one that ever
+                                 * granted; pass-1 asks are the E60m/E16 reset class
+                                 * in our context (spec 22 READY law, open question 3) */
 
 static sup_eng_status_t s;
-static uint16_t s_div;
-static bool s_next_level;      /* ramp alternates duty / level jobs */
+static uint32_t s_now;          /* last tick's now_ms */
+static uint32_t s_era_start;    /* ms stamp of the current era */
+static uint32_t s_tx_ms;        /* ms stamp of the in-flight job */
+static bool s_force;            /* FE13 sub-11 lab bypass */
+static uint8_t s_prev_state;    /* 0x34's "previous was 0x23" check */
+static bool s_34_retried;       /* the one re-request of the 0x1F era */
+static uint8_t s_zero_rounds;    /* S23: duty rounds with the level settled at 0 */
+static uint16_t s_pass;         /* E60r: 5 ms passes since boot */
 
-void sup_engage_arm(bool on)
+void sup_engage_boot(void)
 {
-    if (on) {
-        memset(&s, 0, sizeof s);
-        s.state = ST_SYNC;
-        s.lvl_cmd = 1u;
-        s_div = JOB_PERIOD - 1u;         /* first job on the next pass */
-        s_next_level = false;
-    } else {
-        s.state = ST_IDLE;
-        s.enable_req = false;
-        s.enable_sent = false;
-        s.enable_from_start = false;
-    }
-}
-
-void sup_engage_request_enable(bool on)
-{
-    s.enable_req = on;
-}
-
-static bool s_enable_forced;
-
-void sup_engage_force_enable(bool on)
-{
-    s_enable_forced = on;
-}
-
-void sup_engage_enable_from_start(bool on)
-{
-    s.enable_from_start = on;
+    memset(&s, 0, sizeof s);
+    s.state = SUP_ENG_S0;
+    s.value = VAL_INIT;
+    s.lvl_exp = LVL_MAX;      /* 0xFFF93BA2 = 7 at init */
+    s.lvl = LVL_MAX;          /* 0xFFF93BA1 = 7 at init (boot-warm cell) */
+    s.mode = 7u;              /* job mode: level (the init value rides W2) */
+    s.ctx = 0u;
+    s.enable_req = false;     /* E60r: arms at ASK_PASS — the E60i-proven timing.
+                               * NR-1 holds (the ask and the walk are one system);
+                               * only the TIMING retreats to our proven-safe cell */
+    s_prev_state = SUP_ENG_IDLE;
+    s_pass = 0u;
 }
 
 bool sup_engage_active(void)
 {
-    return s.state != ST_IDLE;
+    return s.state != SUP_ENG_IDLE;
+}
+
+const sup_eng_status_t *sup_engage_status(void)
+{
+    return &s;
 }
 
 void sup_engage_echo_bit0(bool echo_set)
@@ -97,206 +96,350 @@ void sup_engage_echo_bit0(bool echo_set)
 
 bool sup_engage_enable_bit(void)
 {
-    /* Stock law (0x91C86 dispatch + word builder): the word's bit 0 goes out
-     * only once the supervisor's 0x22 echo shows bit 0 (the acceptance grant).
-     * The request itself is a shadow (0xFFF90953) latched early; asserting it
-     * unilaterally resets the TCU in every timing tried (bench 2026-10-30
-     * through 2026-11-01: late, from-start cold, warm, both dialects). */
-    s.enable_sent = (s.enable_req && s.echo_grant) || s_enable_forced;
+    /* Stock law (0x91C86): bit 0 = the request cell, FORCED on every pass once
+     * armed (unless the disable flag is set). The bench reset class was bit 0
+     * without the rolling conversation (E60m proof), never bit 0 with it. */
+    s.enable_sent = (s.enable_req && !s.enable_kill) || s_force;
     return s.enable_sent;
 }
 
-const sup_eng_status_t *sup_engage_status(void)
+void sup_engage_kill(bool on)
 {
-    return &s;
+    s.enable_kill = on;
 }
 
-bool sup_engage_poll(uint16_t *words, uint8_t *n)
+/* Legacy adapters (lab/build plumbing) */
+void sup_engage_arm(bool on)
+{
+    if (on && s.state == SUP_ENG_IDLE) {
+        sup_engage_boot();
+    } else if (!on) {
+        s.state = SUP_ENG_IDLE;
+        s.enable_req = false;
+    }
+}
+
+void sup_engage_request_enable(bool on)
+{
+    s.enable_req = on;
+}
+
+void sup_engage_force_enable(bool on)
+{
+    s_force = on;
+}
+
+void sup_engage_enable_from_start(bool on)
+{
+    (void)on;                 /* the request cell is on from boot (E60p) */
+}
+
+/* Stage a new era value (0x6C48C's staging half): fills the pending slot; the
+ * next tick promotes it into the W2 job (the ping-pong), the reply's 0x0A echo
+ * confirms, and only then does the era clock restart. */
+static void stage_value(uint8_t v)
+{
+    if (v == s.value) {
+        return;
+    }
+    s.pending = v;
+    s.staged = false;
+    s.retries = 0u;
+    s.mode = 7u;              /* level job while a value is in play */
+}
+
+static void era_started(void)
+{
+    s_era_start = s_now;
+    s.era_ms = 0u;
+}
+
+/* The outer FSM (0xFFF95010) — stepped every tick; the one-shot states run
+ * their action and advance immediately. */
+static void fsm_step(void)
+{
+    switch (s.state) {
+    case SUP_ENG_S0:
+        /* mode_req_set(5) + the 0x06 era (0x6C48C(0x4B0,...)) */
+        s.lvl_exp = LVL_TARGET_S0;
+        stage_value(VAL_06);
+        era_started();
+        s.state = SUP_ENG_S8;
+        break;
+    case SUP_ENG_S8:
+        /* mode_transition_supervise: target reached -> advance; budget spent ->
+         * walk restart (0x6C720) and keep supervising */
+        if (s.lvl >= LVL_TARGET_S0) {
+            s.state = SUP_ENG_S12;
+        } else if ((s_now - s_era_start) >= S8_BUDGET_MS) {
+            stage_value(VAL_06);
+            era_started();
+        }
+        break;
+    case SUP_ENG_S12:
+        s.lvl_exp = LVL_TARGET_S0;   /* mode_req_set(5) again */
+        s.state = SUP_ENG_S23;
+        if (s.pending == 0u) {       /* the duty era takes the wire on entry */
+            s.mode = 0u;
+            era_started();
+        }
+        break;
+    case SUP_ENG_S23:
+        /* DUTY era armed on entry: mode_req_set(0) drags the level to 0 */
+        if (s.mode != 0u && s.pending == 0u) {
+            s.lvl_exp = 0u;
+            s.mode = 0u;             /* duty job takes the wire */
+            era_started();
+        }
+        if (s.lvl == 0u && s.mode == 0u) {
+            if (s.pending == 0u && ++s_zero_rounds >= ZERO_ROUNDS) {
+                /* 0x8D108(0) && 0x6C48C(0x1838): the 0x1F era, staged once the
+                 * level has SETTLED at 0 (the drag-down passes through) */
+                stage_value(VAL_1F);
+                s_prev_state = SUP_ENG_S23;
+                s.state = SUP_ENG_S45;
+            }
+        } else {
+            s_zero_rounds = 0u;
+        }
+        if (s.pending == 0u && s.mode == 0u &&
+            (s_now - s_era_start) >= S23_TIMEOUT_MS) {
+            /* 0x8D1BA timeout -> 0x34 directly */
+            s_prev_state = SUP_ENG_S23;
+            s.state = SUP_ENG_S34;
+        }
+        break;
+    case SUP_ENG_S45:
+        /* proceed gate: level >= 5 (warm chip passes instantly) */
+        if (s.lvl >= LVL_PROCEED) {
+            s.state = SUP_ENG_S34;
+        }
+        break;
+    case SUP_ENG_S34:
+        /* 0x8799C fault_state_advance: re-request the 0x1F era once if we came
+         * from 0x23 with the level still 0; else steady supervision */
+        if (s_prev_state == SUP_ENG_S23 && s.lvl == 0u && !s_34_retried) {
+            s_34_retried = true;
+            stage_value(VAL_1F);
+            s_prev_state = SUP_ENG_IDLE;
+            s.state = SUP_ENG_S45;
+        } else {
+            s.state = SUP_ENG_STEADY;
+            s.mode = 0u;            /* steady = the duty token continues (spec 22
+                                     * section 5: hundreds of consecutive rounds) */
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+/* Duty context cycling (0x6BF9C + 0x8CEDC): while the level is 0 the contexts
+ * walk 0 -> 7 -> 0x19 (0x19 sends the COMPLEMENT token); once the level is
+ * nonzero the steady context is 0x1E (plain token). */
+static void duty_ctx_step(void)
+{
+    if (s.lvl == 0u) {
+        if (s.ctx == 0u) {
+            s.ctx = 7u;
+        } else if (s.ctx == 7u) {
+            s.ctx = 0x19u;
+        } else if (s.ctx != 0x19u) {
+            s.ctx = 0u;             /* returning to 0: restart the cycle */
+        }
+    } else {
+        s.ctx = 0x1Eu;
+    }
+}
+
+bool sup_engage_tick(uint32_t now_ms, uint16_t *words, uint8_t *n)
 {
     uint32_t v;
 
-    if (s.state == ST_IDLE) {
+    if (s.state == SUP_ENG_IDLE) {
         return false;
     }
-    if (s_div < JOB_PERIOD) {
-        s_div++;
+    s_now = now_ms;
+    s.era_ms = (uint16_t)(s_now - s_era_start);
+    s_pass++;                          /* the ask's timing cell */
+    if (s_pass == ASK_PASS) {
+        s.enable_req = true;           /* the E60i-proven +105 ms ask */
+    }
+    if (s.pending != 0u) {
+        /* the staging ping-pong (0x6C742/0x6BD48): the pending slot promotes
+         * ONE PASS after staging — pass 1 stages, pass 2 sends. The value
+         * cell's prior contents (the 0x3F init) ride the first W2 job, the
+         * stock's literal first register words. */
+        s.value = s.pending;
+        s.pending = 0u;
+        era_started();
+    }
+    /* E60t (amended, stock-faithful): the walk runs from the FIRST pass —
+     * the value cell rides its init value 0x3F in the W2 job (the stock's
+     * literal first register words; accepted by this chip by construction —
+     * the stock walks per-boot on this bench). S0's staging ping-pong
+     * promotes 0x06 a few passes later, as the stock's does. This is the
+     * conversation the pass-21 ask rides on (E60m's law) with no invented
+     * probe and no early 84|06 (E60n's law). */
+
+    /* in-flight discipline: skip while a job awaits its reply (0x93B8E);
+     * a reply that never comes clears itself after the safety timeout */
+    if (s.in_flight) {
+        if ((s_now - s_tx_ms) <= TX_TIMEOUT_MS) {
+            return false;
+        }
+        s.in_flight = false;
+    }
+
+    fsm_step();
+    if (s.state == SUP_ENG_IDLE) {
         return false;
     }
-    s_div = 0u;
-    if (s.state == ST_SYNC && s.jobs == 0u) {
-        /* probe before the first token: pure reads (the ID job's shape) — the
-         * challenge must be harvested before it can be answered */
-        words[0] = 0x0A00u;              /* commanded-level echo read */
-        words[1] = 0x0C00u;              /* challenge feedback read */
-        words[2] = 0x0C01u;              /* trailing read, stock duty template */
-        *n = 3u;
-    } else if (s.state == ST_RAMP && s_next_level) {
-        words[0] = (uint16_t)(0x8400u | (s.lvl_cmd & 0x3Fu));
-        words[1] = 0x0A00u;              /* level echo read */
-        words[2] = 0x1200u;              /* commit */
-        words[3] = 0x0C00u;              /* challenge feedback read */
+
+    /* The era stepper (0x6C542): advance the era base when the dwell expires
+     * and bump the expected level toward 7 (the duty twin drags it DOWN again
+     * while the level reads > 6 — 0x6BF9C). */
+    if (s.pending == 0u && s.era_ms >= era_dwell_ms(s.value)) {
+        if (s.state == SUP_ENG_S8 || s.state == SUP_ENG_STEADY) {
+            if (s.lvl_exp < LVL_MAX) {
+                s.lvl_exp++;
+            }
+            era_started();
+        }
+        if (s.mode == 0u && s.lvl_exp > 6u) {
+            s.lvl_exp--;
+        }
+    }
+
+    /* Compose the job (park_pwm_service 0x6C1BA by job-mode cell 0xFFF93B9B) */
+    if (s.mode == 7u) {
+        /* W2 level job {84|value, 0A00, 1200, 0C00} — 0x91190; the value cell
+         * rides as-is (the tick head does the ping-pong promote) */
+        words[0] = (uint16_t)(0x8400u | (s.value & 0x3Fu));
+        words[1] = 0x0A00u;
+        words[2] = 0x1200u;
+        words[3] = 0x0C00u;
         *n = 4u;
-        s_next_level = false;
     } else {
+        /* W1 duty job {88|t0..t3, 1200, 0C00, 0A00} — 0x91086 */
+        duty_ctx_step();
         v = token(s.sel);
+        if (s.ctx == 0x19u) {
+            v = ~v;                    /* the complement-token dialect */
+        }
         words[0] = (uint16_t)(0x8800u | ((v >> 24) & 0xFFu));
         words[1] = (uint16_t)(0x8800u | ((v >> 16) & 0xFFu));
         words[2] = (uint16_t)(0x8800u | ((v >> 8) & 0xFFu));
         words[3] = (uint16_t)(0x8800u | (v & 0xFFu));
-        words[4] = 0x1200u;              /* commit */
-        words[5] = 0x0C00u;              /* challenge feedback read */
-        words[6] = 0x0A00u;              /* level echo read */
-        words[7] = 0x0C01u;              /* stock template's trailing read */
-        *n = 8u;
-        if (s.state == ST_RAMP) {
-            s_next_level = true;
-        }
+        words[4] = 0x1200u;
+        words[5] = 0x0C00u;
+        words[6] = 0x0A00u;
+        *n = 7u;
     }
+    s.in_flight = true;
+    s_tx_ms = s_now;
     s.jobs++;
+    for (uint8_t i = 0u; i < *n; i++) {
+        s.last_words[i] = words[i];
+    }
+    s.last_n = *n;
     return true;
 }
 
-static void harvest_fb(uint16_t fb_word)
+static void harvest_fb(uint8_t fb)
 {
-    uint8_t fb = (uint8_t)(fb_word & 0xFFu);
-
     if ((fb & 0xFu) != s.sel) {
-        s.rot++;                         /* the supervisor advanced its challenge */
+        /* the supervisor advanced its challenge — the token table follows */
     }
     s.sel = fb & 0xFu;
     s.lvl = (uint8_t)((fb >> 4) & 7u);
 }
 
+void sup_engage_tx_failed(void)
+{
+    s.in_flight = false;
+}
+
 void sup_engage_replies(const uint16_t *rx, uint8_t n)
 {
+    s.in_flight = false;
+
     if (n == 3u) {                       /* probe: echo [0], fb [1] */
         if ((rx[1] & 0xF900u) != 0xA800u) {
             s.bad++;
             return;
         }
-        harvest_fb(rx[1]);
+        harvest_fb((uint8_t)(rx[1] & 0xFFu));
         s.lvl_echo = (uint8_t)(rx[0] & 0x3Fu);
-        /* E60n (spec 03 6.2be): the stock ALWAYS walks the 84-eras — 0x06
-         * first (monitor state 0), then 0x1F — even on a warm chip whose
-         * probe echoes 0x1F. The E14 fast path (skip to 0x841F) is retired
-         * to the retry fallback in the level-confirm path: a chip that
-         * refuses 0x06 confirms 0x1F there instead. */
-        s.lvl_cmd = 6u;
-        s_era_runs = 0u;
-        s_commit_bad = 0u;
-        s.state = ST_RAMP;               /* the exchange IS the sequence: the
-                                          * fb nibble wanders (reads 7 cold) —
-                                          * the stock always runs the loop */
-    } else if (n == 8u) {                /* duty job: fb [5], status [4], echo [6] */
-        if ((rx[5] & 0xF900u) != 0xA800u) {
-            s.bad++;
-            return;
-        }
-        s.status = (uint8_t)(rx[4] & 0xFFu);
-        s.tokens++;
-        harvest_fb(rx[5]);
-        if (s.state == ST_SYNC && s.tokens >= SYNC_JOBS) {
-            s.state = ST_RAMP;
-        }
-    } else if (n == 4u) {                /* level job: echo [1], status [2], fb [3] */
+    } else if (n == 4u) {                /* W2: echo [1], commit [2], fb [3] */
         if ((rx[3] & 0xF900u) != 0xA800u) {
             s.bad++;
             return;
         }
         s.status = (uint8_t)(rx[2] & 0xFFu);
-        harvest_fb(rx[3]);
+        harvest_fb((uint8_t)(rx[3] & 0xFFu));
         s.lvl_echo = (uint8_t)(rx[1] & 0x3Fu);
-        /* E60n: the 0x12 commit check — the stock branches on (0x12 & 5) vs
-         * the phase mask every pass (0x911D8 -> 0x6C742): mismatch restarts
-         * the whole level. We count and treat persistent mismatch like an
-         * echo disagreement (the restart path below). */
-        {
-            const uint8_t commit = (uint8_t)(rx[2] & 0x05u);
-            const bool retargeting = s.lvl_echo != s.lvl_cmd;
-            const bool commit_ok = retargeting ? (commit == 1u || commit == 4u)
-                                               : (commit == 0u);
-            if (!commit_ok) {
-                s_commit_bad++;
-            }
+
+        /* The three checks of 0x6C1EA, every reply:
+         * (1) 0x0A echo == staged value (mismatch -> bump-and-resend)
+         * (2) commit (0x12 & 5) vs the phase mask (0 settling / 1|4 re-target)
+         * (3) expected vs reported level (mismatch -> expected := reported) */
+        const bool retargeting = s.lvl_echo != s.value;
+        const uint8_t commit = (uint8_t)(rx[2] & 0x05u);
+        const bool commit_ok = retargeting ? (commit == 1u || commit == 4u)
+                                           : (commit == 0u);
+        if (!commit_ok) {
+            s.commit_bad++;
         }
-        if (s.lvl_echo == s.lvl_cmd && s_commit_bad < 4u) {
+        if (s.lvl_exp != s.lvl) {
+            s.lvl_exp = s.lvl;           /* resync the expectation */
+        }
+        if (s.lvl_echo == s.value) {
             s.echo_ok++;
             s.retries = 0u;
-            s_era_runs++;
-            if (s.state == ST_RAMP) {
-                if (s.lvl_cmd == 6u && s_era_runs >= ERA_06_FLOOR) {
-                    s.lvl_cmd = LEVEL_RUN;   /* the 0x06 era complete -> 0x1F */
-                    s_era_runs = 0u;
-                    s_commit_bad = 0u;
-                } else if (s.lvl_cmd == LEVEL_RUN && s_era_runs >= ERA_1F_FLOOR) {
-                    s.state = ST_HOLD;       /* the 0x1F era complete: certified */
-                } else if (s.lvl_cmd < 6u) {
-                    s.lvl_cmd = 6u;          /* enter the stock's walk from below */
-                }
-            }
         } else {
             s.echo_bad++;
-            /* 0x6C742: the confirm poll resends while the echo disagrees;
-             * after persistent mismatch step anyway (observed, logged). E60n:
-             * a warm chip refusing 0x06 (echo stuck at 0x1F) takes the E14
-             * fast path — confirm what is already there. */
-            if (s.state == ST_RAMP && ++s.retries > ECHO_RETRY) {
+            /* 0x6C742/0x6C720: resend (bump) while the echo disagrees; after
+             * the retry bound, give up on this value (flag) and let the era
+             * stepper proceed — the stock's 0x93BA7 |= 4 class */
+            if (++s.retries > CONFIRM_RETRY) {
                 s.retries = 0u;
-                s_commit_bad = 0u;
-                if (s.lvl_cmd == 6u) {
-                    s.lvl_cmd = LEVEL_RUN;   /* E14 fallback: the chip is warm */
-                    s_era_runs = 0u;
-                } else if (s.lvl_cmd < 6u) {
-                    s.lvl_cmd = 6u;
-                } else if (s.lvl_cmd == LEVEL_RUN) {
-                    s.state = ST_HOLD;
-                }
+                s.lvl_exp = s.lvl;
             }
+        }
+    } else if (n == 7u) {                /* W1: commit [4], fb [5], echo [6] */
+        if ((rx[5] & 0xF900u) != 0xA800u) {
+            s.bad++;
+            return;
+        }
+        s.status = (uint8_t)(rx[4] & 0xFFu);
+        harvest_fb((uint8_t)(rx[5] & 0xFFu));
+        s.lvl_echo = (uint8_t)(rx[6] & 0x3Fu);
+        s.tokens++;
+        /* drag-down (0x6BF9C): the expected level follows the chip down while
+         * the duty era runs */
+        if (s.lvl_exp > s.lvl) {
+            s.lvl_exp = s.lvl;
         }
     }
 }
 
-/* ---- driver register sync: RETIRED 2026-11-04 (spec 03 section 6.2e) -----------------
- *
- * The ID (0x0A), write (0x28) and setpoint (0x2D) jobs emulated here were sent on the
- * supervisor bus (RSPI-B five-select). The driving-state dump of 2026-11-04 proves they are
- * bus-0 jobs: their live TX staging (0xFFF88194 = 8E9F/9021/9655 rows, RX = A200 x4 + 0000
- * — the four real driver chips plus the dead fifth select) matches the bus-0 signature, and
- * the bus-B five-select never draws A2-class replies (E4/E5: 0x0000 from the fourth chip).
- * The real implementations live in io/actuators/sol_drv.c (job_id / job_config / job_cyclic
- * on RSPI-A) with the live write values; the level law is sol_engage_config(). The status
- * block and counters stay for the lab readout; the emitters are gone. */
+/* ---- driver register sync: RETIRED emitters, kept for the lab readout ---- */
 
 static sup_drv_status_t s_drv;
 
-/* E41 (spec 03 section 6.2ad): the bus-B commissioning write job, revived.
- * The stock's eight-register write (job 0x28 class: the 8E9F/9021 rows plus
- * mode/config registers) rides the FOUR-select rotation (SSLB3/2/0/5 - the
- * supervisor stays in the read rotation; register data shaped like control
- * words resets the TCU from our context, 0x8E55 bench 2026-11-01). af01
- * (SSLB0) is the target: its 0x24 switch echo (AAFF ours / AA20 stock
- * driving) never sees the engaged values from our RSPI-A commissioning.
- * Grant-gated (the engaged 0x8E row must never precede acceptance) and
- * slow - every 400 passes (~2 s), the m4r cadence that never stressed the
- * 5 ms stream (E40b's 100 ms RSPI-A burst withdrew the grant). The 0x88
- * mode row carries the stock's setpoint-row values in rotation order minus
- * the supervisor: {1A, 1A, 12, 15} - af01 = 0x12. Rows 8/9 repeat the 8E/90
- * rows, the two the driving dump shows the stock writing. */
 static bool     s_wj_on;
 static uint8_t  s_wj_v8e;
 static uint16_t s_wj_div;
-static bool     s_sp_on;       /* E42: the bus-B setpoint job (magic data[7]) */
-static bool     s_cc_on;       /* E45: the bus-B cyclic companion (magic data[7]=2) */
-static uint16_t s_cc_sp;       /* E45: its setpoint value (staged by the caller) */
-static bool     s_cb_on;       /* E51: the boot companion — row-per-pass from app start */
+static bool     s_sp_on;
+static bool     s_cc_on;
+static uint16_t s_cc_sp;
+static bool     s_cb_on;
 
 void sup_drv_write_arm(bool on, uint8_t v8e)
 {
     if (on != s_wj_on || v8e != s_wj_v8e) {
-        s_wj_div = 0u;        /* reset ONLY on a state change — task_10ms re-asserts the
-                               * arm every tick and a per-call reset starves the 400-pass
-                               * cadence counter (the E40 lesson, reborn; caught live:
-                               * div pinned at ~2 with on=1, drv_writes frozen at 0) */
+        s_wj_div = 0u;
     }
     s_wj_on = on;
     s_wj_v8e = v8e;
@@ -316,19 +459,22 @@ void sup_drv_cyclic_boot(bool on)
 void sup_drv_setpoint_arm(bool on)
 {
     if (on != s_sp_on) {
-        s_wj_div = 0u;        /* transition-only reset, same discipline */
+        s_wj_div = 0u;
     }
     s_sp_on = on;
 }
 
 void sup_drv_sync(bool on)
 {
-    (void)on;                 /* retired: the bus-0 commissioning runs in sol_drv */
+    (void)on;
+}
+
+void sup_drv_write_once(void)
+{
 }
 
 void sup_drv_setpoint_once(void)
 {
-    /* retired: setpoints ride the sol_drv cyclic job */
 }
 
 const sup_drv_status_t *sup_drv_status(void)
@@ -338,16 +484,9 @@ const sup_drv_status_t *sup_drv_status(void)
 
 bool sup_drv_poll(uint16_t *words, uint8_t *n)
 {
-    /* E51 (spec 03 section 6.2ai): the BOOT COMPANION — the stock's order, complete.
-     * E50b proved register jobs on the supervisor's select SURVIVE bit0-free (15
-     * jobs, no reset) and die only with bit0 in play — and the stock's own rail is
-     * UP at +250 ms with its leap, 15 s BEFORE any bit0 exists. The grant was never
-     * the rail's prerequisite; the rail is earned by the bit0-free driver jobs.
-     * Here: the captured cyclic (0xFFF88518, engaged stock 2026-11-08) streams as
-     * ONE ROW (5 words, every select incl. the supervisor's frame 2) PER 5 ms
-     * PASS from app start — nibble-poll scale, stream-safe, in the rail window,
-     * rotating through all 9 rows every 45 ms. No ask, no bit0, ever (unless the
-     * bench magic-arms one). */
+    /* E52's captured 45-frame cyclic (the boot companion) — OFF in E60p: the
+     * walk owns the wire cadence now, and the stock's own discipline keeps
+     * bus-B traffic to its ten descriptors. Retained for lab arming only. */
     if (s_cb_on) {
         static const uint16_t STOCK_CYCLIC[45] = {
             0x881Au, 0x881Au, 0x881Au, 0x8812u, 0x8815u,
@@ -361,12 +500,6 @@ bool sup_drv_poll(uint16_t *words, uint8_t *n)
             0xD800u, 0xD800u, 0xD800u, 0xD800u, 0xD800u,
         };
         static uint8_t s_cb_div;
-        /* E52: the stock's exact shape — all 45 frames as ONE burst every
-         * 10 ms (every 2nd pass), bit0-free. E51's row-per-pass survived
-         * indefinitely (hundreds of jobs, zero resets) proving content and
-         * cadence safe; the remaining shape delta vs the stock is the
-         * CONTIGUOUS burst. E45's 10 ms resets all had bit0 in play — the
-         * stall attribution was never clean; this settles it. */
         if (++s_cb_div < 2u) {
             return false;
         }
@@ -374,37 +507,13 @@ bool sup_drv_poll(uint16_t *words, uint8_t *n)
         for (uint8_t i = 0u; i < 45u; i++) {
             words[i] = STOCK_CYCLIC[i];
         }
-        *n = 45u;                      /* nine rows x five selects, one burst */
+        *n = 45u;
         s_drv.drv_jobs++;
         return true;
     }
-    /* E45 (spec 03 section 6.2af): the bus-B CYCLIC COMPANION — the stock's 45-frame
-     * driver cyclic (template 0x40D0C) rides THE SUPERVISOR'S OWN BUS on the five-select
-     * rotation af31/af21/af11/af01/af51 = SSLB3/2/1/0/5 — FRAME INDEX 2 GOES TO THE
-     * SUPERVISOR (0x88|mode, A0, E8|setpoint, A6, F0|setpoint, 60, C0, 66, D8), every
-     * 10 ms from app start. OUR driver cyclic rides RSPI-A where the supervisor sees
-     * nothing — it has never witnessed a setpoint. The E42 "five-select wall" was a
-     * dialect error, not a wall: the lone burst's 0x881A told the supervisor its own
-     * "channels" were in current control; the stock's frame-2 mode is its chip-record
-     * mode (flag-only, 0x10-class) and its rhythm is continuous from app start.
-     * Setpoints: the E43 window-load staging (250 mA class per channel, the park-hold
-     * fail-safe magnitude) mirrored by the caller; frame 2 (supervisor) carries zero
-     * setpoints and the benign 0x10 mode. Grant-independent like the stock's. */
     static uint16_t s_cc_div;
     if (s_cc_on) {
-        /* E47: 2 s cadence — the proven-survivable rate for a standalone job. */
         if (++s_cc_div >= 400u) {
-            /* E50 (spec 03 section 6.2ai): THE VERBATIM REPLAY. The stock's live
-             * 45-frame cyclic TX buffer (0xFFF88518), captured 2026-11-08 while
-             * engaged at 1.786 A (park target 8, self-engaged P-hold):
-             *   row0 881A 881A 881A 8812 8815   (modes — frame 2 = the supervisor,
-             *                                     BOTH channels current control)
-             *   row2 E853 ED89 ED89 E853 E800   (ch0 setpoints: frame 2 = 0x589
-             *                                     = 855 mA on the supervisor's C)
-             *   row4 F589 F589 F053 F000 F000   (ch1: frame 2 = 0x53 = 50 mA TCC)
-             * If THIS resets, the exact values are eliminated and the transport
-             * (wire timing) is definitively the wall; if it survives, the specific
-             * P-hold distribution was the missing piece. */
             static const uint16_t STOCK_CYCLIC[45] = {
                 0x881Au, 0x881Au, 0x881Au, 0x8812u, 0x8815u,
                 0xA000u, 0xA000u, 0xA000u, 0xA000u, 0xA000u,
@@ -420,16 +529,16 @@ bool sup_drv_poll(uint16_t *words, uint8_t *n)
             for (uint8_t i = 0u; i < 45u; i++) {
                 words[i] = STOCK_CYCLIC[i];
             }
-            *n = 45u;                    /* nine rows x five selects -> xfer5 */
+            *n = 45u;
             s_drv.drv_jobs++;
             return true;
         }
         return false;
     }
-    if ((!s_wj_on && !s_sp_on) || s.state == ST_IDLE || !s.echo_grant) {
+    if ((!s_wj_on && !s_sp_on) || s.state == SUP_ENG_IDLE) {
         return false;
     }
-    if (++s_wj_div < 400u) {              /* ~2 s at the 5 ms pass */
+    if (++s_wj_div < 400u) {
         return false;
     }
     s_wj_div = 0u;
@@ -458,15 +567,6 @@ bool sup_drv_poll(uint16_t *words, uint8_t *n)
         s_drv.drv_writes++;
         return true;
     }
-    /* E42c: the dump-exact engaged setpoint job (driving dump 0x2D): TEN words
-     * on the five-select rotation — the 88 mode row {1A,1A,1A,12,15} then
-     * A000 x5 (dither zero). E42's 45-word cyclic-companion burst reset the
-     * TCU (stall > 20 ms when stacked on the same tick, the E28 law —
-     * BSS-wipe forensics: armed statics zeroed, ladder re-climbed, drv_sp
-     * cleared). The 10-word shape is ID-poll length: stream-safe by
-     * construction. The cycling keep-warm VALUES (E8/F0 rows) ride the
-     * RSPI-A cyclic as since E37; this job feeds af01 the mode/dither rows
-     * it never saw. */
     {
         static const uint8_t MODE5[5] = { 0x1Au, 0x1Au, 0x1Au, 0x12u, 0x15u };
         for (uint8_t c = 0u; c < 5u; c++) {
@@ -476,7 +576,7 @@ bool sup_drv_poll(uint16_t *words, uint8_t *n)
             words[5u + c] = 0xA000u;
         }
     }
-    *n = 10u;                              /* two rows x five selects -> xfer5 */
+    *n = 10u;
     s_drv.drv_jobs++;
     s_drv.drv_sp++;
     return true;
@@ -484,7 +584,6 @@ bool sup_drv_poll(uint16_t *words, uint8_t *n)
 
 void sup_drv_replies(const uint16_t *rx, uint8_t n)
 {
-    /* strict classes — kept for the historical lab data; no emitter feeds it now */
     for (uint8_t i = 0u; i < n && i < SUP_DRV_READ_WORDS; i++) {
         if ((rx[i] & 0xFE00u) == 0xA800u) {
             s_drv.drv_a8++;
@@ -497,13 +596,3 @@ void sup_drv_replies(const uint16_t *rx, uint8_t n)
         }
     }
 }
-
-
-/* ---- the setpoint job (stock 0x2D, sender 0x924B0): template flash 0x40D0C
- * = [88, A0, E8, A6, F0, 60, C0, 66, D8]; the stock ORs the flags byte into
- * 0x88, bytes into A0/A6, and the 11-BIT CURRENT SETPOINTS into E8/F0 (two
- * per chip, sender positions 10-14 / 20-24 = chan+0xC / chan+0x14). The
- * engaged stock's keep-warm machine commands these continuously from boot
- * (0x90586 capture: 11 xx 00 01 11 xx, xx cycling 41/34/3A/27/0E/1F/3C/26/44);
- * our commissioning sends a static keep-warm-class 0x1141 on both channels. */
-

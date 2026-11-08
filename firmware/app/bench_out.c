@@ -731,18 +731,21 @@ static int sup_lab_results(uint8_t *out, uint16_t max)
         out[1] = e->state;
         out[2] = e->sel;
         out[3] = e->lvl;
-        out[4] = e->lvl_cmd;
-        out[5] = e->rot;
+        out[4] = e->pending ? e->pending : e->value;
+        /* E60p: the walk's live view — FSM state, era value, level cells,
+         * duty context, counters (struct fields moved/renamed with the
+         * engine rewrite; spec 22 states in out[5]). */
+        out[5] = e->state;
         out[6] = e->jobs;
         out[7] = e->bad;
-        out[8] = e->echo_ok;
-        out[9] = e->echo_bad;
+        out[8] = e->value;
+        out[9] = e->ctx;
         out[10] = e->status;
         out[11] = e->lvl_echo;
-        out[12] = e->retries;
+        out[12] = (uint8_t)((e->lvl_exp << 4) | e->lvl);
         out[13] = (uint8_t)(e->tokens >> 8); out[14] = (uint8_t)e->tokens;
         out[15] = (uint8_t)((e->enable_req ? 1u : 0u) | (e->enable_sent ? 2u : 0u) |
-                            (e->enable_from_start ? 4u : 0u));
+                            (e->echo_grant ? 4u : 0u));
         for (uint8_t i = 0u; i < 8u; i++) {                /* cyclic replies as mode 2 */
             out[16u + 2u * i] = (uint8_t)(st->rx_words[i] >> 8);
             out[17u + 2u * i] = (uint8_t)st->rx_words[i];

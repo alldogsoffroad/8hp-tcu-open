@@ -30,6 +30,7 @@ static uint16_t fake_sup(uint16_t tx)
         break;
     case 0x84:
         fs.lvl_cmd = (uint8_t)(tx & 0x3Fu);
+        fs.lvl = (uint8_t)(fs.lvl_cmd & 7u);   /* E60p: settles on the write */
         break;
     case 0x12:
         r = 0xAAC2u;                     /* commit ack */
@@ -48,6 +49,11 @@ static uint16_t fake_sup(uint16_t tx)
         break;
     case 0x22:
         r = (uint16_t)(0xA800u | (fs.accept ? 1u : 0u));  /* the grant echo */
+        break;
+    case 0x14:
+        r = 0xAAD5u;                     /* the bench's 0x14: bits 6/7 faulted
+                                          * (unpopulated outputs 1/2) — drives
+                                          * the fault-path twin F every pass */
         break;
     case 0x8E:
         fs.last_8e = tx;
@@ -186,93 +192,150 @@ int main(void)
         CHECK((stub.sup_tx[43] & 0xFF00u) == 0x8E00u && (stub.sup_tx[43] & 0x01u) == 0u);
     }
 
-    /* ---- engage sequence (spec 03, challenge-response decoded 2026-10-31) ----
-     * The fake supervisor starts at challenge sel 6 and achieved level 0; the
-     * 0x0C read rotates the challenge every 3rd read; a level write is echoed
-     * by the 0x0A read and settles into the achieved level on the next token. */
+    /* ---- E60p: the commissioning walk (spec 22, the unified protocol) ----
+     * The engine runs from a 1 ms tick (the stock's timer-ISR 0x9106C cadence):
+     * boot init 0x3F -> S0 stages the 0x06 era (dwell 3600 ms) -> S8 (target
+     * reached on the reply) -> S12 -> S23 duty era (token, context cycling
+     * while level==0, 0x19 sends ~token) -> reported 0 -> the 0x1F era
+     * (dwell 8600 ms) -> S45 proceed gate -> S34 -> STEADY (duty resumes).
+     * The fake supervisor settles its achieved level on the 0x84 write and
+     * echoes it on 0x0A; token rounds keep it settled. */
     {
         const sup_eng_status_t *e = sup_engage_status();
+        static uint32_t tms;
+        uint16_t wj[SUP_ENG_JOB_MAX], wrx[SUP_ENG_JOB_MAX];
+        uint8_t wn;
 
         memset(&fs, 0, sizeof fs);
         fs.sel = 6u;
         stub.sup_reply_fn = fake_sup;
         sup_app_pattern2(true, 0x00u, 0x20u, true);
+
+        /* boot: S0, value 0x3F, expected/reported 7; the cell arms at pass 21
+         * and the walk holds until 500 ms (E60r: the proven-safe timings) */
         sup_engage_arm(true);
-        CHECK(e->state == 1u && e->lvl_cmd == 1u);
+        CHECK(e->state == SUP_ENG_S0 && e->value == 0x3Fu && e->lvl_exp == 7u);
+        CHECK(!e->enable_req);                     /* not yet: pass 0 */
 
-        /* first register job: the read-only probe (challenge harvest before the
-         * first token — 0A00 0C00 0C01), then the duty token for sel 6 */
-        while (e->jobs == 0u) {
-            sup_tick_5ms();
-        }
-        CHECK(e->jobs == 1u && e->sel == 6u);   /* E60n: lvl_cmd enters the walk at the probe */
-        CHECK(back(2u) == 0x0A00u && back(1u) == 0x0C00u && back(0u) == 0x0C01u);
-        while (e->jobs == 1u) {
-            sup_tick_5ms();
-        }
-        CHECK(e->jobs == 2u);
-        CHECK(back(7u) == 0x8863u && back(6u) == 0x8893u &&
-              back(5u) == 0x886Cu && back(4u) == 0x889Cu);
-        CHECK(back(3u) == 0x1200u && back(2u) == 0x0C00u &&
-              back(1u) == 0x0A00u && back(0u) == 0x0C01u);
+        tms = 0u;
+        wn = 0u;
+#define WJ (e->last_words)      /* the engine's composed job this pass */
+#define WN (e->last_n)
+#define WALK_TICK() do { tms += 5u; sup_tick_5ms(); } while (0)  /* one 5 ms pass */
 
-        /* sync = two duty rounds, then the ramp: level jobs climb 1..7 then the
-         * engaged 31, each confirmed by the 0x0A echo before advancing (the
-         * stock's 0x6C742 confirm loop; mismatch = resend) */
+        /* pass 1: the walk rides the init value 0x3F — the stock's literal
+         * first register words, the conversation the pass-21 ask rides on */
+        CHECK(!e->enable_req);                     /* the ask arms at pass 21 */
+        WALK_TICK();
+        CHECK(WN == 4u && WJ[0] == 0x843Fu);
+        CHECK(WJ[1] == 0x0A00u && WJ[2] == 0x1200u && WJ[3] == 0x0C00u);
+        /* pass 2: S0's staging promote lands — 0x06 takes the value cell */
+        WALK_TICK();
+        CHECK(WJ[0] == 0x8406u);
+        CHECK(e->value == 0x06u);
+        CHECK(e->state == SUP_ENG_S8 || e->state == SUP_ENG_S12 ||
+             e->state == SUP_ENG_S23);                      /* warm chip advances */
+        CHECK(e->echo_ok >= 1u && e->lvl_echo == 0x06u);    /* 0x0A echo confirmed */
+        CHECK(e->lvl == 6u);                                /* fake settled on the write */
+
+        /* S8: target 5 reached -> S12 -> S23 (duty era) on the next ticks */
+        WALK_TICK();
+        CHECK(e->state == SUP_ENG_S12 || e->state == SUP_ENG_S23);
+        WALK_TICK();
+        CHECK(e->state == SUP_ENG_S23 && e->mode == 0u);    /* the duty job takes the wire */
+
+        /* duty jobs: token frames + commit/fb/echo, one per pass */
+        {
+            const uint16_t jobs0 = e->jobs;
+            WALK_TICK();
+            CHECK(e->jobs == jobs0 + 1u && WN == 7u);
+        }
+        CHECK((WJ[0] & 0xFF00u) == 0x8800u && (WJ[3] & 0xFF00u) == 0x8800u);
+        CHECK(WJ[4] == 0x1200u && WJ[5] == 0x0C00u && WJ[6] == 0x0A00u);
+        CHECK(e->tokens >= 1u);
+
+        /* context cycling while the level is 0: the fake is dragged down
+         * (lvl_cmd = 0: every duty round reports 0 — the zero-rounds counter
+         * runs; the ctx cycle 0 -> 7 -> 0x19 completes inside the staging
+         * window of five rounds) */
+        fs.lvl_cmd = 0u;
+        fs.lvl = 0u;
         {
             unsigned guard = 0u;
-            while (e->state == 1u && ++guard < 200000u) {
-                sup_tick_5ms();
+            while (e->ctx != 0x19u && ++guard < 30u) {
+                WALK_TICK();
             }
-            CHECK(e->state == 2u);           /* probe goes straight to the ramp */
+            CHECK(e->ctx == 0x19u);              /* 0 -> 7 -> 0x19 while level 0 */
+            /* context 0x19 sends the COMPLEMENT token: capture it */
+            uint32_t comp = 0u;
+            for (uint8_t j = 0u; j < 4u; j++) {
+                comp = (comp << 8) | (uint32_t)(WJ[j] & 0xFFu);
+            }
+            /* the level rises: the settle takes one round (the next job is
+             * still 0x19-complement), then the plain token at context 0x1E */
+            fs.lvl_cmd = 6u;
+            fs.lvl = 6u;
             guard = 0u;
-            while (e->state == 2u && ++guard < 200000u) {
-                sup_tick_5ms();
+            while (e->ctx != 0x1Eu && ++guard < 20u) {
+                WALK_TICK();
             }
-            CHECK(guard < 200000u);
+            CHECK(e->ctx == 0x1Eu);
+            uint32_t plain = 0u;
+            for (uint8_t j = 0u; j < 4u; j++) {
+                plain = (plain << 8) | (uint32_t)(WJ[j] & 0xFFu);
+            }
+            CHECK(plain != comp);                /* complement dialect observed */
+            CHECK(e->mode == 0u);                /* no premature 0x1F staging */
         }
-        CHECK(e->state == 3u);                     /* hold: 0x1F confirmed */
-        CHECK(e->lvl_cmd == 31u && e->lvl_echo == 31u);
-        CHECK(e->echo_ok >= 8u && e->echo_bad == 0u);   /* 1..7 + the 31 */
-        CHECK(e->rot > 0u);                        /* challenge rotations observed */
 
-        /* enable: NEVER before the supervisor's echo grants bit 0 (stock law —
-         * the request is a shadow; every unilateral enable resets the TCU) */
-        sup_engage_request_enable(true);
-        sup_tick_5ms();
-        CHECK(!e->enable_sent && !s->enable);         /* no grant yet: no bit 0 */
-        CHECK((fs.last_8e & 0x01u) == 0u);
-        fs.accept = true;                             /* the supervisor grants */
-        sup_tick_5ms();
-        CHECK(!e->enable_sent);                       /* grant seen this pass */
-        sup_tick_5ms();                               /* word carries it next pass */
-        CHECK(e->enable_sent && s->enable);
-        CHECK((fs.last_8e & 0x01u) == 1u);
-        fs.accept = false;                            /* grant withdrawn */
-        sup_tick_5ms();
-        CHECK(e->enable_sent);                        /* one pass of latency */
-        sup_tick_5ms();
-        CHECK(!e->enable_sent && !s->enable);
-        sup_engage_request_enable(false);
-        sup_tick_5ms();
-        CHECK(!e->enable_sent);
-
-        /* hold state keeps answering the rolling challenge */
+        /* level settles at 0 for the staging window: the 0x1F era returns to
+         * the W2 job after the five duty rounds */
+        fs.lvl_cmd = 0u;
+        fs.lvl = 0u;
         {
-            uint16_t tok = e->tokens;
             unsigned guard = 0u;
-            while (e->tokens == tok && ++guard < 200000u) {
-                sup_tick_5ms();
+            while (e->mode != 7u && ++guard < 40u) {
+                WALK_TICK();
             }
-            CHECK(e->tokens == tok + 1u && e->state == 3u);
+            CHECK(e->mode == 7u && e->pending == 0x1Fu);   /* staged, un-promoted */
+            WALK_TICK();                                    /* the ping-pong promote */
+            CHECK(e->pending == 0u && WJ[0] == 0x841Fu && e->value == 0x1Fu);
+            CHECK(e->state == SUP_ENG_S45 || e->state == SUP_ENG_S34);
         }
 
-        /* disarm: enable forced off, state idle */
+        /* the fake settles 7 on the write: proceed gate passes -> STEADY,
+         * and the duty token resumes */
+        fs.lvl_cmd = 0x1Fu;
+        fs.lvl = 7u;
+        {
+            unsigned guard = 0u;
+            while (e->state != SUP_ENG_STEADY && ++guard < 40u) {
+                WALK_TICK();
+            }
+            CHECK(e->state == SUP_ENG_STEADY && e->mode == 0u);
+        }
+
+        /* steady state runs ON (the stock: hundreds of token rounds) — the
+         * ask's pass 21 arrives here on the fast-settling fake */
+        WALK_TICK();
+        WALK_TICK();
+        WALK_TICK();
+        CHECK(e->tokens >= 3u);              /* the steady duty rounds flow */
+
+        /* the enable CELL law: on from boot; the kill switch suppresses it */
+        CHECK(e->enable_sent);
+        sup_engage_kill(true);
+        CHECK(!sup_engage_enable_bit());
+        sup_engage_kill(false);
+        CHECK(sup_engage_enable_bit());
+
+        /* the fault twin: the fake's 0x14 (0xD5) queues F every 5 ms pass —
+         * the enables word fault-masked (0x20 keeps bit 5: output 0 clean) */
+        CHECK(s->reg14 == 0xD5u && s->fault_jobs >= 1u);
+
+        /* disarm: idle */
         sup_engage_arm(false);
-        sup_drv_sync(false);
-        CHECK(!e->enable_sent && e->state == 0u && !sup_engage_active());
-        sup_tick_5ms();
-        CHECK(!s->enable);
+        CHECK(e->state == SUP_ENG_IDLE && !sup_engage_active());
         stub.sup_reply_fn = 0;
     }
 
