@@ -785,6 +785,10 @@ void plat_drv_init(void)
      * the 16th interrupt (id_poll's 10 + the cyclic's first frames) exhausted
      * all 15 banks. Pure stack handling from here on. */
     INTC_IBNR = 0x0000u;
+    /* E60f: arm the feed from init — the rail window (~320 ms) needs the
+     * cyclic flowing from the first 10 ms tick; the staged 1 s arm was a
+     * diagnostic-only safety (spec 03 6.2at) */
+    s_drv_irq_live = true;
 
     SPCRA = 0x00u;
     RSPIA_DMA_REQ0 = 0u;

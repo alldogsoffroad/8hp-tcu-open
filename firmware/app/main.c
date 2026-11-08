@@ -344,22 +344,13 @@ static void task_100ms(void)
     uint32_t up_s = st->now_ms / 1000u;
     can_frame_t f = { .id = HEARTBEAT_ID, .dlc = 8u };
 
-    /* E60b: arm the interrupt window only after a second of proven life, and
-     * stamp the arming in the heartbeat (bit 4) — the last heartbeat before
-     * silence pins the death to the delivery moment. */
-    static bool s_irq_armed;
-    if (!s_irq_armed && st->now_ms >= 1000u) {
-        s_irq_armed = true;
-        plat_drv_irq_arm(true);
-    }
-
     f.data[0] = s_counter++;
     {
         const sup_status_t *sv = sup_status();
         f.data[1] = (uint8_t)((st->missed_ticks != 0u ? 0x01u : 0u) |
                               ((sv->last_rx & SUP_REPLY_MASK) == SUP_REPLY_OK ? 0x02u : 0u) |
                               (sv->replies_bad != 0u ? 0x04u : 0u) | (sv->enable ? 0x08u : 0u) |
-                              (s_irq_armed ? 0x10u : 0u));
+                              0x10u);   /* E60f: feed armed from init */
     }
     f.data[2] = (uint8_t)(up_s >> 8);
     f.data[3] = (uint8_t)up_s;

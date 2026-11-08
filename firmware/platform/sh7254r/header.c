@@ -116,17 +116,6 @@ void rspi_a_isr(void)
     volatile uint8_t *const gate  = (volatile uint8_t *)0xFFFE6030u;
     volatile uint16_t *const spdr = (volatile uint16_t *)0xFFFFB004u;
 
-    /* E60d: announce only at burst START (idx==1) and burst END (the else
-     * branch) — the E60c per-interrupt announce flooded the 7 TX mailboxes;
-     * start/end pairs prove burst completion cleanly (E60c already proved
-     * delivery: 11 entries, idx feeding, two bursts staged) */
-    if (rspi_a_idx == 1u) {
-        can_frame_t f = { .id = 0x7F6u, .dlc = 8u,
-                          .data = { 0xE6u, 0x45u, 0x01u, 0, 0, 0, 0, 0 } };
-        f.data[3] = rspi_a_count;
-        (void)plat_can_send(CAN_BUS1, &f);
-    }
-
     /* the stock's entry protocol (0x96590 decode) */
     *spsr = 0u;                          /* SPSR acknowledge */
     (void)*gate;
@@ -156,12 +145,6 @@ void rspi_a_isr(void)
          * disarm the receive interrupt, keep MSTR (the stock's live idle) */
         *spcr = 0x08u;
         rspi_a_count = 0u;               /* releases the mainline wait */
-        {   /* E60d: burst-END announce with the final idx */
-            can_frame_t f = { .id = 0x7F6u, .dlc = 8u,
-                              .data = { 0xE6u, 0x45u, 0x02u, 0, 0, 0, 0, 0 } };
-            f.data[3] = rspi_a_idx;
-            (void)plat_can_send(CAN_BUS1, &f);
-        }
     }
 }
 
