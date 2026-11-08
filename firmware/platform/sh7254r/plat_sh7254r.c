@@ -778,6 +778,13 @@ void plat_drv_init(void)
         INTC_IPR(i) = 0u;
     }
     RSPIA_IPR = (uint16_t)((RSPIA_IPR & ~0x0F00u) | 0x0E00u);
+    /* E60e: register banks OFF — the bank-overflow killer (spec 03 6.2as).
+     * E60d's exception landed with the interrupted PC in the guard loop and
+     * SR.I raised to the RSPI's own priority — the bank-overflow signature:
+     * the boot enables banked interrupt entry, GCC's rte never RESBANKs, and
+     * the 16th interrupt (id_poll's 10 + the cyclic's first frames) exhausted
+     * all 15 banks. Pure stack handling from here on. */
+    INTC_IBNR = 0x0000u;
 
     SPCRA = 0x00u;
     RSPIA_DMA_REQ0 = 0u;

@@ -2493,3 +2493,39 @@ regs: SPCRA=0x00, SPSRA=0x20 (SPTEF set, SPE off — consistent).
 Vector-table arithmetic re-verified against the manual: table offset =
 4 × vector number (SPRIA 445 → 0x6F4; our array index 441 at header+0x764,
 VBR = header+0x70) — no off-by-one.
+
+### 6.2as E60b-e — the diagnostic ladder to the bank-overflow killer (2026-11-08, late) [O]
+
+**E60b (staged arm):** the SR window stays closed for the first second. Boot:
+heartbeats flowing (app init innocent), arm at heartbeat seq 10 (bit 4 stamped),
+DEADBABE in the same 100 ms, then silence. Delivery works; the landing is wrong.
+
+**E60c (announce net):** vectors 444/446/447/448 announce themselves; the ISR
+announces entry. Boot: 11 ISR entries with idx feeding across the id_poll
+(count=10) and cyclic (count=0x2d) bursts — **THE INTERRUPT-DRIVEN FEED WORKS**
+(the E59/E60 architecture is proven on silicon) — then DEADBABE mid-cyclic while
+the in-flight burst kept completing in interrupt land (the 7 TX mailboxes
+saturated; arrival order ≠ send order).
+
+**E60d (exception-frame reader):** default_handler reads its hardware frame
+(@r15 = PC, @(r15,4) = SR; manual 7.5.3). The verdict frame:
+`dead 000416FE 0001` — the interrupted PC is `dt r1` INSIDE the open-window
+guard loop (where the mainline always is), i.e. not a faulting instruction but
+an interrupt-context capture; and the burst never completed afterward (the
+RSPI was masked) — an interrupt at ≥0xE delivered to a default slot, with SR.I
+raised to the RSPI's own priority. None of 444/446/447/8 announced.
+
+**The answer — REGISTER BANK OVERFLOW (manual 7.4 + 8.3.6).** The boot enables
+banked interrupt entry (IBNR BE[1:0]); banked ISRs must end with RESBANK to
+release the bank. GCC's stack-based `interrupt_handler` (plain rte) never does
+— every interrupt LEAKS a bank. Fifteen banks: id_poll's 10 interrupts plus
+the cyclic's first frames ≈ the 16th interrupt overflows, the bank-overflow
+EXCEPTION vectors to a default slot, and (per 7.4.2) the exception sets SR.I
+to the overflow-causing interrupt's priority — freezing the RSPI at 0xE while
+the mainline hangs. The interrupt count matches the death point exactly.
+
+**E60e: `INTC_IBNR = 0`** (BE=00: register banks disabled for all interrupts,
+BOVE=0: overflow exception off) in the INTC hygiene block — pure stack-based
+handling, GCC's model. The staged arm, announce net and exception-frame reader
+stay in place: the next boot should show paired burst start/end announces
+flowing indefinitely and heartbeats past the arm moment forever.

@@ -24,6 +24,14 @@
  * sources (SPEIA/SPTIA/SPRIA, vectors 444/445/446) share IPR27 bits 11-8. */
 #define INTC_IPR(n)  REG16(0xFFFE0C00u + 2u * ((n) - 3u))   /* IPR03..IPR29 */
 #define RSPIA_IPR    INTC_IPR(27)                            /* bits 11-8: RSPI_A group */
+/* Bank number register (manual 8.3.6): BE[1:0] bits 15-14 enable register banks
+ * for interrupt entry, BOVE bit 13 enables the bank-overflow exception. The
+ * boot runs banked ISRs (resbank epilogues); GCC's stack-based interrupt
+ * handlers never RESBANK, so with banks enabled every interrupt LEAKS a bank —
+ * after 15 the bank-overflow exception fires (E60d: mid-cyclic, vectoring to
+ * default_handler with SR.I set to the RSPI's 0xE, freezing the burst).
+ * IBNR = 0 selects pure stack-based handling for all interrupts. */
+#define INTC_IBNR    REG16(0xFFFE080Eu)
 
 /* ---- Compare match timer (section 15) ---------------------------------- */
 #define CMT_CMSTR   REG16(0xFFFEC000u)  /* bit0 STR0, bit1 STR1 */
