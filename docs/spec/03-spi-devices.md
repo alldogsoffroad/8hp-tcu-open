@@ -2529,3 +2529,34 @@ BOVE=0: overflow exception off) in the INTC hygiene block — pure stack-based
 handling, GCC's model. The staged arm, announce net and exception-frame reader
 stay in place: the next boot should show paired burst start/end announces
 flowing indefinitely and heartbeats past the arm moment forever.
+
+### 6.2au The grant bisect — THE BOOT COMPANION IS THE GRANT-BREAKER (2026-11-08, night) [O]
+
+**The reference experiments (all with the proven recipe: magic spam→hb5, delay
+150, watched via the heartbeat enable bit — the universal probe):**
+
+| build | bus-0 wire | boot companion | verdict |
+|---|---|---|---|
+| E39 (m4bh) | dead (timeouts) | none | **GRANT** — echo AA91, grant=1, echo_grant=1, tokens 877→2888 over 30 s |
+| E49 (m4bu) | dead | none | **GRANT** — enable bit 0x0a |
+| E53 (m4by) | LIVE (polled) | **on (since E51)** | REFUSED |
+| E60f/g | live / gated-quiet | on | REFUSED (both — bus-0 state irrelevant!) |
+| **E60h (m4ch)** | gated-quiet | **OFF** | **GRANT** — 0x12 → 0x1a |
+
+**THE LAW: E51's boot companion (`sup_drv_cyclic_boot(true)` — the stock-shaped
+driver cyclic sent to the supervisor on bus B continuously from app start,
+bit0-free) prevents the grant.** It landed in E51, "survived" (no reset — the
+E50b bit0-free law), and **the grant was never re-tested after it arrived** —
+the breaker hid through E53-E60g while the transport work took the blame.
+E60g's quiet-bus-A failure is now explained: the companion rides bus B; bus-0
+silence was never the variable.
+
+**The withdrawal returns (the open problem):** with the grant standing
+(E60h, enable 0x1a), opening the bus-0 stream live (FE13 sub0F) → the enable
+bit falls back within seconds (0x1a → 0x12) and the ammeter holds .166 A.
+The E40b withdrawal class: the driver cyclic's bursts block the mainline
+(the ISR feed completes but each xfer waits in the guard loop) and delay the
+supervisor's 5 ms mirror passes; one late pass flips echo_grant off. The
+ammeter has never moved on ANY granted stream (E39/E49/E60h): the rail bit
+was 0 throughout — grant ≠ conduction; the drivers must be driven WHILE the
+grant holds, which the current 10 ms cyclic cadence breaks.
