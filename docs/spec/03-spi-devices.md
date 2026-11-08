@@ -2719,3 +2719,15 @@ Live proof (the one-shot slate, hand-fed via the five-select):
 
 **E60j = E60i + jobs 2/3 routed through plat_sup_burst (single-select
 SSLB1) + the 0x90 pattern 0x21→0x20 (the stock's steady letter bit).**
+
+### 6.2ba THE MISSING COMMISSIONING — the handshake had the same wrong-chip bug (2026-11-08, night end) [O]
+
+E60j's live probes: the commit word 0x1200 ANSWERS (AAC2 — bit1 set, the
+exact bit the stock's 0x14 carries and we lacked) but the certification
+still reads 0x24=AA00. The spec's own 6.2ah hypothesis is the mechanism:
+the certification latches only on a COMMISSIONED chip, and our E49 startup
+handshake rode plat_sup_xfer's alternation — half its words (including
+every commit) went to SSLB0. The stock's commissioning job 0x40A14 loads
+ONE SPCMD: {84|value, 0A, 12(commit), 0C} — ALL to SSLB1.
+**E60k = E60j + the handshake via plat_sup_burst (single-select SSLB1),
+stock word order, sent twice.**
