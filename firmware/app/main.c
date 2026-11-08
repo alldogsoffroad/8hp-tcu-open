@@ -397,12 +397,25 @@ int main(void)
                                  * mailbox input word may depend on the module-stop state */
     (void)plat_mb_poll_init();  /* the valid window may open between capture and here */
     sup_init();
-#if defined(TCU_AUTOENGAGE)
+#if defined(TCU_AUTOENGAGE) && !defined(TCU_E60G_QUIET)
     sol_stream_gate(true);  /* E31 (spec 03 section 6.2w): the load-latch test - the
                              * drivers commission and deliver from the first 10 ms
                              * cyclic, racing the ~370 ms rail window (the stock's
                              * solenoid leap lands at +200-250 ms, anchored capture
                              * 2026-11-06). Bus-0 runs from app start. */
+#endif
+#if defined(TCU_E60G_QUIET)
+    /* E60g (spec 03 6.2au): the grant A/B. Every historical grant (E38/39 3/3,
+     * E41b lease-hold) ran with bus-0 DEAD ON THE WIRE - the five-select
+     * rotation's words at the supervisor's af01 slot never left the MCU. E60f
+     * made the transport real: the ask fully sends (delay=0/left=0), the
+     * ladder reaches HOLD, the mirror is alive - and the supervisor refuses
+     * (0x22 frozen AA90), fresh boot or aged, stream open or manually closed
+     * after the fact. Hypothesis: the LIVE cyclic words on the supervisor's
+     * select poison the parser from the first pass. This build gates bus-0
+     * OFF from init - zero words on af01 - restoring the historical wire
+     * condition deliberately. The bench can still open it live (FE13 sub0F). */
+    sol_stream_gate(false);
 #endif
     sol_init();             /* identification + configuration; all channels off */
     (void)plat_mb_poll_init();
