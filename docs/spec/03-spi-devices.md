@@ -2783,3 +2783,17 @@ chip is boot-warm at level 7), and the 0x12 commit-mask check per level-job
 reply (persistent mismatch joins the echo-retry path). Everything else —
 the ladder conversation, the self-ask at pass 21, the certification, the
 leap — unchanged.
+
+### 6.2be E60n verdict — the walk reset-loops; the observation run (2026-11-08, night end) [O]
+
+E60n (the 0x06-era walk): RESET LOOP (uptime 0 every heartbeat, ask delay
+frozen at 13 — the mirror stalled across resets; AAB0 primed echoes = fresh
+windows). The 0x8406-era word is a reset class in our context — the E16
+family (certain 84-values outside the stock's full commissioning supervisor
+reset instantly). Two regressions, one law: **the ladder's probe→token→0x841F
+confirm shape is the SAFE register conversation; every deviation resets.**
+The next step is the observation run: restore the stock, read its OWN
+commissioning cells live through its meas (the 84-value staging 0xFFF9094E/
+0xFFF9054E, the 0x12/0x24 shadows 0xFFF90551/0xFFF907D7, the letters
+0xFFF90944, the level 0xFFF93BA1) as it engages — the exact timeline ground
+truth the replica must match.
