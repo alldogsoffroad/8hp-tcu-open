@@ -2700,3 +2700,22 @@ throughout; the stock reads AA20 at the same point; the E6-era table's
 other unexplained deltas: job3 replies ours AA45/AAFF vs stock AA46/AA05).
 The sole remaining question: what closes SSLB1's output — the enables-job
 path decode (in flight) targets exactly this.
+
+### 6.2az THE WRONG-CHIP DISCOVERY — the AAFF was SSLB0 answering (2026-11-08, night end) [O]
+
+The enables-path decode (descriptors verified from ROM): the stock's
+0x40C0C and 0x40C54 load ONE SPCMD (0xAF11) — **both frames of each job go
+to SSLB1**. Our mirror ran jobs 2 and 3 through plat_sup_xfer (the
+SSLB1/SSLB0 alternation) — each job's SECOND frame (the 0x24 and 0x2E
+reads) landed on SSLB0. **The entire AAFF "refusal" history was the wrong
+chip's answer to registers it doesn't have.**
+
+Live proof (the one-shot slate, hand-fed via the five-select):
+- SSLB1 reg 0x14 = AAD5 — fault bits 6/7 (outputs 1/2, unpopulated — the
+  stock's C7 shows the same), **bit5 CLEAR: output 0 (the rail) unfaulted**
+- write 0x9020 → AA00; read 0x24 → **AA00 (no refusal)** — acknowledged,
+  data 0x00 (the certification latches only in the granted context, which
+  the probe had stopped); 0x28 → AA45; 0x2E → AA3B (real data)
+
+**E60j = E60i + jobs 2/3 routed through plat_sup_burst (single-select
+SSLB1) + the 0x90 pattern 0x21→0x20 (the stock's steady letter bit).**

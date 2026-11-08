@@ -487,7 +487,7 @@ int main(void)
      * addressed as a driver — without it, every register job on its select (E42/E45/
      * E46/E47's companions) is the reset-class violation. E16's bench: 0x21 alone was
      * benign (no reset; only the 0x24 read-back anomaly — pre-companion era). */
-    sup_app_pattern3(true, 0x90u, 0x10u, 0x21u);
+    sup_app_pattern3(true, 0x90u, 0x10u, 0x20u);   /* E60j: the stock's steady letter bit (output 0 certified); 0x21 was E10's transient */
     sup_drv_sync(true);
     /* Engaged channel staging (spec 03 section 6.2e): the live 0x88 mode flags of
      * the driving stock = the six pressure channels + line pressure in CURRENT

@@ -207,8 +207,14 @@ static void app_pattern_tick(void)
     uint16_t dj[SUP_DRV_READ_WORDS], drx[SUP_DRV_READ_WORDS];
 
     s_st.sent++;
-    if (!plat_sup_xfer(job1, rx1, 4u) || !plat_sup_xfer(job2, rx2, 2u) ||
-        !plat_sup_xfer(job3, rx3, 2u)) {
+    /* E60j (spec 03 6.2az): jobs 2 and 3 go SINGLE-SELECT (SSLB1, both frames) —
+     * the stock's descriptors 0x40C0C/0x40C54 load ONE SPCMD (0xAF11), so the
+     * 0x24 and 0x2E reads are SSLB1 reads. Our plat_sup_xfer alternation was
+     * sending each job's SECOND frame to SSLB0 — the entire AAFF "refusal" was
+     * the wrong chip's answer. Verified live: hand-fed to SSLB1, the same read
+     * returns AA00 (clean acknowledgment). */
+    if (!plat_sup_xfer(job1, rx1, 4u) || !plat_sup_burst(job2, rx2, 2u) ||
+        !plat_sup_burst(job3, rx3, 2u)) {
         s_st.busy++;
         return;
     }
