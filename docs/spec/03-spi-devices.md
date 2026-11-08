@@ -2648,3 +2648,37 @@ Corrections recorded: 0x980E0 = the A-DMAC channel configurator (6.2ap's
 DMAC-side); 0x96468 = the job launcher; the stock's cyclic is DMA-launched
 (SPCR=0xF8, DMAC count 45, TX 0xFFF88518) with vector 445 as the burst-end
 handler; idle mode words are 0x8810-class (calibration bit 4), not bare 0x8800.
+
+### 6.2ax E60i verdict — the recipe executed; the rail = a CERTIFICATION PATH (2026-11-08, night end) [O]
+
+**E60i booted and executed the decoded recipe completely:** the self-ask
+fired at ~pass 21 (+105 ms, INSIDE the window — delay=0/left=1999 = the grant
+landed on the FIRST ask pass); the leap fired (tx holds the phase-2 engaged
+setpoints e853/ed89); the drivers answered live (A212 headers, A200-class
+replies to the engaged words); the enable held for 18+ minutes (bits 0x1a).
+The ammeter: .233 spike, settle .167 — **no conduction.**
+
+**The live state at full grant:** last_tx=0x8E91 / last_rx=0xAA91 (the
+engaged shadow pair; echo AA91 = bit0 grant SET, bit4 life), the 0x22 echo =
+AA91 — and **0x24 = AAFF, the refusal byte** (the stock's engaged reading is
+AA20). The grant bit and the rail bit are DIFFERENT things: the stock's
+engaged 0x22 echo = AAA1 (bit5 = RAIL up); ours = AA91 (bit5 = 0).
+
+**THE RAIL'S TRUE NATURE (the spec's own 6.2i role decode + the choreography,
+now unified): the rail is switch output 0 on the SSLB1 chip** — a driver-
+family chip WITH SWITCH OUTPUTS whose 0x90 register bit 5 certifies output 0
+on (the 'c' state letter from the switch-output manager 0x85828/0x8C7A8; the
+stock's steady 0x90 word = 0x9020, masked ~(status&0xE0) so faulted outputs
+clear). 0x24=AA20 is that chip ACKNOWLEDGING the output on. **We have sent
+0x9021 since E10** (the "switch-enable bit 0" theory — wrong bit).
+
+**Live test on the granted boot (FE13 sub08, no flash): pattern set to the
+stock's 0x9020 — 0x24 STAYED AAFF.** The certification bit alone is not
+sufficient: the stock queues the ENABLES JOB (0x40C0C) on every letter change
+(0x92E80) — a separate bus-B job that actually enables the output — plus the
+classifier-fed letter machinery (0xFFF90944) and the status-feedback mask.
+That certification path is the one subsystem we have never exercised.
+
+**Remaining work (bounded): decode the enables job 0x40C0C's frames and the
+letter-change path, then one build that runs the certification at the grant.**
+Everything else — transport, ask, grant, leap, drivers — is proven end to end.
