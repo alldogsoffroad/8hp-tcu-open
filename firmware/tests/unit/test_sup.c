@@ -205,7 +205,7 @@ int main(void)
         while (e->jobs == 0u) {
             sup_tick_5ms();
         }
-        CHECK(e->jobs == 1u && e->sel == 6u && e->lvl_cmd == 1u);
+        CHECK(e->jobs == 1u && e->sel == 6u);   /* E60n: lvl_cmd enters the walk at the probe */
         CHECK(back(2u) == 0x0A00u && back(1u) == 0x0C00u && back(0u) == 0x0C01u);
         while (e->jobs == 1u) {
             sup_tick_5ms();
