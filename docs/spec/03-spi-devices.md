@@ -2749,3 +2749,37 @@ Undecoded candidates, in order: (1) the 84-write's runtime VALUE (the stock's
 builder 0x91190 — ours is the guessed 0x1F); (2) the classifier letters'
 internal conditions (0x85828/0x8C7A8/0x8C6D4 — what makes letters[0]='c' at
 power-on); (3) the engage-path dependency E60m exposed.
+
+### 6.2bd The three-report synthesis and E60n — the commissioning walk (2026-11-08, night end) [O]
+
+**Regression report:** the ladder's register jobs are the stock's own cyclic
+conversation (probe, the rolling-challenge duty job, the level job
+0x8400|lvl) — E60m's premise was doubly wrong (no 8E-level-rows exist; the
+jobs are stock). The pass-21 self-ask REQUIRES them (E60l/i first-pass grant
+with them vs E60m reject-without = one variable). Ungranted bit-0 = the
+instant-reset class → the reset loop. E60m's hunks reverted.
+
+**84-commissioning report:** the 84-value is a WALK, not a constant —
+0x3F (boot init) → 0x06 (monitor state 0, ~3.6 s dwell) → 0x1F (state 0x23,
+~8.6 s), the job {84|v, 0A, 12, 0C} CYCLIC (ISR 0x9106C every tick, one in
+flight via 0x93B8E); per-pass checks: 0x0A echo == value, (0x12 & 5) vs the
+phase mask {0 settle, 1|4 re-target}; whole-level restart on mismatch; the
+0x0C high nibble = the level (certify at >= 6). Our 0x1F guess was the
+stock's second era — the missing pieces: the 0x06 era, continuous
+repetition, the commit-mask check.
+
+**Classifier report + reconciliation:** letters[0]='c' is the classifier's
+ONLY certification product (we hard-code 0x20). Its "gates dead without CAN"
+verdict misattributed the job completion handlers (0x92D94/0x911D8 are the
+cyclic/84-job completions per the spec's own table, not CAN RX): the level
+gate reads the 0x0C SPI nibble (ours: 7 ✓) and the command gate reads the
+0x22 echo bit0 (ours: the grant ✓) — consistent with the stock engaging on
+our CAN-silent bench.
+
+**E60n = E60l + the stock's walk:** the ladder's level machine enters at
+lvl_cmd=0x06 (the E14 fast path retired to the retry fallback — a chip
+refusing 0x06 confirms 0x1F there), era floors 100/200 runs (~1 s/~2 s; the
+chip is boot-warm at level 7), and the 0x12 commit-mask check per level-job
+reply (persistent mismatch joins the echo-retry path). Everything else —
+the ladder conversation, the self-ask at pass 21, the certification, the
+leap — unchanged.

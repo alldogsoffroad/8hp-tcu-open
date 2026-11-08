@@ -175,13 +175,8 @@ static void app_pattern_tick(void)
     sup_engage_echo_bit0((s_st.rx_words[2] & SUP_BIT_ENABLE) != 0u);
     uint8_t bits = (uint8_t)((s_app8e & (uint8_t)~s_app_toggle) |
                              (s_toggle ? s_app_toggle : 0u));
-#if defined(TCU_E60I_RECIPE)
-    if (sup_engage_enable_bit()) {        /* E60m: the ladder idles; the echo decides */
-        bits |= SUP_BIT_ENABLE;
-#else
     if (sup_engage_active() && sup_engage_enable_bit()) {
         bits |= SUP_BIT_ENABLE;
-#endif
         /* E24 (spec 03 section 6.2p): the stock's engaged WTCR = 0x27 = RESET
          * mode (bit 6/TME clear, live I/O read). E21/E22 switched to interval
          * mode (TME set) — REMOVED: we stay in reset mode like the stock. */
@@ -255,9 +250,13 @@ static void app_pattern_tick(void)
             }
         }
     }
-#if !defined(TCU_E60I_RECIPE)
     if (sup_engage_active()) {            /* register job riding the cyclic stream:
-                                           * single bus owner, the stream never stops */
+                                           * single bus owner, the stream never stops.
+                                           * E60m tried silencing this — REGRESSION
+                                           * (reset loop): the jobs are the stock's
+                                           * own register conversation (the rolling
+                                           * challenge!) and the pass-21 self-ask
+                                           * REQUIRES them (spec 03 6.2bc/6.2bd). */
         uint16_t ej[SUP_ENG_JOB_MAX], erx[SUP_ENG_JOB_MAX];
         uint8_t en = 0u;
         if (sup_engage_poll(ej, &en)) {
@@ -268,14 +267,6 @@ static void app_pattern_tick(void)
             }
         }
     }
-#else
-    /* E60m (spec 03 6.2bb): the ladder's wire jobs SILENCED — its level-row
-     * register words (8E80|level, e.g. 8E95) are non-stock traffic on SSLB1
-     * interleaved into the stock's exact 7-job sequence; after the companion
-     * law, extra register traffic on the supervisor's select is the class
-     * chips reject. The steady bit-0 keeps flowing via the echo path below
-     * (sup_engage_active is forced true under the recipe). */
-#endif
     {   /* five-select driver read: the stock's commissioning traffic, witnessed
          * by the supervisor (its select is in the rotation) */
         uint8_t dn = 0u;

@@ -34,6 +34,17 @@ static uint32_t token(uint8_t sel)
                             * one-shot latched AA1F on the bench) */
 #define ECHO_RETRY 3u     /* 0x6C742: resend the level job while the 0x0A echo
                            * disagrees with the command */
+/* E60n (spec 03 6.2be): the stock's commissioning walk — the monitor ALWAYS
+ * walks the 84-value eras: 0x06 (state 0, dwell 6*200+0x960 ticks) then 0x1F
+ * (state 0x23, dwell 31*200+0x960), checking the 0x0A echo == value and the
+ * 0x12 commit word's bits &5 against the per-phase mask (0 settling, 1|4
+ * re-targeting), restarting the level on mismatch. Our chip is boot-warm
+ * (probe echo 0x1F, level nibble 7) so the eras run at confirm-plus-floor
+ * dwell; the E14 fast path remains the fallback when the chip refuses 0x06. */
+#define ERA_06_FLOOR 100u   /* 10 ms ladder runs: >=1 s at 0x06 (stock ~3.6 s cold) */
+#define ERA_1F_FLOOR 200u   /* >=2 s at 0x1F (stock ~8.6 s cold) */
+static uint16_t s_era_runs;     /* dwell counter for the current 84-era */
+static uint8_t  s_commit_bad;   /* 0x12 mask mismatches this level */
 
 enum { ST_IDLE = 0u, ST_SYNC = 1u, ST_RAMP = 2u, ST_HOLD = 3u };
 
@@ -165,16 +176,14 @@ void sup_engage_replies(const uint16_t *rx, uint8_t n)
         }
         harvest_fb(rx[1]);
         s.lvl_echo = (uint8_t)(rx[0] & 0x3Fu);
-        if (s.lvl_echo == LEVEL_RUN) {
-            /* E14 (spec 03 section 6.2j): the supervisor powers up at 0x1F —
-             * already engaged-ready (boot-era probe reads 1F BEFORE any level
-             * command, 2026-11-05). Do NOT disturb it with the 1..7 ramp: the
-             * stock's own law arms its enable in one monitor pass with no ramp
-             * (0x873F0, state <= 6 ~always true). Command 0x841F — confirm
-             * what is already there — and the HOLD transition follows on the
-             * first matching echo. */
-            s.lvl_cmd = LEVEL_RUN;
-        }
+        /* E60n (spec 03 6.2be): the stock ALWAYS walks the 84-eras — 0x06
+         * first (monitor state 0), then 0x1F — even on a warm chip whose
+         * probe echoes 0x1F. The E14 fast path (skip to 0x841F) is retired
+         * to the retry fallback in the level-confirm path: a chip that
+         * refuses 0x06 confirms 0x1F there instead. */
+        s.lvl_cmd = 6u;
+        s_era_runs = 0u;
+        s_commit_bad = 0u;
         s.state = ST_RAMP;               /* the exchange IS the sequence: the
                                           * fb nibble wanders (reads 7 cold) —
                                           * the stock always runs the loop */
@@ -197,29 +206,49 @@ void sup_engage_replies(const uint16_t *rx, uint8_t n)
         s.status = (uint8_t)(rx[2] & 0xFFu);
         harvest_fb(rx[3]);
         s.lvl_echo = (uint8_t)(rx[1] & 0x3Fu);
-        if (s.lvl_echo == s.lvl_cmd) {
+        /* E60n: the 0x12 commit check — the stock branches on (0x12 & 5) vs
+         * the phase mask every pass (0x911D8 -> 0x6C742): mismatch restarts
+         * the whole level. We count and treat persistent mismatch like an
+         * echo disagreement (the restart path below). */
+        {
+            const uint8_t commit = (uint8_t)(rx[2] & 0x05u);
+            const bool retargeting = s.lvl_echo != s.lvl_cmd;
+            const bool commit_ok = retargeting ? (commit == 1u || commit == 4u)
+                                               : (commit == 0u);
+            if (!commit_ok) {
+                s_commit_bad++;
+            }
+        }
+        if (s.lvl_echo == s.lvl_cmd && s_commit_bad < 4u) {
             s.echo_ok++;
             s.retries = 0u;
+            s_era_runs++;
             if (s.state == ST_RAMP) {
-                if (s.lvl_cmd < LEVEL_MAX) {
-                    s.lvl_cmd++;
-                } else if (s.lvl_cmd == LEVEL_MAX) {
-                    s.lvl_cmd = LEVEL_RUN;   /* 7 confirmed -> the engaged 0x1F */
-                } else {
-                    s.state = ST_HOLD;       /* 0x1F confirmed: steady duty arms */
+                if (s.lvl_cmd == 6u && s_era_runs >= ERA_06_FLOOR) {
+                    s.lvl_cmd = LEVEL_RUN;   /* the 0x06 era complete -> 0x1F */
+                    s_era_runs = 0u;
+                    s_commit_bad = 0u;
+                } else if (s.lvl_cmd == LEVEL_RUN && s_era_runs >= ERA_1F_FLOOR) {
+                    s.state = ST_HOLD;       /* the 0x1F era complete: certified */
+                } else if (s.lvl_cmd < 6u) {
+                    s.lvl_cmd = 6u;          /* enter the stock's walk from below */
                 }
             }
         } else {
             s.echo_bad++;
             /* 0x6C742: the confirm poll resends while the echo disagrees;
-             * after persistent mismatch step anyway (observed, logged) */
+             * after persistent mismatch step anyway (observed, logged). E60n:
+             * a warm chip refusing 0x06 (echo stuck at 0x1F) takes the E14
+             * fast path — confirm what is already there. */
             if (s.state == ST_RAMP && ++s.retries > ECHO_RETRY) {
                 s.retries = 0u;
-                if (s.lvl_cmd < LEVEL_MAX) {
-                    s.lvl_cmd++;
-                } else if (s.lvl_cmd == LEVEL_MAX) {
-                    s.lvl_cmd = LEVEL_RUN;
-                } else {
+                s_commit_bad = 0u;
+                if (s.lvl_cmd == 6u) {
+                    s.lvl_cmd = LEVEL_RUN;   /* E14 fallback: the chip is warm */
+                    s_era_runs = 0u;
+                } else if (s.lvl_cmd < 6u) {
+                    s.lvl_cmd = 6u;
+                } else if (s.lvl_cmd == LEVEL_RUN) {
                     s.state = ST_HOLD;
                 }
             }
