@@ -667,9 +667,17 @@ volatile uint8_t  rspi_a_count;
 
 bool plat_drv_xfer_irq(const uint16_t *tx, uint16_t *rx, uint8_t n)
 {
-    if (n > 64u) {
+    uint32_t sr;
+    uint32_t guard;
+    bool ok;
+
+    if (n > 64u || n == 0u) {
         return false;
     }
+
+    __asm__ volatile ("stc sr, %0" : "=r"(sr));
+    __asm__ volatile ("ldc %0, sr" : : "r"(sr | 0xF0u));   /* mask during staging */
+
     /* copy the frames into the shared buffer */
     for (uint8_t i = 0u; i < n; i++) {
         rspi_a_tx_buf[i] = tx[i];
@@ -678,7 +686,7 @@ bool plat_drv_xfer_irq(const uint16_t *tx, uint16_t *rx, uint8_t n)
     rspi_a_idx = 0u;
     rspi_a_count = n;
 
-    /* arm the peripheral: full init then SPCR=0x09 + interrupt */
+    /* the proven polled-path peripheral init */
     SPCRA = 0x00u;
     RSPIA_DMA_REQ0 = 0u;
     RSPIA_DMA_REQ1 = 0u;
@@ -692,31 +700,44 @@ bool plat_drv_xfer_irq(const uint16_t *tx, uint16_t *rx, uint8_t n)
     for (uint32_t i = 0u; i < 5u; i++) {
         SPCMDA(i) = s_drv_cmd[i];
     }
-    /* the clock gate: open before the first interrupt */
-    *(volatile uint8_t *)0xFFFE6030u = 0xF3u;
+    *(volatile uint8_t *)0xFFFE6030u = 0xF3u;              /* clock gate open */
 
-    /* trigger the first frame: write SPCR=0x09 and the first SPDR */
-    SPCRA = 0x09u;
-    *(volatile uint16_t *)0xFFFFB004u = rspi_a_tx_buf[0];
-    rspi_a_idx = 1u;
+    /* E60: the interrupt plumbing — RSPI_A is the ONLY enabled source
+     * (plat_drv_init zeroed every IPR), priority 0xE in IPR27 bits 11-8 */
+    RSPIA_IPR = (uint16_t)((RSPIA_IPR & ~0x0F00u) | 0x0E00u);
 
-    /* wait for the burst to complete (the ISR decrements count to 0) */
-    {
-        uint32_t guard = 100000u;
-        while (rspi_a_count != 0u && guard != 0u) {
-            guard--;
+    /* arm the master with the receive interrupt (manual 17.3.1: bit7 SPRIE,
+     * bit6 SPE, bit3 MSTR — the E59 value 0x09 had SPE clear and never clocked) */
+    SPCRA = 0xC8u;
+
+    /* start frame 0 exactly like the polled loop (manual 17.4.9 CPU trigger) */
+    for (guard = 20000u; guard != 0u && (SPSRA & SPSR_SPTEF) == 0u; guard--) {
+    }
+    ok = (guard != 0u);
+    if (ok) {
+        (void)SPSRA;
+        SPDRA = rspi_a_tx_buf[0];
+        (void)SPSRA;
+        SPSRA = 0u;                                        /* start trigger */
+        rspi_a_idx = 1u;
+
+        /* open the SR window: the ISR feeds frames 1..n-1 as each SPRF lands */
+        __asm__ volatile ("ldc %0, sr" : : "r"(sr & ~0xF0u));
+        for (guard = 500000u; guard != 0u && rspi_a_count != 0u; guard--) {
         }
-        if (guard == 0u) {
-            SPCRA = 0x00u;
-            rspi_a_count = 0u;
-            return false;
-        }
+        __asm__ volatile ("ldc %0, sr" : : "r"(sr));       /* restore the mask */
+        ok = (guard != 0u);
+    }
+
+    SPCRA = 0x08u;                                         /* disarm SPRIE, keep MSTR */
+    if (!ok) {
+        rspi_a_count = 0u;
+        return false;
     }
     /* copy the replies back */
     for (uint8_t i = 0u; i < n; i++) {
         rx[i] = rspi_a_rx_buf[i];
     }
-    SPCRA = 0x00u;
     return true;
 }
 
@@ -735,6 +756,17 @@ void plat_drv_spbr_set(uint8_t spbr)
 
 void plat_drv_init(void)
 {
+    /* E60: interrupt hygiene. The boot leaves its INTC armed when the
+     * application starts (live read 2026-11-08: ATU-III at priority 7 in
+     * IPR16-19, the WDT ITI at 0xE and CMT nibbles in IPR05). Any of those
+     * would vector to default_handler — a hang — the first time SR.I drops.
+     * Zero every IPR, then give RSPI_A its priority; xfer_irq re-asserts the
+     * RSPI nibble before each burst. */
+    for (uint32_t i = 3u; i <= 29u; i++) {
+        INTC_IPR(i) = 0u;
+    }
+    RSPIA_IPR = (uint16_t)((RSPIA_IPR & ~0x0F00u) | 0x0E00u);
+
     SPCRA = 0x00u;
     RSPIA_DMA_REQ0 = 0u;
     RSPIA_DMA_REQ1 = 0u;

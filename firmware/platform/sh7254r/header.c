@@ -64,19 +64,21 @@ static void default_handler(void)
     }
 }
 
-/* E59 (spec 03 section 6.2aq): the INTERRUPT-DRIVEN FEED ISR — the complete
- * transplant. Architecture corrected: the stock uses interrupt-driven CPU feeding
- * (NOT DMA). The ISR fires when the peripheral is ready for the next word, the
- * handler writes SPDR from the frame buffer, reads the reply, advances, returns.
- * The buffer and index live in .bss (plat_sh7254r.c owns them). The gate ack
- * and SPSR clear are from the stock's vector-445 decode (0x96590). */
+/* E60 (spec 03 section 6.2ar): the interrupt-driven feed ISR, corrected.
+ * E59's ISR never fired: SR.I was 15 from boot (start.S), IPR27 was 0 and
+ * SPCR=0x09 never had SPE set (manual 17.3.1: bit7 SPRIE, bit6 SPE, bit3
+ * MSTR — the old "0x09 = SPE+MSTR" decode had SPE wrong). E60 arms the burst
+ * with SPCR=0xC8 (SPRIE+SPE+MSTR), IPR27 bits 11-8 = 0xE and SR.I opened only
+ * for the burst window (plat_drv_xfer_irq); this handler then feeds frames.
+ * The feed order is the proven polled loop's (manual 17.4.9): SPTEF read,
+ * SPDR write, SPSR read, SPSR=0 (the CPU start trigger). */
 __attribute__((interrupt_handler))
 void rspi_a_isr(void)
 {
     /* volatile: shared with the mainline fill/start code */
     extern volatile uint16_t rspi_a_tx_buf[64];
     extern volatile uint16_t rspi_a_rx_buf[64];
-    extern volatile uint8_t  rspi_a_idx;     /* current frame index */
+    extern volatile uint8_t  rspi_a_idx;     /* frames already started */
     extern volatile uint8_t  rspi_a_count;   /* frames in this burst */
 
     volatile uint8_t *const spsr  = (volatile uint8_t *)0xFFFFB003u;
@@ -85,20 +87,34 @@ void rspi_a_isr(void)
     volatile uint16_t *const spdr = (volatile uint16_t *)0xFFFFB004u;
 
     /* the stock's entry protocol (0x96590 decode) */
-    *spsr = 0x20u;                       /* clear the overrun flag */
+    *spsr = 0u;                          /* SPSR acknowledge */
     (void)*gate;
-    *gate = 0xF3u;                       /* clock-gate enable (E57's missing piece) */
+    *gate = 0xF3u;                       /* clock-gate enable */
+
+    if (rspi_a_idx == 0u) {
+        /* spurious entry (no frame started): disarm and leave */
+        *spcr = 0x08u;
+        rspi_a_count = 0u;
+        return;
+    }
+
+    /* collect the reply of the frame that just completed — reading SPDR
+     * clears SPRF, the interrupt request. The reply of frame k belongs at
+     * index k: the mainline started frame 0 with idx=1, so this is idx-1. */
+    rspi_a_rx_buf[rspi_a_idx - 1u] = *spdr;
 
     if (rspi_a_idx < rspi_a_count) {
-        /* feed the next frame */
-        *spcr = 0x09u;                   /* SPE+MSTR: the active transaction value */
-        rspi_a_rx_buf[rspi_a_idx] = *spdr;  /* collect the previous reply */
-        *spdr = rspi_a_tx_buf[rspi_a_idx];  /* write the next frame */
+        /* feed the next frame (the polled loop's proven order) */
+        (void)*spsr;                     /* read SPTEF = 1 */
+        *spdr = rspi_a_tx_buf[rspi_a_idx];
+        (void)*spsr;
+        *spsr = 0u;                      /* start trigger (manual 17.4.9) */
         rspi_a_idx++;
     } else {
-        /* burst complete: disable the peripheral (stop the interrupt source) */
-        *spcr = 0x00u;
-        rspi_a_count = 0u;
+        /* burst complete: the final reply is already collected above;
+         * disarm the receive interrupt, keep MSTR (the stock's live idle) */
+        *spcr = 0x08u;
+        rspi_a_count = 0u;               /* releases the mainline wait */
     }
 }
 

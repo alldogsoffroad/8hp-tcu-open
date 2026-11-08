@@ -2436,3 +2436,60 @@ polled subset) but cannot latch writes.
 
 Every address decoded. E58c (m4c8, 177DE8C4) restores the polled
 baseline.
+
+### 6.2ar E59/E60 — the interrupt hardware was never on: SR.I, IPR27, and the SPCR layout correction (2026-11-08, night) [O]
+
+**E59 (m4c9) boot: .220 A settle → .177 A** — 11 mA above every previous
+idle (.166 A). Inference: the held 0xFFFE6030=0xF3 clock gate itself draws
+the difference; no rail movement. Live 0x361 probes:
+
+- `count=0, idx=1` stable across reads — a burst staged, timed out, cleaned
+  up. **The ISR never fired.**
+- `rx_buf` all zeros (only the ISR writes it).
+- `tx_buf[10..44]` = the PHASE2 engaged table exactly (the leap ran and
+  staged); `[0..4] = 0x0600×5` = sol_id_poll's put_cmd(0, 0x0600) overwrite
+  of the shared buffer after the cyclic's timeout. Everything staged,
+  nothing clocked.
+
+**Three independent reasons, all found statically:**
+
+1. **SR.I = 15 since boot.** start.S masks all interrupts (`ldc 0xF0, sr`)
+   and nothing ever lowers it — no maskable interrupt can fire, ever.
+2. **IPR27 = 0.** Manual table 8.4: RSPI_A's three sources (SPEIA 444,
+   SPRIA 445, SPTIA 446) share IPR27 bits 11-8 (IPR27 @ 0xFFFE0C30); reset
+   value 0 = masked at the controller. We never programmed it.
+3. **SPCR=0x09 has SPE clear.** Manual 17.3.1: **bit7 SPRIE, bit6 SPE,
+   bit5 SPTIE, bit4 SPEIE, bit3 MSTR, bit2 MODFEN; bits 1-0 reserved.**
+   The E58b-era decode "0x09 = SPE+MSTR" had SPE wrong — 0x09 is MSTR plus
+   a reserved bit. **The E58b "CPU-loop definitively dead / DMA required"
+   verdict is VOID: those builds never enabled the peripheral at all.**
+   Our proven polled 0x48 = SPE(bit6)+MSTR(bit3) — SPE was the load-bearing
+   bit all along. (The stock's decoded SPCR cycle 0x09/0x08/0x06/0x05/0x00
+   re-reads as: 0x09/0x08 = MSTR, 0x06/0x05 = SPTIE|MODFEN — with SPE=0,
+   SPTEF=1, setting SPTIE immediately raises SPTIA per the manual's own
+   note: a software interrupt kick. Parked for a future engine; not needed
+   by E60.)
+
+**Live INTC read (the boot's leftovers):** IPR05=0x120E (WDT ITI at 0xE,
+CMT nibbles), IPR16-19=0x7777/0x7000 (**ATU-III at priority 7**), IPR20=
+0x0020, IPR26=0x3000 — all still armed when our app starts. Had E59 gotten
+past the SR mask, the first ATU tick would have vectored to
+default_handler (an infinite loop) and hung the app. Post-timeout RSPI-A
+regs: SPCRA=0x00, SPSRA=0x20 (SPTEF set, SPE off — consistent).
+
+**E60 (m4ca): the corrected interrupt-driven build.**
+1. `plat_drv_init`: zero IPR03..IPR29 (hygiene), then IPR27 bits 11-8=0xE.
+2. `plat_drv_xfer_irq`: stage under SR mask; SPCR=**0xC8** (SPRIE+SPE+MSTR);
+   start frame 0 in the proven polled order (manual 17.4.9 CPU start
+   trigger: SPTEF read → SPDR write → SPSR read → SPSR=0); open SR.I only
+   for the burst window; restore; SPCR=0x08 (disarm, the stock's live idle).
+3. `rspi_a_isr`: reply collected at **idx-1** (E59 stored the reply of
+   frame k at rx[k+1] and never collected the final reply — an off-by-one
+   that would have scrambled every read-back even if the ISR had fired);
+   feed reproduces the polled order verbatim; spurious-entry guard; burst
+   end writes SPCR=0x08 and count=0.
+4. The bus-B polled transport and the 0x48 driver-read path are unchanged.
+
+Vector-table arithmetic re-verified against the manual: table offset =
+4 × vector number (SPRIA 445 → 0x6F4; our array index 441 at header+0x764,
+VBR = header+0x70) — no off-by-one.

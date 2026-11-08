@@ -16,6 +16,14 @@
 #define WDT_WRCR    REG16(0xFFFE0006u)  /* write: 0x5Axx */
 #define WDT_RSTCSR  REG16(0xFFFE0004u)  /* RSTCSR: WOVF clear via 0xA5-keyed write */
 #define WDT_IPR     REG16(0xFFFE0C04u)  /* watchdog interrupt priority (stock 0x978A4: 0xE) */
+/* INTC interrupt priority registers (manual section 8, register table):
+ * IPR03..IPR29 at 0xFFFE0C00..0xFFFE0C34, 16-bit, one 4-bit priority nibble per
+ * source. E60 live read: the boot leaves ATU-III sources at priority 7
+ * (IPR16-19 = 0x7777/0x7000), the WDT ITI at 0xE and CMT nibbles in IPR05 —
+ * all still armed when the application starts. Table 8.4: RSPI_A's three
+ * sources (SPEIA/SPTIA/SPRIA, vectors 444/445/446) share IPR27 bits 11-8. */
+#define INTC_IPR(n)  REG16(0xFFFE0C00u + 2u * ((n) - 3u))   /* IPR03..IPR29 */
+#define RSPIA_IPR    INTC_IPR(27)                            /* bits 11-8: RSPI_A group */
 
 /* ---- Compare match timer (section 15) ---------------------------------- */
 #define CMT_CMSTR   REG16(0xFFFEC000u)  /* bit0 STR0, bit1 STR1 */
