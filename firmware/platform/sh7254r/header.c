@@ -93,6 +93,16 @@ void rspi_a_isr(void)
     volatile uint8_t *const gate  = (volatile uint8_t *)0xFFFE6030u;
     volatile uint16_t *const spdr = (volatile uint16_t *)0xFFFFB004u;
 
+    /* E60c: entry announce — a 0x7F6 here proves delivery + entry work; silence
+     * with a DEADBABE means the fault precedes the first ISR instruction */
+    {
+        can_frame_t f = { .id = 0x7F6u, .dlc = 8u,
+                          .data = { 0xE6u, 0x45u, 0, 0, 0, 0, 0, 0 } };
+        f.data[2] = rspi_a_idx;
+        f.data[3] = rspi_a_count;
+        (void)plat_can_send(CAN_BUS1, &f);
+    }
+
     /* the stock's entry protocol (0x96590 decode) */
     *spsr = 0u;                          /* SPSR acknowledge */
     (void)*gate;
@@ -125,6 +135,32 @@ void rspi_a_isr(void)
     }
 }
 
+/* E60c: the announce net. E60b's DEADBABE fired at the exact arm moment — an
+ * interrupt delivers but lands somewhere unexpected. Each RSPI-area vector now
+ * names itself on the bus (0x7F5 [0xE6, vecnum]) before hanging: 444 = SPEIA
+ * (error), 445 = the ISR's own entry announce, 446 = SPTIA (transmit), 447/448
+ * = alignment sentinels (a 447/448 hit means the vector numbering itself is
+ * shifted). One flash names the culprit exactly. */
+static void announce_vec(uint8_t which)
+{
+    can_frame_t f = { .id = 0x7F5u, .dlc = 8u, .data = { 0xE6u, 0, 0, 0, 0, 0, 0, 0 } };
+    f.data[1] = which;
+    (void)plat_can_send(CAN_BUS1, &f);
+}
+
+#define ANN_HANDLER(n)                                              \
+    static void ann_##n(void) __attribute__((interrupt_handler));   \
+    static void ann_##n(void)                                       \
+    {                                                               \
+        announce_vec(n);                                            \
+        for (;;) { }                                                \
+    }
+
+ANN_HANDLER(444)
+ANN_HANDLER(446)
+ANN_HANDLER(447)
+ANN_HANDLER(448)
+
 /* Vectors 4..511 (508 entries), at header +0x80.
  * Layout: 7 x V64 (vectors 4-259) | V16 x3 (260-307) | V4 x3 (308-319)
  * then the tail: V4, V4 = vectors 320-327... vector 445 = index 441 (0-based). */
@@ -139,16 +175,17 @@ void (*const app_vectors[508])(void) = {
     V16(default_handler), V16(default_handler), V16(default_handler),
     /* vectors 308..319 (indices 304..315): 3 x V4 */
     V4(default_handler), V4(default_handler), V4(default_handler),
-    /* indices 316..440 (125 default entries) — 64 + 48 + 12 + 1 */
+    /* indices 316..440 (125 entries) — 64 + 48 + 12 + 1 */
     V64(default_handler),
     V16(default_handler), V16(default_handler), V16(default_handler),
     V4(default_handler), V4(default_handler), V4(default_handler),
-    default_handler,
-    /* index 441 = VECTOR 445: the RSPI-A interrupt (stock handler 0x96590) */
-    rspi_a_isr,
-    /* indices 442..507 (66 default entries) — 64 + 2 */
-    V64(default_handler),
-    default_handler, default_handler,
+    ann_444,                 /* index 440 = VECTOR 444 (SPEIA, error) */
+    rspi_a_isr,              /* index 441 = VECTOR 445 (SPRIA) — the feed */
+    ann_446, ann_447, ann_448,   /* vectors 446/447/448: SPTIA + sentinels */
+    /* indices 445..507 (63 default entries) — 48 + 12 + 3 */
+    V16(default_handler), V16(default_handler), V16(default_handler),
+    V4(default_handler), V4(default_handler), V4(default_handler),
+    default_handler, default_handler, default_handler,
 };
 
 /* Tail record at 0x17FB70 (outside the CRC range): project identification and end marker. */
