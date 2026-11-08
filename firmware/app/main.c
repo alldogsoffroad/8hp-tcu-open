@@ -538,8 +538,16 @@ int main(void)
     }
     /* E51: the boot companion — the stock's driver cyclic from app start,
      * bit0-free (the stock's rail is up at +250 ms, 15 s before any bit0;
-     * E50b proved our register jobs survive bit0-free). No ask is armed. */
+     * E50b proved our register jobs survive bit0-free). No ask is armed.
+     * E60h (spec 03 6.2au): the bisect pinned the grant-breaker to E50-E53;
+     * E50/E52 were bench-armed (not boot-time), E49 grants, E53 refuses —
+     * and the grant was NEVER re-tested after E51 landed this companion.
+     * It sends the driver-cyclic register words to the supervisor on bus B
+     * continuously from boot: the prime suspect. Under the QUIET define the
+     * companion stays off — the historical E49 wire condition, deliberately. */
+#if !defined(TCU_E60G_QUIET)
     sup_drv_cyclic_boot(true);
+#endif
 #endif
     sched_init(s_tasks, (uint8_t)(sizeof s_tasks / sizeof s_tasks[0]));
 
