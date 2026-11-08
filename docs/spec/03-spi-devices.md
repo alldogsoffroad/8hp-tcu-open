@@ -2560,3 +2560,38 @@ supervisor's 5 ms mirror passes; one late pass flips echo_grant off. The
 ammeter has never moved on ANY granted stream (E39/E49/E60h): the rail bit
 was 0 throughout — grant ≠ conduction; the drivers must be driven WHILE the
 grant holds, which the current 10 ms cyclic cadence breaks.
+
+### 6.2av CORRECTION to 6.2au: there was no withdrawal — it was the E42 RESET WALL (2026-11-08, night) [O]
+
+The "withdrawal" recorded at the end of 6.2au (stream-open under a standing
+grant → enable falls within seconds) was misread. The heartbeat **uptime
+counter** (0x7F0 data[2..3]) read 876 s at 20:24:34 — the app (re)started at
+**20:09:58, the exact second of the FE13 gate-open**. The enable bit "falling"
+0x1a → 0x12 was the REBOOTED app's first heartbeats.
+
+**Reconstruction:** the grant landed at 20:08:48 (companion off). The FE13
+stream-open at 20:09:57 fired the lazy commissioning immediately — `job_id` +
+`job_config(CFG_8E)`: 40 words, register-class, five-select WITH the
+supervisor's select in the rotation, **bit0 in play** → the E42 five-select
+wall → supervisor-initiated MCU reset, instantly. The fresh app then ran the
+same job_config once more **ungated** (a seam: job_config bypasses the
+stream gate; it fires at ladder level changes regardless) — and it SURVIVED,
+because bit0 was no longer in play. Both directions of the law observed
+inside one minute:
+
+**THE UNIFIED LAW (supersedes the separate E40b-withdrawal reading):**
+register-class words reaching the supervisor's bus-A select —
+- bit0-free → no reset, but the supervisor REFUSES all grants thereafter
+  (E60g's frozen AA90; the E50b survival law's flip side), and
+- with bit0 in play → immediate MCU reset (E42d's wall; tonight 20:09:58).
+
+Other notes: boot_trips read 1 after the reset — CONSISTENT, because the
+boot manager wipes .noinit on every handover (the counter cannot count soft
+resets; the uptime field is the reliable reboot witness). The frozen tx_buf
+audited at 20:20 was the post-reset app's lone config job; the engaged
+cyclic never ran on that boot (stream closed at reboot, per the QUIET gate).
+
+PENDING (the four parallel investigations): the stock's true select map,
+the E42d-era experimental danger map, the +250 ms choreography, and the
+alignment reconciliation — after which the next flash executes the decoded
+recipe rather than testing a hypothesis.
