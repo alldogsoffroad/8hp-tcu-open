@@ -2682,3 +2682,21 @@ That certification path is the one subsystem we have never exercised.
 **Remaining work (bounded): decode the enables job 0x40C0C's frames and the
 letter-change path, then one build that runs the certification at the grant.**
 Everything else — transport, ask, grant, leap, drivers — is proven end to end.
+
+### 6.2ay The ring verdict — continuity DEAD; the output stage is everything (2026-11-08, night end) [O]
+
+**The E60i boot's echo ring (g_sup_rx_hist, the 0x22 echo per pass):**
+passes 2-20 = AAB0 (bit5 = the rail PRIMED from our first passes — the
+handover was gapless; the 2026-11-05 continuity theory is DEAD); pass 21 =
+AAB1 (the self-ask fired at its armed pass and the supervisor accepted on
+the FIRST pass — grant + primed rail coexisted for 44 passes); pass 65 =
+AA91 (bit5 dropped at the window close — the "primed, not conducting" law
+confirmed to the pass). The ammeter never moved during the entire B1 era.
+
+**Therefore:** the conversation is flawless and accepted, the window was
+used correctly, the drivers were commanded with the engaged values while
+the rail was primed — and the output stage still never closed (0x24 = AAFF
+throughout; the stock reads AA20 at the same point; the E6-era table's
+other unexplained deltas: job3 replies ours AA45/AAFF vs stock AA46/AA05).
+The sole remaining question: what closes SSLB1's output — the enables-job
+path decode (in flight) targets exactly this.
