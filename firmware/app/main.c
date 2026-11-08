@@ -529,14 +529,16 @@ int main(void)
      * handshake; ours arrived uncommissioned. Sent through the existing
      * alternating transport (even frames -> SSLB1, odd -> SSLB0 reads). */
     {
-        /* E60k (spec 03 6.2ba): ALL frames to SSLB1 (single-select burst) —
-         * the stock's commissioning job 0x40A14 loads ONE SPCMD; our old
-         * alternation sent every other word to SSLB0. THE MISSING
-         * COMMISSIONING (the 6.2ah hypothesis, now mechanism-known): the
-         * certification (0x9020) latches only on a commissioned chip. The
-         * 0x1200 commit answers AAC2 when hand-fed — the chip is listening. */
+        /* E60l (spec 03 6.2ba): the FULL stock handshake, ALL frames to
+         * SSLB1 (single-select). E60k dropped the 0x8800x4 mode-register
+         * preamble when re-routing — but SSLB1 is a driver-family chip: its
+         * 0x88 registers are its CHANNEL MODES, mode-set before the commit
+         * sequence. The certification cannot latch on unmodeled channels. */
+        static const uint16_t w1[7] = {0x8800u, 0x8800u, 0x8800u, 0x8800u,
+                                        0x1200u, 0x0C00u, 0x0A00u};
         static const uint16_t w2[4] = {0x841Fu, 0x0A00u, 0x1200u, 0x0C00u};
         uint16_t rx[8];
+        (void)plat_sup_burst(w1, rx, 7u);
         (void)plat_sup_burst(w2, rx, 4u);
         (void)plat_sup_burst(w2, rx, 4u);   /* the stock repeats commissioning */
     }
