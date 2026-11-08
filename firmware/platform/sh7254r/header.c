@@ -57,15 +57,38 @@ const struct app_header app_header = {
     .entry       = start,
 };
 
-/* Unexpected exception or interrupt: announce on CAN, then hold.
- * E60b: E60 booted with zero bus activity — if an unexpected vector is the
- * killer, this names it. The mailbox registers are safe to write from any
- * context and the CAN controller transmits autonomously. */
-static void default_handler(void) __attribute__((interrupt_handler));
+/* E60d: the exception frame reader. Manual 7.5.3: on exception entry the
+ * hardware pushes SR then PC, so @r15 = the faulting (or interrupted) PC and
+ * @(r15,4) = SR. The naked entry captures both and the body announces them —
+ * one frame resolves against the map to the exact instruction. */
+void default_body(uint32_t pc, uint32_t sr);   /* global: resolved from naked asm */
+__attribute__((naked))
 static void default_handler(void)
 {
-    can_frame_t f = { .id = 0x7F5u, .dlc = 8u,
-                      .data = { 0xDEu, 0xADu, 0xBAu, 0xBEu, 0, 0, 0, 0 } };
+    /* basic asm only inside naked; this toolchain prefixes C symbols with _ */
+    __asm__ volatile (
+        "mov.l  @r15, r4        \n"     /* the faulting/interrupted PC  */
+        "mov.l  @(4, r15), r5   \n"     /* SR at the moment of fault    */
+        "mov.l  3f, r0          \n"
+        "jsr    @r0             \n"
+        " nop                   \n"
+        "9: bra   9b            \n"     /* default_body never returns   */
+        " nop                   \n"
+        ".align 2               \n"
+        "3: .long _default_body \n"
+    );
+}
+
+__attribute__((used))              /* referenced only from the naked asm; keep under --gc-sections */
+void default_body(uint32_t pc, uint32_t sr)
+{
+    can_frame_t f = { .id = 0x7F5u, .dlc = 8u, .data = { 0xDEu, 0xADu, 0, 0, 0, 0, 0, 0 } };
+    f.data[2] = (uint8_t)(pc >> 24);
+    f.data[3] = (uint8_t)(pc >> 16);
+    f.data[4] = (uint8_t)(pc >> 8);
+    f.data[5] = (uint8_t)pc;
+    f.data[6] = (uint8_t)(sr >> 16);
+    f.data[7] = (uint8_t)(sr >> 8);
     (void)plat_can_send(CAN_BUS1, &f);
     for (;;) {
     }
@@ -93,12 +116,13 @@ void rspi_a_isr(void)
     volatile uint8_t *const gate  = (volatile uint8_t *)0xFFFE6030u;
     volatile uint16_t *const spdr = (volatile uint16_t *)0xFFFFB004u;
 
-    /* E60c: entry announce — a 0x7F6 here proves delivery + entry work; silence
-     * with a DEADBABE means the fault precedes the first ISR instruction */
-    {
+    /* E60d: announce only at burst START (idx==1) and burst END (the else
+     * branch) — the E60c per-interrupt announce flooded the 7 TX mailboxes;
+     * start/end pairs prove burst completion cleanly (E60c already proved
+     * delivery: 11 entries, idx feeding, two bursts staged) */
+    if (rspi_a_idx == 1u) {
         can_frame_t f = { .id = 0x7F6u, .dlc = 8u,
-                          .data = { 0xE6u, 0x45u, 0, 0, 0, 0, 0, 0 } };
-        f.data[2] = rspi_a_idx;
+                          .data = { 0xE6u, 0x45u, 0x01u, 0, 0, 0, 0, 0 } };
         f.data[3] = rspi_a_count;
         (void)plat_can_send(CAN_BUS1, &f);
     }
@@ -132,6 +156,12 @@ void rspi_a_isr(void)
          * disarm the receive interrupt, keep MSTR (the stock's live idle) */
         *spcr = 0x08u;
         rspi_a_count = 0u;               /* releases the mainline wait */
+        {   /* E60d: burst-END announce with the final idx */
+            can_frame_t f = { .id = 0x7F6u, .dlc = 8u,
+                              .data = { 0xE6u, 0x45u, 0x02u, 0, 0, 0, 0, 0 } };
+            f.data[3] = rspi_a_idx;
+            (void)plat_can_send(CAN_BUS1, &f);
+        }
     }
 }
 
