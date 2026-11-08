@@ -105,6 +105,8 @@ void sup_drv_setpoint_arm(bool on);
  * 45-frame driver cyclic on the five-select rotation with the supervisor's
  * select at frame 2, at the stock's 10 ms cadence, grant-independent. The
  * supervisor witnesses the setpoint rows; frame 2 carries the benign 0x10
+ * [E60i note, spec 03 6.2aw: on BUS B, frame 2 (SSLB1) IS the supervisor — the
+ *  frame-2 register words are the Law-C grant poison. This companion is OFF.]
  * mode and zero setpoints (the E42 reset was the 0x881A dialect error).
  * sp = the 11-bit setpoint mirrored to the four real chips' frames. */
 void sup_drv_cyclic_arm(bool on, uint16_t sp);

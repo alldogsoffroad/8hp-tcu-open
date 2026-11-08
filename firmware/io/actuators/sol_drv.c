@@ -184,13 +184,13 @@ static void job_status(void)
 static void job_cyclic(void)
 {
 #if defined(TCU_AUTOENGAGE)
-    /* E59 (spec 03 section 6.2aq): THE LEAP — the two-phase cyclic.
-     * Phase 1 (first 25 ticks = 250ms): mode=0x8800 (disabled), setpoints=0.
-     * Phase 2 (+250ms onward): the captured ENGAGED values (the leap).
-     * This mimics the stock's park-arbiter engage at +250ms (0xA57DA, reason
-     * 0x17): the 0→engaged STEP during the rail window (~320ms) is what the
-     * supervisor may need to see to hold the rail. Sending engaged values
-     * from boot would skip the transition. */
+    /* E60i timing correction (spec 03 6.2aw): the stock's leap lands at
+     * T+200-250 ms FROM POWER-ON (choreography decode: park decision ~+150 ms,
+     * ~100 ms fill phases, step at ~+200-250 ms; ammeter 1910 mA at +250 ms).
+     * Our scheduler starts ~+95 ms after power-on (the boot-manager handover),
+     * so phase 1 = 15 ticks (150 ms) puts the step at ~+245 ms from power-on —
+     * inside the ~320 ms rail window with margin. The E59 value (25 ticks)
+     * landed at ~+345 ms — past the window close. */
     {
         static const uint16_t PHASE1_CYC[45] = {
             /* mode 0x00 = both channels DISABLED, all setpoints 0 */
@@ -217,9 +217,9 @@ static void job_cyclic(void)
             0xD800u, 0xD800u, 0xD800u, 0xD800u, 0xD800u,
         };
         static uint8_t s_leap_ticks;    /* counts 10ms cyclic passes */
-        const uint16_t *tbl = (s_leap_ticks < 25u) ? PHASE1_CYC : PHASE2_CYC;
-        if (s_leap_ticks < 25u) {
-            s_leap_ticks++;             /* advance toward the leap */
+        const uint16_t *tbl = (s_leap_ticks < 15u) ? PHASE1_CYC : PHASE2_CYC;
+        if (s_leap_ticks < 15u) {
+            s_leap_ticks++;             /* advance toward the leap (E60i: 15 ticks) */
         }
         for (uint8_t i = 0u; i < 45u; i++) {
             s_tx[i] = tbl[i];

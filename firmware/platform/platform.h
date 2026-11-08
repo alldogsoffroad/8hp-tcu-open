@@ -87,7 +87,10 @@ bool plat_sup_burst2(const uint16_t *tx, uint16_t *rx, uint8_t n);
  * two-command jobs). E15 (spec 03 section 6.2m): the stock's cyclic job 0x40BC0
  * sends its one-word status-nibble poll to SSLB0 alone (select cfg 0x40B76). */
 bool plat_sup_burst0(const uint16_t *tx, uint16_t *rx, uint8_t n);
-/* Five-select rotation (SSLB3/2/1/0/5, select cfg 0x40CE4 = AF31/AF21/AF11/AF01/AF51).
+/* Five-select rotation on bus B (SSLB3/2/1/0/5 in bus-B pin terms; select cfg 0x40CE4 =
+ * AF31/AF21/AF11/AF01/AF51 — SPCMD values are PERIPHERAL-RELATIVE: the same table on bus A
+ * walks SSLA3/2/1/0/5 = the four driver chips + the dead fifth select; on bus B index 2
+ * (AF11 = SSLB1) is the supervisor. E60i decode, spec 03 6.2aw.)
  * CORRECTED 2026-11-04 (spec 03 section 6.2e): 0x40CE4 is the stock's BUS-0 five-select —
  * the ID/write/setpoint commissioning jobs run on RSPI-A (SSLA3/2/1/0/5, driver chips;
  * their live RX staging carries the bus-0 signature A200 x4 + 0000). The supervisor does

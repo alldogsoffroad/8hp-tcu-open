@@ -397,25 +397,25 @@ int main(void)
                                  * mailbox input word may depend on the module-stop state */
     (void)plat_mb_poll_init();  /* the valid window may open between capture and here */
     sup_init();
-#if defined(TCU_AUTOENGAGE) && !defined(TCU_E60G_QUIET)
-    sol_stream_gate(true);  /* E31 (spec 03 section 6.2w): the load-latch test - the
-                             * drivers commission and deliver from the first 10 ms
-                             * cyclic, racing the ~370 ms rail window (the stock's
-                             * solenoid leap lands at +200-250 ms, anchored capture
-                             * 2026-11-06). Bus-0 runs from app start. */
+#if defined(TCU_AUTOENGAGE)
+    sol_stream_gate(true);  /* E60i (spec 03 6.2aw): stream OPEN from init - the
+                             * four-agent decode exonerated bus A entirely (the
+                             * supervisor is RSPI-B/SSLB1; it physically cannot
+                             * hear a bus-A frame - RSPI-B lacks SSL3/SSL5). The
+                             * stock commissions the drivers from its first 10 ms
+                             * pass, BEFORE bit 0 flows; we replicate that order. */
 #endif
-#if defined(TCU_E60G_QUIET)
-    /* E60g (spec 03 6.2au): the grant A/B. Every historical grant (E38/39 3/3,
-     * E41b lease-hold) ran with bus-0 DEAD ON THE WIRE - the five-select
-     * rotation's words at the supervisor's af01 slot never left the MCU. E60f
-     * made the transport real: the ask fully sends (delay=0/left=0), the
-     * ladder reaches HOLD, the mirror is alive - and the supervisor refuses
-     * (0x22 frozen AA90), fresh boot or aged, stream open or manually closed
-     * after the fact. Hypothesis: the LIVE cyclic words on the supervisor's
-     * select poison the parser from the first pass. This build gates bus-0
-     * OFF from init - zero words on af01 - restoring the historical wire
-     * condition deliberately. The bench can still open it live (FE13 sub0F). */
-    sol_stream_gate(false);
+#if defined(TCU_E60I_RECIPE)
+    /* E60i: the companion stays OFF (Law C, spec 03 6.2au - the bus-B boot
+     * companion's frame-2 register words prevented every grant for seven
+     * builds). Replaces the E60G_QUIET gate: bus A is safe to run. */
+    /* THE SELF-ASK (the stock's decoded choreography, 0x873F0 one-shot ->
+     * 0x91C86): the stock's bit 0 first flows ~10-20 ms after app start and
+     * never stops - NOT bench-armed, NOT gated on engage. We arm internally:
+     * delay 20 mirror passes = ask beginning ~+100 ms after the mirror starts,
+     * inside the ~320 ms rail window - "the one cell never tested" (E20,
+     * spec 03 6.2o note) now executed as the stock executes it. */
+    sup_bit0_boot_arm(2000u, 20u);
 #endif
     sol_init();             /* identification + configuration; all channels off */
     (void)plat_mb_poll_init();
@@ -542,10 +542,12 @@ int main(void)
      * E60h (spec 03 6.2au): the bisect pinned the grant-breaker to E50-E53;
      * E50/E52 were bench-armed (not boot-time), E49 grants, E53 refuses —
      * and the grant was NEVER re-tested after E51 landed this companion.
-     * It sends the driver-cyclic register words to the supervisor on bus B
-     * continuously from boot: the prime suspect. Under the QUIET define the
-     * companion stays off — the historical E49 wire condition, deliberately. */
-#if !defined(TCU_E60G_QUIET)
+     * E60i (6.2aw): the four-agent decode confirmed it — the companion's
+     * frame-2 register words land on the supervisor's SSLB1 (bus B), the
+     * ONLY live wire on either bus: bit0-free they poison grants, with bit0
+     * they reset. The stock never sends driver-cyclic words on bus B at all
+     * (its driver cyclic is bus-A only; the two buses never cross). OFF. */
+#if !defined(TCU_E60I_RECIPE)
     sup_drv_cyclic_boot(true);
 #endif
 #endif

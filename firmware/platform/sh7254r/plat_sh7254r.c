@@ -733,9 +733,15 @@ bool plat_drv_xfer_irq(const uint16_t *tx, uint16_t *rx, uint8_t n)
         SPSRA = 0u;                                        /* start trigger */
         rspi_a_idx = 1u;
 
-        /* open the SR window: the ISR feeds frames 1..n-1 as each SPRF lands */
+        /* open the SR window: the ISR feeds frames 1..n-1 as each SPRF lands.
+         * E60i: guard = 100000 (~4 ms). The E59 value (500000, ~20 ms)
+         * equaled the supervisor's stall-reset threshold by itself — ONE hung
+         * burst could delay the bus-B mirror past the E28 enforcement limit
+         * and hard-reset the MCU (the leading mechanism for the 20:09:58
+         * reset, spec 03 6.2aw). A healthy 45-frame burst completes in
+         * ~300 µs; 4 ms is generous and can never approach 20 ms doubled. */
         __asm__ volatile ("ldc %0, sr" : : "r"(sr & ~0xF0u));
-        for (guard = 500000u; guard != 0u && rspi_a_count != 0u; guard--) {
+        for (guard = 100000u; guard != 0u && rspi_a_count != 0u; guard--) {
         }
         __asm__ volatile ("ldc %0, sr" : : "r"(sr));       /* restore the mask */
         ok = (guard != 0u);

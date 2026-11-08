@@ -2595,3 +2595,56 @@ PENDING (the four parallel investigations): the stock's true select map,
 the E42d-era experimental danger map, the +250 ms choreography, and the
 alignment reconciliation — after which the next flash executes the decoded
 recipe rather than testing a hypothesis.
+
+### 6.2aw The four-agent decode and THE DECODED RECIPE (E60i) (2026-11-08, night end) [O]
+
+Four parallel static investigations (Ghidra select map; bench-log danger map;
++250 ms choreography decode; alignment reconciliation) converged without
+contradiction and settled the topology, the ammeter theory, and the recipe.
+
+**TOPOLOGY, SETTLED:** bus A (RSPI-A) = four driver chips (SSLA3/SSLA2/SSLA1/
+SSLA0, the 0xA2 class) + one dead select (SSLA5, 0x0000 replies) — word i →
+SPCMD[i mod 5], every job restarting at SPCMD0 (launcher 0x96468, table
+0x40CE4). **The supervisor is NOT in the bus-A rotation at all** — it is
+RSPI-B/SSLB1, and RSPI-B physically lacks SSL3/SSL5, so it cannot hear a
+bus-A frame. The origin of every conflicting note: the supervisor's bus-B
+select word is numerically 0xAF11 = bus-A SPCMD2's value (SPCMD values are
+peripheral-relative). All register-word danger lives on bus B SSLB1: bit0-free
+→ grant-poison (the companion, Law C), with bit0 → reset (E42-E50). The
+stock's own write job sends 8E9F/9021/9655 on BUS A (driver PWM/config
+registers — 0x8E9F is the driver 1 kHz PWM constant, NOT a supervisor word).
+
+**THE AMMETER THEORY, UNIFIED:** the stock timeline = rail (boot manager's
+gapless 5 ms service, from T+0 — the rail never drops) + bit0 flowing from
+~T+105 ms (one-shot enable 0x873F0 → 0x91C86; NOT engage-coupled, NOT
+bench-armed) + the leap at T+200-250 ms (park arbiter target 8/0x17 → ~100 ms
+fill phases → letters 0→0x21 → records → cyclic words step; 1910 mA at
++250 ms) — all inside the ~320 ms window. **No test of ours ever had all
+three coincidences:** every ask landed outside the window (the proven recipe's
+pass 150 = +750 ms; "the one cell never tested: asking while the rail is
+still up" — the E20 note), and window-open boots never had grant+drivers.
+Additionally: the stock runs BOTH buses interrupt-driven at equal priority
+(IPR27 nibbles = 4/4) — neither bus ever waits on the mainline; our polled
+bus-B mirror under bus-A burst load is the lateness class (withdrawal at
+~11-20 ms late; hard reset past the E28 threshold). The E59 burst guard
+(500000 ≈ 20 ms) equaled the reset threshold BY ITSELF — one hung burst was
+sufficient; the leading mechanism for the 20:09:58 reset (6.2av's open item),
+now that the word-wall reading is impossible for bus A.
+
+**THE E60I RECIPE (the decoded choreography, executed):**
+1. Companion OFF (Law C) — the stock never sends driver-cyclic words on bus B.
+2. Stream OPEN from init; the config job commissions the drivers BEFORE bit0
+   (the stock's order: config from the first 10 ms pass, bit0 from +105 ms).
+3. THE SELF-ASK: sup_bit0_boot_arm(2000, 20) at init — bit0 flows from mirror
+   pass ~20 (+100 ms), inside the window, the stock's one-shot timing.
+4. THE LEAP: phase 1 = 15 ticks (150 ms) → phase 2 (the captured engaged
+   values) at ~+245 ms from power-on (sched starts ~+95 ms after the boot
+   handover; the E59 value of 25 ticks landed at ~+345 ms — past the close).
+5. Guard 500000 → 100000 (~4 ms): a hung burst can never approach the 20 ms
+   stall threshold; the 5 ms task order already runs the mirror before the
+   bus-A bursts.
+Corrections recorded: 0x980E0 = the A-DMAC channel configurator (6.2ap's
+"SPCMD bit 13 = DMA enable" is wrong — SPCMD bit 13 is SPNDEN; the |0x2000 is
+DMAC-side); 0x96468 = the job launcher; the stock's cyclic is DMA-launched
+(SPCR=0xF8, DMAC count 45, TX 0xFFF88518) with vector 445 as the burst-end
+handler; idle mode words are 0x8810-class (calibration bit 4), not bare 0x8800.
