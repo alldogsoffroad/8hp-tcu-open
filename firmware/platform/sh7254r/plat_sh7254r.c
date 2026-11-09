@@ -69,8 +69,9 @@ static void wdt_init(void)
     WDT_WTCR  = 0xA547u;    /* stop (TME = 0) before changing the clock select */
     WDT_WRCR  = 0x5A80u;    /* kept: irrelevant in interval mode (no reset path) */
     WDT_WTCNT = 0x5AB7u;    /* first overflow after ~60 ms                     */
-    WDT_WTCR  = 0xA527u;    /* E28: INTERVAL mode, running, P/16384 — the stock's
-                             * engaged word (live 0x27), no self-reset */
+    WDT_WTCR  = 0xA567u;    /* the rebuild law (design §5.6): watchdog RESET mode,
+                             * P/5120 — interval mode comes ONLY later, on the
+                             * echo-confirmed enable edge (plat_wdt_mode) */
 }
 
 void plat_wdt_service(void)
@@ -78,41 +79,8 @@ void plat_wdt_service(void)
     WDT_WTCNT = 0x5ADBu;    /* ~30 ms to overflow */
 }
 
-/* Watchdog mode switch (unused since E24; kept for the lab). Manual-corrected
- * decode: bit 6 WT/IT — 1 = watchdog, 0 = interval. The stock enable-edge
- * behavior (0x978A4 / 0x97850): on the output-enable edge the app moves its
- * own watchdog into interval-timer mode with the interrupt priority raised to
- * 0xE; on disable back to reset mode with WRCR = 0x5A80. Interrupts stay
- * globally masked in this firmware, so the interval-mode IRQ only pends; in
- * interval mode the WDTOVF pin stays quiet (manual s14.1: the pin output is a
- * watchdog-mode feature). */
-void plat_wdt_mode(bool interval)
-{
-    uint32_t sr;
-
-    __asm__ volatile ("stc sr, %0" : "=r"(sr));
-    __asm__ volatile ("ldc %0, sr" : : "r"(sr | 0xF0u));
-    if (interval) {
-        if ((WDT_WTCR & 0x40u) != 0u) {
-            if ((WDT_WTCR & 0x20u) == 0u) {
-                WDT_WTCR = (uint16_t)((WDT_WTCR & 0xFFBFu) | 0xA500u);
-            } else {
-                WDT_WTCR = (uint16_t)((WDT_WTCR & 0xFF9Fu) | 0xA520u);
-            }
-        }
-        WDT_IPR = (uint16_t)((WDT_IPR & 0xFFF0u) | 0xEu);
-    } else {
-        if ((WDT_WTCR & 0x40u) == 0u) {
-            if ((WDT_WTCR & 0x20u) == 0u) {
-                WDT_WTCR = (uint16_t)(WDT_WTCR | 0xA540u);
-            } else {
-                WDT_WTCR = (uint16_t)((WDT_WTCR & 0xFFDFu) | 0xA560u);
-            }
-        }
-        WDT_WRCR = 0x5A80u;
-    }
-    __asm__ volatile ("ldc %0, sr" : : "r"(sr));
-}
+/* plat_wdt_mode moved to plat_wdt.c (the rebuild design §5.6 law: reset
+ * mode default, interval ONLY on an echo-confirmed enable edge). */
 
 /* ---- 1 ms tick: CMT0, P/8 = 2.5 MHz, compare 2499 --------------------------- */
 static void tick_init(void)
@@ -1316,4 +1284,28 @@ void plat_init(void)
     (void)can_init(RCAN_A_BASE);
     (void)can_init(RCAN_C_BASE);
     plat_wdt_service();
+}
+
+/* ---- Rebuild additions (design §5) --------------------------------------------- */
+
+/* FRT microsecond timestamp (design §3): timer A counts at 1 MHz (16-bit).
+ * The wrap is tracked in software: this is called at least once per 65 ms
+ * (every 5 ms batch pass and every era check), so one compare suffices. */
+uint32_t plat_frt_us(void)
+{
+    static uint16_t s_last;
+    static uint32_t s_hi;               /* whole wraps since start */
+    const uint16_t now = FRT_TCNTA;
+
+    if (now < s_last) {
+        s_hi += 0x10000u;
+    }
+    s_last = now;
+    return s_hi | (uint32_t)now;
+}
+
+/* Bus-A bit-rate accessor for the RSPI engine (plat_rspi.c pump). */
+uint8_t plat_drv_spbr_get(void)
+{
+    return s_drv_spbr;
 }

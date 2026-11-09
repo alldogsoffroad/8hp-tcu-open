@@ -1,0 +1,681 @@
+/* sup_walk.c — the supervisor commissioning walk (design §7.7, spec 22 §6).
+ *
+ * The stock's machine, ported from the top-down decode (spec 22 §6 and
+ * artifact2 §6; stock addresses in every comment). Structure:
+ *
+ *   monitor pass (5 ms, 0x873F0):  one-shot enable → token stage (0x7EE8A)
+ *   → walk task (0x6C63E) → outer FSM 0xFFF95010 (parked while the walk
+ *   state is non-zero).
+ *
+ *   walk task: state 7 samples (FRT deadline gate, stale reply → stall++,
+ *   stop the timer → 0x19), state 0x19 = era stepper + reply processor,
+ *   state 0 = era stepper; tail: staging ping-pong completes → 7, else 0.
+ *   The output gate runs EVERY pass.
+ *
+ *   timer ISR (1 ms, plat_walktmr_isr → here): WDT already fed; dispatch by
+ *   the job-mode cell: 0 → W1 duty token, 7 → W2 level. One-in-flight,
+ *   silent skip when busy — dispatch starts on the FIRST tick after the
+ *   programmer arms the timer (E60ab: no 84-class silence gaps).
+ *
+ * Documented interpretations ([I], kept adjacent to the law they serve):
+ *   1. The reply processor harvests in walk state 0 as well as 7/0x19 — the
+ *      decode shows 0x6C1EA called from 7 and 0x19 [O]; state 0 must also
+ *      see fresh replies or the FSM's level gates (state 8 target, 0x45
+ *      proceed) read a frozen nibble.
+ *   2. The expected-vs-reported check resyncs silently (expected :=
+ *      reported); the ATTENTION restart fires on the 0x0A echo mismatch —
+ *      the bump-and-resend loop "syncs on the echo, not the nibble"
+ *      (spec 03 level-exchange note). Firing it on the nibble too would
+ *      fight its own resync every era.
+ *   3. The expected/echo checks are level-era checks (job mode 7): during
+ *      the DUTY drag the level is falling by design; only the commit phase
+ *      mask (duty-context-set) is checked in mode 0.
+ *   4. Guard bumps: level programmer bumps expected +1 (+2 for the 0x1F
+ *      class), cap 7 — a downward command first pulls the expectation down.
+ *      Duty twin: drag-down expected-- when level > 6, else a climb bump.
+ *      (Design A2/V7: the guard-window compare scaling is replaced by fixed
+ *      re-arm + this bookkeeping, "unchanged in effect".)
+ */
+#include "bsw/sup/sup_walk.h"
+#include "bsw/sup/sup_jobs.h"
+#include "bsw/sup/sup_cells.h"
+#include "bsw/sup/sup_token.h"
+#include "bsw/sup/sup_ctrl.h"
+#include "platform.h"
+
+/* ── stock constants ────────────────────────────────────────────────────── */
+
+#define WALK_VAL_INIT        0x3Fu    /* 0x6C12C boot init (never on the wire) */
+#define WALK_ERA_06          0x4B0u   /* the 0x06 era period (6 x 200)         */
+#define WALK_ERA_1F          0x1838u  /* the 0x1F era period (0x1F x 200)      */
+#define WALK_PERIOD_MAX      0x3139u  /* 0x6C48C range law: value < 0x3139     */
+#define WALK_LEVEL_MAX       7u
+#define WALK_ERA_TAIL_MS     2400u    /* the 0x960 tick tail of every era      */
+#define WALK_DWELL_UNIT_US   1000u    /* era unit ≈ 1 ms (spec 22 §6.3 [I])    */
+
+/* budgets (spec 22 budget_table; lengths [I], structure [O]) */
+#define WALK_S8_BUDGET_PASSES   4000u  /* state 8 supervise (~20 s at 5 ms)  */
+#define WALK_S23_TIMEOUT_PASSES 4000u  /* 0x8D1BA duty-era timeout (~20 s)   */
+
+#define WALK_ECHO_RETRIES    3u        /* 0x6C742 confirm retry bound        */
+#define WALK_REPLY_WINDOW_US 4000u     /* state-7 sample window [I]          */
+
+/* duty contexts (see sup_token.c) */
+#define WALK_CTX_STEADY      0x1Eu
+#define WALK_CTX_INV         0x19u
+
+/* walk flag bits (0xFFF93BA7) */
+#define WALK_FL_EXPECT_LOW   0x08u     /* reported below expected  [I] */
+#define WALK_FL_EXPECT_HIGH  0x10u     /* reported above expected  [I] */
+#define WALK_FL_ECHO_LOW     0x20u     /* echo below staged        [I] */
+#define WALK_FL_ECHO_HIGH    0x40u     /* echo above staged        [I] */
+#define WALK_FL_GIVEUP       0x04u     /* ping-pong give-up                */
+
+/* ── pass-scoped budgets (ordinary .bss — not bench-read cells) ────────── */
+
+static uint16_t s_s8_budget;         /* the 0xFFF9417D countdown */
+static uint16_t s_s23_timeout;       /* the 0x8D1BA timeout */
+
+/* The stock's hardware-condition gate (0x68BE0: 0xFFFF1001 bit 6 — "no
+ * fault condition present"). The platform layer owns register reads; until
+ * a strong plat_hwcond() lands there, this weak default returns "condition
+ * clear" (the bench-proven path) and the platform overrides it later. */
+bool plat_hwcond(void);
+__attribute__((weak)) bool plat_hwcond(void)
+{
+    return false;
+}
+
+/* ── forward ────────────────────────────────────────────────────────────── */
+
+static void program_level(void);
+static void duty_programmer(void);
+static void era_stepper(void);
+static void reply_processor(void);
+static bool ping_pong_confirm(void);
+static bool reply_fresh_now(void);
+
+/* ── timer programmers (0x6C0BA level / 0x6BF9C duty twin) ─────────────── */
+
+static void program_timer(void)
+{
+    uint32_t now = plat_frt_us();
+    CELL_ERA_BASE = now;                          /* 0xFFF9240C */
+    CELL_ERA_DEADLINE = now + WALK_REPLY_WINDOW_US;   /* 0xFFF92410 */
+    /* dispatch starts on the first compare tick (E60ab: no silence gap) */
+    plat_walktmr_start();
+}
+
+static void program_level(void)
+{
+    uint8_t lvl = CELL_VALUE;                     /* the commanded era value */
+
+    CELL_JOB_MODE = 7u;                           /* 0xFFF93B9B */
+    if (lvl < 8u) {
+        if (lvl < CELL_LVL_EXPECTED) {
+            /* a downward command pulls the expectation down first (the
+             * 0x06 era from init-7) */
+            CELL_LVL_EXPECTED = lvl;
+        } else if (CELL_LVL_EXPECTED < WALK_LEVEL_MAX) {
+            CELL_LVL_EXPECTED++;                  /* guard bump +1 */
+        }
+    } else if (CELL_LVL_EXPECTED < WALK_LEVEL_MAX) {
+        /* the 0x1F class: guard bump +2 (era ramp, cap 7) */
+        CELL_LVL_EXPECTED = (uint8_t)(CELL_LVL_EXPECTED + 2u);
+        if (CELL_LVL_EXPECTED > WALK_LEVEL_MAX) {
+            CELL_LVL_EXPECTED = WALK_LEVEL_MAX;
+        }
+    }
+    CELL_COMMIT_MASK = 0u;                        /* settling phase */
+    program_timer();
+}
+
+static void duty_programmer(void)
+{
+    uint8_t ctx = CELL_DUTY_CTX;
+
+    CELL_JOB_MODE = 0u;                           /* the duty twin */
+    /* phase mask: 1 while the context is cycling (0/7), 0 for the plain
+     * and complement contexts 0x1E/0x19 */
+    CELL_COMMIT_MASK = (ctx == WALK_CTX_STEADY || ctx == WALK_CTX_INV)
+                       ? 0u : 1u;
+    if (CELL_LVL_REPORTED > 6u) {
+        if (CELL_LVL_EXPECTED != 0u) {
+            CELL_LVL_EXPECTED--;                  /* drag-down */
+        }
+    } else if (CELL_LVL_EXPECTED < WALK_LEVEL_MAX) {
+        CELL_LVL_EXPECTED++;                      /* context-aware climb [I] */
+    }
+    program_timer();
+}
+
+/* arm the DUTY era (the FSM's mode_req_set(0) law, 0x8D020 → 0x6C802):
+ * steady context first, token staged, duty twin programmed. */
+static void duty_arm(void)
+{
+    CELL_DUTY_CTX = WALK_CTX_STEADY;
+    CELL_DUTY_CTX_COMPL = (uint8_t)~WALK_CTX_STEADY;
+    sup_token_stage(CELL_SELECTOR);
+    duty_programmer();
+}
+
+/* the mode chain's level request (0x8D136 law). Target 0 arms the drag
+ * (the DUTY era); targets >= 5 ride the level eras — the supervise state
+ * watches the harvested level against them. */
+static void mode_req_set(uint8_t target)
+{
+    if (target == 0u) {
+        duty_arm();
+    }
+}
+
+/* ── init (stock 0x6C12C park_pwm_init) ────────────────────────────────── */
+
+void sup_walk_init(void)
+{
+    /* the commanded value pair */
+    CELL_VALUE = WALK_VAL_INIT;
+    CELL_VALUE_COMPL = 0xC0u;
+    /* the period pair */
+    CELL_PERIOD = 0x3138u;
+    CELL_PERIOD_BASE = 0x3138u;
+    /* expected AND reported level = 7 */
+    CELL_LVL_EXPECTED = WALK_LEVEL_MAX;
+    CELL_LVL_REPORTED = WALK_LEVEL_MAX;
+    /* era counter pair = 1 / ~1 */
+    CELL_ERA_COUNT = 1u;
+    CELL_ERA_COMPL = 0xFEu;
+    /* time base = now; guard windows derived */
+    CELL_ERA_BASE = plat_frt_us();
+    CELL_ERA_DEADLINE = CELL_ERA_BASE + WALK_REPLY_WINDOW_US;
+    /* machine cells */
+    CELL_BOOT_FLAG = 1u;                          /* 0xFFF9500E: walk armed  */
+    CELL_WALK_STATE = 0u;                         /* 0xFFF93BA3 (RAM-cleared)*/
+    CELL_OUTER_FSM = 0u;                          /* 0xFFF95010 */
+    CELL_FSM_RETURN = 0u;                         /* 0xFFF93B93 */
+    CELL_WALK_SUBST = 0u;                         /* 0xFFF93B43 */
+    CELL_PENDING = 0u;                            /* 0xFFF94FE9 */
+    CELL_JOB_MODE = 0u;
+    CELL_COMMIT_MASK = 0u;
+    CELL_SELECTOR = 0u;
+    CELL_ATTENTION = 0u;
+    CELL_WALK_FLAGS = 0u;
+    CELL_STALL_CNT = 0u;
+    CELL_RETRIES = 0u;
+    CELL_COMMIT_RETRIES = 0u;
+    CELL_TWO_PASS = 0u;
+    CELL_MAX_LATCH = WALK_LEVEL_MAX;
+    CELL_LAST_DUTY_CNT = 0u;
+    CELL_LAST_LEVEL_CNT = 0u;
+    CELL_STAGED_84 = 0u;
+    /* duty context pair starts at the steady context [I] */
+    CELL_DUTY_CTX = WALK_CTX_STEADY;
+    CELL_DUTY_CTX_COMPL = (uint8_t)~WALK_CTX_STEADY;
+    /* the one-shot enable latch */
+    CELL_EN_ONESHOT = 0u;
+
+    s_s8_budget = 0u;
+    s_s23_timeout = 0u;
+
+    /* NO 84 word is sent here (D4/NR-2); the walk timer is not started —
+     * the first stage arms it from the FSM's first pass. */
+}
+
+/* ── the one-shot enable (0x873F0 first-pass law) ──────────────────────── */
+
+static void one_shot_enable(void)
+{
+    /* fires once per boot, on the first pass with a harvested level < 7
+     * and the hardware condition clear — i.e. once the 0x06 era is live,
+     * so the ask rides a running conversation (NR-1: never ask into a
+     * silent bus; the bench-proven +105 ms shape falls out of this). */
+    if (CELL_EN_ONESHOT == 0u &&
+        CELL_LVL_REPORTED < WALK_LEVEL_MAX &&
+        !plat_hwcond()) {
+        sup_enable_request(true);
+        CELL_EN_ONESHOT = 1u;
+    }
+}
+
+/* ── era stepper (stock 0x6C542) ────────────────────────────────────────── */
+
+static void era_stepper(void)
+{
+    uint32_t elapsed = plat_frt_us() - CELL_ERA_BASE;
+    uint32_t threshold = ((uint32_t)CELL_PERIOD + WALK_ERA_TAIL_MS)
+                         * WALK_DWELL_UNIT_US;
+
+    if (elapsed < threshold) {
+        return;
+    }
+    /* advance the era base */
+    CELL_ERA_BASE = plat_frt_us();
+    CELL_ERA_DEADLINE = CELL_ERA_BASE + WALK_REPLY_WINDOW_US;
+    /* the era counter pair steps */
+    CELL_ERA_COUNT++;
+    CELL_ERA_COMPL = (uint8_t)~CELL_ERA_COUNT;
+    if (CELL_JOB_MODE == 7u) {
+        /* level era: bump the expected level toward 7 */
+        if (CELL_LVL_EXPECTED < WALK_LEVEL_MAX) {
+            CELL_LVL_EXPECTED++;
+        }
+    } else {
+        /* duty era: step the context cycle, re-program the twin (its phase
+         * mask and bumps follow the new context) */
+        (void)sup_token_context();
+        duty_programmer();
+    }
+}
+
+/* ── reply freshness (the mode-dependent counter watch) ────────────────── */
+
+static bool reply_fresh_now(void)
+{
+    if (CELL_JOB_MODE == 7u) {
+        return CELL_LEVEL_COUNT != CELL_LAST_LEVEL_CNT;
+    }
+    return CELL_DUTY_COUNT != CELL_LAST_DUTY_CNT;
+}
+
+/* ── reply processor (stock 0x6C1EA park_monitor_feedback) ─────────────── */
+
+static void reply_processor(void)
+{
+    uint8_t mode = CELL_JOB_MODE;
+    uint8_t lvl;
+
+    /* freshness: the duty counter in job-mode 0, the level counter in
+     * mode 7, each vs its last-seen cell */
+    if (mode == 7u) {
+        if (CELL_LEVEL_COUNT == CELL_LAST_LEVEL_CNT) {
+            return;                               /* nothing fresh */
+        }
+        CELL_LAST_LEVEL_CNT = CELL_LEVEL_COUNT;
+    } else {
+        if (CELL_DUTY_COUNT == CELL_LAST_DUTY_CNT) {
+            return;
+        }
+        CELL_LAST_DUTY_CNT = CELL_DUTY_COUNT;
+    }
+
+    /* harvest: selector = fb & 0xF, level = (fb >> 4) & 7 — the only
+     * level-nibble harvester in the image */
+    CELL_SELECTOR = (uint8_t)(CELL_FB_0C & 0x0Fu);
+    lvl = (uint8_t)((CELL_FB_0C >> 4) & 7u);
+    if (lvl > CELL_MAX_LATCH) {
+        CELL_MAX_LATCH = lvl;
+    }
+    CELL_LVL_REPORTED = lvl;
+
+    /* check 1: expected vs reported (level eras only — interpretation 3).
+     * Mismatch → flag + silent resync (expected := reported). */
+    if (mode == 7u && CELL_LVL_EXPECTED != CELL_LVL_REPORTED) {
+        CELL_WALK_FLAGS |= (CELL_LVL_REPORTED < CELL_LVL_EXPECTED)
+                           ? WALK_FL_EXPECT_LOW : WALK_FL_EXPECT_HIGH;
+        CELL_LVL_EXPECTED = CELL_LVL_REPORTED;
+    }
+
+    /* check 2: the commit phase mask — (commit & 5) must equal the mask
+     * the programmer set (0 settling / 1 duty-cycle). Mismatch counts. */
+    if ((uint8_t)(CELL_COMMIT_12 & 5u) != CELL_COMMIT_MASK) {
+        CELL_COMMIT_RETRIES++;
+    }
+
+    /* check 3: the 0x0A echo vs the staged value (level eras only).
+     * Mismatch → flag + attention 7 → sub-state 0x2A → bump-and-resend;
+     * the loop re-syncs on the echo (spec 03 level-exchange note). */
+    if (mode == 7u && CELL_STAGED_84 != CELL_ECHO_0A) {
+        CELL_WALK_FLAGS |= (CELL_ECHO_0A < CELL_STAGED_84)
+                           ? WALK_FL_ECHO_LOW : WALK_FL_ECHO_HIGH;
+        CELL_ATTENTION = 7u;
+        CELL_WALK_SUBST = 0x2Au;
+        sup_walk_req_restart();
+    }
+    /* SUBST 0x2A is the stock's attention marker; the restart has already
+     * re-staged (SUBST now warm-pending or cold), so nothing to clear. */
+}
+
+/* ── staging ping-pong confirm (stock 0x6C742) ─────────────────────────── */
+
+static bool ping_pong_confirm(void)
+{
+    switch (CELL_WALK_SUBST) {
+    case SUP_SUB_COLD_STAGED: {
+        /* the era value is on the wire; confirm on a fresh reply's echo */
+        if (!reply_fresh_now()) {
+            return false;
+        }
+        if (CELL_ECHO_0A == CELL_STAGED_84) {
+            /* commit: the period is the era value x 200 */
+            CELL_PERIOD = (uint16_t)((uint16_t)CELL_VALUE * 200u);
+            CELL_PERIOD_BASE = CELL_PERIOD;
+            CELL_RETRIES = 0u;
+            CELL_WALK_SUBST = SUP_SUB_NONE;
+            return true;                          /* era confirmed live */
+        }
+        /* fresh reply, echo mismatch: retry with a re-program */
+        CELL_RETRIES++;
+        if (CELL_RETRIES >= WALK_ECHO_RETRIES) {
+            CELL_WALK_FLAGS |= WALK_FL_GIVEUP;    /* give up this value */
+            CELL_RETRIES = 0u;
+            CELL_WALK_SUBST = SUP_SUB_NONE;
+            return false;
+        }
+        if (CELL_JOB_MODE == 7u) {
+            program_level();                      /* re-program per retry */
+        } else {
+            duty_programmer();
+        }
+        return false;
+    }
+    case SUP_SUB_WARM_PENDING:
+        /* promote the parked slot (0x6BD48-class diverse write) and put it
+         * on the wire; the pass after confirms echo == staged */
+        CELL_VALUE = CELL_PENDING;
+        CELL_VALUE_COMPL = (uint8_t)~CELL_PENDING;
+        CELL_PENDING = 0u;
+        program_level();
+        CELL_WALK_SUBST = SUP_SUB_COLD_STAGED;
+        return false;
+    default:
+        return false;
+    }
+}
+
+/* ── bump and resend (stock 0x6C720 park_pwm_req_restart) ──────────────── */
+
+void sup_walk_req_restart(void)
+{
+    /* re-stage the current era value; the guard bump rides the programmer
+     * and the exchange re-syncs on the 0x0A echo. Before the first stage
+     * the era value is the 0x3F init — re-stage the 0x06 era instead. */
+    uint16_t value = (CELL_VALUE == WALK_VAL_INIT)
+                     ? WALK_ERA_06
+                     : (uint16_t)((uint16_t)CELL_VALUE * 200u);
+    (void)sup_walk_stage(value);
+}
+
+/* ── the staging ping-pong value request (stock 0x6C48C) ───────────────── */
+
+uint8_t sup_walk_stage(uint16_t value)
+{
+    uint8_t level;
+
+    if (value >= WALK_PERIOD_MAX) {
+        return 2u;                                /* stock range law */
+    }
+    level = (uint8_t)(value / 200u);
+    if (level == 0u) {
+        return 2u;                                /* never stage an 84|00 */
+    }
+
+    if (CELL_WALK_STATE == 0u && CELL_WALK_SUBST == SUP_SUB_NONE) {
+        /* cold: stage the diverse pair, program the timer, walk state 7 */
+        CELL_VALUE = level;
+        CELL_VALUE_COMPL = (uint8_t)~level;
+        program_level();
+        CELL_WALK_SUBST = SUP_SUB_COLD_STAGED;
+        CELL_WALK_STATE = SUP_WALK_SAMPLE;
+    } else {
+        /* warm: park in the pending slot; the next pass promotes it, the
+         * pass after confirms the echo */
+        CELL_PENDING = level;
+        CELL_WALK_SUBST = SUP_SUB_WARM_PENDING;
+    }
+    return 0u;
+}
+
+/* ── the output gate (0x6C63E tail — every pass) ───────────────────────── */
+
+static void output_gate(void)
+{
+    /* certified byte: level >= 6 AND the granted echo bit */
+    if (CELL_LVL_REPORTED >= 6u && CELL_GRANT != 0u) {
+        CELL_CERTIFIED = 1u;
+    }
+    /* certification event: level 7 on two consecutive passes */
+    if (CELL_LVL_REPORTED == WALK_LEVEL_MAX) {
+        CELL_TWO_PASS++;
+        if (CELL_TWO_PASS >= 2u) {
+            CELL_CERT_EVENTS |= 0x2000u;
+        }
+    } else {
+        CELL_TWO_PASS = 0u;
+    }
+}
+
+/* ── the walk task (stock 0x6C63E) ──────────────────────────────────────── */
+
+static void walk_task(void)
+{
+    switch (CELL_WALK_STATE) {
+    case SUP_WALK_SAMPLE:
+        /* state 7: wait for the sample point, then process */
+        if ((uint32_t)(plat_frt_us() - CELL_ERA_BASE) >= WALK_REPLY_WINDOW_US) {
+            if (!reply_fresh_now()) {
+                /* stale reply: stall++, stop the timer, → 0x19 — and ride
+                 * the stock's own restart law so the ladder never sits
+                 * silent (E60ab: no 84-class silence gaps) */
+                CELL_STALL_CNT++;
+                plat_walktmr_stop();
+                CELL_WALK_STATE = SUP_WALK_ERA;
+                sup_walk_req_restart();
+                break;
+            }
+            reply_processor();
+        }
+        break;
+    case SUP_WALK_ERA:
+        /* state 0x19: era stepper + reply processor */
+        era_stepper();
+        reply_processor();
+        break;
+    default:
+        /* state 0: era stepper; the reply processor also runs here so the
+         * FSM's level gates stay live (interpretation 1) */
+        era_stepper();
+        reply_processor();
+        break;
+    }
+
+    /* tail: the staging ping-pong completes → 7, else 0 */
+    if (ping_pong_confirm()) {
+        CELL_WALK_STATE = SUP_WALK_SAMPLE;
+    } else {
+        CELL_WALK_STATE = SUP_WALK_IDLE;
+    }
+
+    output_gate();
+}
+
+/* ── the outer FSM (0xFFF95010 — the era sequence) ──────────────────────── */
+
+static void outer_fsm(void)
+{
+    switch (CELL_OUTER_FSM) {
+    case SUP_FSM_BOOT:
+        /* boot flag → mode_req_set(5); stage the 0x06 era (the first 84|06
+         * on the wire); → 8 */
+        if (CELL_BOOT_FLAG != 0u) {
+            CELL_BOOT_FLAG = 0u;
+            mode_req_set(5u);
+        }
+        if (CELL_PERIOD != WALK_ERA_06) {
+            (void)sup_walk_stage(WALK_ERA_06);
+        }
+        CELL_FSM_RETURN = SUP_FSM_BOOT;
+        CELL_OUTER_FSM = SUP_FSM_SUPERVISE;
+        s_s8_budget = WALK_S8_BUDGET_PASSES;
+        break;
+
+    case SUP_FSM_SUPERVISE:
+        /* mode_transition_supervise: budget countdown to the target (>= 5);
+         * reached → mode_seq_step advances to 0x12; not reached → walk
+         * restart */
+        if (CELL_LVL_REPORTED >= 5u) {
+            CELL_FSM_RETURN = SUP_FSM_SUPERVISE;
+            CELL_OUTER_FSM = SUP_FSM_REARM;
+            CELL_BOOT_FLAG = 1u;
+            break;
+        }
+        if (s_s8_budget != 0u) {
+            s_s8_budget--;
+            break;
+        }
+        sup_walk_req_restart();
+        s_s8_budget = WALK_S8_BUDGET_PASSES;
+        break;
+
+    case SUP_FSM_REARM:
+        /* boot flag → mode_req_set(5) again; → 0x23 */
+        if (CELL_BOOT_FLAG != 0u) {
+            CELL_BOOT_FLAG = 0u;
+            mode_req_set(5u);
+        }
+        CELL_FSM_RETURN = SUP_FSM_REARM;
+        CELL_OUTER_FSM = SUP_FSM_DUTY;
+        CELL_BOOT_FLAG = 1u;
+        break;
+
+    case SUP_FSM_DUTY:
+        /* boot flag → mode_req_set(0): the drag. The DUTY era (token,
+         * context cycling) is already armed by mode_req_set(0). Timeout →
+         * 0x34; reported level == 0 → stage the 0x1F era, → 0x45 */
+        if (CELL_BOOT_FLAG != 0u) {
+            CELL_BOOT_FLAG = 0u;
+            mode_req_set(0u);
+            s_s23_timeout = WALK_S23_TIMEOUT_PASSES;
+        }
+        if (CELL_LVL_REPORTED == 0u && CELL_PERIOD != WALK_ERA_1F) {
+            (void)sup_walk_stage(WALK_ERA_1F);
+            CELL_FSM_RETURN = SUP_FSM_DUTY;
+            CELL_OUTER_FSM = SUP_FSM_PROCEED;
+            break;
+        }
+        if (s_s23_timeout != 0u) {
+            s_s23_timeout--;
+            break;
+        }
+        CELL_FSM_RETURN = SUP_FSM_DUTY;
+        CELL_OUTER_FSM = SUP_FSM_ADVANCE;
+        break;
+
+    case SUP_FSM_PROCEED:
+        /* proceed gate: level >= 5 (a warm chip passes instantly) → 0x34 */
+        if (CELL_LVL_REPORTED >= 5u) {
+            CELL_FSM_RETURN = SUP_FSM_PROCEED;
+            CELL_OUTER_FSM = SUP_FSM_ADVANCE;
+        }
+        break;
+
+    case SUP_FSM_ADVANCE:
+        /* fault_state_advance: prev 0x23 && level 0 → re-request the 0x1F
+         * era; else steady supervision — keep the duty token era alive */
+        if (CELL_FSM_RETURN == SUP_FSM_DUTY &&
+            CELL_LVL_REPORTED == 0u &&
+            CELL_PERIOD != WALK_ERA_1F) {
+            (void)sup_walk_stage(WALK_ERA_1F);
+            CELL_OUTER_FSM = SUP_FSM_PROCEED;
+        } else {
+            if (CELL_JOB_MODE != 0u) {
+                duty_arm();                       /* steady token rounds */
+            }
+            CELL_BOOT_FLAG = 0u;
+        }
+        break;
+
+    default:
+        /* event bit path: return to the previous state */
+        CELL_OUTER_FSM = CELL_FSM_RETURN;
+        break;
+    }
+}
+
+/* ── the 5 ms monitor task (stock 0x873F0) ─────────────────────────────── */
+
+void sup_monitor_poll(void)
+{
+    /* the monitor integrity sweep computes and stages the token each pass
+     * (stock 0x7EE8A; the challenge selector rotates under chip control) */
+    sup_token_stage(CELL_SELECTOR);
+
+    one_shot_enable();
+
+    /* the walk task runs every pass; the outer FSM is parked while the
+     * walk state is non-zero */
+    walk_task();
+    if (CELL_WALK_STATE == SUP_WALK_IDLE) {
+        outer_fsm();
+    }
+}
+
+/* ── the W2 level builder (stock 0x91190) ───────────────────────────────── */
+
+void sup_level_job(void)
+{
+    uint16_t *st;
+
+    if (!sup_job_check_free(JOB_LEVEL)) {
+        return;                                   /* one-in-flight: silent */
+    }
+    if (CELL_VALUE == WALK_VAL_INIT) {
+        return;                                   /* 0x3F never goes on the wire */
+    }
+    /* the stagers own the words: stage all four frames */
+    st = sup_job_table[JOB_LEVEL].tx_stage;
+    st[0] = (uint16_t)(0x8400u | (uint16_t)CELL_VALUE);
+    st[1] = 0x0A00u;
+    st[2] = 0x1200u;
+    st[3] = 0x0C00u;
+    CELL_STAGED_84 = CELL_VALUE;                  /* the echo-compare value */
+    (void)sup_job_queue(JOB_LEVEL);
+}
+
+/* ── the W1 duty builder (stock 0x91086) ────────────────────────────────── */
+
+void sup_duty_job(void)
+{
+    uint32_t tok;
+    uint16_t *st;
+
+    if (!sup_job_check_free(JOB_DUTY)) {
+        return;                                   /* one-in-flight: silent */
+    }
+    tok = CELL_TOKEN_STAGED;
+    if (CELL_DUTY_CTX == WALK_CTX_INV) {
+        tok = ~tok;                               /* context 0x19 sends ~token */
+    }
+    /* the four token bytes OR'd onto the four 0x88 template words */
+    st = sup_job_table[JOB_DUTY].tx_stage;
+    st[0] = (uint16_t)(0x8800u | ((tok >> 24) & 0xFFu));
+    st[1] = (uint16_t)(0x8800u | ((tok >> 16) & 0xFFu));
+    st[2] = (uint16_t)(0x8800u | ((tok >> 8) & 0xFFu));
+    st[3] = (uint16_t)(0x8800u | (tok & 0xFFu));
+    st[4] = 0x1200u;
+    st[5] = 0x0C00u;
+    st[6] = 0x0A00u;
+    CELL_TOKEN_LAST = tok;                        /* 0xFFF90548 (builder) */
+    (void)sup_job_queue(JOB_DUTY);
+}
+
+/* ── the walk timer ISR service (stock 0x6C1BA park_pwm_service) ───────── */
+
+void sup_walk_isr(void)
+{
+    /* The WDT feed is already done by plat_walktmr_isr (the stock feeds
+     * before dispatching — the walk's liveness IS the WDT's liveness).
+     * Dispatch by the job-mode cell; a busy job is skipped silently
+     * (stock 0x93B8E check-free inside the builders). Then deliver: the
+     * walk queue has priority, so a queued walk job goes out on this very
+     * tick when the bus is idle (E60ab: dispatch from the first tick — a
+     * busy bus leaves it queued and the next handler-done/batch pump
+     * delivers it). */
+    uint8_t mode = CELL_JOB_MODE;
+
+    if (mode == 0u) {
+        sup_duty_job();                           /* the DUTY era: W1 */
+    } else if (mode == 7u) {
+        sup_level_job();                          /* the LEVEL eras: W2 */
+    }
+    sup_job_engine_pump();
+}

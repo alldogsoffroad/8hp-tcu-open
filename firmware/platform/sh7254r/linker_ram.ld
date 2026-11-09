@@ -1,7 +1,15 @@
 /* RAM application (spec 18): the whole program runs from RAM, loaded by the data-flash loader.
  * The loadable part (vectors, code, constants, initialised data) is one contiguous block from
  * 0xFFF84100 (the image payload); .bss follows; the stack is at the top of RAM. The code-flash
- * header, tail and end marker are not used. */
+ * header, tail and end marker are not used.
+ *
+ * ⚠ REBUILD LANDMINE (2026-11-09): the supervisor shadow cells live at the
+ * stock's RAM addresses 0xFFF88400-0xFFF95014 (sup_cells.h). This contiguous
+ * image + .bss (~83 KB) RUNS OVER that range, so a cell write would corrupt
+ * the RAM app's own code. The cell map needs its own RAM-app decision (a
+ * relocated mirror window or a slimmed image) before this flow is ever
+ * re-flashed. The bench flow is the code-flash application (linker.ld),
+ * which reserves every range; this file is kept building for the record. */
 OUTPUT_FORMAT("elf32-sh")
 OUTPUT_ARCH(sh)
 ENTRY(_start)

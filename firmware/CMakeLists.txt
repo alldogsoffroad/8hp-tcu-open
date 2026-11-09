@@ -6,11 +6,19 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 add_compile_options(-Wall -Wextra -Wconversion -Wshadow -O2 -g)
 
-include_directories(${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/include)
+include_directories(${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/include ${CMAKE_SOURCE_DIR}/platform)
 
 set(CORE_SOURCES
     bsw/sched/sched.c
-    bsw/sup/sup.c bsw/sup/sup_engage.c
+    bsw/sup/sup_jobs.c
+    bsw/sup/sup_handlers.c
+    bsw/sup/sup_walk.c
+    bsw/sup/sup_batch.c
+    bsw/sup/sup_ctrl.c
+    bsw/sup/sup_letters.c
+    bsw/sup/sup_token.c
+    bsw/drv/drv_jobs.c
+    bsw/drv/drv_handlers.c
     bsw/com/crc8.c
     bsw/com/com.c
     bsw/com/com_tx.c
@@ -21,7 +29,7 @@ set(CORE_SOURCES
     io/sensors/speed.c
     io/sensors/tft.c
     io/sensors/sensors.c
-    io/actuators/sol_drv.c
+    io/actuators/sol_ctl.c
     app/bench_out.c
     app/range.c
     app/park_ctl.c
@@ -71,6 +79,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         platform/sh7254r/fl_blob.S
         platform/sh7254r/header.c
         platform/sh7254r/plat_sh7254r.c
+        platform/sh7254r/plat_intc.c
+        platform/sh7254r/plat_tick.c
+        platform/sh7254r/plat_walktmr.c
+        platform/sh7254r/plat_wdt.c
+        platform/sh7254r/plat_rspi.c
         platform/sh7254r/libc_min.c
         ${CORE_SOURCES}
     )
@@ -117,6 +130,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         platform/sh7254r/start.S
         platform/sh7254r/header.c
         platform/sh7254r/plat_sh7254r.c
+        platform/sh7254r/plat_intc.c
+        platform/sh7254r/plat_tick.c
+        platform/sh7254r/plat_walktmr.c
+        platform/sh7254r/plat_wdt.c
+        platform/sh7254r/plat_rspi.c
         platform/sh7254r/libc_min.c
         ${CORE_SOURCES}
     )
@@ -158,7 +176,9 @@ else()
     add_executable(test_meas tests/unit/test_meas.c bsw/meas/meas.c tests/unit/stub_plat.c)
     add_test(NAME meas COMMAND test_meas)
     add_executable(test_com_tx tests/unit/test_com_tx.c bsw/com/com_tx.c bsw/com/sigpack.c
-        bsw/com/crc8.c io/vehicle/fca_tx.c tests/unit/stub_plat.c)
+        bsw/drv/drv_jobs.c
+    bsw/drv/drv_handlers.c
+    bsw/com/crc8.c io/vehicle/fca_tx.c tests/unit/stub_plat.c)
     add_test(NAME com_tx COMMAND test_com_tx)
     add_executable(test_sensors tests/unit/test_sensors.c io/sensors/adc.c io/sensors/speed.c
         io/sensors/tft.c io/sensors/sensors.c tests/unit/stub_plat.c)
@@ -167,8 +187,10 @@ else()
     add_test(NAME sup COMMAND test_sup)
     add_executable(test_sol tests/unit/test_sol.c io/actuators/sol_drv.c tests/unit/stub_plat.c)
     add_test(NAME sol COMMAND test_sol)
-    add_executable(test_bench tests/unit/test_bench.c app/bench_out.c io/actuators/sol_drv.c
-        bsw/sup/sup.c bsw/sup/sup_engage.c bsw/diag/uds.c bsw/diag/isotp.c bsw/diag/boot_record.c
+    add_executable(test_bench tests/unit/test_bench.c app/bench_out.c io/actuators/sol_ctl.c
+        bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
+        bsw/sup/sup_letters.c bsw/drv/drv_jobs.c bsw/drv/drv_handlers.c
+        bsw/diag/uds.c bsw/diag/isotp.c bsw/diag/boot_record.c
         io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
         tests/unit/stub_plat.c)
     target_compile_definitions(test_bench PRIVATE TCU_M4B_OUTPUTS)
@@ -176,15 +198,23 @@ else()
     add_executable(test_park tests/unit/test_park.c app/range.c app/park_ctl.c app/park.c
         app/bench_out.c bsw/diag/uds.c bsw/diag/isotp.c bsw/diag/boot_record.c
         safety/park_mon.c io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c
-        bsw/com/crc8.c io/actuators/sol_drv.c bsw/sup/sup.c bsw/sup/sup_engage.c tests/unit/stub_plat.c)
+        bsw/drv/drv_jobs.c
+    bsw/drv/drv_handlers.c
+    bsw/com/crc8.c io/actuators/sol_ctl.c bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c
+        bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c bsw/sup/sup_letters.c tests/unit/stub_plat.c)
     target_compile_definitions(test_park PRIVATE PARK_TEST_HOOKS TCU_M4B_OUTPUTS)
     add_test(NAME park COMMAND test_park)
     add_executable(test_dump tests/unit/test_dump.c app/bench_dump.c tests/unit/stub_plat.c)
     add_test(NAME dump COMMAND test_dump)
+    add_executable(test_rebuild tests/unit/test_rebuild.c bsw/sched/sched.c
+        bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_walk.c bsw/sup/sup_batch.c
+        bsw/sup/sup_ctrl.c bsw/sup/sup_letters.c bsw/sup/sup_token.c
+        tests/unit/stub_plat.c)
+    add_test(NAME rebuild COMMAND test_rebuild)
     # project flasher on the simulated flash controller (spec 16 section 7)
     set(FL_HOST_SOURCES flasher/fl_core.c flasher/fl_fcu.c tests/unit/fl_sim.c)
     add_executable(test_flasher tests/unit/test_flasher.c ${FL_HOST_SOURCES} app/flash_entry.c
-        bsw/sup/sup.c bsw/sup/sup_engage.c tests/unit/stub_plat.c)
+        bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c tests/unit/stub_plat.c)
     target_compile_definitions(test_flasher PRIVATE FL_HOST)
     add_test(NAME flasher COMMAND test_flasher)
     add_executable(test_loader tests/unit/test_loader.c loader/ld_image.c)

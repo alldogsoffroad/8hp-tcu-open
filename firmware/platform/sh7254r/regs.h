@@ -204,3 +204,31 @@
 #define GRDF(n)   REG32(TF_BASE(n) + 0x1Cu)
 
 #endif
+
+/* ── rebuild additions (design §3 — the binding register map) ──────────── */
+
+/* WDT byte accessors (the rebuild uses 8-bit accesses) */
+#define WTCR_ADDR   (0xFFFE0000u)
+#define WTCNT_ADDR  (0xFFFE0002u)
+#define WTSR_ADDR   (0xFFFE0004u)    /* bit 7 = WOVF (reset cause) */
+#define WRCR_ADDR   (0xFFFE0006u)
+
+/* RSPI-B IPR nibble (bits 15-12 of IPR27) — [I], P8 verify */
+#define RSPIB_IPR   INTC_IPR(27)
+
+/* ATU-D1 tick timer (validated: ATU-D1 CMID10, not "timer H") */
+#define ATU_D1_TCNT   REG32(0xFFFFF530u)   /* 16-bit counter + 8 fraction bits */
+#define ATU_D1_OCRD10 REG32(0xFFFFF5D0u)   /* compare-match A */
+#define ATU_D1_TIER   REG8(0xFFFFF545u)     /* interrupt enable, bit 0 = CMID10 */
+#define ATU_D1_TSR    REG8(0xFFFFF54Cu)     /* status, bit 0 = compare flag */
+#define ATU_D1_TSTR   REG8(0xFFFFF540u)     /* start, bit 1 = D1 counting */
+
+/* ATU-D0 walk timer (spec 22 §1; control set observed, counter [I]) */
+#define ATU_D0_TIER   REG8(0xFFFFF585u)     /* interrupt enable, bit 0 = CMID00 */
+#define ATU_D0_TSR    REG8(0xFFFFF58Cu)     /* status, bit 0 = compare flag */
+#define ATU_D0_TSTR   REG8(0xFFFFF58Eu)     /* start, bit 0 = D0 counting */
+#define ATU_D0_OCR    REG32(0xFFFFF5B0u)     /* compare value */
+#define ATU_D0_TCNT   REG32(0xFFFFF520u)     /* counter [I] — P8 probe */
+
+/* FRT (free-running timer, 1 MHz µs timestamp) */
+#define FRT_TCNTA     REG16(0xFFFFF220u)

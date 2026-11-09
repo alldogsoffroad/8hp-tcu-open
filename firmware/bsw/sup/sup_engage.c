@@ -67,7 +67,9 @@ void sup_engage_boot(void)
 {
     memset(&s, 0, sizeof s);
     s.state = SUP_ENG_S0;
-    s.value = VAL_INIT;
+    s.value = VAL_06;    /* E60aa: the wire starts at 06 (the decompile's
+                          * cold-path fact); 0x3F is the cell init, never staged.
+                          * S0's staging of 0x06 is then a no-op (v == s.value) */
     s.lvl_exp = LVL_MAX;      /* 0xFFF93BA2 = 7 at init */
     s.lvl = LVL_MAX;          /* 0xFFF93BA1 = 7 at init (boot-warm cell) */
     s.mode = 7u;              /* job mode: level (the init value rides W2) */
@@ -265,6 +267,12 @@ bool sup_engage_tick(uint32_t now_ms, uint16_t *words, uint8_t *n)
     if (s_pass == ASK_PASS) {
         s.enable_req = true;           /* the E60i-proven +105 ms ask */
     }
+    /* E60ab: the hold DELETED — the stall decode proved the chip cannot
+     * tolerate 80 ms of 84-class silence after the handshake arms its
+     * commit/echo state machine (the RSPI-B wedge at pass 16). The stock
+     * never holds its walk either — the "84|06 at the ask window" was a
+     * timer-arithmetic coincidence, not a delay. Our 84|06 from pass 1
+     * is the correct shape (continuous walk from the first service). */
     if (s.pending != 0u) {
         /* the staging ping-pong (0x6C742/0x6BD48): the pending slot promotes
          * ONE PASS after staging — pass 1 stages, pass 2 sends. The value

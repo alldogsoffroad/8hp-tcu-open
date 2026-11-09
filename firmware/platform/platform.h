@@ -19,8 +19,8 @@ void plat_init(void);
 /* Returns true once per elapsed 1 ms tick (polled). */
 bool plat_tick_poll(void);
 
-/* Watchdog: must be called at least every 30 ms (spec 05 section 2). */
-void plat_wdt_service(void);
+/* Watchdog: replaced by plat_wdt_kick (rebuild §5.6). The old name is kept for compatibility during the transition. */
+void plat_wdt_service(void); /* compat — calls plat_wdt_kick */
 
 /* Queue a frame for transmission; returns false if all transmit buffers are busy. */
 bool plat_can_send(can_bus_t bus, const can_frame_t *f);
@@ -34,6 +34,62 @@ void plat_can_rx_commit(void);
 
 /* Fetch one received frame, if any. Polled from task context. */
 bool plat_can_recv(can_bus_t bus, can_frame_t *f);
+
+/* ---- RSPI job transport: interrupt-per-frame engine (rebuild design §5.5) ----
+ * Replaces the polled plat_sup_xfer/burst and plat_drv_xfer family.
+ * The mainline stages a job; the RX ISR collects replies and feeds the next
+ * frame; the completion handler runs in ISR context. SPCR discipline:
+ * idle = 0x08, armed = 0xC8, ISR disarms to 0x08 at burst end. */
+typedef void (*rspi_done_fn)(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t frames);
+
+/* Queue a transaction (task context; caller holds SR if windowed).
+ * Returns false if the bus is busy. After launch, call plat_rspi_pump(). */
+bool plat_rspi_launch(uint8_t bus, uint8_t job_id, uint16_t *tx, uint16_t *rx,
+                      uint8_t frames, const uint16_t *sel_cfg, uint8_t n_sel,
+                      rspi_done_fn done);
+/* Start the staged transaction if the bus is idle (task or init context). */
+void plat_rspi_pump(uint8_t bus);
+/* Returns true while a transaction is in flight on this bus. */
+bool plat_rspi_busy(uint8_t bus);
+/* ISR-entry count per bus (P8 diagnostic: verifies the IPR assignment). */
+uint32_t plat_rspi_isr_count(uint8_t bus);
+/* Blocking single transaction for lab/diagnostic use (FE13). */
+bool plat_rspi_lab(uint8_t bus, const uint16_t *tx, uint16_t *rx,
+                   uint8_t frames, const uint16_t *sel_cfg, uint8_t n_sel,
+                   uint32_t timeout_ms);
+/* Engine init (both buses to idle SPCR = 0x08). */
+void plat_rspi_init(void);
+/* Bus-A bit-rate accessor (the engine uses this). */
+uint8_t plat_drv_spbr_get(void);
+
+/* ---- INTC and SR (rebuild design §5.2) ---- */
+typedef struct { uint8_t ipr; uint8_t shift; uint8_t prio; } plat_ipr_ent_t;
+typedef struct { const plat_ipr_ent_t *ent; uint8_t n; } plat_ipr_map_t;
+void plat_intc_setup(const plat_ipr_map_t *m);
+void plat_sr_open(void);               /* SR.I = 0xE (stock order 21) */
+void plat_sr_close(void);              /* SR.I = 0xF (critical sections) */
+uint32_t plat_sr_i(void);              /* current SR.I level */
+
+/* ---- 1 ms tick (rebuild design §5.3, ATU-D1 CMID10) ---- */
+void plat_tick_start(void);
+uint32_t plat_tick_count(void);
+
+/* ---- Walk timer (rebuild design §5.4, ATU-D0 compare) ---- */
+void plat_walktmr_start(void);
+void plat_walktmr_stop(void);
+bool plat_walktmr_running(void);
+uint32_t plat_walktmr_count(void);     /* P8 step-0 probe: must advance */
+
+/* ---- WDT with reset-cause capture (rebuild design §5.6) ---- */
+void plat_wdt_kick(void);
+void plat_wdt_mode(bool interval);
+void plat_wdt_quick_reset(void) __attribute__((noreturn));
+bool plat_wdt_is_interval(void);
+void plat_wdt_capture_reset_cause(void); /* once at init */
+uint8_t plat_wdt_wovf_count(void);
+
+/* ---- FRT microsecond timestamp (design §3) ---- */
+uint32_t plat_frt_us(void);
 
 /* ---- Analog inputs (spec 04) ----
  * Latest conversion result of channel AN0..AN27 or AN40..AN46, left-aligned 16-bit

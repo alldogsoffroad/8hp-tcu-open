@@ -1,7 +1,8 @@
 #include "app/flash_entry.h"
 #include "platform/platform.h"
 #include "platform/sh7254r/regs.h"     /* SPSRB/SPDRB, SPSR flags, WDT_WTCNT */
-#include "bsw/sup/sup.h"
+#include "bsw/sup/sup_jobs.h"          /* the lab job path (design §7.2) */
+#include "bsw/sup/sup_cells.h"         /* CELL_USE_COUNTER, J1 echo counters */
 
 #define NRC_SFNS   0x12
 #define NRC_IMLOIF 0x13
@@ -50,6 +51,37 @@ static uint32_t misr_fold(uint32_t seed, const uint32_t *words, uint32_t n)
 
 static uint8_t s_countdown;     /* ms until the flasher starts; 0 = not requested */
 
+/* ── the supervisor-word lab adapter (design §7.2) ────────────────────────
+ * The deleted sup.c sent its pattern word from a 5 ms tick; the rebuild's
+ * batch owns the 5 ms wire (NR-2: never a word outside the frame), so every
+ * lab word now goes out as ONE blocking SSLB1 exchange through the job
+ * engine's lab path. The last word/reply pair is kept for the FE32 results. */
+static uint16_t s_lab_last_tx;
+static uint16_t s_lab_last_rx;
+static bool     s_lab_last_ok;
+
+static bool lab_word(uint16_t w, uint16_t *rx)
+{
+    uint16_t t = w;
+    const bool ok = sup_lab_job_queue(&t, rx, 1u, SEL_B1, 1u);
+
+    s_lab_last_tx = w;
+    s_lab_last_ok = ok;
+    if (ok) {
+        s_lab_last_rx = *rx;
+    }
+    return ok;
+}
+
+/* the programming-mode word (the user boot MAT's flash loop shape: 0x8E80,
+ * bit 4 toggling is the tick's job — the lab sends the base word once). */
+static void sup_set_flash_mode(bool on)
+{
+    uint16_t rx;
+
+    (void)lab_word(on ? 0x8E80u : 0x8E04u, &rx);
+}
+
 #if !defined(TCU_RAM_APP)
 static void enable_lines(bool on)
 {
@@ -94,74 +126,85 @@ static int enable_test(uint8_t type, uint16_t n, uint8_t *out, uint16_t max, boo
 static int sup_pattern(uint8_t type, const uint8_t *in, uint16_t n, uint8_t *out, uint16_t max,
                        bool allowed)
 {
-    const sup_status_t *st = sup_status();
-
     if (type == 1u) {
+        uint16_t rx;
+
         if (n != 3u) {
             return -NRC_IMLOIF;
         }
         if (!allowed) {
             return -NRC_CNC;
         }
-        sup_set_pattern(true, (uint16_t)(in[0] << 8 | in[1]), in[2]);
+        (void)lab_word((uint16_t)((uint16_t)(in[0] << 8) | in[1]), &rx);
         return 0;
     }
     if (type == 4u) {
-        /* lab: raw pattern — NO bit-0 clearing (for [8E,01] init) */
+        /* lab: raw word — NO bit-0 clearing (for [8E,01] init) */
+        uint16_t rx;
+
         if (n != 3u) {
             return -NRC_IMLOIF;
         }
         if (!allowed) {
             return -NRC_CNC;
         }
-        sup_set_pattern_raw(true, (uint16_t)(in[0] << 8 | in[1]), in[2]);
+        (void)lab_word((uint16_t)((uint16_t)(in[0] << 8) | in[1]), &rx);
         return 0;
     }
     if (n != 0u) {
         return -NRC_IMLOIF;
     }
     if (type == 2u) {
-        sup_set_pattern(false, 0u, 0u);
+        s_lab_last_tx = 0u;
+        s_lab_last_rx = 0u;
         return 0;
     }
     if (max < 5u) {
         return -NRC_IMLOIF;
     }
-    out[0] = (uint8_t)(st->last_tx >> 8);
-    out[1] = (uint8_t)st->last_tx;
-    out[2] = (uint8_t)(st->last_rx >> 8);
-    out[3] = (uint8_t)st->last_rx;
+    out[0] = (uint8_t)(s_lab_last_tx >> 8);
+    out[1] = (uint8_t)s_lab_last_tx;
+    out[2] = (uint8_t)(s_lab_last_rx >> 8);
+    out[3] = (uint8_t)s_lab_last_rx;
     out[4] = fwe_byte();
     if (type == 3u && max >= 21u) {
-        /* lab counters: tx/rx/fwe + sent, replies_ok, replies_bad, busy (u32 BE) */
-        out[5] = (uint8_t)(st->sent >> 24);
-        out[6] = (uint8_t)(st->sent >> 16);
-        out[7] = (uint8_t)(st->sent >> 8);
-        out[8] = (uint8_t)st->sent;
-        out[9] = (uint8_t)(st->replies_ok >> 24);
-        out[10] = (uint8_t)(st->replies_ok >> 16);
-        out[11] = (uint8_t)(st->replies_ok >> 8);
-        out[12] = (uint8_t)st->replies_ok;
-        out[13] = (uint8_t)(st->replies_bad >> 24);
-        out[14] = (uint8_t)(st->replies_bad >> 16);
-        out[15] = (uint8_t)(st->replies_bad >> 8);
-        out[16] = (uint8_t)st->replies_bad;
-        out[17] = (uint8_t)(st->busy >> 24);
-        out[18] = (uint8_t)(st->busy >> 16);
-        out[19] = (uint8_t)(st->busy >> 8);
-        out[20] = (uint8_t)st->busy;
+        /* lab counters: tx/rx/fwe + sent, replies_ok, replies_bad, busy (u32 BE),
+         * read from the engine's per-job use counters (design §7.1) */
+        const uint32_t sent = CELL_USE_COUNTER(JOB_CTRL);
+        const uint32_t j1_err = CELL_J1_ERR;
+        const uint32_t j1_ok = CELL_J1_OK;
+
+        out[5] = (uint8_t)(sent >> 24);
+        out[6] = (uint8_t)(sent >> 16);
+        out[7] = (uint8_t)(sent >> 8);
+        out[8] = (uint8_t)sent;
+        out[9] = (uint8_t)(j1_ok >> 24);
+        out[10] = (uint8_t)(j1_ok >> 16);
+        out[11] = (uint8_t)(j1_ok >> 8);
+        out[12] = (uint8_t)j1_ok;
+        out[13] = (uint8_t)(j1_err >> 24);
+        out[14] = (uint8_t)(j1_err >> 16);
+        out[15] = (uint8_t)(j1_err >> 8);
+        out[16] = (uint8_t)j1_err;
+        out[17] = 0u;
+        out[18] = 0u;
+        out[19] = 0u;
+        out[20] = 0u;                       /* busy: the lab path owns the bus */
         return 21;
     }
     return 5;
 }
 
 /* Raw supervisor exchange: send one word, read the reply, report FPMON.
- * Suspends the 5ms tick so the RSPI bus is exclusively ours. */
+ * The lab path owns the bus for the one word (the engine's ISR discipline
+ * replaced the polled SPSR dance of the deleted transport). Status bits:
+ * 1 = sent, 2 = reply. */
 static int sup_raw_exchange(uint8_t type, const uint8_t *in, uint16_t n,
                             uint8_t *out, uint16_t max, bool allowed)
 {
     uint16_t rx = 0u;
     uint16_t tx;
+    uint8_t status = 0u;
 
     if (type != 1u) {
         return -NRC_SFNS;
@@ -172,35 +215,12 @@ static int sup_raw_exchange(uint8_t type, const uint8_t *in, uint16_t n,
     if (!allowed) {
         return -NRC_CNC;
     }
-    tx = (uint16_t)(in[0] << 8 | in[1]);
-    sup_suspend(true);                  /* stop the 5ms tick: we own the RSPI */
-    for (volatile uint32_t d = 0u; d < 2000u; d++) { }  /* ~100us settle */
-    /* clear any stale SPRF from the tick's last word (manual: SPRF=1 blocks
-     * the receive buffer from being updated by new transfers) */
-    if ((SPSRB & SPSR_SPRF) != 0u) {
-        (void)SPDRB;                    /* read to acknowledge */
-        SPSRB = 0u;                     /* clear SPRF */
+    tx = (uint16_t)((uint16_t)(in[0] << 8) | in[1]);
+    if (lab_word(tx, &rx)) {
+        status = 3u;                    /* sent + reply */
+    } else {
+        status = 1u;                    /* bus refused / timed out */
     }
-    /* wait TX-empty, send our word, poll for the NEW SPRF */
-    uint32_t guard;
-    uint8_t status = 0u;
-    for (guard = 50000u; guard != 0u && (SPSRB & SPSR_SPTEF) == 0u; guard--) { }
-    if ((SPSRB & SPSR_SPTEF) != 0u) {
-        SPDRB = tx;                     /* start the transmission */
-        status |= 1u;                   /* sent */
-    }
-    for (guard = 20000u; guard != 0u; guard--) {
-        if ((SPSRB & SPSR_SPRF) != 0u) {
-            rx = SPDRB;                 /* read the reply */
-            status |= 2u;               /* got reply */
-            SPSRB = 0u;                 /* clear SPRF */
-            break;
-        }
-        if ((guard & 0xFFFu) == 0u) {
-            WDT_WTCNT = 0x5ADBu;        /* WDT service */
-        }
-    }
-    sup_suspend(false);                 /* resume the keep-alive */
     out[0] = (uint8_t)(tx >> 8);
     out[1] = (uint8_t)tx;
     out[2] = (uint8_t)(rx >> 8);
@@ -210,28 +230,22 @@ static int sup_raw_exchange(uint8_t type, const uint8_t *in, uint16_t n,
     return 6;
 }
 
-/* Back-to-back burst on the stateless vendor frame (per-frame full re-init — the only
- * CPU-mode discipline proven to deliver more than one frame; see plat_sh7254r.c). The
- * reply to each frame is read in its own slot; we keep the LAST one. Frame-to-frame gap
- * is one setup (11 register writes), effectively back-to-back at the supervisor's scale.
+/* Back-to-back burst on the supervisor's single-select (the 0x1D478 shape:
+ * one word per blocking lab exchange, replies collected per frame; we keep
+ * the LAST one). Frame-to-frame gap is one job launch — effectively
+ * back-to-back at the supervisor's scale (design §7.2).
  * Reply: 71 01 FE 36 <last_rx_hi> <last_rx_lo> <fwe> */
 static int burst_words(const uint16_t *words, uint16_t count, uint8_t *out, uint16_t max)
 {
     uint16_t rx = 0u;
-    uint8_t r = 0u;
 
     if (max < 3u) {
         return -NRC_IMLOIF;
     }
-    sup_suspend(true);                  /* stop the 5ms tick: we own the RSPI */
     for (uint16_t i = 0u; i < count; i++) {
-        r = plat_sup_exchange(words[i], &rx);
-        if ((r & 1u) == 0u) {
-            break;                      /* setup refused (cannot happen) */
-        }
+        (void)lab_word(words[i], &rx);
         WDT_WTCNT = 0x5ADBu;            /* WDT, as the vendor does */
     }
-    sup_suspend(false);                 /* resume the keep-alive tick */
     out[0] = (uint8_t)(rx >> 8);
     out[1] = (uint8_t)rx;
     out[2] = fwe_byte();
@@ -309,29 +323,23 @@ static int sup_authentic(uint8_t type, const uint8_t *in, uint16_t n,
         return -NRC_CNC;
     }
 
-    /* 1. INIT SEQUENCE via raw tick pattern (bit 0 NOT cleared for [8E,01]) */
+    /* 1. INIT SEQUENCE as one lab word each (bit 0 NOT cleared for [8E,01]) */
     /* [8E,01] — the init frame that the vendor's boot sends at power-up */
-    sup_set_pattern_raw(true, 0x8E01u, 0u);
+    (void)lab_word(0x8E01u, &rx);
     lab_delay(20000u);
     /* [84,01] x 11 */
     for (uint8_t i = 0u; i < 11u; i++) {
-        sup_set_pattern_raw(true, 0x8401u, 0u);
+        (void)lab_word(0x8401u, &rx);
         for (volatile uint32_t d = 0u; d < 20000u; d++) { }
     }
     /* [8E,04] — the final keep-alive */
-    sup_set_pattern_raw(true, 0x8E04u, 0u);
+    (void)lab_word(0x8E04u, &rx);
     for (volatile uint32_t d = 0u; d < 20000u; d++) { }
-    sup_set_pattern_raw(false, 0u, 0u);
 
-    /* 2. read the supervisor profile via the tick pattern */
-    sup_set_pattern(true, 0x1200u, 0u);          /* [12,00] */
+    /* 2. read the supervisor profile */
+    (void)lab_word(0x1200u, &rx);                 /* [12,00] */
     lab_delay(60000u);
-    {
-        const sup_status_t *st = sup_status();
-        rx = st->last_rx;
-    }
     profile = (uint8_t)(rx & 0x0Fu);              /* bits 3:0 */
-    sup_set_pattern(false, 0u, 0u);
 
     /* 3. read the MISR (enable first) */
     MISRCR = 1u;                                  /* MISREN */
@@ -344,23 +352,18 @@ static int sup_authentic(uint8_t type, const uint8_t *in, uint16_t n,
     auth = ~(t_val ^ misr);                       /* complement of XOR */
 
     /* 5. send as the [88]x4 job: MSB first */
-    sup_set_pattern(true, (uint16_t)(0x8800u | ((auth >> 24) & 0xFFu)), 0u);
+    (void)lab_word((uint16_t)(0x8800u | ((auth >> 24) & 0xFFu)), &rx);
     lab_delay(20000u);
-    sup_set_pattern(true, (uint16_t)(0x8800u | ((auth >> 16) & 0xFFu)), 0u);
+    (void)lab_word((uint16_t)(0x8800u | ((auth >> 16) & 0xFFu)), &rx);
     for (volatile uint32_t d = 0u; d < 20000u; d++) { }
-    sup_set_pattern(true, (uint16_t)(0x8800u | ((auth >> 8) & 0xFFu)), 0u);
+    (void)lab_word((uint16_t)(0x8800u | ((auth >> 8) & 0xFFu)), &rx);
     for (volatile uint32_t d = 0u; d < 20000u; d++) { }
-    sup_set_pattern(true, (uint16_t)(0x8800u | (auth & 0xFFu)), 0u);
+    (void)lab_word((uint16_t)(0x8800u | (auth & 0xFFu)), &rx);
     for (volatile uint32_t d = 0u; d < 20000u; d++) { }
 
     /* 6. read the demand state [0A,00] to check acceptance */
-    sup_set_pattern(true, 0x0A00u, 0u);
+    (void)lab_word(0x0A00u, &rx);
     lab_delay(60000u);
-    {
-        const sup_status_t *st = sup_status();
-        rx = st->last_rx;
-    }
-    sup_set_pattern(false, 0u, 0u);
 
     /* 7. report */
     out[0] = profile;

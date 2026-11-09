@@ -30,15 +30,30 @@ typedef struct {
     uint16_t drv_last_tx[45];
     unsigned drv_jobs;
     unsigned drv5_jobs;
-    uint16_t toe_duty;
-    bool wdt_interval;         /* last plat_wdt_mode() state */          /* park hold PWM duty (permil), TOE31 / PL6 */
+    uint16_t toe_duty;          /* park hold PWM duty (permil), TOE31 / PL6 */
+    bool wdt_interval;          /* last plat_wdt_mode() state */
     bool userboot_ok;
     bool fwe;                   /* FPMON.FWE */
     unsigned flasher_starts;
     bool flash_enable;
     bool fwe_follows_enable;
+
+    /* ---- rebuild platform model (design §5) ---- */
+    unsigned ms;                /* plat_tick_count() returns this (the test advances it) */
+    uint32_t frt_us;            /* plat_frt_us() model value */
+    bool rspi_launch_fail;      /* plat_rspi_launch: bus busy (all buses) */
+    bool lab_fail;              /* plat_rspi_lab: bus timeout */
+    unsigned walktmr_starts;    /* plat_walktmr_start() calls */
 } stub_plat_t;
 
 extern stub_plat_t stub;
+
+/* The fake RSPI job engine arms a transaction on plat_rspi_launch(); the TEST
+ * plays the interrupt with stub_rspi_isr() — one call per frame fed, the last
+ * call runs the completion handler (ISR context) and may queue the next job.
+ * Scripted replies: sup_reply_fn(tx) (default sup_xfer_rx), framed in the
+ * 0xA8/0xAA class by select parity on bus 1, 0xA2 on bus 0. */
+void stub_rspi_isr(uint8_t bus);
+bool stub_rspi_busy(uint8_t bus);
 
 #endif

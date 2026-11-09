@@ -1,0 +1,149 @@
+/* sup_batch.c — the 5 ms batch (design §7.5; stock 0x8EE82 pool order, 1:1).
+ *
+ * Stock call order (artifact2 §2.3):
+ *   timing → 0x91C86 (compose 0x8E) → 0x91DAA (= 0x93126 C9 summarize +
+ *   0x92B82 queue J6 + 0x92D38 arm J1) → 0x91E12 (J2/F staging, the
+ *   0x91804/0x91810 law; the letters/selftest chain runs in the same pass,
+ *   the stock's mode-sequencer 0x85160 slot) → 0x92A84 (queue J5) →
+ *   0x90ACC (echo-derived condense) → 0x921A0 (bus-A kick, queues the
+ *   0x40A98 ID job) → 0x9305A/0x93198 (J3/J4 cyclic starters) and J7 on
+ *   every 2nd pass (design §12 V4: "every rotation" not fully decoded).
+ *
+ * Staging model (design §7.1): the stagers write the descriptor's tx_stage
+ * directly and the engine sends tx_stage as-is — the constant frames are
+ * re-staged here each pass exactly as the stock's template queuers do.
+ *
+ * The bus-A ID kick (drv_id_kick, stock 0x921A0) belongs to bsw/drv (P4);
+ * a weak no-op keeps the link green until that module lands and its
+ * strong definition replaces this one.
+ */
+#include "bsw/sup/sup_batch.h"
+#include "bsw/sup/sup_jobs.h"
+#include "bsw/sup/sup_cells.h"
+#include "bsw/sup/sup_ctrl.h"
+#include "bsw/sup/sup_letters.h"
+#include "platform.h"
+
+static uint16_t s_pass;              /* the 2-pass divider for J7 */
+static uint32_t s_stamp;            /* the batch timing journal (FRT us) */
+
+void drv_id_kick(void);              /* bsw/drv P4: queue the bus-A ID job */
+__attribute__((weak)) void drv_id_kick(void)
+{
+    /* bus-A service not yet built (P4) — no-op until the strong symbol lands */
+}
+
+/* ── the constant-frame stagers ─────────────────────────────────────────── */
+
+static void batch_stage_stat(void)
+{
+    uint16_t *st = sup_job_table[JOB_STAT].tx_stage;
+    st[0] = 0x1800u;
+    st[1] = 0x0C00u;
+    st[2] = 0x1E00u;
+    st[3] = 0x0600u;
+    st[4] = 0x1400u;
+}
+
+static void batch_stage_ctrl_tail(void)
+{
+    /* frames 2/3: the 0x22/0x09 read commands (frames 0/1 are the
+     * composers' — sup_ctrl_compose / sup_c9_compose) */
+    uint16_t *st = sup_job_table[JOB_CTRL].tx_stage;
+    st[2] = 0x2200u;
+    st[3] = 0x0900u;
+}
+
+static void batch_stage_id(void)
+{
+    uint16_t *st = sup_job_table[JOB_ID].tx_stage;
+    st[0] = 0x0600u;
+    st[1] = 0x0300u;
+    st[2] = 0x0000u;
+    st[3] = 0x0000u;
+}
+
+static void batch_stage_pos(void)
+{
+    uint16_t *st = sup_job_table[JOB_POS].tx_stage;
+    st[0] = 0x2800u;
+    st[1] = 0x2E00u;
+}
+
+static void batch_stage_sslb2(void)
+{
+    sup_job_table[JOB_SSLB2].tx_stage[0] = 0x00FFu;
+}
+
+static void batch_stage_nib(void)
+{
+    sup_job_table[JOB_NIB].tx_stage[0] = 0x0000u;
+}
+
+/* ── init (stock 0x91DD2 serial_rx_init law) ────────────────────────────── */
+
+void sup_batch_init(void)
+{
+    s_pass = 0u;
+    s_stamp = 0u;
+    sup_enable_request(false);          /* request 0, outputs-disabled 1 */
+    CELL_SSLB2_RAW = 0x8000u;           /* the sentinel */
+    /* the first bus-B job: J5 ID staged and queued */
+    batch_stage_id();
+    (void)sup_job_queue(JOB_ID);
+}
+
+/* ── the 5 ms batch (stock 0x8EE82 pool order, 1:1) ─────────────────────── */
+
+void sup_batch_5ms(void)
+{
+    /* 1. timing stamp (FRT sample for the batch journal) */
+    s_stamp = plat_frt_us();
+
+    /* 2. the composers (0x91C86 + 0x93126) */
+    sup_ctrl_compose();
+    sup_c9_compose();
+
+    /* 3. queue JOB_STAT (0x92B82), queue JOB_CTRL (0x92D38) */
+    batch_stage_stat();
+    (void)sup_job_queue(JOB_STAT);
+    batch_stage_ctrl_tail();
+    (void)sup_job_queue(JOB_CTRL);
+
+    /* 4. the letters chain + J2/F staging (0x91E12 law; the self-test runs
+     *    in the batch pass — the stock's mode-sequencer slot) */
+    sup_selftest_step();
+    sup_enables_stage();
+
+    /* 5. queue JOB_ID (0x92A84) */
+    batch_stage_id();
+    (void)sup_job_queue(JOB_ID);
+
+    /* 6. reply condense (0x90ACC: grant, handover, WDT A-law, SSLB2,
+     *    telemetry average) */
+    sup_reply_condense();
+
+    /* 7. bus-A kick (0x921A0: queue the ID job + engine kick) */
+    drv_id_kick();
+
+    /* 8. the cyclic starters (0x9305A/0x93198) and J7 on every 2nd pass */
+    batch_stage_pos();
+    (void)sup_job_queue(JOB_POS);
+    batch_stage_sslb2();
+    (void)sup_job_queue(JOB_SSLB2);
+    s_pass++;
+    if ((s_pass & 1u) == 0u) {
+        batch_stage_nib();
+        (void)sup_job_queue(JOB_NIB);
+    }
+
+    /* the builder law (0x91C86 tail): force the request cell while outputs
+     * are not disabled — the composer does it with bit 0; the batch makes
+     * the pass invariant explicit. */
+    if (CELL_OUTPUTS_DIS != 1u) {
+        CELL_REQUEST = 1u;
+    }
+
+    /* pump the engine: launch whatever's queued and the bus is free */
+    sup_job_engine_pump();
+}

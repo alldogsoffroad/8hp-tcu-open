@@ -12,8 +12,10 @@
 #include "app/bench_out.h"
 #include "bsw/com/crc8.h"
 #include "bsw/diag/uds.h"
-#include "bsw/sup/sup.h"
-#include "io/actuators/sol_drv.h"
+#include "bsw/sup/sup_jobs.h"
+#include "bsw/sup/sup_batch.h"
+#include "bsw/sup/sup_cells.h"
+#include "io/actuators/sol_ctl.h"
 #include "tests/unit/stub_plat.h"
 
 #include <stdio.h>
@@ -22,6 +24,24 @@
 
 static int fails;
 #define CHECK(c) do { if (!(c)) { printf("FAIL %s:%d %s\n", __FILE__, __LINE__, #c); fails++; } } while (0)
+
+/* scripted supervisor: the 0x22 read mirrors the staged ctrl byte (the
+ * healthy-supervisor law); everything else reads 0 */
+static uint16_t sup_mirror(uint16_t tx)
+{
+    return (tx & 0xFF00u) == 0x2200u ? CELL_CTRL_STAGED : 0x0000u;
+}
+
+/* run the job engine's completions (the test plays the RX ISR) */
+static void drain_rspi(void)
+{
+    for (uint8_t b = 0u; b < 2u; b++) {
+        unsigned guard = 100u;
+        while (stub_rspi_busy(b) && guard-- != 0u) {
+            stub_rspi_isr(b);
+        }
+    }
+}
 
 /* ---------------------------------------------------------------- sensors stand-in */
 
@@ -103,12 +123,18 @@ static void reset_all(void)
     s_prev_release = false;
     s_violations = 0u;
     vehicle_init();
-    sol_stream_gate(true);      /* E29: tests exercise the legacy always-on stream */
     sol_init();
-    sup_init();
+    sup_jobs_init();
+    sup_batch_init();           /* serial_rx_init: request 0, outputs disabled, J5 queued */
     plat_toe_out_init();
     bench_init();
     park_init();
+    stub.sup_reply_fn = sup_mirror;
+    drain_rspi();
+    sup_batch_5ms();            /* one J1 pass: the bench's supervisor-health witness */
+    drain_rspi();
+    sup_batch_5ms();
+    drain_rspi();
 }
 
 static void step(void)
@@ -139,6 +165,7 @@ static void step(void)
     park_tick_10ms();
     bench_tick_10ms();                   /* production order: park requests, then bench force */
     sol_tick_10ms();                     /* applies the staged channel requests               */
+    drain_rspi();                        /* the cyclic's completion (ISR context)             */
 
     /* pass criteria (section 6): no release out of P unless stationary with the engine running;
      * the pawl never starts to drop while moving except in SAFE */
@@ -214,7 +241,8 @@ static void test_standstill_cycle(void)
     run(20u);
     CHECK(ps->state == PC_HOLDING && ps->req.hold && ps->req.release && m.pawl == 100);
     CHECK(stub.toe_duty == 1000u);                          /* park hold energised      */
-    CHECK(sol_status()->mode[7] == SOL_MODE_FULL_ON);       /* release kept on while holding */
+    CHECK(sol_channel(7u)->mode == SOL_MODE_CURRENT &&
+          sol_channel(7u)->setpoint == 2047u);              /* release kept on while holding */
     sc.lever_code = 3u;
     run(10u);
     sc.lever_code = 4u;
@@ -224,7 +252,7 @@ static void test_standstill_cycle(void)
     sc.lever_code = 1u;                 /* P: engage */
     run(20u);
     CHECK(ps->state == PC_IN_P && !ps->req.hold && !ps->req.release && m.pawl == 0);
-    CHECK(stub.toe_duty == 0u && sol_status()->mode[7] == SOL_MODE_OFF);
+    CHECK(stub.toe_duty == 0u && sol_channel(7u)->mode == SOL_MODE_OFF);
     CHECK(ps->ctl_faults == 0u && ps->mon_faults == 0u && s_violations == 0u);
 }
 
@@ -276,20 +304,23 @@ static void test_bench_suspension(void)
     CHECK(ps->state == PC_HOLDING && stub.toe_duty == 1000u);
 
     /* healthy supervisor so the bench start conditions pass */
-    stub.sup_reply = 0xA800u;
-    sup_tick_5ms();
-    sup_tick_5ms();
+    sup_batch_5ms();
+    drain_rspi();
+    sup_batch_5ms();
+    drain_rspi();
     CHECK(bench_routine(1u, BENCH_PARK_RID, start_in, 2u, out, sizeof out) == 0);
     step();
     CHECK(bench_active());
     CHECK(stub.toe_duty == 0u);                      /* park hold suspended          */
-    CHECK(sol_status()->mode[7] == SOL_MODE_FULL_ON);/* bench drives the release     */
+    CHECK(sol_channel(7u)->mode == SOL_MODE_CURRENT &&
+          sol_channel(7u)->setpoint == 2047u);       /* bench drives the release     */
     CHECK(ps->state == PC_HOLDING && ps->req.hold);  /* requests keep being computed */
 
     CHECK(bench_routine(2u, BENCH_PARK_RID, NULL, 0u, out, sizeof out) == 0);
     step();
     CHECK(!bench_active());
-    CHECK(stub.toe_duty == 1000u && sol_status()->mode[7] == SOL_MODE_FULL_ON);
+    CHECK(stub.toe_duty == 1000u && sol_channel(7u)->mode == SOL_MODE_CURRENT &&
+          sol_channel(7u)->setpoint == 2047u);
     CHECK(ps->mon_faults == 0u && s_violations == 0u);
 }
 
@@ -448,7 +479,7 @@ static void test_contacts_disagree(void)
     sc.lever_code = 4u;
     run(50u);
     CHECK(ps->state == PC_SAFE && !ps->req.release && !ps->req.hold);
-    CHECK(stub.toe_duty == 0u && sol_status()->mode[7] == SOL_MODE_OFF);   /* outputs dead in SAFE */
+    CHECK(stub.toe_duty == 0u && sol_channel(7u)->mode == SOL_MODE_OFF);   /* outputs dead in SAFE */
 }
 
 /* Engage times out (contacts never reach P): SAFE. */

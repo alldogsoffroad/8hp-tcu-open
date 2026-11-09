@@ -174,6 +174,59 @@ ANN_HANDLER(446)
 ANN_HANDLER(447)
 ANN_HANDLER(448)
 
+/* ── the rebuild's ISR entries (design §5.2-5.5; spec 24 vector inventory) ─
+ * vector 148 WDT ITI (interval mode), 216 ATU-D0 CMID00 (walk), 228 ATU-D1
+ * CMID10 (the 1 ms tick), 445/449 RSPI-A/B SPRIB (the job engine). Each
+ * wrapper only forwards to the engine's ISR body; the bodies own their
+ * acknowledge/re-arm. The data-flash loader (TCU_LOADER) never arms any of
+ * these sources — its vectors stay on the default announce net. */
+#if !defined(TCU_LOADER)
+
+extern void plat_tick_isr(void);
+extern void plat_walktmr_isr(void);
+extern void plat_rspi_isr(uint8_t bus);
+extern void plat_wdt_kick(void);
+
+__attribute__((interrupt_handler))
+static void v_wdt_iti(void)
+{
+    plat_wdt_kick();                    /* interval mode: reload on overflow */
+}
+
+__attribute__((interrupt_handler))
+static void v_walktmr(void)
+{
+    plat_walktmr_isr();
+}
+
+__attribute__((interrupt_handler))
+static void v_tick(void)
+{
+    plat_tick_isr();
+}
+
+__attribute__((interrupt_handler))
+static void v_rspi_a(void)
+{
+    plat_rspi_isr(0u);
+}
+
+__attribute__((interrupt_handler))
+static void v_rspi_b(void)
+{
+    plat_rspi_isr(1u);
+}
+
+#else
+
+#define v_wdt_iti default_handler
+#define v_walktmr default_handler
+#define v_tick default_handler
+#define v_rspi_a default_handler
+#define v_rspi_b default_handler
+
+#endif
+
 /* Vectors 4..511 (508 entries), at header +0x80.
  * Layout: 7 x V64 (vectors 4-259) | V16 x3 (260-307) | V4 x3 (308-319)
  * then the tail: V4, V4 = vectors 320-327... vector 445 = index 441 (0-based). */
@@ -182,23 +235,138 @@ ANN_HANDLER(448)
 #define V64(x) V16(x), V16(x), V16(x), V16(x)
 __attribute__((section(".app_vectors"), used))
 void (*const app_vectors[508])(void) = {
-    /* vectors 4..259 (indices 0..255): 4 x V64 */
-    V64(default_handler), V64(default_handler), V64(default_handler), V64(default_handler),
-    /* vectors 260..307 (indices 256..303): 3 x V16 */
-    V16(default_handler), V16(default_handler), V16(default_handler),
-    /* vectors 308..319 (indices 304..315): 3 x V4 */
-    V4(default_handler), V4(default_handler), V4(default_handler),
-    /* indices 316..440 (125 entries) — 64 + 48 + 12 + 1 */
-    V64(default_handler),
-    V16(default_handler), V16(default_handler), V16(default_handler),
-    V4(default_handler), V4(default_handler), V4(default_handler),
-    ann_444,                 /* index 440 = VECTOR 444 (SPEIA, error) */
-    rspi_a_isr,              /* index 441 = VECTOR 445 (SPRIA) — the feed */
-    ann_446, ann_447, ann_448,   /* vectors 446/447/448: SPTIA + sentinels */
-    /* indices 445..507 (63 default entries) — 48 + 12 + 3 */
-    V16(default_handler), V16(default_handler), V16(default_handler),
-    V4(default_handler), V4(default_handler), V4(default_handler),
-    default_handler, default_handler, default_handler,
+    /* vectors 4..511: 508 entries. Wired: index 144 = vector 148 (WDT ITI),
+     * 212 = vector 216 (ATU-D0 CMID00, walk), 224 = vector 228 (ATU-D1
+     * CMID10, the 1 ms tick), 440-444 (RSPI-A error/announce sentinels),
+     * 441 = vector 445 (RSPI-A SPRIA) and 449 = vector 449 (RSPI-B SPRIB) —
+     * the job-engine RX ISRs. Everything else defaults (announce + halt). */
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    v_wdt_iti,  /* index 144 = VECTOR 148 */ default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    v_walktmr,  /* index 212 = VECTOR 216 */ default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    v_tick,  /* index 224 = VECTOR 228 */ default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    ann_444,  /* index 440 = VECTOR 444 */ v_rspi_a,  /* index 441 = VECTOR 445 */ ann_446,  /* index 442 = VECTOR 446 */ ann_447,  /* index 443 = VECTOR 447 */
+    ann_448,  /* index 444 = VECTOR 448 */ default_handler, default_handler, default_handler,
+    default_handler, v_rspi_b,  /* index 449 = VECTOR 453 */ default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
 };
 
 /* Tail record at 0x17FB70 (outside the CRC range): project identification and end marker. */

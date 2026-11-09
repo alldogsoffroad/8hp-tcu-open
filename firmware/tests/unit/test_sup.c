@@ -214,7 +214,7 @@ int main(void)
         /* boot: S0, value 0x3F, expected/reported 7; the cell arms at pass 21
          * and the walk holds until 500 ms (E60r: the proven-safe timings) */
         sup_engage_arm(true);
-        CHECK(e->state == SUP_ENG_S0 && e->value == 0x3Fu && e->lvl_exp == 7u);
+        CHECK(e->state == SUP_ENG_S0 && e->value == 0x06u && e->lvl_exp == 7u);
         CHECK(!e->enable_req);                     /* not yet: pass 0 */
 
         tms = 0u;
@@ -223,29 +223,29 @@ int main(void)
 #define WN (e->last_n)
 #define WALK_TICK() do { tms += 5u; sup_tick_5ms(); } while (0)  /* one 5 ms pass */
 
-        /* pass 1: the walk rides the init value 0x3F — the stock's literal
-         * first register words, the conversation the pass-21 ask rides on.
-         * E60w wire check: NO bit 0 in the early mirror words (the E32r
-         * reset class) — scan the ring for this pass's 0x8E word */
-        CHECK(!e->enable_req);                     /* the ask arms at pass 21 */
+        /* E60ab: the walk runs from pass 1 (the hold deleted — the chip
+         * can't tolerate 84-class silence after the handshake arms it);
+         * the first W2 is 84|06 (never 3F); the ask arms at pass 21 */
+        CHECK(!e->enable_req);                  /* ask not yet at pass 0 */
         WALK_TICK();
+        CHECK(WN == 4u && WJ[0] == 0x8406u);   /* the FIRST-EVER 84 word */
+        CHECK(WJ[1] == 0x0A00u && WJ[2] == 0x1200u && WJ[3] == 0x0C00u);
+        /* pre-ask mirror word: no bit 0 */
         {
             uint16_t first8e = 0u;
             for (unsigned i = 0u; i < stub.sup_n && i < 64u; i++) {
                 const uint16_t w = stub.sup_tx[(stub.sup_n - 1u - i) % 64u];
-                if ((w & 0xFF00u) == 0x8E00u) {
-                    first8e = w;
-                    break;
-                }
+                if ((w & 0xFF00u) == 0x8E00u) { first8e = w; break; }
             }
-            CHECK((first8e & 0xFF00u) == 0x8E00u); /* found the mirror word */
-            CHECK((first8e & 0x01u) == 0u);        /* bit 0 OFF pre-ask */
+            CHECK((first8e & 0xFF00u) == 0x8E00u && (first8e & 0x01u) == 0u);
         }
-        CHECK(WN == 4u && WJ[0] == 0x843Fu);
-        CHECK(WJ[1] == 0x0A00u && WJ[2] == 0x1200u && WJ[3] == 0x0C00u);
-        /* pass 2: S0's staging promote lands — 0x06 takes the value cell */
-        WALK_TICK();
-        CHECK(WJ[0] == 0x8406u);
+        /* run to the ask's pass and beyond */
+        {
+            unsigned guard = 0u;
+            while (!e->enable_req && ++guard < 40u) { WALK_TICK(); }
+            CHECK(e->enable_req);               /* armed at pass 21 */
+            CHECK(e->jobs > 15u);               /* the walk has been flowing */
+        }
         CHECK(e->value == 0x06u);
         CHECK(e->state == SUP_ENG_S8 || e->state == SUP_ENG_S12 ||
              e->state == SUP_ENG_S23);                      /* warm chip advances */

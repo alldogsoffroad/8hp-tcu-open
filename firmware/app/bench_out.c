@@ -1,10 +1,13 @@
 #include "app/bench_out.h"
 #include "bsw/diag/uds.h"
-#include "bsw/sup/sup.h"
-#include "bsw/sup/sup_engage.h"
-#include "io/actuators/sol_drv.h"
+#include "bsw/sup/sup_jobs.h"
+#include "bsw/sup/sup_cells.h"
+#include "bsw/sup/sup_ctrl.h"
+#include "bsw/sup/sup_walk.h"           /* SUP_WALK_* states (the one-shot guard) */
+#include "bsw/drv/drv_jobs.h"
+#include "io/actuators/sol_ctl.h"
 #include "io/vehicle/vehicle.h"
-#include "platform/platform.h"          /* plat_sup_xfer (FE13); plat_toe_out_* (FE11) */
+#include "platform/platform.h"          /* plat_rspi_lab (FE12/FE13); plat_toe_out_* (FE11) */
 
 #define NRC_IMLOIF 0x13
 #define NRC_CNC    0x22
@@ -12,6 +15,19 @@
 #define NRC_SFNS   0x12
 #define SES_EXT    0x03u
 #define ENGINE_RUNNING_RPM 50
+
+/* Bus-A lab exchange (design §8): one five-select transaction, frame i → chip
+ * i mod 5 — the routing of the deleted plat_drv_xfer, now on the RSPI engine's
+ * blocking lab path. The cyclic job may hold the bus; the lab waits it out. */
+static bool drv_lab_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n)
+{
+    for (uint8_t t = 0u; t < 100u; t++) {
+        if (plat_rspi_lab(0u, tx, rx, n, SEL_A5, 5u, 20u)) {
+            return true;
+        }
+    }
+    return false;
+}
 
 typedef enum { BK_SOL = 0, BK_PARK_OUT = 1 } bench_kind_t;
 
@@ -29,16 +45,37 @@ static bool engine_running(void)
     return v->q_engine_speed == Q_OK && v->engine_speed >= ENGINE_RUNNING_RPM;
 }
 
-static bool drivers_healthy(void)
+/* the 11-bit setpoint of a current demand: 0.6 mA steps (stock 0x90118, the
+ * carried sol_drv law), capped at the driver maximum 12282 * 0.1 mA. */
+#define SOL_MA10_MAX   12282u
+static uint16_t sol_setpoint_of(uint16_t ma10)
 {
-    const sol_status_t *s = sol_status();
-    return s->ready && s->faults == 0u;
+    const uint32_t c = ma10 > SOL_MA10_MAX ? SOL_MA10_MAX : ma10;
+    return (uint16_t)(c / 6u);
 }
 
+/* Drivers healthy (rebuild §8): the bus-A job engine is not stuck — every job
+ * slot is free, so the cyclic and the ID poll can flow. The old latched-fault
+ * byte belonged to the deleted sol_drv engine; the new handlers release their
+ * slots unconditionally (drv_handlers.c), so a slot stuck busy is the one
+ * observable "driver layer dead" state. */
+static bool drivers_healthy(void)
+{
+    return drv_job_check_free(DRV_ID) && drv_job_check_free(DRV_CYC);
+}
+
+/* Supervisor healthy (design §7.6 law, live): the last 0x22 echo must mirror
+ * the staged ctrl byte under mask 0xDF (bit 5 excluded — the chip's own rail
+ * telemetry, never asserted by us), and at least one echo must have matched
+ * once (CELL_J1_OK) — a supervisor that never answers refuses the test. */
 static bool supervisor_healthy(void)
 {
-    const sup_status_t *s = sup_status();
-    return (s->last_rx & SUP_REPLY_MASK) == SUP_REPLY_OK;
+    static bool seen;
+
+    if ((CELL_J1_OK & 0x5Eu) != 0u) {
+        seen = true;
+    }
+    return seen && ((CELL_ECHO_22 ^ CELL_CTRL_STAGED) & 0xDFu) == 0u;
 }
 
 /* Channels 0-6 are the bench channels: forced off whenever no test drives them.
@@ -65,12 +102,12 @@ static void stop(uint8_t reason)
     s_active = false;
     s_left_10ms = 0u;
     bench_channels_off();
-    sup_enable_clear(SUP_EN_BENCH);
+    /* No supervisor output-enable request is made or cleared here (M4b law,
+     * bench 2026-10-30): the request cell belongs to the sup_ctrl composer /
+     * walk FSM now, and the bench never arms it. */
 }
 
-static uint16_t s_force_left_10ms;      /* FE13 sub 11: A-law bypass window, 10 ms ticks */
-static bool s_duty_cyc;                 /* FE13 sub 14 (E8): the duty job cyclic */
-static uint8_t s_duty_div;
+static uint16_t s_force_left_10ms;      /* FE13 sub 12: A-law bypass window, 10 ms ticks */
 
 void bench_init(void)
 {
@@ -80,7 +117,6 @@ void bench_init(void)
     s_reason = BENCH_END_NONE;
     s_left_10ms = 0u;
     bench_channels_off();
-    sup_enable_clear(SUP_EN_BENCH);
 }
 
 bool bench_active(void)
@@ -91,35 +127,16 @@ bool bench_active(void)
 void bench_tick_10ms(void)
 {
     if (s_force_left_10ms != 0u && --s_force_left_10ms == 0u) {
-        sup_engage_force_enable(false);             /* the bypass window closes itself */
-    }
-    if (s_duty_cyc) {                               /* E8: the stock's duty stream, mirrored
-                                                     * at ~10 Hz while the ladder holds and
-                                                     * no bench test owns the outputs (the
-                                                     * reset trip, spec 03 section 6.2f) */
-        if (s_active || !sup_engage_active()) {
-            s_duty_div = 0u;
-        } else if (++s_duty_div >= 10u) {
-            static const uint16_t d_live[8] = {
-                0x90u, 0x10u, 0x20u, 0x40u, 0x40u, 0x60u, 0x00u, 0x00u,
-            };
-            s_duty_div = 0u;
-            if (!sol_duty_job(d_live)) {
-                s_duty_cyc = false;                 /* bus gone: stop the stream */
-            }
-        }
+        sup_enable_request(false);                  /* the bypass window closes itself */
     }
     if (!s_active) {
 #if !defined(TCU_AUTOENGAGE)   /* E31b (spec 03 section 6.2w): the idle wipe erased
-                                * the engage load every 10 ms - keep-warm NEVER flowed
-                                * (the .217-era blips were rail-up logic current, not
-                                * delivery; E19's attribution corrected). In the
-                                * AUTOENGAGE bench build the stream owns channels 0-6
-                                * from boot; a bench test still reclaims them at start
-                                * and the stop() cleanup still clears on test end. */
+                                * the engage load every 10 ms - keep-warm NEVER flowed.
+                                * In the AUTOENGAGE bench build the solenoid cyclic owns
+                                * channels 0-6 from boot; a bench test still reclaims
+                                * them at start and the stop() cleanup clears on end. */
         bench_channels_off();
 #endif
-        sup_enable_clear(SUP_EN_BENCH);
         return;
     }
     if (uds_session() != SES_EXT) {
@@ -134,12 +151,12 @@ void bench_tick_10ms(void)
         stop(BENCH_END_TIMEOUT);
     } else if (s_kind == BK_SOL) {
         bench_channels_off();
-        sol_set(s_ch, SOL_MODE_CURRENT, (ma10_t)(s_ma * 10u));
+        sol_set(s_ch, SOL_MODE_CURRENT, sol_setpoint_of((uint16_t)(s_ma * 10u)));
 #if defined(TCU_M4B_OUTPUTS)
     } else {                             /* BK_PARK_OUT */
         bench_channels_off();
         if (s_ch == 0u) {
-            sol_set(SOL_CH_PARK_RELEASE, SOL_MODE_FULL_ON, 0u);
+            sol_set(SOL_CH_PARK_RELEASE, SOL_MODE_CURRENT, sol_setpoint_of(SOL_MA10_MAX));
             plat_toe_out_set(0u);
         } else {
             plat_toe_out_set(s_duty);
@@ -328,7 +345,8 @@ static int rspi_diag(uint8_t type, const uint8_t *in, uint16_t n, uint8_t *out, 
         out[30u + v * 8u] = (uint8_t)(rx[v] >> 8);
         out[31u + v * 8u] = (uint8_t)rx[v];
     }
-    /* leave the registers as the driver layer expects them */
+    /* leave the bus in the engine's idle state (design §5.5: SPCR = 0x08,
+     * MSTR only; the engine reloads SPCMD/SPSCR per transaction) */
     SPCRA = 0x00u;
     SPSRA = 0u;
     SPSCRA = 4u;
@@ -338,7 +356,7 @@ static int rspi_diag(uint8_t type, const uint8_t *in, uint16_t n, uint8_t *out, 
     SPCMDA(3) = 0xAF01u;
     SPCMDA(4) = 0xAF51u;
     SPNDA = 0u;
-    SPCRA = 0x48u;
+    SPCRA = 0x08u;
     return 72;
 }
 
@@ -361,7 +379,7 @@ static const uint16_t map_r1[NMAP_R] = { 0x0600u, 0x0000u, 0x1800u, 0x1E00u, 0x2
 
 static void map_xfer(const uint16_t *tx, uint8_t n, uint16_t *out_words)
 {
-    (void)plat_drv_xfer(tx, out_words, n);
+    (void)drv_lab_xfer(tx, out_words, n);
 }
 
 static int rspi_map(uint8_t type, uint8_t *out, uint16_t max)
@@ -429,7 +447,7 @@ static int rspi_lab(const uint8_t *in, uint16_t n, uint8_t *out, uint16_t max)
     for (uint16_t i = 0u; i < n / 2u; i++) {
         tx[i] = (uint16_t)(((uint16_t)in[2u * i] << 8) | in[2u * i + 1u]);
     }
-    if (!plat_drv_xfer(tx, rx, (uint8_t)(n / 2u))) {
+    if (!drv_lab_xfer(tx, rx, (uint8_t)(n / 2u))) {
         return -NRC_CNC;
     }
     for (uint16_t i = 0u; i < n / 2u; i++) {
@@ -465,12 +483,12 @@ static int rspi_dump(uint8_t type, uint8_t *out, uint16_t max)
     if (max < 100u) {
         return -NRC_IMLOIF;
     }
-    ok = plat_drv_xfer(id_tx, rx, 10u);
+    ok = drv_lab_xfer(id_tx, rx, 10u);
     for (uint8_t i = 0u; i < 10u; i++) {
         out[2u * i] = (uint8_t)(rx[i] >> 8);
         out[2u * i + 1u] = (uint8_t)rx[i];
     }
-    ok = ok && plat_drv_xfer(cfg_tx, rx, 40u);
+    ok = ok && drv_lab_xfer(cfg_tx, rx, 40u);
     for (uint8_t i = 0u; i < 40u; i++) {
         out[20u + 2u * i] = (uint8_t)(rx[i] >> 8);
         out[21u + 2u * i] = (uint8_t)rx[i];
@@ -480,15 +498,31 @@ static int rspi_dump(uint8_t type, uint8_t *out, uint16_t max)
 #endif
 
 /* ---- FE13: RSPI-B supervisor lab (spec 03 section 4.4) -------------------------------
- * One-shot raw exchanges with the stock two-command sequence (SSLB1 / SSLB0 alternating)
- * and a sustained replay of the stock application's cyclic supervisor jobs, so the bench
- * can iterate supervisor hypotheses live. Words with 0x8E bit 0 (output enable) or bit 7
- * are the danger words: they reset or re-flash the TCU when sent without the full context. */
+ * One-shot raw exchanges through the job engine's lab path (design §7.2):
+ * even-indexed frames of the two-command table go to SSLB1 (supervisor), odd
+ * to SSLB0 — the wire shapes of the stock cyclic jobs, byte-identical
+ * (design §11). Words with 0x8E bit 0 (output enable) or bit 7 set are the
+ * danger words: they reset or re-flash the TCU when sent without context.
+ * Subs 2/3/7/8/9 arm the request cell (the composer carries bit 0); the
+ * cyclic word stream itself is the stock batch now and cannot be overridden.
+ */
 #define SUP_LAB_MAX 100u
 
 static uint16_t s_sup_rx[SUP_LAB_MAX];
 static uint8_t  s_sup_n;
-static uint8_t  s_sup_mode;            /* 0 idle, 1 one-shot done, 2 stock pattern on */
+static uint8_t  s_sup_mode;            /* 0 idle, 1 one-shot done, 2 cyclic live, 3 walk view */
+
+/* the lab exchange: wait out the cyclic jobs, then one blocking transaction */
+static bool sup_lab_xfer(uint16_t *tx, uint16_t *rx, uint8_t n,
+                         const uint16_t *sel_cfg, uint8_t n_sel)
+{
+    for (uint16_t t = 0u; t < 2000u; t++) {
+        if (sup_lab_job_queue(tx, rx, n, sel_cfg, n_sel)) {
+            return true;
+        }
+    }
+    return false;
+}
 
 static int sup_lab_start(const uint8_t *in, uint16_t n)
 {
@@ -496,93 +530,57 @@ static int sup_lab_start(const uint8_t *in, uint16_t n)
         return -NRC_IMLOIF;
     }
     if (in[0] == 12u) {                                    /* A-law bypass: force the
-                                                             * enable bit, bench only, bounded */
+                                                             * request cell, bench only,
+                                                             * bounded */
         if (n < 2u || n > 2u || in[1] > 10u) {
             return -NRC_ROOR;
         }
         if (in[1] == 0u) {
-            sup_engage_force_enable(false);
+            sup_enable_request(false);
             s_force_left_10ms = 0u;
             return 0;
         }
-        if (!sup_engage_active()) {
-            return -NRC_CNC;                        /* only from the ladder-complete state */
+        if (CELL_BOOT_FLAG == 0u) {
+            return -NRC_CNC;                        /* only while the walk is armed */
         }
-        sup_engage_force_enable(true);
+        sup_enable_request(true);
         s_force_left_10ms = (uint16_t)(in[1] * 100u);
         return 0;
     }
-    if (in[0] == 13u) {                                    /* duty job (E7, spec 03 section
-                                                             * 6.2e): one 40-word bus-0 burst,
-                                                             * 0xD0 | duty[r] to the slot-2
-                                                             * chip per rotation */
-        if (n > 9u) {
-            return -NRC_ROOR;
-        }
-        {
-            /* in[1..8] = duties; omitted bytes default to the stock's live pattern
-             * (driving dump 2026-11-04: 90 10 20 40 40 60 00 00) */
-            static const uint16_t D_LIVE[8] = {
-                0x90u, 0x10u, 0x20u, 0x40u, 0x40u, 0x60u, 0x00u, 0x00u,
-            };
-            uint16_t duty[8];
-            for (uint8_t r = 0u; r < 8u; r++) {
-                duty[r] = (uint16_t)((n >= 2u + r) ? in[1u + r] : (uint8_t)D_LIVE[r]);
-            }
-            if (!sol_duty_job(duty)) {
-                return -NRC_CNC;
-            }
-        }
+    if (in[0] == 13u || in[0] == 14u) {                    /* the duty-job experiments
+                                                             * (E7/E8): RETIRED — the
+                                                             * walk engine runs the
+                                                             * stock's duty stream at
+                                                             * the stock cadence; the
+                                                             * bench hook has nothing
+                                                             * left to mirror */
         return 0;
     }
-    if (in[0] == 14u) {                                    /* E8 (spec 03 section 6.2f):
-                                                             * the duty job CYCLIC — the
-                                                             * stock sends it continuously;
-                                                             * we mirror it at ~10 Hz from
-                                                             * the bench tick, HOLD-gated,
-                                                             * never during a bench test */
+    if (in[0] == 15u) {                                    /* bus-A stream gate (E29):
+                                                             * RETIRED — bus A flows
+                                                             * from init (design §8) */
         if (n != 2u || in[1] > 1u) {
             return -NRC_ROOR;
         }
-        if (in[1] != 0u && !sup_engage_active()) {
-            return -NRC_CNC;                 /* the stream must be ladder-complete */
-        }
-        s_duty_cyc = in[1] != 0u;
-        s_duty_div = 0u;
         return 0;
     }
-    if (in[0] == 15u) {                                    /* E29 (spec 03 section 6.2s):
-                                                             * bus-0 stream gate - the
-                                                             * pure-stream A/B. Opening
-                                                             * runs the commissioning. */
-        if (n != 2u || in[1] > 1u) {
-            return -NRC_ROOR;
-        }
-        sol_stream_gate(in[1] != 0u);
-        return 0;
-    }
-    if (in[0] == 9u) {                                     /* engage sequence: arm /
-                                                             * [1 = enable req] /
-                                                             * [2 = stock order: enable
-                                                             *  shadow + driver sync] */
+    if (in[0] == 9u) {                                     /* walk view arm / disarm:
+                                                             * [1 = request on] /
+                                                             * [2 = request + outputs
+                                                             *  enabled] / 0 = disarm */
         if (n < 2u || n > 3u || in[1] > 2u) {
             return -NRC_IMLOIF;
         }
-        sup_engage_arm(in[1] != 0u);
-        sup_engage_enable_from_start(in[1] == 2u);
-        sup_drv_sync(in[1] != 0u);         /* the five-select read job rides along */
-        if (in[1] == 2u) {
-            sup_engage_request_enable(true);
-        } else if (n == 3u) {
-            sup_engage_request_enable(in[2] != 0u);
-        }
+        sup_enable_request(in[1] != 0u);
         s_sup_mode = 3u;
         return 0;
     }
-    if (in[0] != 5u && in[0] != 7u && in[0] != 8u && sup_engage_active()) {
-        return -NRC_CNC;             /* raw one-shots would stop the cyclic stream */
+    if (in[0] != 5u && in[0] != 7u && in[0] != 8u && CELL_WALK_STATE != SUP_WALK_IDLE) {
+        return -NRC_CNC;             /* raw one-shots would stop the walk's stream */
     }
-    if (in[0] == 1u) {                                     /* one-shot raw exchange */
+    if (in[0] == 1u) {                                     /* one-shot alternating
+                                                             * (SSLB1/SSLB0, the J1/J5
+                                                             * wire shape) */
         const uint16_t bytes = (uint16_t)(n - 1u);
         if (bytes < 2u || bytes > 2u * SUP_LAB_MAX || (bytes & 1u) != 0u) {
             return -NRC_IMLOIF;
@@ -593,7 +591,7 @@ static int sup_lab_start(const uint8_t *in, uint16_t n)
             for (uint8_t i = 0u; i < cnt; i++) {
                 tx[i] = (uint16_t)(((uint16_t)in[1u + 2u * i] << 8) | in[2u + 2u * i]);
             }
-            if (!plat_sup_xfer(tx, s_sup_rx, cnt)) {
+            if (!sup_lab_xfer(tx, s_sup_rx, cnt, SEL_B1_B0, 2u)) {
                 return -NRC_CNC;
             }
             s_sup_n = cnt;
@@ -601,7 +599,8 @@ static int sup_lab_start(const uint8_t *in, uint16_t n)
         }
         return 0;
     }
-    if (in[0] == 4u) {                                     /* SSLB1-only burst (0x1D478 shape) */
+    if (in[0] == 4u) {                                     /* SSLB1-only burst (0x1D478
+                                                             * shape, single-select) */
         const uint16_t bytes = (uint16_t)(n - 1u);
         if (bytes < 2u || bytes > 2u * SUP_LAB_MAX || (bytes & 1u) != 0u) {
             return -NRC_IMLOIF;
@@ -612,7 +611,7 @@ static int sup_lab_start(const uint8_t *in, uint16_t n)
             for (uint8_t i = 0u; i < cnt; i++) {
                 tx[i] = (uint16_t)(((uint16_t)in[1u + 2u * i] << 8) | in[2u + 2u * i]);
             }
-            if (!plat_sup_burst(tx, s_sup_rx, cnt)) {
+            if (!sup_lab_xfer(tx, s_sup_rx, cnt, SEL_B1, 1u)) {
                 return -NRC_CNC;
             }
             s_sup_n = cnt;
@@ -620,27 +619,25 @@ static int sup_lab_start(const uint8_t *in, uint16_t n)
         }
         return 0;
     }
-    if (in[0] == 7u) {                                     /* pattern incl. SSLB2 */
-        if (n != 3u) {
+    if (in[0] == 7u || in[0] == 8u) {                      /* word-shape experiments:
+                                                             * bits8e bit 0 routes to
+                                                             * the request cell (the
+                                                             * composer's only bit-0
+                                                             * source); the 0x90 bits
+                                                             * stay owned by the letters
+                                                             * chain (design §7.8) */
+        if (in[0] == 7u && n != 3u) {
             return -NRC_IMLOIF;
         }
-        sup_app_pattern2(true, in[1], in[2], true);
-        s_sup_mode = 2u;
-        return 0;
-    }
-    if (in[0] == 8u) {                                     /* engaged-app word shape:
-                                                             * base bits, toggle mask, [0x90 bits] */
-        if (n != 3u && n != 4u) {
+        if (in[0] == 8u && n != 3u && n != 4u) {
             return -NRC_IMLOIF;
         }
-        /* single-frame friendly: without the fourth byte use the engaged stock's
-         * measured 0x90 value (switch output 0, 2026-10-31 capture) */
-        sup_app_pattern3(true, in[1], in[2], n == 4u ? in[3] : 0x20u);
+        sup_enable_request((in[1] & 0x01u) != 0u);
         s_sup_mode = 2u;
         return 0;
     }
     if (in[0] == 10u) {                                    /* five-select one-shot
-                                                             * (SSLB3/2/1/0/5 rotation):
+                                                             * (bus A, chip rotation):
                                                              * word i -> select i%5 */
         const uint16_t bytes = (uint16_t)(n - 1u);
         if (bytes < 2u || bytes > 2u * SUP_LAB_MAX || (bytes & 1u) != 0u) {
@@ -652,7 +649,7 @@ static int sup_lab_start(const uint8_t *in, uint16_t n)
             for (uint8_t i = 0u; i < cnt; i++) {
                 tx[i] = (uint16_t)(((uint16_t)in[1u + 2u * i] << 8) | in[2u + 2u * i]);
             }
-            if (!plat_sup_xfer5(tx, s_sup_rx, cnt)) {
+            if (!drv_lab_xfer(tx, s_sup_rx, cnt)) {
                 return -NRC_CNC;
             }
             s_sup_n = cnt;
@@ -679,7 +676,7 @@ static int sup_lab_start(const uint8_t *in, uint16_t n)
             for (uint8_t i = 0u; i < cnt; i++) {
                 tx[i] = (uint16_t)(((uint16_t)in[1u + 2u * i] << 8) | in[2u + 2u * i]);
             }
-            if (!plat_sup_burst2(tx, s_sup_rx, cnt)) {
+            if (!sup_lab_xfer(tx, s_sup_rx, cnt, SEL_B2, 1u)) {
                 return -NRC_CNC;
             }
             s_sup_n = cnt;
@@ -687,17 +684,20 @@ static int sup_lab_start(const uint8_t *in, uint16_t n)
         }
         return 0;
     }
-    if (in[0] == 2u) {                                     /* stock cyclic pattern on */
-        if (n != 3u) {
-            return -NRC_IMLOIF;
+    if (in[0] == 2u || in[0] == 3u) {                      /* cyclic pattern on/off:
+                                                             * the batch IS the stock
+                                                             * cyclic now; bit 0 arms
+                                                             * through the request cell */
+        if (in[0] == 2u) {
+            if (n != 3u) {
+                return -NRC_IMLOIF;
+            }
+            sup_enable_request((in[1] & 0x01u) != 0u);
+            s_sup_mode = 2u;
+        } else {
+            sup_enable_request(false);
+            s_sup_mode = 0u;
         }
-        sup_app_pattern(true, in[1], in[2]);
-        s_sup_mode = 2u;
-        return 0;
-    }
-    if (in[0] == 3u) {                                     /* pattern off */
-        sup_app_pattern(false, 0u, 0u);
-        s_sup_mode = 0u;
         return 0;
     }
     return -NRC_SFNS;
@@ -717,53 +717,78 @@ static int sup_mb_block(uint8_t *out)
     return 8;
 }
 
+/* the eight cyclic reply words of the old rx_words layout: J1 (4), J2 (2), J3 (2) */
+static void sup_rx_words(uint16_t w[8])
+{
+    const uint16_t *rx;
+
+    rx = sup_job_rx(JOB_CTRL);
+    w[0] = rx[0]; w[1] = rx[1]; w[2] = rx[2]; w[3] = rx[3];
+    rx = sup_job_rx(JOB_EN);
+    w[4] = rx[0]; w[5] = rx[1];
+    rx = sup_job_rx(JOB_POS);
+    w[6] = rx[0]; w[7] = rx[1];
+}
+
+/* the echo counters of the old sup_status layout, as the new cells hold them:
+ * echo_ok / echo_bad (0x22 echo), a8_bad (SSLB1 class), aa_bad (SSLB0 class) */
+static void sup_echo_counts(uint16_t *ok, uint16_t *bad, uint16_t *a8, uint16_t *aa)
+{
+    *ok  = (uint16_t)(CELL_J1_OK & 0x22u);
+    *bad = (uint16_t)(CELL_J1_ECHOFAIL & 0x22u);
+    *a8  = (uint16_t)(CELL_J1_ERR & 0x15u);
+    *aa  = (uint16_t)(CELL_J1_ERR & 0x0Au);
+}
+
 static int sup_lab_results(uint8_t *out, uint16_t max)
 {
-    const sup_status_t *st = sup_status();
+    if (s_sup_mode == 3u) {                                /* walk/enable view */
+        uint16_t w[8], ok, bad, a8, aa;
+        uint16_t o = 0u;
 
-    if (s_sup_mode == 3u) {                                /* engage sequence status */
-        const sup_eng_status_t *e = sup_engage_status();
-        const sup_drv_status_t *dv = sup_drv_status();
         if (max < 198u) {
             return -NRC_IMLOIF;
         }
-        out[0] = 3u;
-        out[1] = e->state;
-        out[2] = e->sel;
-        out[3] = e->lvl;
-        out[4] = e->pending ? e->pending : e->value;
-        /* E60p: the walk's live view — FSM state, era value, level cells,
-         * duty context, counters (struct fields moved/renamed with the
-         * engine rewrite; spec 22 states in out[5]). */
-        out[5] = e->state;
-        out[6] = e->jobs;
-        out[7] = e->bad;
-        out[8] = e->value;
-        out[9] = e->ctx;
-        out[10] = e->status;
-        out[11] = e->lvl_echo;
-        out[12] = (uint8_t)((e->lvl_exp << 4) | e->lvl);
-        out[13] = (uint8_t)(e->tokens >> 8); out[14] = (uint8_t)e->tokens;
-        out[15] = (uint8_t)((e->enable_req ? 1u : 0u) | (e->enable_sent ? 2u : 0u) |
-                            (e->echo_grant ? 4u : 0u));
+        sup_rx_words(w);
+        sup_echo_counts(&ok, &bad, &a8, &aa);
+        out[o++] = 3u;
+        out[o++] = CELL_OUTER_FSM;                 /* the walk's outer FSM */
+        out[o++] = CELL_WALK_SUBST;                /* staging ping-pong sub-state */
+        out[o++] = CELL_LVL_REPORTED;
+        out[o++] = CELL_PENDING != 0u ? CELL_PENDING : CELL_VALUE;
+        out[o++] = CELL_WALK_STATE;
+        out[o++] = (uint8_t)CELL_USE_COUNTER(JOB_LEVEL);   /* walk jobs launched */
+        out[o++] = CELL_STALL_CNT;                 /* reply-starved passes */
+        out[o++] = CELL_VALUE;
+        out[o++] = CELL_DUTY_CTX;
+        out[o++] = CELL_JOB_MODE;                  /* 0 duty / 7 level */
+        out[o++] = CELL_ECHO_0A;
+        out[o++] = (uint8_t)((CELL_LVL_EXPECTED << 4) | CELL_LVL_REPORTED);
+        out[o++] = (uint8_t)(CELL_TOKEN_STAGED >> 8);
+        out[o++] = (uint8_t)CELL_TOKEN_STAGED;
+        out[o++] = (uint8_t)((CELL_REQUEST != 0u ? 1u : 0u) |
+                             ((CELL_CTRL_STAGED & 0x01u) != 0u ? 2u : 0u) |
+                             (CELL_GRANT != 0u ? 4u : 0u));
         for (uint8_t i = 0u; i < 8u; i++) {                /* cyclic replies as mode 2 */
-            out[16u + 2u * i] = (uint8_t)(st->rx_words[i] >> 8);
-            out[17u + 2u * i] = (uint8_t)st->rx_words[i];
+            out[o++] = (uint8_t)(w[i] >> 8);
+            out[o++] = (uint8_t)w[i];
         }
-        out[32] = (uint8_t)(st->echo_ok >> 8);  out[33] = (uint8_t)st->echo_ok;
-        out[34] = (uint8_t)(st->echo_bad >> 8); out[35] = (uint8_t)st->echo_bad;
-        out[36] = dv->drv_jobs;
-        out[37] = dv->drv_bad;
-        out[38] = (uint8_t)(dv->drv_a8 >> 8); out[39] = (uint8_t)dv->drv_a8;
-        out[40] = (uint8_t)(dv->drv_aa >> 8); out[41] = (uint8_t)dv->drv_aa;
-        out[42] = dv->drv_writes;
-        (void)sup_mb_block(&out[43]);
+        out[o++] = (uint8_t)(ok >> 8);  out[o++] = (uint8_t)ok;
+        out[o++] = (uint8_t)(bad >> 8); out[o++] = (uint8_t)bad;
+        out[o++] = (uint8_t)CELL_USE_COUNTER(DRV_JOB_ID);  /* bus-A ID jobs */
+        out[o++] = 0u;                                     /* drv_bad: no latch in §8 */
+        out[o++] = (uint8_t)(drv_job_rx(DRV_JOB_ID)[0] >> 8);
+        out[o++] = (uint8_t)drv_job_rx(DRV_JOB_ID)[0];
+        out[o++] = (uint8_t)(drv_job_rx(DRV_JOB_ID)[5] >> 8);
+        out[o++] = (uint8_t)drv_job_rx(DRV_JOB_ID)[5];
+        out[o++] = (uint8_t)CELL_USE_COUNTER(DRV_JOB_CFG); /* configuration writes */
+        (void)sup_mb_block(&out[o]);
+        o += 8u;
         /* the input-word trajectory: 32 undelayed samples captured at start-up (raw) and
          * the 1 ms history compressed to its transitions (value, ms index) */
         {
             uint16_t n_hist;
             const uint16_t *hist = plat_mb_hist(&n_hist);
-            uint16_t o = 51u;
 
             if (max < 55u) {
                 return -NRC_IMLOIF;
@@ -772,7 +797,7 @@ static int sup_lab_results(uint8_t *out, uint16_t max)
             for (uint16_t i = 0u; i < n_hist && i < 16u; i++) {   /* first 16 ms, raw */
                 out[o++] = (uint8_t)(hist[i] >> 8); out[o++] = (uint8_t)hist[i];
             }
-            for (; o < 51u + 2u + 32u; o++) {
+            for (; o < 85u; o++) {
                 out[o] = 0u;                                     /* pad to fixed size */
             }
             uint16_t ev = 0u;                                    /* transitions, up to 24 */
@@ -786,16 +811,18 @@ static int sup_lab_results(uint8_t *out, uint16_t max)
             for (; ev < 24u; ev++) {
                 out[o++] = 0u; out[o++] = 0u; out[o++] = 0u; out[o++] = 0u;
             }
-            /* E7 (spec 03 section 6.2e): the bus-0 duty job's slot-2 replies and the
-             * engaged-config state, so the commissioning law is observable live */
+            /* the walk's duty job: completion count + the last seven slot replies
+             * (the E7/E8 bench block, now read from the walk's own job) */
             {
-                const sol_status_t *sv = sol_status();
+                const uint16_t *drx = sup_job_rx(JOB_DUTY);
 
-                out[o++] = sv->duty_runs;
-                for (uint8_t r = 0u; r < 8u; r++) {
-                    out[o++] = (uint8_t)(sv->duty_rx[r] >> 8);
-                    out[o++] = (uint8_t)sv->duty_rx[r];
+                out[o++] = (uint8_t)CELL_USE_COUNTER(JOB_DUTY);
+                for (uint8_t r = 0u; r < 7u; r++) {
+                    out[o++] = (uint8_t)(drx[r] >> 8);
+                    out[o++] = (uint8_t)drx[r];
                 }
+                out[o++] = CELL_STAGED_84;                     /* the level slot */
+                out[o++] = 0u;
             }
             return (int)o;                              /* 51 + 2 + 32 + 96 + 17 = 198 */
         }
@@ -814,20 +841,25 @@ static int sup_lab_results(uint8_t *out, uint16_t max)
         (void)sup_mb_block(&out[2u + 2u * s_sup_n]);
         return (int)need;
     }
-    if (s_sup_mode == 2u) {                                /* pattern status + replies */
+    if (s_sup_mode == 2u) {                                /* cyclic status + replies */
+        uint16_t w[8], ok, bad, a8, aa;
+
         if (max < 35u) {
             return -NRC_IMLOIF;
         }
+        sup_rx_words(w);
+        sup_echo_counts(&ok, &bad, &a8, &aa);
         out[0] = 2u;
         for (uint8_t i = 0u; i < 8u; i++) {
-            out[1u + 2u * i] = (uint8_t)(st->rx_words[i] >> 8);
-            out[2u + 2u * i] = (uint8_t)st->rx_words[i];
+            out[1u + 2u * i] = (uint8_t)(w[i] >> 8);
+            out[2u + 2u * i] = (uint8_t)w[i];
         }
-        out[17] = (uint8_t)(st->echo_ok >> 8);  out[18] = (uint8_t)st->echo_ok;
-        out[19] = (uint8_t)(st->echo_bad >> 8); out[20] = (uint8_t)st->echo_bad;
-        out[21] = (uint8_t)(st->a8_bad >> 8);   out[22] = (uint8_t)st->a8_bad;
-        out[23] = (uint8_t)(st->aa_bad >> 8);   out[24] = (uint8_t)st->aa_bad;
-        out[25] = (uint8_t)(st->sslb2_rx >> 8); out[26] = (uint8_t)st->sslb2_rx;
+        out[17] = (uint8_t)(ok >> 8);  out[18] = (uint8_t)ok;
+        out[19] = (uint8_t)(bad >> 8); out[20] = (uint8_t)bad;
+        out[21] = (uint8_t)(a8 >> 8);  out[22] = (uint8_t)a8;
+        out[23] = (uint8_t)(aa >> 8);  out[24] = (uint8_t)aa;
+        out[25] = (uint8_t)(CELL_SSLB2_COPY >> 8);
+        out[26] = (uint8_t)CELL_SSLB2_COPY;
         (void)sup_mb_block(&out[27]);
         return 35;
     }
@@ -838,6 +870,8 @@ static int sup_lab_results(uint8_t *out, uint16_t max)
     out[0] = 0u;
     return 1;
 }
+
+
 
 int bench_routine(uint8_t type, uint16_t rid, const uint8_t *in, uint16_t n, uint8_t *out,
                   uint16_t max)
@@ -854,7 +888,7 @@ int bench_routine(uint8_t type, uint16_t rid, const uint8_t *in, uint16_t n, uin
             return sup_lab_start(in, n);
         }
         if (type == 2u) {
-            sup_app_pattern(false, 0u, 0u);
+            sup_enable_request(false);          /* stop: the request cell disarmed */
             s_sup_mode = 0u;
             return 0;
         }
@@ -905,6 +939,7 @@ int bench_routine(uint8_t type, uint16_t rid, const uint8_t *in, uint16_t n, uin
     }
     out[4] = (uint8_t)(s_left_10ms / 10u > 255u ? 255u : s_left_10ms / 10u);
     out[5] = s_reason;
-    out[6] = sol_status()->faults;
+    out[6] = 0u;                    /* driver fault byte: the §8 handlers release
+                                     * their slots unconditionally (no latch) */
     return 7;
 }

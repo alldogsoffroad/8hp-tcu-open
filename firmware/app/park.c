@@ -2,11 +2,16 @@
 
 #if defined(TCU_M4B_OUTPUTS)
 #include "app/bench_out.h"
-#include "io/actuators/sol_drv.h"
+#include "io/actuators/sol_ctl.h"
 #endif
 
 /* Project values, to be measured in M4b. */
 static const park_ctl_cfg_t s_cfg = { 500u, 1000u, true };
+
+/* Park release valve drive: the on/off channel is commissioned with the
+ * driver's maximum setpoint (the carried SOL_MODE_FULL_ON law, spec 12
+ * section 2b: 12282 * 0.1 mA / 6 = the 11-bit full-scale 2047). */
+#define PARK_RELEASE_SETPOINT 2047u
 
 /* Park hold energisation (permille). First cut: fully on — stock battery-compensates the
  * duty (spec 12 section 1.2); refine from the FE11 / bench measurements. */
@@ -45,7 +50,9 @@ static void apply(const park_out_t *out)
         plat_toe_out_set(0u);
         return;
     }
-    sol_set(SOL_CH_PARK_RELEASE, out->release ? SOL_MODE_FULL_ON : SOL_MODE_OFF, 0u);
+    sol_set(SOL_CH_PARK_RELEASE,
+            out->release ? SOL_MODE_CURRENT : SOL_MODE_OFF,
+            out->release ? PARK_RELEASE_SETPOINT : 0u);
     plat_toe_out_set(out->hold ? PARK_HOLD_DUTY : 0u);
     /* no supervisor enable request: the 0x8E enable bit resets this TCU (bench
      * 2026-10-30, see bench_out.c) */

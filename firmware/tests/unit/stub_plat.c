@@ -1,7 +1,35 @@
 /* Platform stubs for unit tests: capture transmitted frames, resets and hand-overs. */
 #include "tests/unit/stub_plat.h"
 
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+
+/* The supervisor shadow cells (sup_cells.h) live at the stock's RAM addresses
+ * (0xFFF80000..0xFFF96000, design §9/§10). On the host the test maps that
+ * window so the cells are ordinary writable memory; the target pins them with
+ * the linker's .sup_* sections instead. */
+static void stub_cells_map(void) __attribute__((constructor));
+static void stub_cells_map(void)
+{
+    const uintptr_t base = 0xFFF80000u;
+    const size_t len = 0x16000u;        /* 0xFFF80000..0xFFF96000 */
+    void *p = mmap((void *)base, len, PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANONYMOUS
+#ifdef MAP_FIXED_NOREPLACE
+                   | MAP_FIXED_NOREPLACE
+#else
+                   | MAP_FIXED
+#endif
+                   , -1, 0);
+
+    if (p == MAP_FAILED || (uintptr_t)p != base) {
+        perror("stub: cell window mmap failed");
+        exit(1);
+    }
+    memset(p, 0, len);
+}
 
 stub_plat_t stub;
 
@@ -328,3 +356,223 @@ const plat_mb_status_t *plat_mb_status(void)
 }
 bool plat_drv_xfer_irq(const uint16_t *tx, uint16_t *rx, uint8_t n) { (void)tx; (void)rx; (void)n; return true; }
 void plat_drv_irq_arm(bool on) { (void)on; }
+
+/* ── rebuild platform model (design §5) ──────────────────────────────────── */
+
+/* The fake RSPI job engine: launch arms, pump starts the feed, and the TEST
+ * plays the RX ISR (stub_rspi_isr) frame by frame; the final call runs the
+ * completion handler, which may queue and pump the next job. */
+
+typedef struct {
+    bool     armed;         /* staged, waiting for pump */
+    bool     feeding;       /* on the wire, ISR collects */
+    uint8_t  frames;
+    uint8_t  n_sel;
+    uint8_t  job_id;
+    uint8_t  idx;           /* next frame to feed */
+    uint16_t *tx;
+    uint16_t *rx;
+    rspi_done_fn done;
+} stub_rspi_t;
+
+/* the scripted reply payload (low byte) per transmitted word */
+static uint16_t rspi_scripted_value(uint16_t tx)
+{
+    return sup_reply_word(tx);
+}
+
+static stub_rspi_t s_rs[2];
+static uint32_t s_rs_isr[2];
+
+void plat_rspi_init(void)
+{
+    memset(s_rs, 0, sizeof s_rs);
+}
+
+static uint16_t rspi_scripted(uint8_t bus, uint16_t tx, uint8_t i, uint8_t n_sel)
+{
+    uint16_t cls;
+
+    if (bus == 0u) {
+        cls = 0xA200u;                              /* driver chips: A2 class */
+    } else if (n_sel == 1u && tx == 0x00FFu) {
+        cls = 0xB400u;                              /* SSLB2 */
+    } else if (n_sel == 1u) {
+        cls = 0xA800u;                              /* single-select: supervisor */
+    } else {
+        cls = (i & 1u) == 0u ? 0xA800u : 0xAA00u;   /* alternating B1/B0 */
+    }
+    return (uint16_t)(cls | (rspi_scripted_value(tx) & 0x00FFu));
+}
+
+bool plat_rspi_launch(uint8_t bus, uint8_t job_id, uint16_t *tx, uint16_t *rx,
+                      uint8_t frames, const uint16_t *sel_cfg, uint8_t n_sel,
+                      rspi_done_fn done)
+{
+    stub_rspi_t *c = &s_rs[bus];
+
+    (void)sel_cfg;
+    if (stub.rspi_launch_fail || c->armed || c->feeding || frames == 0u) {
+        return false;
+    }
+    c->tx = tx;
+    c->rx = rx;
+    c->frames = frames;
+    c->n_sel = n_sel;
+    c->job_id = job_id;
+    c->idx = 0u;
+    c->done = done;
+    c->armed = true;
+    return true;
+}
+
+void plat_rspi_pump(uint8_t bus)
+{
+    stub_rspi_t *c = &s_rs[bus];
+
+    if (c->armed) {
+        c->armed = false;
+        c->feeding = true;
+        c->idx = 1u;                    /* frame 0 is fed by the pump itself */
+    }
+}
+
+bool plat_rspi_busy(uint8_t bus)
+{
+    return s_rs[bus].armed || s_rs[bus].feeding;
+}
+
+uint32_t plat_rspi_isr_count(uint8_t bus)
+{
+    return s_rs_isr[bus];
+}
+
+/* the RX ISR body: collect the reply of the frame that just completed, feed
+ * the next one; at burst end disarm and run the completion handler */
+void stub_rspi_isr(uint8_t bus)
+{
+    stub_rspi_t *c = &s_rs[bus];
+
+    if (!c->feeding) {
+        return;
+    }
+    s_rs_isr[bus]++;
+    c->rx[c->idx - 1u] = rspi_scripted(bus, c->tx[c->idx - 1u], (uint8_t)(c->idx - 1u), c->n_sel);
+    if (c->idx < c->frames) {
+        c->idx++;
+        return;
+    }
+    c->feeding = false;
+    if (c->done != NULL) {
+        c->done(bus, c->job_id, c->rx, c->frames);
+    }
+}
+
+bool stub_rspi_busy(uint8_t bus)
+{
+    return plat_rspi_busy(bus);
+}
+
+/* blocking lab path (FE12/FE13): completes immediately from the script */
+bool plat_rspi_lab(uint8_t bus, const uint16_t *tx, uint16_t *rx,
+                   uint8_t frames, const uint16_t *sel_cfg, uint8_t n_sel,
+                   uint32_t timeout_ms)
+{
+    (void)bus;
+    (void)sel_cfg;
+    (void)timeout_ms;
+    if (stub.lab_fail) {
+        return false;
+    }
+    for (uint8_t i = 0u; i < frames; i++) {
+        rx[i] = rspi_scripted(bus, tx[i], i, n_sel);
+    }
+    return true;
+}
+
+uint8_t plat_drv_spbr_get(void)
+{
+    return 5u;
+}
+
+void plat_intc_setup(const plat_ipr_map_t *m)
+{
+    (void)m;
+}
+
+void plat_sr_open(void)
+{
+}
+
+void plat_sr_close(void)
+{
+}
+
+uint32_t plat_sr_i(void)
+{
+    return 0xEu;
+}
+
+void plat_tick_start(void)
+{
+}
+
+uint32_t plat_tick_count(void)
+{
+    return stub.ms;
+}
+
+/* ---- walk timer model ---- */
+static bool s_walk_run;
+
+void plat_walktmr_start(void)
+{
+    s_walk_run = true;
+    stub.walktmr_starts++;
+}
+
+void plat_walktmr_stop(void)
+{
+    s_walk_run = false;
+}
+
+bool plat_walktmr_running(void)
+{
+    return s_walk_run;
+}
+
+uint32_t plat_walktmr_count(void)
+{
+    return stub.frt_us;             /* advances with the test's clock */
+}
+
+/* ---- WDT model ---- */
+void plat_wdt_kick(void)
+{
+}
+
+void plat_wdt_capture_reset_cause(void)
+{
+}
+
+uint8_t plat_wdt_wovf_count(void)
+{
+    return 0u;
+}
+
+bool plat_wdt_is_interval(void)
+{
+    return stub.wdt_interval;
+}
+
+void plat_wdt_quick_reset(void)
+{
+    stub.resets++;
+    exit(1);
+}
+
+/* ---- FRT microsecond model (the test advances stub.frt_us) ---- */
+uint32_t plat_frt_us(void)
+{
+    return stub.frt_us;
+}

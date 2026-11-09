@@ -9,7 +9,33 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <time.h>
+
+/* The supervisor shadow cells (sup_cells.h) live at the stock's RAM addresses
+ * (0xFFF80000..0xFFF96000, design §9/§10). The sim maps that window so the
+ * cells are ordinary writable memory; the target pins them with the linker's
+ * .sup_* sections instead. */
+static void sim_cells_map(void) __attribute__((constructor));
+static void sim_cells_map(void)
+{
+    const uintptr_t base = 0xFFF80000u;
+    const size_t len = 0x16000u;        /* 0xFFF80000..0xFFF96000 */
+    void *p = mmap((void *)base, len, PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANONYMOUS
+#ifdef MAP_FIXED_NOREPLACE
+                   | MAP_FIXED_NOREPLACE
+#else
+                   | MAP_FIXED
+#endif
+                   , -1, 0);
+
+    if (p == MAP_FAILED || (uintptr_t)p != base) {
+        perror("sim: cell window mmap failed");
+        exit(1);
+    }
+    memset(p, 0, len);
+}
 
 static struct timespec s_next;
 static uint32_t s_ticks, s_limit = 1000u;
@@ -58,6 +84,203 @@ bool plat_tick_poll(void)
         return true;
     }
     return false;
+}
+
+/* ---- Rebuild platform model (design §5) -------------------------------- *
+ * The target's tick/walk/RSPI engines are ISR-driven; the host has no
+ * interrupts, so the 1 ms poll substitutes for the tick ISR and the RSPI
+ * engine completes its transaction synchronously inside plat_rspi_pump(). */
+#include "bsw/sched/sched.h"
+
+void plat_tick_start(void)
+{
+    /* poll-driven on the host; the counter lives in plat_tick_poll */
+}
+
+uint32_t plat_tick_count(void)
+{
+    return s_ticks;
+}
+
+/* monotonic microsecond timestamp (the FRT model) */
+static uint32_t host_us(void)
+{
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (uint32_t)((uint64_t)now.tv_sec * 1000000u + (uint64_t)now.tv_nsec / 1000u);
+}
+
+uint32_t plat_frt_us(void)
+{
+    return host_us();
+}
+
+/* ---- INTC / SR: no interrupt controller on the host ---- */
+void plat_intc_setup(const plat_ipr_map_t *m)
+{
+    (void)m;
+}
+
+void plat_sr_open(void)
+{
+}
+
+void plat_sr_close(void)
+{
+}
+
+uint32_t plat_sr_i(void)
+{
+    return 0xEu;
+}
+
+/* ---- Walk timer model: the walk's own clock (design §5.4) ---- */
+static bool s_walk_run;
+
+void plat_walktmr_start(void)
+{
+    s_walk_run = true;
+}
+
+void plat_walktmr_stop(void)
+{
+    s_walk_run = false;
+}
+
+bool plat_walktmr_running(void)
+{
+    return s_walk_run;
+}
+
+uint32_t plat_walktmr_count(void)
+{
+    return host_us();           /* advances while "running" */
+}
+
+/* ---- WDT model ---- */
+static bool s_wdt_interval;
+
+void plat_wdt_kick(void)
+{
+}
+
+void plat_wdt_capture_reset_cause(void)
+{
+}
+
+uint8_t plat_wdt_wovf_count(void)
+{
+    return 0u;
+}
+
+bool plat_wdt_is_interval(void)
+{
+    return s_wdt_interval;
+}
+
+void plat_wdt_quick_reset(void)
+{
+    printf("[%6u ms] WDT QUICK RESET\n", s_ticks);
+    exit(0);
+}
+
+/* ---- RSPI job engine model (design §5.5): completes inside pump() ---- */
+typedef struct {
+    bool     armed;
+    uint8_t  frames;
+    uint8_t  n_sel;
+    uint8_t  job_id;
+    const uint16_t *tx;
+    uint16_t *rx;
+    rspi_done_fn done;
+} host_rspi_t;
+
+static host_rspi_t s_hc[2];
+static uint32_t s_hc_isr[2];
+
+void plat_rspi_init(void)
+{
+    memset(s_hc, 0, sizeof s_hc);
+}
+
+/* Simulated reply per frame: bus B by select parity (SSLB1 = 0xA8 class even
+ * frames of a two-command table, SSLB0 = 0xAA, SSLB2 = 0xB4); bus A 0xA2. */
+static uint16_t host_reply(uint8_t bus, uint16_t tx, uint8_t i, uint8_t n_sel)
+{
+    uint16_t cls;
+    if (bus == 0u) {
+        cls = 0xA200u;
+    } else if (n_sel == 1u && tx == 0x00FFu) {
+        cls = 0xB400u;
+    } else if (n_sel == 1u) {
+        cls = 0xA800u;
+    } else {
+        cls = (i & 1u) == 0u ? 0xA800u : 0xAA00u;
+    }
+    return (uint16_t)(cls | (tx & 0x00FFu));
+}
+
+bool plat_rspi_launch(uint8_t bus, uint8_t job_id, uint16_t *tx, uint16_t *rx,
+                      uint8_t frames, const uint16_t *sel_cfg, uint8_t n_sel,
+                      rspi_done_fn done)
+{
+    host_rspi_t *c = &s_hc[bus];
+    (void)sel_cfg;
+    if (c->armed || frames == 0u) {
+        return false;
+    }
+    c->tx = tx;
+    c->rx = rx;
+    c->frames = frames;
+    c->n_sel = n_sel;
+    c->job_id = job_id;
+    c->done = done;
+    c->armed = true;
+    return true;
+}
+
+void plat_rspi_pump(uint8_t bus)
+{
+    host_rspi_t *c = &s_hc[bus];
+
+    if (!c->armed) {
+        return;
+    }
+    c->armed = false;
+    s_hc_isr[bus] += c->frames;
+    for (uint8_t i = 0u; i < c->frames; i++) {
+        c->rx[i] = host_reply(bus, c->tx[i], i, c->n_sel);
+    }
+    if (c->done != NULL) {
+        c->done(bus, c->job_id, c->rx, c->frames);
+    }
+}
+
+bool plat_rspi_busy(uint8_t bus)
+{
+    return s_hc[bus].armed;
+}
+
+uint32_t plat_rspi_isr_count(uint8_t bus)
+{
+    return s_hc_isr[bus];
+}
+
+bool plat_rspi_lab(uint8_t bus, const uint16_t *tx, uint16_t *rx,
+                   uint8_t frames, const uint16_t *sel_cfg, uint8_t n_sel,
+                   uint32_t timeout_ms)
+{
+    (void)bus;
+    (void)timeout_ms;
+    for (uint8_t i = 0u; i < frames; i++) {
+        rx[i] = host_reply(1u, tx[i], i, n_sel);
+    }
+    return true;
+}
+
+uint8_t plat_drv_spbr_get(void)
+{
+    return 5u;
 }
 
 void plat_wdt_service(void) { }
