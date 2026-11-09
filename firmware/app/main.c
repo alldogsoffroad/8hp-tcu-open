@@ -512,9 +512,18 @@ int main(void)
     sol_set(8u, SOL_MODE_OFF, 0u);
     sol_set(9u, SOL_MODE_OFF, 0u);
     sup_engage_arm(true);
-    sup_engage_request_enable(true);
+    /* E60w (the audit's fix): sup_engage_request_enable(true) REMOVED — the
+     * legacy adapter armed the request cell at INIT, and the rewritten
+     * enable_bit() (no echo gate) put bit 0 in the 0x8E word from WORD ONE
+     * (0x8E91 vs E60n's 0x8E90/0x8E80) — the E32r reset class, landing at
+     * now_ms=2, three ms before the first heartbeat. The ask now arms at
+     * the engine's ASK_PASS=21, the E60i-proven timing (or never, in the
+     * discriminator build — also fine). */
 #endif
-#if defined(TCU_AUTOENGAGE) && !defined(TCU_E60P)
+#if defined(TCU_AUTOENGAGE)  /* E60v bisect step 1: the handshake RESTORED —
+                                   * every booting build since E49 sent it; all six
+                                   * silent builds lack it (the one main.c behavioral
+                                   * delta left standing) */
     /* E49 (spec 03 section 6.2ag): the STARTUP COMMISSIONING restored (E35r's
      * proven-safe handshake, removed in E38 on a theory that collapsed). The
      * stock's first SSLB1 jobs (transport 0x40CA0) commission the supervisor's

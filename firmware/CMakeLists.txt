@@ -78,7 +78,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     set_source_files_properties(platform/sh7254r/libc_min.c PROPERTIES
         COMPILE_OPTIONS -fno-tree-loop-distribute-patterns)
     target_include_directories(tcu_app.elf PRIVATE ${CMAKE_SOURCE_DIR}/platform/sh7254r/include)
-    target_compile_definitions(tcu_app.elf PRIVATE TCU_AUTOENGAGE TCU_E60P TCU_E60U_DISC)  # bench m4 series; E60u - the pass-budget discriminator (walk+twin silent)
+    target_compile_definitions(tcu_app.elf PRIVATE TCU_AUTOENGAGE TCU_E60P)  # bench m4 series; E60x - the full walk, alive at last (boot death solved: no bit0 from word one)
     target_link_options(tcu_app.elf PRIVATE -T ${LDSCRIPT} -Wl,-Map=tcu_app.map)
     target_link_libraries(tcu_app.elf PRIVATE gcc)
     add_dependencies(tcu_app.elf tcu_flasher_bin)

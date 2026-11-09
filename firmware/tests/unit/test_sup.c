@@ -224,9 +224,23 @@ int main(void)
 #define WALK_TICK() do { tms += 5u; sup_tick_5ms(); } while (0)  /* one 5 ms pass */
 
         /* pass 1: the walk rides the init value 0x3F — the stock's literal
-         * first register words, the conversation the pass-21 ask rides on */
+         * first register words, the conversation the pass-21 ask rides on.
+         * E60w wire check: NO bit 0 in the early mirror words (the E32r
+         * reset class) — scan the ring for this pass's 0x8E word */
         CHECK(!e->enable_req);                     /* the ask arms at pass 21 */
         WALK_TICK();
+        {
+            uint16_t first8e = 0u;
+            for (unsigned i = 0u; i < stub.sup_n && i < 64u; i++) {
+                const uint16_t w = stub.sup_tx[(stub.sup_n - 1u - i) % 64u];
+                if ((w & 0xFF00u) == 0x8E00u) {
+                    first8e = w;
+                    break;
+                }
+            }
+            CHECK((first8e & 0xFF00u) == 0x8E00u); /* found the mirror word */
+            CHECK((first8e & 0x01u) == 0u);        /* bit 0 OFF pre-ask */
+        }
         CHECK(WN == 4u && WJ[0] == 0x843Fu);
         CHECK(WJ[1] == 0x0A00u && WJ[2] == 0x1200u && WJ[3] == 0x0C00u);
         /* pass 2: S0's staging promote lands — 0x06 takes the value cell */
