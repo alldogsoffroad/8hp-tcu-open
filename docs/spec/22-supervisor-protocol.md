@@ -66,7 +66,7 @@ of `0xFFFFF58E`) whose interrupt service routine is **`0x9106C`** [O disassembly
 ## 2. The complete job table (flash 0x409F4–0x40C74) [O — dumped from the ELF]
 
 Descriptor = 32 bytes, integrity marker `0x45B9F72D` at +0x1C:
-`{u16 class (0x0101 = bus-B cyclic, 0x0000 = bus-A five-select) [I on semantics], u8 frames,
+`{u16 class (0x0100 = bus-B 5 ms cyclic, 0x0101 = W1/W2 walk jobs — **exclusive**; 0x0000 = bus-A five-select; byte 1 selects the 5-slot register queue vs the 10-slot cyclic queue, decoded in 0x937F8) [V: spec22_validation], u8 frames,
 u8 selects, u32 TX-staging-RAM, u32 RX-staging-RAM, u32 select-cfg-flash, u32 status-cell,
 u32 completion-handler, u32 trailing-records, u32 0x45B9F72D}` (spec 03 §4.3, §6.2e; layout
 cross-checked word-by-word in this artifact's ELF dump).
@@ -83,7 +83,7 @@ descriptor's `selects` byte says how many SPCMD entries get loaded — jobs 0x40
 |---|---|---|---|---|---|
 | J1 | `0x40BE8` | 4 → B1,B0,B1,B0 | `8E00\|ctrl, C900\|c9, 2200, 0900` (live staging `0xFFF88424`) | every 5 ms pass: `0x8EE82` → `0x91DAA` → `0x92D38` (ctrl byte composed by `0x91C86`, C9 byte by `0x93126`) | `0x92D94 shifter_resp_echo` |
 | J2 | `0x40C0C` | 2 → B1,B1 | `9000\|en, 2400` (template @0x40C08) | on letter/output-state change: `0x91804/0x91810` → `0x92E80` (word from `0x91758 switch_status_build`) | `0x92ED4` |
-| J3 | `0x40C54` | 2 → B1,B1 | `2800, 2E00` (template @0x40C50) | cyclic [I]: RX cells consumed every 5 ms by `0x91ACA`; descr/template literals sit in 0x93126's pool (queuer not cleanly isolated) | `0x93096` |
+| J3 | `0x40C54` | 2 → B1,B1 | `2800, 2E00` (template @0x40C50) | cyclic [V]: queuer `0x9305A` (`bank_tmpl_init_88444`, called by `0x91ACA`; template `0x40C50`→staging `0xFFF88444`) | `0x93096` |
 | J4 | `0x40C74` | 1 → SSLB2 (mode 0) | `00FF` (template @0x40D8C) | cyclic: `0x93198 bank_tmpl_init_885e4` | `0x931D4` |
 | J5 | `0x40B80` | 4 → B1,B0,B1,B0 | `0600, 0300, 0000, 0000` (template @0x40B78) | first bus-B job at init (`0x91DD2`), then every 5 ms pass: `0x8EE82` → `0x91E12` → `0x92A84` | `0x92AC0` |
 | J6 | `0x40BA0` | 5 → B1,B0,B1,B0,B1 | `1800, 0C00, 1E00, 0600, 1400` (template @0x40D78) | every 5 ms pass: `0x91DAA` → `0x92B82` | `0x92BBE` |

@@ -188,7 +188,7 @@ reporters, one per vector group. [O]
 | Peripheral | Boot arms? | App re-configures / runs | Masked/killed? | Fed/serviced? |
 |---|---|---|---|---|
 | **WDT** | YES — all three boot programs (0x1DBC8 bootloader / 0x3180C bootmgr / 0x3E930): WTCNT=0x5AB7 or 0x5A6E (clock-strap dependent), WRCR=0x5A80 (RSTE=1 → overflow resets chip), WTCR=0xA567 (watchdog mode CKS=7), IPR05 nibble0=0xE; fed per loop 0x1D1A4 / 0x30F30 (FRT −3000) | first feed in startup table (0x66D64 → 0x95408); cyclic feed via `sched_batch_g`→thunk 0x920F8→0x95408 (WTCNT=0x5AB7, WTCR=0xA567) | **conditionally STOPPED**: `power_state_update` 0x91C86 (supervisor echo bits 0xFFF907D4) → 0x920A4 `state_9096a_update` → `wdt_mode_start` 0x97850 (arm) or `wdt_mode_stop` 0x978A4 (clears TME via 0xA5xx keys) — power-state gated | YES cyclically (≈30.3 ms margin per spec 05); fatal path 0x66F82 deliberately forces quick reset via 0x966B8 (WRCR=0x5A80, WTCR=0xA563 CKS=3) [O] |
-| **INTC** | boot clears to known state (0x1DAFC/0x31744/0x9533C walk &DAT_fffe0c00); arms ATU-F IPR16–18 = 7 (0x31D48) or 9 (0x1E1D8), ATU-H CMIH = 2 (0x1E260, IPR20 0xFFFE0C22), WDT ITI = 0xE; masks RCAN-A nibble (0x1DE9C) / clears IPR28 (0x329F8, 0x1DCF8) | app sets: CMI0/CMI1 = 1/2 (0x96E80), DMAC4/5 = 0xE/4 (0x967F4), ATU-D/E = 5/6/8/4 (0x970FC IPR10-14, 0x97198 IPR14/15), tick CMID10 5→6 (0x6791A), CAN A/B/C = 5 (0x9838C), RSPI A/B = 4 (0x963CC) | app masks: RSPI all idle (0x963A4, IPR27&=0xF000), DMAC2/3 prio cleared (0x96FA4), ATU-A IPR06 = 0 (0x96F7C `boot_frc_irq_disable__3`), ADC/ATU-F/G/H/J IPRs never enabled | ATU prescalers/master enable re-checked at runtime [O spec 02 §1] |
+| **INTC** | boot clears to known state (0x1DAFC/0x31744/0x9533C walk &DAT_fffe0c00); arms ATU-F IPR16–18 = 7 (0x31D48) or 9 (0x1E1D8), ATU-H CMIH = 2 (0x1E260, IPR20 0xFFFE0C22 (IPR17)), WDT ITI = 0xE; masks RCAN-A nibble (0x1DE9C) / clears IPR28 (0x329F8, 0x1DCF8) | app sets: CMI0/CMI1 = 1/2 (0x96E80), DMAC4/5 = 0xE/4 (0x967F4), ATU-D/E = 5/6/8/4 (0x970FC IPR10-14, 0x97198 IPR14/15), tick CMID10 5→6 (0x6791A), CAN A/B/C = 5 (0x9838C), RSPI A/B = 4 (0x963CC) | app masks: RSPI all idle (0x963A4, IPR27&=0xF000), DMAC2/3 prio cleared (0x96FA4), ATU-A IPR06 = 0 (0x96F7C `boot_frc_irq_disable__3`), ADC/ATU-F/G/H/J IPRs never enabled | ATU prescalers/master enable re-checked at runtime [O spec 02 §1] |
 | **RSPI-A** (0xFFFFB000) | disabled, then boot SPI layer starts (spec 05 §4) | `rspi_all_units_idle` 0x963A4 (SPCR=8); `spi_engine_hw_init` 0x96900 (programs A-DMAC handshake cells 0xFFFE6060-96, staging 0xFFF8844C); `spi_job_dmac_launch` 0x96468 — per job program RSPI+DMAC then **SPCR=0xF8 launch**; RX ISR stops with SPCR=8 | SPTI/SPEI never enabled (v444/446 stubs) | interrupt-driven RX at IPR 4 (v445) [O] |
 | **RSPI-B** (0xFFFFB800) | 〃 | 〃 (bus index 1); supervisor chip on SSLB1 (spec 03 §5) | 〃 | interrupt-driven RX at IPR 4 (v449) [O] |
 | **RSPI-C** (0xFFFFC000) | SPCR=8 | left idle (0x963A4 covers it; stubs at v452-454) | masked | no |
@@ -295,3 +295,12 @@ is: read WTSR bit 7 once at startup before the first WDT feed, and count occurre
 7. Boot-block vector tables (bootloader/boot-manager VBR region) not extracted — boot ISR
    → 0x1D758 dispatch mapping is inferred from the handler records, not from boot vector
    slots. [I]
+
+
+## Validation corrections (2026-11-09, spec_arch_validation agent)
+
+- RCAN-B/C rows shifted one slot: 466=error-walk 0x9567E, 467=rx_b 0x95714, **468=txend_b 0x95814**, 474=error-walk 0x958B4, 475=rx_c 0x9592E, **476=txend_c 0x95A4C**
+- v427 TEIA = 0x95C50
+- **v300/v301 (ATU-E3/E4) carry real handlers 0x9167C/0x916CC armed by the app** (sched_batch_g job 0x91FA4 → 0x9733C writes IPR15=0x7777) — the "232-311 all stubs" row is wrong
+- Tick source: **ATU-D1 CMID10** (not "timer H"); the ISR self-re-arms OCRD10 0xFFFFF5D0
+- App entry 0x66CA8 is a data label in the Ghidra project (misread as a pointer); hand-disassembled from the ELF: full 23-step sequence, 19 call targets, VBR=0x40080-0x10 arithmetic
