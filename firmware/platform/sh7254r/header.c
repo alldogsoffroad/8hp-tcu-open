@@ -351,8 +351,8 @@ void (*const app_vectors[508])(void) = {
     default_handler, default_handler, default_handler, default_handler,
     default_handler, default_handler, default_handler, default_handler,
     ann_444,  /* index 440 = VECTOR 444 */ v_rspi_a,  /* index 441 = VECTOR 445 */ ann_446,  /* index 442 = VECTOR 446 */ ann_447,  /* index 443 = VECTOR 447 */
-    ann_448,  /* index 444 = VECTOR 448 */ default_handler, default_handler, default_handler,
-    default_handler, v_rspi_b,  /* index 449 = VECTOR 453 */ default_handler, default_handler,
+    ann_448,  /* index 444 = VECTOR 448 */ v_rspi_b,  /* index 445 = VECTOR 449 (spec 24: RSPI-B SPRIB rx. The first flash had this one slot late — index 449/vector 453 — so bus B froze mid-burst in FEEDING and the walk never harvested a reply) */ default_handler, default_handler,
+    default_handler, default_handler, default_handler, default_handler,
     default_handler, default_handler, default_handler, default_handler,
     default_handler, default_handler, default_handler, default_handler,
     default_handler, default_handler, default_handler, default_handler,

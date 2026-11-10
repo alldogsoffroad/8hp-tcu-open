@@ -140,8 +140,8 @@ static const plat_ipr_ent_t s_ipr_entries[] = {
     {  5u,  0u, 0xEu },      /* WDT ITI (interval mode)    */
     { 10u, 12u,  6u },       /* ATU-D0 walk compare        */
     { 10u,  0u,  6u },       /* ATU-D1 tick                */
-    { 27u,  8u,  4u },       /* RSPI-A SPRIA               */
-    { 27u, 12u,  4u },       /* RSPI-B SPRIB  [I] P8 check */
+    { 27u, 12u,  4u },       /* RSPI-A SPRIA — nibble 15-12 (spec 24 §rspi, @0x963CC) */
+    { 27u,  8u,  4u },       /* RSPI-B SPRIB — nibble 11-8 (spec 24; the first flash had these two nibbles swapped → A masked, B at the wrong vector) */
 };
 static const plat_ipr_map_t s_ipr_map = {
     s_ipr_entries, sizeof(s_ipr_entries) / sizeof(s_ipr_entries[0]),
