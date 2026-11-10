@@ -29,10 +29,30 @@
 #define CMFA10     0x0010u
 
 static volatile uint32_t s_tick_count;
+volatile uint32_t s_tick_isr_count;  /* TRUE vector deliveries (diagnostic) */
 
 uint32_t plat_tick_count(void)
 {
     return s_tick_count;
+}
+
+uint32_t plat_tick_isr_count(void)
+{
+    return s_tick_isr_count;
+}
+
+/* superloop fallback (r01e): harvest the compare flag directly. Returns
+ * true if a tick elapsed. Safe with a live interrupt: the flag clears on
+ * the first harvest; a rare ISR/poll race costs at most one double tick. */
+bool plat_tick_poll_hw(void)
+{
+    if ((TSRD1 & CMFA10) == 0u) {
+        return false;
+    }
+    TSRD1 = (uint16_t)(TSRD1 & ~CMFA10);     /* write-0-after-read clears */
+    OCRD10 = TCNT1D1 + TICK_COUNTS;          /* re-arm */
+    s_tick_count++;
+    return true;
 }
 
 void plat_tick_start(void)
@@ -54,5 +74,6 @@ void plat_tick_isr(void)
     /* re-arm: next compare = current + 1 ms */
     OCRD10 = TCNT1D1 + TICK_COUNTS;
     s_tick_count++;
+    s_tick_isr_count++;
     sched_tick_isr();                      /* bounded: timestamp + due scan */
 }

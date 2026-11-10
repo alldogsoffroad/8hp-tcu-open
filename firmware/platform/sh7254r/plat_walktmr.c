@@ -74,6 +74,20 @@ uint32_t plat_walktmr_count(void)
     return TCNT1D0;                          /* P8 step 0: must advance when running */
 }
 
+/* superloop fallback (r01e): harvest the walk compare flag directly.
+ * Mirror of the ISR body (WDT feed first — the stock law). */
+bool plat_walktmr_poll(void)
+{
+    if ((TSRD0 & CMFA00) == 0u) {
+        return false;
+    }
+    TSRD0 = (uint16_t)(TSRD0 & ~CMFA00);
+    OCRD00 = next_ocr(TCNT1D0);
+    plat_wdt_kick();
+    sup_walk_isr();
+    return true;
+}
+
 /* the ISR body — called from the vector-table entry at slot 216 (CMID00) */
 void plat_walktmr_isr(void)
 {

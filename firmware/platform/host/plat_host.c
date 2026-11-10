@@ -71,6 +71,13 @@ void plat_init(void)
     add_ms(&s_next);
 }
 
+/* r01e fallback stubs: the host model is synchronous — the polls never
+ * fire (the host tick rides plat_tick_poll above; RSPI replies complete
+ * inside the stub's launch call) */
+bool plat_tick_poll_hw(void) { return false; }
+bool plat_walktmr_poll(void) { return false; }
+bool plat_rspi_poll(uint8_t bus) { (void)bus; return false; }
+
 bool plat_tick_poll(void)
 {
     struct timespec now;

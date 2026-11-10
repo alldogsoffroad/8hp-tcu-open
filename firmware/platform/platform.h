@@ -53,6 +53,7 @@ void plat_rspi_pump(uint8_t bus);
 bool plat_rspi_busy(uint8_t bus);
 /* ISR-entry count per bus (P8 diagnostic: verifies the IPR assignment). */
 uint32_t plat_rspi_isr_count(uint8_t bus);
+bool plat_rspi_poll(uint8_t bus);      /* r01e superloop fallback: harvest SPRF */
 /* Blocking single transaction for lab/diagnostic use (FE13). */
 bool plat_rspi_lab(uint8_t bus, const uint16_t *tx, uint16_t *rx,
                    uint8_t frames, const uint16_t *sel_cfg, uint8_t n_sel,
@@ -73,12 +74,15 @@ uint32_t plat_sr_i(void);              /* current SR.I level */
 /* ---- 1 ms tick (rebuild design §5.3, ATU-D1 CMID10) ---- */
 void plat_tick_start(void);
 uint32_t plat_tick_count(void);
+uint32_t plat_tick_isr_count(void);   /* TRUE vector deliveries (r01e diagnostic) */
+bool plat_tick_poll_hw(void);         /* r01e superloop fallback: harvest the compare flag */
 
 /* ---- Walk timer (rebuild design §5.4, ATU-D0 compare) ---- */
 void plat_walktmr_start(void);
 void plat_walktmr_stop(void);
 bool plat_walktmr_running(void);
 uint32_t plat_walktmr_count(void);     /* P8 step-0 probe: must advance */
+bool plat_walktmr_poll(void);          /* r01e superloop fallback */
 
 /* ---- WDT with reset-cause capture (rebuild design §5.6) ---- */
 void plat_wdt_kick(void);

@@ -277,12 +277,19 @@ int main(void)
         if (plat_tick_poll()) {
             sched_tick_isr();
         }
-        /* r01d DIAGNOSTIC: superloop WDT kick. With the CMT poll retired,
-         * a dead tick ISR starves task_1ms of its kick and the ~30 ms WDT
-         * reset loop hides every cell behind a reboot (r01c: no hb, no UDS,
-         * 176-198 mA). Kicking here keeps the app probeable regardless of
-         * interrupt state — a hung SUPERLOOP still resets. Revert to the
-         * task-side kick once the tick is proven. */
+        /* r01e POLLED FALLBACKS: until the INTC fabric is proven, the
+         * superloop harvests every interrupt flag directly — the firmware
+         * runs even with a dead INTC, and the ISR counters
+         * (s_tick_isr_count, s_vec_count) tell the bench which path
+         * carried the traffic. Remove when the vectors prove live. */
+        if (plat_tick_poll_hw()) {
+            sched_tick_isr();
+        }
+        (void)plat_walktmr_poll();
+        (void)plat_rspi_poll(0u);
+        (void)plat_rspi_poll(1u);
+        /* r01d DIAGNOSTIC: superloop WDT kick (a dead tick starves the
+         * task-side kick; a hung SUPERLOOP still resets) */
         plat_wdt_kick();
         sched_drain();
     }

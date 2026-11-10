@@ -108,7 +108,7 @@ void plat_rspi_pump(uint8_t bus)
     volatile uint8_t *sr = spsr(bus);
     volatile uint16_t *dr = spdr(bus);
     uint32_t guard;
-    for (guard = 20000u; guard != 0u && (*sr & 0x02u) == 0u; guard--) {
+    for (guard = 20000u; guard != 0u && (*sr & SPSR_SPTEF) == 0u; guard--) {
     }
     if (guard == 0u) {
         *spcr(bus) = 0x08u;                     /* can't start: disarm */
@@ -133,9 +133,15 @@ uint32_t plat_rspi_isr_count(uint8_t bus)
     return s_chan[bus].isr_count;
 }
 
-/* ── the RX ISR body (called from vector 445 bus A / 449 bus B) ───────── */
+/* ── the RX engine: vector entry / shared body / polled fallback ──────────
+ * r01e: the INTC fabric is suspect until proven, so the engine runs three
+ * ways — the true vector entry (counts s_vec_count), the shared body, and
+ * a superloop poll that harvests SPRF directly. The counters tell the
+ * bench which path carried the traffic. */
 
-void plat_rspi_isr(uint8_t bus)
+volatile uint32_t s_vec_count[2];   /* TRUE vector deliveries (diagnostic) */
+
+static void plat_rspi_isr_body(uint8_t bus)
 {
     rspi_chan_t *c = &s_chan[bus];
     c->isr_count++;
@@ -177,6 +183,30 @@ void plat_rspi_isr(uint8_t bus)
          * gapless chaining (the stock's DMA engine behaves the same) */
         plat_rspi_pump(bus);
     }
+}
+
+/* the TRUE interrupt entry (vector 445 bus A / 449 bus B) */
+void plat_rspi_isr(uint8_t bus)
+{
+    if (bus < 2u) {
+        s_vec_count[bus]++;
+    }
+    plat_rspi_isr_body(bus);
+}
+
+/* superloop fallback: harvest a pending reply flag directly. Returns true
+ * if the body ran. Safe with a live interrupt: both paths are guarded by
+ * the channel state and the flag clears on the first harvest. */
+bool plat_rspi_poll(uint8_t bus)
+{
+    if (bus >= 2u || s_chan[bus].state != CH_FEEDING) {
+        return false;
+    }
+    if ((*spsr(bus) & SPSR_SPRF) == 0u) {
+        return false;
+    }
+    plat_rspi_isr_body(bus);
+    return true;
 }
 
 /* ── lab/debug: single transaction with timeout (blocking, diagnostic only) ── */
