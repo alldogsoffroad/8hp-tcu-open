@@ -193,14 +193,24 @@ static void plat_rspi_isr_body(uint8_t bus)
          * rather than corrupting silently) */
     } else {
         /* burst end: disarm, CLEAN the SPSR (trailing flag/OVRN kill —
-         * see the pump note), hand the replies to the completion handler */
+         * see the pump note), hand the replies to the completion handler.
+         * F5 (protocol_audit §1): snapshot the handoff BEFORE clearing the
+         * state — the walk ISR runs at IPR 6 over this engine's 4 and can
+         * preempt the window between state=IDLE and the field reads; its
+         * pump then launches a queued walk job, overwriting done/job_id/rx
+         * and misdirecting THIS burst's completion (snapshot works in both
+         * entry paths and never delays the walk tick by raising SR). */
+        rspi_done_fn done = c->done;
+        uint8_t job_id = c->job_id;
+        uint16_t *rx = c->rx;
+        uint8_t frames = c->frames;
         *spcr(bus) = 0x08u;                     /* idle = MSTR only */
         (void)*spsr(bus);
         *spsr(bus) = 0x20u;
         c->state = CH_IDLE;
         c->idx = 0u;
-        if (c->done) {
-            c->done(bus, c->job_id, c->rx, c->frames);
+        if (done) {
+            done(bus, job_id, rx, frames);
         }
         /* the done handler may queue the next job; pump it now for
          * gapless chaining (the stock's DMA engine behaves the same) */

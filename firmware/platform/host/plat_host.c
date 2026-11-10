@@ -77,6 +77,9 @@ void plat_init(void)
 bool plat_tick_poll_hw(void) { return false; }
 bool plat_walktmr_poll(void) { return false; }
 bool plat_rspi_poll(uint8_t bus) { (void)bus; return false; }
+/* no host ATU ISR: 0 keeps main.c's F2 gate on the CMT fallback, which is
+ * the host's tick source */
+uint32_t plat_tick_isr_count(void) { return 0u; }
 
 bool plat_tick_poll(void)
 {

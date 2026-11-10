@@ -213,28 +213,39 @@
 
 /* ── rebuild additions (design §3 — the binding register map) ──────────── */
 
-/* WDT byte accessors (the rebuild uses 8-bit accesses) */
+/* WDT accessors (the rebuild uses 16-BIT KEYED writes — platform_audit #6:
+ * every stock WDT site is mov.w with the key 0x5A/0xA5 in the high byte) */
 #define WTCR_ADDR   (0xFFFE0000u)
 #define WTCNT_ADDR  (0xFFFE0002u)
-#define WTSR_ADDR   (0xFFFE0004u)    /* bit 7 = WOVF (reset cause) */
+#define WTSR_ADDR   (0xFFFE0004u)    /* RSTCSR 16-bit: WOVF = low half 0xFFFE0005
+                                      * bit 7 (platform_audit #2 — 0xFFFE0004 is
+                                      * the KEY half); clear via the 0xA5-keyed
+                                      * 16-bit RMW (stock 0x95446) */
 #define WRCR_ADDR   (0xFFFE0006u)
 
 /* RSPI-B IPR nibble (bits 15-12 of IPR27) — [I], P8 verify */
 #define RSPIB_IPR   INTC_IPR(27)
 
-/* ATU-D1 tick timer (validated: ATU-D1 CMID10, not "timer H") */
+/* ATU-D1 tick timer (validated: ATU-D1 CMID10, not "timer H"). Flag/enable
+ * addresses corrected to the bench-proven byte map (platform_audit #13/P1#8
+ * + timer_audit §1: the old 0xF545/0xF54C/0xF540 were wrong — 0xF540 is
+ * TCNT1D2 territory, and the stock's executed flag/enable bytes are
+ * 0xF5CD/0xF5CF). Not referenced from any .c — kept corrected so a future
+ * one-line include cannot resurrect the stale map. */
 #define ATU_D1_TCNT   REG32(0xFFFFF530u)   /* 16-bit counter + 8 fraction bits */
 #define ATU_D1_OCRD10 REG32(0xFFFFF5D0u)   /* compare-match A */
-#define ATU_D1_TIER   REG8(0xFFFFF545u)     /* interrupt enable, bit 0 = CMID10 */
-#define ATU_D1_TSR    REG8(0xFFFFF54Cu)     /* status, bit 0 = compare flag */
-#define ATU_D1_TSTR   REG8(0xFFFFF540u)     /* start, bit 1 = D1 counting */
+#define ATU_D1_TIER   REG8(0xFFFFF5CFu)     /* CMEAD10 enable, byte bit 4 (stock 0x67960) */
+#define ATU_D1_TSR    REG8(0xFFFFF5CDu)     /* CMFAD10 status/ack, byte bit 4 (stock 0x6795C) */
+#define ATU_D1_TSTR   REG8(0xFFFFF500u)     /* TSTRD, bit 1 = STRD1 (stock init 0x9718C) */
 
-/* ATU-D0 walk timer (spec 22 §1; control set observed, counter [I]) */
-#define ATU_D0_TIER   REG8(0xFFFFF585u)     /* interrupt enable, bit 0 = CMID00 */
-#define ATU_D0_TSR    REG8(0xFFFFF58Cu)     /* status, bit 0 = compare flag */
-#define ATU_D0_TSTR   REG8(0xFFFFF58Eu)     /* start, bit 0 = D0 counting */
-#define ATU_D0_OCR    REG32(0xFFFFF5B0u)     /* compare value */
-#define ATU_D0_TCNT   REG32(0xFFFFF520u)     /* counter [I] — P8 probe */
+/* ATU-D0 walk timer (spec 22 §1). Same bench-proven byte map correction:
+ * old 0xF585/0xF58C/0xF58E/0xF5B0 were wrong — TSRD0/TIERD0 bytes are
+ * 0xF58D/0xF58F and OCRD00 is 0xF590 (platform_audit #13/P1#8). */
+#define ATU_D0_TIER   REG8(0xFFFFF58Fu)     /* CMEAD00 enable, byte bit 4 */
+#define ATU_D0_TSR    REG8(0xFFFFF58Du)     /* CMFAD00 status/ack, byte bit 4 */
+#define ATU_D0_TSTR   REG8(0xFFFFF500u)     /* TSTRD, bit 0 = STRD0 (stock init 0x9718C) */
+#define ATU_D0_OCR    REG32(0xFFFFF590u)    /* OCRD00 compare value (bench map) */
+#define ATU_D0_TCNT   REG32(0xFFFFF520u)     /* counter — bench-proven */
 
 /* FRT (free-running timer, 1 MHz µs timestamp) */
 #define FRT_TCNTA     REG16(0xFFFFF220u)

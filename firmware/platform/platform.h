@@ -170,8 +170,6 @@ void plat_drv_init(void);
 bool plat_drv_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n);
 /* E54: live-set the driver-bus (RSPI-A) bit rate; takes effect at the next exchange. */
 void plat_drv_spbr_set(uint8_t spbr);
-/* E56 (6.2am): the stock's unconditional frame feed (SPCR=0x08, no SPTEF poll). */
-bool plat_drv_xfer_stock(const uint16_t *tx, uint16_t *rx, uint8_t n);
 /* E59 (6.2aq): the interrupt-driven frame feed — fill buffer, arm, ISR feeds. */
 bool plat_drv_xfer_irq(const uint16_t *tx, uint16_t *rx, uint8_t n);
 /* E60b: staged arm — the SR window stays closed until the scheduler has proven

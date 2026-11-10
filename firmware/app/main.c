@@ -32,6 +32,11 @@
 /* [I] shaft assignment of the speed channels (spec 02 section 4.1) */
 static const sensors_cfg_t s_sensors_cfg = { 0u, 1u, { 60u, 60u, 60u } };
 
+/* F2 (protocol_audit §1/F2): how long the ATU tick must be quiet before the
+ * CMT fallback re-engages (the audit's "> 10 ms" un-retire threshold). The
+ * CMT retires only on SUSTAINED ATU liveness, never on one harvested flag. */
+#define ATU_TICK_QUIET_US 10000u
+
 /* ── UDS application glue (carried): leave/did/routine routing ─────────── */
 /* bench read-out records FD00/FD01/FD02 (carried wire formats) */
 static void inputs_status(uint8_t d[8])
@@ -285,13 +290,30 @@ int main(void)
          * flag directly — the firmware runs even with a dead INTC, and the
          * ISR counters (s_tick_isr_count, s_vec_count) tell the bench which
          * path carried the traffic. The CMT poll (r01b-proven) carries the
-         * tick ONLY until the ATU hardware tick proves live once. */
-        static uint8_t s_atu_tick_live;
+         * tick until the ATU hardware tick proves SUSTAINED and retires it;
+         * if the ATU goes quiet again the CMT re-engages (F2: the old
+         * single-fire self-retire left the bench with NO tick source at
+         * all once TCNT1D1 froze — protocol_audit §1/F2). */
+        static uint32_t s_atu_isr_prev;
+        static uint32_t s_atu_live_us;
+        static bool s_atu_retired;
         if (plat_tick_poll_hw()) {
-            sched_tick_isr();
-            s_atu_tick_live = 1u;
-        } else if (s_atu_tick_live == 0u && plat_tick_poll()) {
-            sched_tick_isr();
+            sched_tick_isr();                        /* polled ATU harvest */
+            s_atu_live_us = plat_frt_us();
+            s_atu_retired = true;
+        }
+        if (plat_tick_isr_count() != s_atu_isr_prev) {
+            /* the true ISR is sustaining the tick (it calls
+             * sched_tick_isr itself); a single harvested flag is not proof */
+            s_atu_isr_prev = plat_tick_isr_count();
+            s_atu_live_us = plat_frt_us();
+            s_atu_retired = true;
+        } else if (s_atu_retired &&
+                   (plat_frt_us() - s_atu_live_us) >= ATU_TICK_QUIET_US) {
+            s_atu_retired = false;                   /* ATU quiet: resume CMT */
+        }
+        if (!s_atu_retired && plat_tick_poll()) {
+            sched_tick_isr();                        /* CMT fallback (r01b) */
         }
         (void)plat_walktmr_poll();
         (void)plat_rspi_poll(0u);

@@ -10,6 +10,12 @@
 #define SSLB1_OK(rx)  (((rx) & 0xF900u) == 0xA800u)
 #define SSLB0_OK(rx)  (((rx) & 0xFE00u) == 0xAA00u)
 
+/* F4/F8 (protocol_audit): per-job reply-error counters. The spec 22 §4
+ * preamble's per-job error address (0xFFF94218[2*id]) is owned by the use
+ * counters (sup_jobs launch), so the error counts live here — bench reads
+ * them by ELF symbol until the stock decode resolves the F8 conflict. */
+static volatile uint8_t s_job_err_cnt[JOB_COUNT];
+
 /* ── J1: {8E|ctrl, C9, 22, 09} — handler sup_resp_ctrl ─────────────────── */
 
 void sup_resp_ctrl(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
@@ -18,9 +24,14 @@ void sup_resp_ctrl(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
     /* frames 0,2 → SSLB1 (A8 class); frames 1,3 → SSLB0 (AA class) */
     if (!SSLB1_OK(rx[0])) CELL_J1_ERR |= 1u;
     if (!SSLB0_OK(rx[1])) CELL_J1_ERR |= 2u;
-    if (!SSLB1_OK(rx[2])) { CELL_J1_ERR |= 4u; goto fin; }
+    if (!SSLB1_OK(rx[2])) CELL_J1_ERR |= 4u;
     if (!SSLB0_OK(rx[3])) CELL_J1_ERR |= 8u;
-    /* THE ECHO CELL: rx[2] low byte = the 0x22 echo */
+    /* THE ECHO CELL: rx[2] low byte = the 0x22 echo. Harvested
+     * UNCONDITIONALLY — error bits and cell harvests are separate acts in
+     * the stock's cell law (spec 22 §4.4 lists the 0xFFF907D5 row
+     * unconditionally; F4/D6: the old goto-fin on the class verdict skipped
+     * it and permanently killed CELL_ECHO_22/CELL_GRANT on the bench's real
+     * 0xAB-class reply, locking sup_ctrl's bit-2 life sign at 0x04). */
     CELL_ECHO_22 = (uint8_t)(rx[2] & 0xFFu);
     /* echo test: (rx[2] ^ staged_ctrl) & 0xDF — bit 5 excluded (NR-8:
      * the rail is the chip's own telemetry, never asserted by us) */
@@ -39,7 +50,6 @@ void sup_resp_ctrl(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
     CELL_GRANT = (CELL_ECHO_22 & 0x01u) != 0u ? 1u : 0u;
     /* handover readiness latch */
     CELL_HANDOVER_RDY = (uint8_t)(CELL_REG_14 & 0x01u);
-fin:
     sup_job_release(JOB_CTRL);
     sup_job_engine_pump();
 }
@@ -167,7 +177,12 @@ void sup_resp_duty(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
     CELL_REPLY_FRESH |= 1u;
     goto fin;
 bad:
-    /* count the error; the walk engine retries */
+    /* F4 (protocol_audit): keep the reject-all gate (spec-faithful, §5 —
+     * never widen the masks to accept 0xAB as valid) but COUNT the discard:
+     * the empty bad: label left the spec 22 §4 per-job error bookkeeping
+     * unimplemented, so the bench could not see why replies die. The walk
+     * engine retries on the next timer fire. */
+    s_job_err_cnt[JOB_DUTY]++;
 fin:
     sup_job_release(JOB_DUTY);
     sup_job_engine_pump();
@@ -189,6 +204,9 @@ void sup_resp_level(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
     CELL_REPLY_FRESH |= 2u;
     goto fin;
 bad:
+    /* F4 (protocol_audit): same bookkeeping law as W1 above — reject-all
+     * stays, but the discard is counted per job (spec 22 §4 preamble). */
+    s_job_err_cnt[JOB_LEVEL]++;
 fin:
     sup_job_release(JOB_LEVEL);
     sup_job_engine_pump();

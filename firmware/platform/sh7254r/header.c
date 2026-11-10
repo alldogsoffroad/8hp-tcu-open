@@ -94,59 +94,11 @@ void default_body(uint32_t pc, uint32_t sr)
     }
 }
 
-/* E60 (spec 03 section 6.2ar): the interrupt-driven feed ISR, corrected.
- * E59's ISR never fired: SR.I was 15 from boot (start.S), IPR27 was 0 and
- * SPCR=0x09 never had SPE set (manual 17.3.1: bit7 SPRIE, bit6 SPE, bit3
- * MSTR — the old "0x09 = SPE+MSTR" decode had SPE wrong). E60 arms the burst
- * with SPCR=0xC8 (SPRIE+SPE+MSTR), IPR27 bits 11-8 = 0xE and SR.I opened only
- * for the burst window (plat_drv_xfer_irq); this handler then feeds frames.
- * The feed order is the proven polled loop's (manual 17.4.9): SPTEF read,
- * SPDR write, SPSR read, SPSR=0 (the CPU start trigger). */
-__attribute__((interrupt_handler))
-void rspi_a_isr(void)
-{
-    /* volatile: shared with the mainline fill/start code */
-    extern volatile uint16_t rspi_a_tx_buf[64];
-    extern volatile uint16_t rspi_a_rx_buf[64];
-    extern volatile uint8_t  rspi_a_idx;     /* frames already started */
-    extern volatile uint8_t  rspi_a_count;   /* frames in this burst */
-
-    volatile uint8_t *const spsr  = (volatile uint8_t *)0xFFFFB003u;
-    volatile uint8_t *const spcr  = (volatile uint8_t *)0xFFFFB000u;
-    volatile uint8_t *const gate  = (volatile uint8_t *)0xFFFE6030u;
-    volatile uint16_t *const spdr = (volatile uint16_t *)0xFFFFB004u;
-
-    /* the stock's entry protocol (0x96590 decode) */
-    *spsr = 0u;                          /* SPSR acknowledge */
-    (void)*gate;
-    *gate = 0xF3u;                       /* clock-gate enable */
-
-    if (rspi_a_idx == 0u) {
-        /* spurious entry (no frame started): disarm and leave */
-        *spcr = 0x08u;
-        rspi_a_count = 0u;
-        return;
-    }
-
-    /* collect the reply of the frame that just completed — reading SPDR
-     * clears SPRF, the interrupt request. The reply of frame k belongs at
-     * index k: the mainline started frame 0 with idx=1, so this is idx-1. */
-    rspi_a_rx_buf[rspi_a_idx - 1u] = *spdr;
-
-    if (rspi_a_idx < rspi_a_count) {
-        /* feed the next frame (the polled loop's proven order) */
-        (void)*spsr;                     /* read SPTEF = 1 */
-        *spdr = rspi_a_tx_buf[rspi_a_idx];
-        (void)*spsr;
-        *spsr = 0u;                      /* start trigger (manual 17.4.9) */
-        rspi_a_idx++;
-    } else {
-        /* burst complete: the final reply is already collected above;
-         * disarm the receive interrupt, keep MSTR (the stock's live idle) */
-        *spcr = 0x08u;
-        rspi_a_count = 0u;               /* releases the mainline wait */
-    }
-}
+/* rspi_a_isr deleted (platform_audit #11/P1#7): a dead-code trap — its bus-A
+ * ADMATE0 gate byte was the bus-B value 0xF3 and it wrote SPSR=0 at entry.
+ * It had no references (the wired vector uses v_rspi_a → plat_rspi_isr) and
+ * was GC'd under --gc-sections; removing it so it can never be rewired. The
+ * rspi_a_* buffers it shared stay — plat_drv_xfer_irq/plat_drv_xfer own them. */
 
 /* E60c: the announce net. E60b's DEADBABE fired at the exact arm moment — an
  * interrupt delivers but lands somewhere unexpected. Each RSPI-area vector now
@@ -371,6 +323,10 @@ void (*const app_vectors[508])(void) = {
     default_handler, default_handler, default_handler, default_handler,
     default_handler, default_handler, default_handler, default_handler,
     default_handler, default_handler, default_handler, default_handler,
+    /* platform_audit #8/P0#5: the initializer had 512 entries for this
+     * 508-element array — GCC silently dropped the 4 excess ones, leaving
+     * vectors 508-511 as NULL slots (jump-to-0 if ever taken). Trimmed to
+     * exactly 508; every wired entry above is unchanged. */
     default_handler, default_handler, default_handler, default_handler,
 };
 

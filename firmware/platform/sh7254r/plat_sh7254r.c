@@ -628,10 +628,11 @@ bool plat_sup_burst0(const uint16_t *tx, uint16_t *rx, uint8_t n)
 static const uint16_t s_drv_cmd[5] = { 0xAF31u, 0xAF21u, 0xAF11u, 0xAF01u, 0xAF51u };
 static uint8_t s_drv_spbr = 5u;   /* declared before first use */
 
-/* E59 (spec 03 section 6.2aq): the interrupt-driven frame feed. The buffer
- * and index are shared with rspi_a_isr (header.c). The mainline fills the
- * buffer and starts the burst; the ISR feeds frames on interrupt; the
- * mainline reads replies after the burst completes (count returns to 0). */
+/* E59 (spec 03 section 6.2aq): the interrupt-driven frame feed. The buffers
+ * and index are shared between plat_drv_xfer_irq and plat_drv_xfer (below;
+ * sol_drv.c drives both). The mainline fills the buffer and starts the
+ * burst; plat_drv_xfer_irq feeds frames on interrupt; the mainline reads
+ * replies after the burst completes (count returns to 0). */
 volatile uint16_t rspi_a_tx_buf[64];
 volatile uint16_t rspi_a_rx_buf[64];
 volatile uint8_t  rspi_a_idx;
@@ -684,7 +685,10 @@ bool plat_drv_xfer_irq(const uint16_t *tx, uint16_t *rx, uint8_t n)
     for (uint32_t i = 0u; i < 5u; i++) {
         SPCMDA(i) = s_drv_cmd[i];
     }
-    *(volatile uint8_t *)0xFFFE6030u = 0xF3u;              /* clock gate open */
+    *(volatile uint8_t *)0xFFFE6030u = 0xFCu;              /* ADMATE0 bus-A burst arm
+                                        * (platform_audit #7/P0: bus-A contexts write
+                                        * 0xFC — launcher 0x96584, burst ISR 0x965B4;
+                                        * 0xF3 is the bus-B value) */
 
     /* E60: the interrupt plumbing — RSPI_A is the ONLY enabled source
      * (plat_drv_init zeroed every IPR), priority 0xE in IPR27 bits 11-8 */
@@ -830,48 +834,11 @@ bool plat_drv_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n)
     return true;
 }
 
-bool plat_drv_xfer_stock(const uint16_t *tx, uint16_t *rx, uint8_t n)
-{
-    /* E56 (spec 03 section 6.2am): THE STOCK'S OWN FEED — decoded from the frame
-     * pump at 0x93C30: per frame, ONE unconditional 32-bit store of the packed
-     * {SPCR, pad, SPSR, pad} pair at the register base, then the 16-bit SPDR
-     * write. NO SPTEF polling anywhere in the loop. The stock runs SPCR = 0x08
-     * in this mode (E55 proved our polled transport dead under 0x08 — the poll
-     * waits for a flag that never comes; the stock never waits). The 2026-10-30
-     * "must poll" lesson was a property of 0x48-polled mode, not the hardware.
-     * Reply: read SPDR right back per frame (one-frame lag acceptable if any). */
-    SPCRA = 0x00u;
-    RSPIA_DMA_REQ0 = 0u;
-    RSPIA_DMA_REQ1 = 0u;
-    SPSRA = 0u;
-    SPPCRA = 0u;
-    SPBRA = s_drv_spbr;
-    SPCKDA = 0u;
-    SSLNDA = 0u;
-    SPNDA = 1u;
-    SPSCRA = 4u;
-    for (uint32_t i = 0u; i < 5u; i++) {
-        SPCMDA(i) = s_drv_cmd[i];
-    }
-    {
-        /* the packed per-frame register store: SPCR = 0x08 at +0, SPSR = 0x20
-         * (the stock's ISR entry value: clears OVRF/idle flags) at +2 */
-        volatile uint32_t *const pair = (volatile uint32_t *)0xFFFFB000u;
-        volatile uint16_t *const spdr = (volatile uint16_t *)0xFFFFB004u;
-
-        for (uint8_t i = 0u; i < n; i++) {
-            /* BIG-ENDIAN packed: bits 31-24 = SPCR(+0), bits 7-0 = SPSR(+3).
-             * SPCR = 0x09 = SPE(bit0) + MSTR(bit3) — the workers' active value
-             * (0x93A74 decode: @(desc+0x10) set to 0x09 on transaction start).
-             * SPSR = 0x20 = overrun clear. */
-            *pair = 0x09000020u;
-            *spdr = tx[i];
-            rx[i] = *spdr;               /* immediate read; lag tolerated */
-        }
-    }
-    SPCRA = 0x00u;
-    return true;
-}
+/* plat_drv_xfer_stock deleted (platform_audit #12/P1#7): its claimed decode
+ * doesn't check out (stock 0x93C30 is a RAM buffer copy loop, no packed
+ * register store), SPCR=0x09 contradicts the project's own SPE=bit6 law
+ * (E60 proved 0x09 never clocks), and the 32-bit packed store clobbers
+ * SPPCR (+2) as a side effect. It had no callers. */
 
 /* ---- Park hold output: timer E sub-block 3 channel 1 = TOE31 on PL6 ----------------
  * (spec 02 section 3.1, manual 13.22 / 22.1.22). 2 MHz count clock (clock-bus line 1,

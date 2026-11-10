@@ -24,8 +24,11 @@
 /* ── walk reply cells (linker .sup_walk at 0xFFF90540) ────────────────── */
 #define CELL_REPLY_FRESH    (*(volatile uint8_t  *)0xFFF90540u) /* |=1 duty, |=2 level */
 #define CELL_TOKEN_LAST     (*(volatile uint32_t *)0xFFF90548u)
-#define CELL_LEVEL_COUNT    (*(volatile uint16_t *)0xFFF9054Cu) /* level reply counter */
-#define CELL_DUTY_COUNT     (*(volatile uint16_t *)0xFFF9054Du) /* duty reply counter */
+#define CELL_LEVEL_COUNT    (*(volatile uint16_t *)0xFFF9054Cu) /* level reply counter (spec 22 §4.8) */
+/* duty reply counter is a BYTE: as a u16 at 0x9054D it shared byte 4D with
+ * LEVEL_COUNT and byte 4E with STAGED_84 — the stock cannot hold both as
+ * u16s there (protocol_audit F3; spec 22 §4.9 + spec 23 §A4) */
+#define CELL_DUTY_COUNT     (*(volatile uint8_t  *)0xFFF9054Du) /* duty reply counter */
 #define CELL_ECHO_0A        (*(volatile uint8_t  *)0xFFF9054Fu) /* 0x0A echo */
 #define CELL_FB_0C          (*(volatile uint8_t  *)0xFFF90550u) /* 0x0C feedback */
 #define CELL_COMMIT_12      (*(volatile uint8_t  *)0xFFF90551u) /* 0x12 commit status */

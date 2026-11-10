@@ -59,6 +59,12 @@
 
 #define WALK_ECHO_RETRIES    3u        /* 0x6C742 confirm retry bound        */
 #define WALK_REPLY_WINDOW_US 4000u     /* state-7 sample window [I]          */
+/* F1 (protocol_audit §1): the staging confirm loop has no timeout of its
+ * own — the stock gets its bound from the WDT, our port feeds the WDT from
+ * the tick task, so a stall parked in COLD_STAGED/WARM_PENDING spun
+ * forever. N passes without a fresh reply (100 x 5 ms = 0.5 s) re-stage
+ * the era and re-arm the timer. */
+#define WALK_CONFIRM_TIMEOUT_PASSES 100u
 
 /* duty contexts (see sup_token.c) */
 #define WALK_CTX_STEADY      0x1Eu
@@ -75,6 +81,7 @@
 
 static uint16_t s_s8_budget;         /* the 0xFFF9417D countdown */
 static uint16_t s_s23_timeout;       /* the 0x8D1BA timeout */
+static uint16_t s_confirm_stale;     /* F1: confirm-loop staleness counter */
 
 /* The stock's hardware-condition gate (0x68BE0: 0xFFFF1001 bit 6 — "no
  * fault condition present"). The platform layer owns register reads; until
@@ -216,6 +223,7 @@ void sup_walk_init(void)
 
     s_s8_budget = 0u;
     s_s23_timeout = 0u;
+    s_confirm_stale = 0u;
 
     /* NO 84 word is sent here (D4/NR-2); the walk timer is not started —
      * the first stage arms it from the FSM's first pass. */
@@ -455,11 +463,15 @@ static void walk_task(void)
             if (!reply_fresh_now()) {
                 /* stale reply: stall++, stop the timer, → 0x19 — and ride
                  * the stock's own restart law so the ladder never sits
-                 * silent (E60ab: no 84-class silence gaps) */
+                 * silent (E60ab: no 84-class silence gaps). F1: re-arm the
+                 * timer HERE — the restart's warm stage only promotes (and
+                 * re-programs) on the NEXT pass tail, and a stopped timer
+                 * can never produce the confirming reply. */
                 CELL_STALL_CNT++;
                 plat_walktmr_stop();
                 CELL_WALK_STATE = SUP_WALK_ERA;
                 sup_walk_req_restart();
+                plat_walktmr_start();
                 break;
             }
             reply_processor();
@@ -483,6 +495,25 @@ static void walk_task(void)
         CELL_WALK_STATE = SUP_WALK_SAMPLE;
     } else {
         CELL_WALK_STATE = SUP_WALK_IDLE;
+    }
+
+    /* F1 (protocol_audit §1): bound the staging confirm loop. COLD_STAGED
+     * only exits on a fresh reply, and only a timer dispatch can produce
+     * one — the r01j wedge parked the machine here with the timer stopped,
+     * spinning forever. After WALK_CONFIRM_TIMEOUT_PASSES without a fresh
+     * reply, re-stage the era (sup_walk_req_restart — the same 0x6C720 law
+     * the echo-mismatch path uses) and re-arm the timer immediately. */
+    if (CELL_WALK_SUBST == SUP_SUB_COLD_STAGED ||
+        CELL_WALK_SUBST == SUP_SUB_WARM_PENDING) {
+        if (reply_fresh_now()) {
+            s_confirm_stale = 0u;
+        } else if (++s_confirm_stale >= WALK_CONFIRM_TIMEOUT_PASSES) {
+            s_confirm_stale = 0u;
+            sup_walk_req_restart();
+            plat_walktmr_start();
+        }
+    } else {
+        s_confirm_stale = 0u;
     }
 
     output_gate();
