@@ -29,11 +29,15 @@ void plat_intc_setup(const plat_ipr_map_t *m)
 
 void plat_sr_open(void)
 {
-    /* SR.I = 0xE — all maskable ISRs live (stock order 21, design A6).
-     * BL and the I[3:0] nibble stay; only the mask drops by one level. */
+    /* SR.I = 0 — TRULY open. The r01/r01b bench proved 0xE is NOT "open":
+     * SH-2A delivers only priorities ABOVE SR.I, so 0xE masked the tick (6)
+     * and RSPI (4) entirely while the polled CMT fallback hid it (uptime
+     * cell = 0, both RSPI channels stuck FEEDING). The E60-era burst code
+     * used exactly this value for its proven interrupt windows
+     * (plat_sh7254r.c:711 'ldc sr & ~0xF0'). */
     uint32_t sr;
     __asm__ volatile ("stc sr, %0" : "=r"(sr));
-    sr = (sr & ~0xF0u) | 0xE0u;
+    sr &= ~0xF0u;
     __asm__ volatile ("ldc %0, sr" : : "r"(sr));
 }
 

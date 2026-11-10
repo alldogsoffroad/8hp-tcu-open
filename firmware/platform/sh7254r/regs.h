@@ -162,11 +162,14 @@
 #define ADCSR_ADST 0x80u
 #define ADCSR_ADCS 0x40u                 /* continuous scan */
 
-/* ---- ATU-III (section 13) ----------------------------------------------- */
-#define ATUENR   REG16(0xFFFFF000u)
+/* ---- ATU-III (section 13; manual Table 13.1 — corrected 2026-11-09: the
+ * old define had ATUENR at CBCNT's address) ------------------------------- */
+#define ATU_CBCNT REG8(0xFFFFF000u)     /* clock bus 4/5 source select */
+#define ATUENR   REG16(0xFFFFF004u)     /* master enable: TAE1 TBE2 TCE3 TDE4 ... */
 #define ATU_NCMR REG8(0xFFFFF003u)
 #define ATU_PSCR(n) REG16(0xFFFFF100u + 2u * (n))
 #define ATUENR_PSCE 0x0001u
+#define ATUENR_TDE  0x0010u             /* timer D enable (tick + walk timer) */
 #define ATUENR_TFE  0x0040u
 #define ATUENR_TEE  0x0020u             /* timer E enable                     */
 

@@ -102,9 +102,18 @@ void plat_rspi_pump(uint8_t bus)
     /* arm the interrupt: SPCR = 0xC8 (SPRIE + SPE + MSTR) */
     *spcr(bus) = 0xC8u;
 
-    /* feed frame 0 in the proven polled order */
+    /* feed frame 0 in the E60-proven order: WAIT for SPTEF first — an
+     * SPDR write while the TX buffer is full is silently dropped and the
+     * burst never clocks (old plat_sh7254r.c:694) */
     volatile uint8_t *sr = spsr(bus);
     volatile uint16_t *dr = spdr(bus);
+    uint32_t guard;
+    for (guard = 20000u; guard != 0u && (*sr & 0x02u) == 0u; guard--) {
+    }
+    if (guard == 0u) {
+        *spcr(bus) = 0x08u;                     /* can't start: disarm */
+        return;
+    }
     (void)*sr;                                  /* SPTEF read */
     *dr = c->tx[0];                             /* SPDR write */
     (void)*sr;                                  /* SPSR read */
@@ -130,6 +139,13 @@ void plat_rspi_isr(uint8_t bus)
 {
     rspi_chan_t *c = &s_chan[bus];
     c->isr_count++;
+
+    /* the stock's entry protocol (0x96590 decode): clock-gate acknowledge
+     * on every ISR entry — 0xFFFE6030 = 0xF3. The gate read closed on the
+     * r01/r01b bench (live 0x0000); the stock never lets it stay that way. */
+    volatile uint8_t *const gate = (volatile uint8_t *)0xFFFE6030u;
+    (void)*gate;
+    *gate = 0xF3u;
 
     if (c->state != CH_FEEDING) {
         return;                                 /* spurious */
@@ -195,6 +211,11 @@ void plat_rspi_init(void)
     memset(s_chan, 0, sizeof s_chan);
     s_chan[0].bus = 0u;
     s_chan[1].bus = 1u;
+    /* the clock gate the stock's ISR acknowledges on every entry
+     * (0x96590 decode; read closed live on the r01/r01b bench) */
+    volatile uint8_t *const gate = (volatile uint8_t *)0xFFFE6030u;
+    (void)*gate;
+    *gate = 0xF3u;
     /* both buses idle = MSTR only (stock's live idle) */
     *spcr(0) = 0x08u;
     *spcr(1) = 0x08u;
