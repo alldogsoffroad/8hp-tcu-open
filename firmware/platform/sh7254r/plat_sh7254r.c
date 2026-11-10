@@ -95,12 +95,14 @@ static void tick_init(void)
 
 bool plat_tick_poll(void)
 {
-    /* r01c: the CMT poll is RETIRED on the target — the ATU-D1 ISR
-     * (plat_tick.c, vector 228) is the tick now. The poll silently masked
-     * the dead interrupt fabric through r01/r01b (the heartbeat ran on
-     * the CMT while every real ISR starved). Always false here; the host
-     * simulator keeps its own poll. If the ATU tick fails on the bench,
-     * the app goes visibly silent instead of faking liveness. */
+    /* r01g: the CMT poll RESTORED as the fallback tick (the r01b-proven
+     * path — the app works, UDS answers, the bench reads cells). The
+     * main loop calls it ONLY until the ATU hardware tick proves live
+     * (plat_tick_poll_hw succeeds once), then it self-retires. */
+    if ((CMT_CMSR0 & 0x01u) != 0u) {
+        CMT_CMSR0 = 0x00u;
+        return true;
+    }
     return false;
 }
 

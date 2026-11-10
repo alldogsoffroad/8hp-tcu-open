@@ -277,12 +277,16 @@ int main(void)
         if (plat_tick_poll()) {
             sched_tick_isr();
         }
-        /* r01e POLLED FALLBACKS: until the INTC fabric is proven, the
-         * superloop harvests every interrupt flag directly — the firmware
-         * runs even with a dead INTC, and the ISR counters
-         * (s_tick_isr_count, s_vec_count) tell the bench which path
-         * carried the traffic. Remove when the vectors prove live. */
+        /* r01e/g POLLED FALLBACKS: the superloop harvests every interrupt
+         * flag directly — the firmware runs even with a dead INTC, and the
+         * ISR counters (s_tick_isr_count, s_vec_count) tell the bench which
+         * path carried the traffic. The CMT poll (r01b-proven) carries the
+         * tick ONLY until the ATU hardware tick proves live once. */
+        static uint8_t s_atu_tick_live;
         if (plat_tick_poll_hw()) {
+            sched_tick_isr();
+            s_atu_tick_live = 1u;
+        } else if (s_atu_tick_live == 0u && plat_tick_poll()) {
             sched_tick_isr();
         }
         (void)plat_walktmr_poll();
