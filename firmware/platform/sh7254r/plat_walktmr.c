@@ -80,9 +80,19 @@ bool plat_walktmr_running(void)
 
 void plat_walktmr_start(void)
 {
-    if (s_walk_tmr_running) {
-        return;
-    }
+    /* NO running-guard: the stock's programmers (0x6C0BA level / 0x6BF9C
+     * duty twin) re-write ALL FOUR registers on EVERY call, and the stock's
+     * steady state calls them every 5 ms pass (0x8799C → 0x8D020/0x8CEDC →
+     * 0x6C802 → 0x6BF9C). Bench r01o proved why the guard is fatal: the
+     * U-compare channel died mid-boot once (OCR@5B0 frozen at its last
+     * re-arm, TIER@585 readback 0x00, TSR@58C bit0 never asserts again,
+     * TCNT1D0 running 24-bit wraps past the stale compare forever) and the
+     * guarded start() could never revive it — the walk sat silent for the
+     * rest of the boot (USE[DUTY]=USE-LEVEL frozen, W1 never dispatched,
+     * LVL_REPORTED stuck 7, the one-shot never fired). A compare event can
+     * be lost for good (missed while TCNT is already past the OCR — the
+     * next match would be a full 24-bit wrap away), so every arm must
+     * restore the complete channel state, exactly like the stock. */
     /* stock order (timer_audit §5: config → arm → enable → start; the
      * programmer 0x6C0BA writes OCR@5B0, TIER@585|=1, then on the staged
      * transition TSR@58C&=0xFE + TSTR@58E|=1) */

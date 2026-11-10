@@ -157,9 +157,18 @@ static void duty_programmer(void)
 }
 
 /* arm the DUTY era (the FSM's mode_req_set(0) law, 0x8D020 → 0x6C802):
- * steady context first, token staged, duty twin programmed. */
+ * steady context first, token staged, duty twin programmed. 0x6C802 is
+ * self-guarded on the walk state — busy (nonzero state) means a sample is
+ * in flight and the arm is skipped. The stock calls this arm EVERY steady
+ * monitor pass (0x8799C → 0x8D020/0x8CEDC → 0x6C802), so the guard is what
+ * makes the every-pass call safe: each idle pass re-stages the token and
+ * re-runs the duty programmer, whose tail (0x6C0BA/0x6BF9C law) re-writes
+ * OCR/TIER/TSR/TSTR — the walk tick is repaired 200×/s at steady. */
 static void duty_arm(void)
 {
+    if (CELL_WALK_STATE != SUP_WALK_IDLE) {
+        return;                               /* 0x6C802: busy — skip the arm */
+    }
     CELL_DUTY_CTX = WALK_CTX_STEADY;
     CELL_DUTY_CTX_COMPL = (uint8_t)~WALK_CTX_STEADY;
     sup_token_stage(CELL_SELECTOR);
@@ -601,16 +610,22 @@ static void outer_fsm(void)
 
     case SUP_FSM_ADVANCE:
         /* fault_state_advance: prev 0x23 && level 0 → re-request the 0x1F
-         * era; else steady supervision — keep the duty token era alive */
+         * era; else steady supervision — the stock re-arms the duty twin
+         * EVERY steady pass (0x8799C steady handler: RETURN==0x23 &&
+         * reported!=0 → 0x8D020, else 0x8CEDC; both → 0x6C802 → the duty
+         * programmer 0x6BF9C → the timer programmer tail). The old port
+         * guarded the arm on mode!=0, which at steady (mode 0) re-armed
+         * nothing — when the walk tick died mid-boot (r01o) nothing ever
+         * revived it: W1 never reached the wire, the chip's feedback nibble
+         * stayed 7 and the one-shot never fired. duty_arm() carries the
+         * 0x6C802 state guard, so the every-pass call is safe. */
         if (CELL_FSM_RETURN == SUP_FSM_DUTY &&
             CELL_LVL_REPORTED == 0u &&
             CELL_PERIOD != WALK_ERA_1F) {
             (void)sup_walk_stage(WALK_ERA_1F);
             CELL_OUTER_FSM = SUP_FSM_PROCEED;
         } else {
-            if (CELL_JOB_MODE != 0u) {
-                duty_arm();                       /* steady token rounds */
-            }
+            duty_arm();                           /* steady token rounds — every pass */
             CELL_BOOT_FLAG = 0u;
         }
         break;
