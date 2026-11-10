@@ -76,3 +76,12 @@ the D1 tick init chain near os_timer_rearm 0x6791A's callers
 ALSO: bus B interrupt vector still blanket-wired (444-455) — narrow by
 bisect once the walk unblocks; possible mid-read app reset (B counter
 70->37) unverified.
+
+=== 2026-11-10 AFTERNOON — R01L: THE STACK LIGHTS UP ===
+The audit-fix flash: counters RUNNING (TCNT advancing, CKSEL fix confirmed),
+THE WALK WALKED THE FULL LADDER to outer FSM 0x34 (steady supervision),
+conversation at full rate (11.5k exchanges/2min, jobs 0-8 all cycling),
+ECHO_22=0xAB live, GRANT set in the heartbeat (flags 0x18). The rebuild
+now walks, grants, and converses. NEXT: the certification chain (spec 23:
+selftest -> letters -> 0x90-enables) toward the rail; the tick ISR's D1
+flag is the one straggler (scheduler rides the CMT fallback by design).
