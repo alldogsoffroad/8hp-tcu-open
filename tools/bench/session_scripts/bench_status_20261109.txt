@@ -100,3 +100,13 @@ request-cell/bit0 state and the 0x8E dialect word at arm time);
 (3) if the chip acks-but-refuses: spec 23 candidates #2/#3 (the 0x06-era
 sequencing / the cyclic job context) are the remaining named gaps.
 The arm is REVERSIBLE: 31 01 FE 13 10 00 or the FE13 stop.
+THE 0x24 REPLY VERBATIM (JOB_EN rx): 0xAA00 — ACK-BUT-REFUSED (the E60l law).
+The chip acks the stock's exact 0x9020/0x2400 and declines the latch.
+THE LEAD: our 0x8E word rides 0x8E04 (NORMAL dialect) at arm time; the
+stock's engaged wire = 0x8E91 (ENGAGED dialect bit7+bit4 + request bit0,
+the 0x91C86 law's mode-gated pair). The composer's engaged dialect needs
+CELL_MODE_BYTE & 0x11 == 0x11 (bench mode cell = 0). NEXT EXPERIMENT
+(one variable): arm the letters AND force the engaged dialect bits on the
+0x8E word (extend the bench arm: set the mode-gate cell or add dialect
+bits in the composer via the arm) — the chip's context must match the
+engaged conversation it is being asked to certify.
