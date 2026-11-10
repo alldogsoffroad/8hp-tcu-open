@@ -277,6 +277,13 @@ int main(void)
         if (plat_tick_poll()) {
             sched_tick_isr();
         }
+        /* r01d DIAGNOSTIC: superloop WDT kick. With the CMT poll retired,
+         * a dead tick ISR starves task_1ms of its kick and the ~30 ms WDT
+         * reset loop hides every cell behind a reboot (r01c: no hb, no UDS,
+         * 176-198 mA). Kicking here keeps the app probeable regardless of
+         * interrupt state — a hung SUPERLOOP still resets. Revert to the
+         * task-side kick once the tick is proven. */
+        plat_wdt_kick();
         sched_drain();
     }
 }
