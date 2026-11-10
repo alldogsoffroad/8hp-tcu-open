@@ -142,3 +142,13 @@ ALSO (blocker sweep): CELL_MODE_BYTE has NO natural writer (the engaged
 dialect needs the arm or the stock's mode sequencer 0x85160 rebuild);
 0x14 bit1 remains chip-side; bus-A setpoints are all zero (the 1.77A ALSO
 needs commanded driver currents — sol setpoints — separate from the latch).
+R01O: THE WALK UN-BLINDED. The U-compare + SPSCR=selects-1 fixes landed:
+walk jobs at full cadence (use counters climbing live), the 84-word COMPOSED
+(0x8406), REAL W2 REPLIES for the first time (rx_level = aa00 aa06 aac8 —
+the chip answers 84-class!), REPLY_FRESH=2 (level-fresh), OCR@5B0 advancing.
+NEXT MICRO-CHECK: LVL_REPORTED still 7 — verify the FB_0C nibble extraction
+from the new reply stream (FB_0C@90550 unread; the stock law: LVL=(0x90550>>4)&7);
+then the one-shot -> 0x8E91 -> 0x24 verdict -> the rail. Heartbeat flags this
+boot: 0x10/0x00 (no grant yet — the CTRL echo shape changed with SPSCR fixed;
+the old 'grant' may have been the wrong-chip ABFF artifact!). Full report:
+~/tcu_sweep/walk_job_empty_trace.md
