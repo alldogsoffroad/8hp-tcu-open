@@ -238,14 +238,23 @@
 #define ATU_D1_TSR    REG8(0xFFFFF5CDu)     /* CMFAD10 status/ack, byte bit 4 (stock 0x6795C) */
 #define ATU_D1_TSTR   REG8(0xFFFFF500u)     /* TSTRD, bit 1 = STRD1 (stock init 0x9718C) */
 
-/* ATU-D0 walk timer (spec 22 §1). Same bench-proven byte map correction:
- * old 0xF585/0xF58C/0xF58E/0xF5B0 were wrong — TSRD0/TIERD0 bytes are
- * 0xF58D/0xF58F and OCRD00 is 0xF590 (platform_audit #13/P1#8). */
-#define ATU_D0_TIER   REG8(0xFFFFF58Fu)     /* CMEAD00 enable, byte bit 4 */
-#define ATU_D0_TSR    REG8(0xFFFFF58Du)     /* CMFAD00 status/ack, byte bit 4 */
-#define ATU_D0_TSTR   REG8(0xFFFFF500u)     /* TSTRD, bit 0 = STRD0 (stock init 0x9718C) */
-#define ATU_D0_OCR    REG32(0xFFFFF590u)    /* OCRD00 compare value (bench map) */
-#define ATU_D0_TCNT   REG32(0xFFFFF520u)     /* counter — bench-proven */
+/* ATU-D0 walk timer — CORRECTED 2026-11-10 (bench r01n live reads + the
+ * stock's executed bytes): the walk tick is the U-compare UDID00, VECTOR 224
+ * (stock 0x9106C at table 0x40070+4*224; IPR10 bits 7-4 = 6, stock 0x970FC),
+ * NOT the C-compare CMID00/vector 216 pair below-never-delivered. The
+ * C-compare ch0 flag/enable bytes (0xF58D/0xF58F bit 4) never assert on this
+ * silicon — the stock's own multi-channel arming loop (0x90010) arms ch0's
+ * OCR with NO flag/enable bit. Stock walk-tick register set (0x6C0BA /
+ * 0x9106C / 0x91058): OCR 0xFFFFF5B0 word, TIER byte 0xFFFFF585 bit 0,
+ * TSR byte 0xFFFFF58C bit 0, TSTR byte 0xFFFFF58E bit 0; counter TCNT1D0
+ * 0xFFFFF520, TCRD0 0xFFFFF52C = 0x4000, TSTRD 0xFFFFF500 = 0x0F. */
+#define ATU_D0_U_OCR  REG32(0xFFFFF5B0u)    /* U-compare compare value (stock 0x6C0BA) */
+#define ATU_D0_U_TIER REG8(0xFFFFF585u)     /* U-compare enable, byte bit 0 */
+#define ATU_D0_U_TSR  REG8(0xFFFFF58Cu)     /* U-compare status/ack, byte bit 0 */
+#define ATU_D0_U_TSTR REG8(0xFFFFF58Eu)     /* U-compare start/stop, byte bit 0 */
+#define ATU_D0_TCNT   REG32(0xFFFFF520u)    /* counter — bench-proven */
+#define ATU_D0_TCRD   REG16(0xFFFFF52Cu)    /* 0x4000, written once (stock 0x97152) */
+#define ATU_D0_TSTR   REG8(0xFFFFF500u)     /* TSTRD, counter starts (stock init 0x9718C) */
 
 /* FRT (free-running timer, 1 MHz µs timestamp) */
 #define FRT_TCNTA     REG16(0xFFFFF220u)

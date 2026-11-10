@@ -143,7 +143,11 @@ static const plat_ipr_ent_t s_ipr_entries[] = {
     {  4u, 12u, 0xEu },      /* DMAC4 (ADC_A end)          */
     {  4u,  8u,  4u },       /* DMAC5 (ADC_B end)          */
     {  5u,  0u, 0xEu },      /* WDT ITI (interval mode)    */
-    { 10u, 12u,  6u },       /* ATU-D0 walk compare        */
+    { 10u,  4u,  6u },       /* ATU-D0 UDID00 U-compare — the walk tick (VECTOR 224;
+                              * stock init 0x970FC arms IPR10 bits 7-4 = 6, raised
+                              * to 8 by 0x97198; the old bits 15-12 entry pointed at
+                              * the CMID00 C-compare group, which delivers no
+                              * interrupt on this silicon — 2026-11-10 bench decode) */
     { 10u,  0u,  6u },       /* ATU-D1 tick                */
     { 27u,  8u,  4u },       /* RSPI-A SPRIA — IPR27 bits 11-8 |= 0x400 (stock 0x963CC
                              * bus-0 branch: and 0xF0FF, or 0x400; E60c-proven live).

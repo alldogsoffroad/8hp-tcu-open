@@ -245,9 +245,16 @@ void (*const app_vectors[508])(void) = {
     default_handler, default_handler, default_handler, default_handler,
     default_handler, default_handler, default_handler, default_handler,
     default_handler, default_handler, default_handler, default_handler,
-    v_walktmr,  /* index 212 = VECTOR 216 */ default_handler, default_handler, default_handler,
     default_handler, default_handler, default_handler, default_handler,
     default_handler, default_handler, default_handler, default_handler,
+    /* index 212 = VECTOR 216: CMID00 C-compare ch0 delivers no interrupt on
+     * this silicon (stock 0x90010 arms its OCR with NO flag/enable bit —
+     * bVar6=0 for ch0); the walk tick lives on the U-compare at index 220
+     * (2026-11-10 bench). Vectors 216-219 stay default. */
+    v_walktmr,  /* index 220 = VECTOR 224: ATU-D0 UDID00 U-compare — the stock's
+                 * walk tick ISR 0x9106C sits at vector 224 (table 0x40070 +
+                 * 4*224); IPR10 nibble bits 7-4 = 6 (stock 0x970FC) */
+    default_handler, default_handler, default_handler,
     v_tick,  /* index 224 = VECTOR 228 */ default_handler, default_handler, default_handler,
     default_handler, default_handler, default_handler, default_handler,
     default_handler, default_handler, default_handler, default_handler,

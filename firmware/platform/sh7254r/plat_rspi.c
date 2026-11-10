@@ -95,8 +95,18 @@ void plat_rspi_pump(uint8_t bus)
     for (uint8_t i = 0u; i < c->n_sel && i < 8u; i++) {
         *spcmd(bus, i) = c->sel_cfg[i];
     }
-    /* frame count, bit rate, timing */
-    *spscr(bus) = (uint8_t)(c->frames - 1u);
+    /* SPSCR = SPCMD sequence length - 1 (the SELECTS count), not frames-1:
+     * the stock launcher 0x96468 writes SPSCR = descriptor byte 3 - 1
+     * (selects) and the frame count lives in the DMA transfer — "the SPI
+     * unit runs the command sequence repeatedly until the frame count is
+     * reached" (spec 03 §1). With SPSCR = frames-1 a single-select multi-
+     * frame burst cycled the sequence onto stale SPCMD1 (0xAF01 = SSLB0,
+     * left by the two-select cyclic jobs) and virgin SPCMD2+ (0x0000 = no
+     * select at all): frames 2+ of every W1/W2/EN/POS/FLT burst landed on
+     * the wrong chip or nowhere. The two-select cyclic jobs (CTRL/STAT/ID,
+     * frames = 2 x selects) alternated correctly only by that coincidence.
+     * Stock 6.2az law: both frames of a one-select job go to its one select. */
+    *spscr(bus) = (uint8_t)(c->n_sel - 1u);
     *spbr(bus) = bus ? 5u : plat_drv_spbr_get(); /* B: Pφ/12=1.667MHz, A: proven */
 
     /* clean any stale SPSR (the stock's ISR writes 0x20 first thing on

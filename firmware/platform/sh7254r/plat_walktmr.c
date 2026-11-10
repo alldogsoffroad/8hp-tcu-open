@@ -1,20 +1,37 @@
-/* plat_walktmr.c — ATU-D0 CMID00 compare ISR for the walk timer (design §5.4).
+/* plat_walktmr.c — ATU-D0 UDID00 U-compare ISR for the walk timer (spec 22 §1,
+ * spec 24 §2.1 vector 224, stock 0x9106C "the park/supervisor PWM-servo compare ISR").
  *
- * The walk's own timer, independent of the 5 ms pass (the stock's v224
- * architecture), vector 216. Register map (timer_audit §5: manual §31 list
- * + manual §13.19.2 PROSE + the stock's executed bytes; the flag/enable ops
- * use the STOCK BYTE IDIOM — the "16-bit writes land mirrored" lore was a
- * misdiagnosis, see plat_tick.c / timer_audit §4):
- *   TSTRD  0xFFFFF500 byte = 0x0F (stock init 0x9718C)
- *   TCRD0  0xFFFFF52C WORD; CKSEL1D0 = bits 6:4 (NOT bits 8-6!); stock
- *          init value 0x4000 (bus 0 = 1 MHz), written once, never at runtime
- *   TSRD0  flag/ack via BYTE 0xFFFFF58D (bit 12 = CMFAD00)
- *   TIERD0 enable via BYTE 0xFFFFF58F |= 0x10 (bit 12 = CMEAD00)
- *   OCRD00 0xFFFFF590, TCNT1D0 0xFFFFF520 (32-bit; only bits 31:8 compare —
- *          the OCR step is quantized to 256 counts, timer_audit §3)
- * Rate = SUP_WALK_TICK_MS steps of WALK_QUANTA x 256 µs (bus 0: 1024 µs).
- * The ISR feeds the WDT first (stock law 0x6C1BA), then calls
- * sup_walk_isr() which builds and queues the current walk job.
+ * WALK-TIMER REGISTER MAP CORRECTED 2026-11-10 (bench r01n live reads + the
+ * stock's own executed bytes — the old map below sat on the wrong compare
+ * family and the walk never ticked: USE[DUTY]=USE[LEVEL]=0 after 16 min,
+ * OCR 0xFFFFF590 never re-armed, TCNT1D0 1.6M×256 counts past it, flag
+ * byte 0xFFFFF58D stuck 0x00 while byte 0xFFFFF58C held 0x30):
+ *
+ *   OLD (wrong — ATU-D0 C-compare channel 0, "CMID00", vector 216):
+ *     OCR 0xFFFFF590, flag/ack byte 0xFFFFF58D bit 4, enable byte
+ *     0xFFFFF58F bit 4, TSTRD 0xFFFFF500 bit 0. The stock's own
+ *     multi-channel arming loop (0x90010) arms ch0's OCR but touches NO
+ *     flag/enable bit for it (bVar6=0 for ch0 while ch1/ch2 get 0x20/0x40)
+ *     — C-channel 0 does not deliver an interrupt on this silicon, and
+ *     neither our ISR (vector 216) nor the poll ever saw a flag.
+ *
+ *   NEW (stock verbatim — ATU-D0 U-compare channel 0, "UDID00", vector 224):
+ *     OCR      0xFFFFF5B0 word = remaining << 8          (programmer 0x6C0BA)
+ *     TIER     0xFFFFF585 byte |= 0x01 (enable bit 0)    (0x6C0BA)
+ *     TSR      0xFFFFF58C byte &= 0xFE (ack bit 0)       (ISR 0x9106C idiom;
+ *                                                          servo twin 0x92060 bit 2)
+ *     TSTR     0xFFFFF58E byte |= 0x01 (start bit 0)     (0x6C0BA)
+ *              0xFFFFF58E byte &= 0xFE (stop bit 0)      (0x91058 walk stop)
+ *     IPR10    0xFFFE0C0E nibble bits 7-4 = 6            (stock init 0x970FC
+ *                                                          arms 6; 0x97198 → 8)
+ *     vector   224 (stock table: 0x40070 + 4*224 -> 0x9106C)
+ *
+ * The compared counter is the subblock counter TCNT1D0 0xFFFFF520 (32-bit
+ * register, only bits 31:8 compare — OCR writes are longwords with bits 7:0
+ * = 0, the <<8 quanta law; 24-bit µs counter, TCNTA 0xFFFFF220 is its
+ * low-half view). Rate = SUP_WALK_TICK_MS steps of WALK_QUANTA x 256 µs
+ * (bus 0: 1024 µs per walk step). The ISR feeds the WDT first (stock law
+ * 0x6C1BA), then sup_walk_isr() builds and queues the current walk job.
  */
 #include "platform.h"
 #include "regs.h"
@@ -24,22 +41,24 @@
 #define SUP_WALK_TICK_MS 1u
 #endif
 
-/* ATU-D0 registers */
-#define TCNT1D0   REG32(0xFFFFF520u)
-#define OCRD00    REG32(0xFFFFF590u)   /* compare-match A, channel 0 */
-#define TSRD0_FLG REG8(0xFFFFF58Du)    /* CMFAD00 = bit 12 = bit 4 of this byte */
-#define TSRD0_ACK REG8(0xFFFFF58Du)    /* ack: &= 0xEF (stock byte idiom) */
-#define TIERD0_EN REG8(0xFFFFF58Fu)    /* CMEAD00 enable: |= 0x10 */
-#define TCRD0     REG16(0xFFFFF52Cu)   /* WORD; CKSEL1D0 = bits 6:4 (timer_audit §2) */
-#define TSTRD     REG8(0xFFFFF500u)    /* byte, stock init 0x9718C */
+/* ATU-D0 subblock: counter + the U-compare control set (stock walk tick) */
+#define TCNT1D0    REG32(0xFFFFF520u)
+#define OCRDU00    REG32(0xFFFFF5B0u)   /* U-compare compare value, ch 0 (stock 0x6C0BA) */
+#define TSRC_ACK   REG8(0xFFFFF58Cu)    /* TSR: U-compare status/ack, bit 0 (stock 0x9106C) */
+#define TIERU_EN   REG8(0xFFFFF585u)    /* TIER: U-compare enable, bit 0 (stock 0x6C0BA) */
+#define TSTRE_U    REG8(0xFFFFF58Eu)    /* TSTR: U-compare start/stop bit 0 (0x6C0BA / 0x91058) */
+#define TSTRD      REG8(0xFFFFF500u)    /* counter starts, stock init 0x9718C = 0x0F */
 
-/* TCRD init: same stock-verbatim word as the tick timer (boot table @0x40F7C
- * is all-0x4000 for all six subblocks — timer_audit §1). bus 0 = 1 MHz. */
+/* TCRD0 0xFFFFF52C stays 0x4000 (stock boot table word, written once at
+ * 0x97152; clock-bus 0). The counter runs from plat_tick_start's
+ * TSTRD = 0x0F; this module only re-asserts it when arming. */
 #define TCRD0_INIT 0x4000u
-/* OCR step in 256-count quanta (same hardware law as the tick timer):
+#define TCRD0      REG16(0xFFFFF52Cu)
+
+/* OCR step in 256-count quanta (same <<8 hardware law as the tick timer):
  * SUP_WALK_TICK_MS x 4 quanta x 256 µs = 1024 µs per walk step on bus 0. */
 #define WALK_QUANTA 4u
-#define CMFA00_BYTE 0x10u
+#define UCOMP_BIT   0x01u
 
 /* forward: the walk service entry (sup_walk.c) */
 extern void sup_walk_isr(void);
@@ -64,21 +83,22 @@ void plat_walktmr_start(void)
     if (s_walk_tmr_running) {
         return;
     }
-    /* stock order (timer_audit §5: config → arm → enable → TSTRD → TDE
-     * last, stock init 0x970FC / 0x96F28 flow) */
+    /* stock order (timer_audit §5: config → arm → enable → start; the
+     * programmer 0x6C0BA writes OCR@5B0, TIER@585|=1, then on the staged
+     * transition TSR@58C&=0xFE + TSTR@58E|=1) */
     TCRD0 = (uint16_t)TCRD0_INIT;            /* word store, stock 0x97152 */
-    OCRD00 = next_ocr(TCNT1D0);
-    TSRD0_ACK &= 0xEFu;                      /* CMFAD00 ack (stock byte idiom) */
-    TIERD0_EN |= 0x10u;                      /* CMEAD00 enable (stock byte idiom) */
-    TSTRD = 0x0Fu;   /* the stock starts all four D-subblocks */
+    OCRDU00 = next_ocr(TCNT1D0);
+    TSRC_ACK &= (uint8_t)~UCOMP_BIT;         /* U-compare ack (stock 0x9106C idiom) */
+    TIERU_EN |= UCOMP_BIT;                   /* U-compare enable (stock 0x6C0BA) */
+    TSTRD = 0x0Fu;                           /* counter starts (stock init 0x9718C) */
+    TSTRE_U |= UCOMP_BIT;                    /* U-compare start bit 0 (stock 0x6C0BA) */
     ATUENR |= ATUENR_TDE;                    /* TDE last (boot leaves it clear) */
     s_walk_tmr_running = true;
 }
 
 void plat_walktmr_stop(void)
 {
-    TSTRD &= (uint8_t)~0x01u;
-    TIERD0_EN &= 0xEFu;                      /* disable (byte idiom) */
+    TSTRE_U &= (uint8_t)~UCOMP_BIT;          /* U-compare stop bit 0 (stock 0x91058) */
     s_walk_tmr_running = false;
 }
 
@@ -87,27 +107,29 @@ uint32_t plat_walktmr_count(void)
     return TCNT1D0;                          /* P8 step 0: must advance when running */
 }
 
-/* superloop fallback (r01e): harvest the walk compare flag directly.
+/* superloop fallback (r01e): harvest the U-compare flag directly.
  * Mirror of the ISR body (WDT feed first — the stock law). */
 bool plat_walktmr_poll(void)
 {
-    if ((TSRD0_FLG & CMFA00_BYTE) == 0u) {
+    if ((TSRC_ACK & UCOMP_BIT) == 0u) {
         return false;
     }
-    TSRD0_ACK &= 0xEFu;
-    OCRD00 = next_ocr(TCNT1D0);
+    TSRC_ACK &= (uint8_t)~UCOMP_BIT;
+    OCRDU00 = next_ocr(TCNT1D0);
     plat_wdt_kick();
     sup_walk_isr();
     return true;
 }
 
-/* the ISR body — called from the vector-table entry at slot 216 (CMID00) */
+/* the ISR body — called from the vector-table entry at slot 220 (VECTOR 224,
+ * ATU-D0 UDID00 — the stock's walk tick vector; the stock table holds
+ * 0x9106C at 0x40070 + 4*224) */
 void plat_walktmr_isr(void)
 {
-    /* ack the compare-match (stock byte idiom) */
-    TSRD0_ACK &= 0xEFu;
+    /* ack the compare-match (stock byte idiom, 0x9106C: bclr bit0 @0xFFFFF58C) */
+    TSRC_ACK &= (uint8_t)~UCOMP_BIT;
     /* re-arm */
-    OCRD00 = next_ocr(TCNT1D0);
+    OCRDU00 = next_ocr(TCNT1D0);
     /* WDT feed first (stock law: the walk service 0x6C1BA feeds before
      * dispatching — the walk's liveness IS the WDT's liveness) */
     plat_wdt_kick();
