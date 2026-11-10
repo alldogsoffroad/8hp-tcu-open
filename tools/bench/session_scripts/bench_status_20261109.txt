@@ -85,3 +85,18 @@ ECHO_22=0xAB live, GRANT set in the heartbeat (flags 0x18). The rebuild
 now walks, grants, and converses. NEXT: the certification chain (spec 23:
 selftest -> letters -> 0x90-enables) toward the rail; the tick ISR's D1
 flag is the one straggler (scheduler rides the CMT fallback by design).
+
+=== 2026-11-10 R01M: THE CERTIFICATION ARM FIRED THE LADDER ===
+FE13 sub-16 arm sent on the bench: letters[0]=0x63 ('c'), EN_90=0x20,
+J2 staged = 0x9020/0x2400 (the stock's EXACT engaged pair on the wire).
+THE RAIL DID NOT LATCH (ammeter 167-203 mA, not the 1.77A class).
+ECHO_24 cell read 0 — either the JOB_EN reply did not complete/harvest
+or the chip acked without latching (0xAA20 vs 0xAA00, the E60l law).
+NEXT: (1) read the JOB_EN rx buffer words post-burst (rx addr from the
+sup_job_table @0x4A6D0, job 1's .rx ptr — the 0x24 reply verbatim);
+(2) compare our full armed wire vs the stock's engaged capture (spec 23
+/E13: the stock engaged DURING the 0x06 era at T+250ms — check the
+request-cell/bit0 state and the 0x8E dialect word at arm time);
+(3) if the chip acks-but-refuses: spec 23 candidates #2/#3 (the 0x06-era
+sequencing / the cyclic job context) are the remaining named gaps.
+The arm is REVERSIBLE: 31 01 FE 13 10 00 or the FE13 stop.
