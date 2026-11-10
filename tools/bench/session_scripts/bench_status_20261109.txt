@@ -117,3 +117,13 @@ didn't ride). Letters re-landed (0x9020 staged). THE CHIP STILL ANSWERS
 gate alone doesn't fully engage the composer — trace sup_ctrl_compose's
 engaged branch (bit4's toggle source + the bit0/request path under the
 engaged mode) vs the 0x91C86 stock law. The refusal signature unchanged.
+THE THREE-ARM EXPERIMENT (live, r01n): dialect(bit7+bit4 toggling ✓ — 0x8E80/
+0x8E90 observed alternating) + letters(0x9020 ✓) + REQUEST REFUSED (0x7F3122:
+sub-12 needs CELL_BOOT_FLAG, cleared at walk-steady). THE FULL REFUSAL CHAIN
+NAMED: bit0 rides only via the walk's one-shot; the one-shot needs
+LVL_REPORTED < 7; OUR LEVEL HARVEST NEVER DROPS IT FROM 7. Stock: the first
+real level reply drops reported within ~100ms -> one-shot at +105ms ->
+0x8E91 -> chip certifies. THE LAST WIRE GAP = the level-nibble harvest in
+the W2 reply processor (sup_walk.c's reply processor / sup_handlers level
+path) — LVL_REPORTED is never updated despite the W2 exchanges completing.
+FIX THAT and the certification completes the stock's way (no arms needed).
