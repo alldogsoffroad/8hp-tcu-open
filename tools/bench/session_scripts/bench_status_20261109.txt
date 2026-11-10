@@ -1,0 +1,28 @@
+
+=== 2026-11-09 NIGHT CLOSE (P8: r01-r01g, seven flashes) ===
+THE REBUILD IS ALIVE ON THE BENCH (r01g): heartbeats, UDS answers, tasks
+run (CMT fallback carries the tick), bus-A RSPI interrupts PROVEN (190
+true vector deliveries), bus-B conversation runs polled, REG_14 reply
+landed. The walk is staged (DUTY era 0x23) but stalled on reply checks.
+THE LADDER (one decision per flash):
+r01  frozen cells -> vector slot bug (v_rspi_b one late) + linker
+     cell reservations (validation catch: .bss ran through the cell map)
+r01b live cell reads begin (UDS via CMT-fed tasks) -> all ISRs dead
+r01c SR.I=0xE exposed (delivers only ABOVE; proven value 0), true ATU-D
+     register map, 0xFFFE6030 gate, SPTEF wait -> WDT loop (honest)
+r01d superloop WDT kick -> alive but taskless (diagnostic circularity)
+r01e polled fallbacks + true-vector counters + SPTEF-bit bug caught
+     (0x02 vs 0x20 - every launch aborted since r01c)
+r01f ATUENR root cause: 0xFFFFF000 not F004 (section-31 list wins over
+     the PDF-smeared 13.5 table; boot leaves TDE=0, app enables D)
+r01g CMT restored as SELF-RETIRING fallback -> everything readable
+VERDICT READS: TCNT1D1 ~100Hz (not 20MHz; TCRD bit7 won't stick; ran
+fast 256 compares then slowed - unexplained); s_tick_isr_count=0;
+s_vec_count A=190/B=0; SPSR=0xA0 OVRN class -> reply-word misalignment
+(ECHO_22 lost, REG_14 survived) -> the walk's three checks never pass.
+NEXT (ranked): (1) reply pacing vs the stock ISR 0x96590/0x965E4 decode;
+(2) bus-B interrupt nibble (try IPR27=0x4444); (3) stock tick-init
+disasm for the real TCRD1/TIERD1 recipe (0x6791A re-arm decoded: the
+<<8 fraction convention + cal-rate table 0x66468); (4) walk unblocks
+with (1); (5) ATU tick live -> CMT self-retires (coded).
+Bench on r01g (functional, harmless). All committed+pushed. Memory updated.
