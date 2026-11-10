@@ -350,8 +350,13 @@ void (*const app_vectors[508])(void) = {
     default_handler, default_handler, default_handler, default_handler,
     default_handler, default_handler, default_handler, default_handler,
     default_handler, default_handler, default_handler, default_handler,
-    ann_444,  /* index 440 = VECTOR 444 */ v_rspi_a,  /* index 441 = VECTOR 445 */ ann_446,  /* index 442 = VECTOR 446 */ ann_447,  /* index 443 = VECTOR 447 */
-    ann_448,  /* index 444 = VECTOR 448 */ v_rspi_b,  /* index 445 = VECTOR 449 (spec 24: RSPI-B SPRIB rx. The first flash had this one slot late — index 449/vector 453 — so bus B froze mid-burst in FEEDING and the walk never harvested a reply) */ default_handler, default_handler,
+    v_rspi_b, /* index 440 = VECTOR 444 — the r01i vector EXPERIMENT: the stock builds its table at runtime (its flash table is all park-stubs at 0x408E4), so spec 24's numbers came from RAM-dump inference. A delivers at v445 (proven); B does NOT at v449 with everything else verified (nibbles live, slots verified, SPSR clean) — B's true vector is unknown, so the neighborhood is blanket-wired to v_rspi_b (the body self-guards on state≠FEEDING: stray hits are no-ops). s_vec_count[1] after one boot names the live slot. */
+    v_rspi_a, /* index 441 = VECTOR 445 (bench-proven: RSPI-A SPRIA rx) */
+    v_rspi_b, v_rspi_b,   /* 442/443 = v446/447 */
+    v_rspi_b, v_rspi_b,   /* 444/445 = v448/449 */
+    v_rspi_b, v_rspi_b,   /* 446/447 = v450/451 */
+    v_rspi_b, v_rspi_b,   /* 448/449 = v452/453 */
+    v_rspi_b, v_rspi_b,   /* 450/451 = v454/455 */
     default_handler, default_handler, default_handler, default_handler,
     default_handler, default_handler, default_handler, default_handler,
     default_handler, default_handler, default_handler, default_handler,
