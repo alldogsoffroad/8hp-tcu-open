@@ -127,3 +127,18 @@ real level reply drops reported within ~100ms -> one-shot at +105ms ->
 the W2 reply processor (sup_walk.c's reply processor / sup_handlers level
 path) — LVL_REPORTED is never updated despite the W2 exchanges completing.
 FIX THAT and the certification completes the stock's way (no arms needed).
+THE VALIDATION VERDICT (agent, adversarial): MY LEVEL-HARVEST DIAGNOSIS WAS
+WRONG AT LINK 4 — the harvest EXISTS (sup_walk.c:290-344, sole post-init
+writer of 0x93BA1), stock-law-matched, PROVEN IN THE FLASHED IMAGE byte-
+level. THE DECIDING FORK READ (live): rx_level/rx_duty = ALL ZERO,
+s_job_err_cnt[LEVEL]=62 climbing, REPLY_FRESH=0 — FORK (a) REPLY STARVATION
+AT THE TRANSACTION LEVEL: the W2/W1 (84/88-class, walk-queue) exchanges
+return NO WORDS while the cyclic (22/24/90-class) exchanges return live
+words. NEXT TRACE: why the walk-queue jobs' bursts complete empty (class
+0x0101 routing? the SPSCR per-job frames value? the 84-word semantics?
+compare a walk-job burst's SPCMD/SPSCR/SPBR vs a cyclic job's on the wire
+— the deciding evidence is a bus capture or the pump's per-job config).
+ALSO (blocker sweep): CELL_MODE_BYTE has NO natural writer (the engaged
+dialect needs the arm or the stock's mode sequencer 0x85160 rebuild);
+0x14 bit1 remains chip-side; bus-A setpoints are all zero (the 1.77A ALSO
+needs commanded driver currents — sol setpoints — separate from the latch).
