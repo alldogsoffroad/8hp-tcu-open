@@ -99,6 +99,13 @@ void plat_rspi_pump(uint8_t bus)
     *spscr(bus) = (uint8_t)(c->frames - 1u);
     *spbr(bus) = bus ? 5u : plat_drv_spbr_get(); /* B: Pφ/12=1.667MHz, A: proven */
 
+    /* clean any stale SPSR (the stock's ISR writes 0x20 first thing on
+     * every entry — a trailing SPRF+OVRN from the last burst blocks the
+     * next burst's RX interrupt requests: bus B carried SPSR=0xA0 forever
+     * through r01g/r01h with zero vector deliveries while A delivered) */
+    (void)*spsr(bus);
+    *spsr(bus) = 0x20u;
+
     /* arm the interrupt: SPCR = 0xC8 (SPRIE + SPE + MSTR) */
     *spcr(bus) = 0xC8u;
 
@@ -185,8 +192,11 @@ static void plat_rspi_isr_body(uint8_t bus)
          * the same frame instead of desyncing (the burst stalls visibly
          * rather than corrupting silently) */
     } else {
-        /* burst end: disarm, hand the replies to the completion handler */
+        /* burst end: disarm, CLEAN the SPSR (trailing flag/OVRN kill —
+         * see the pump note), hand the replies to the completion handler */
         *spcr(bus) = 0x08u;                     /* idle = MSTR only */
+        (void)*spsr(bus);
+        *spsr(bus) = 0x20u;
         c->state = CH_IDLE;
         c->idx = 0u;
         if (c->done) {
