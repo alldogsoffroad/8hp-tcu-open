@@ -161,3 +161,18 @@ rejects before the store. NEXT: trace sup_resp_level's FB_0C write + the reply
 processor's check order vs the stock 0x6C1EA law (store-then-check vs
 check-then-store), and the selector cell (BA6 read 0x0010 — odd vs the stock
 selector=FB_0C&0xF=8). Session closed here; bench on r01o, healthy.
+R01P: the self-re-arm landed (DUTY launched — was 0), but W1 WEDGED:
+USE[DUTY]=1 then frozen (one launch, never completed -> in-flight stuck),
+rx_duty still all-zero, LVL still 7, one-shot unfired. THE OPEN QUESTION
+(now precisely bounded): the multi-frame single-select burst model — the
+stock launcher writes SPSCR=selects-1 (=0 for W1) and feeds 7 words via
+DMAC sequentially; our CPU-feed with SPSCR=0 appears to clock ONE frame
+then stop the sequence, wedging the channel mid-burst (r01o's cyclic
+burst = multi-SELECT jobs with SPSCR=selects-1 worked because each frame
+maps one select). NEXT DECODE: the stock's DMAC-feed burst shape vs
+CPU-feed (does the stock's RSPI auto-advance frames with SPSCR=0 under
+DMAC, or does SPSCR mean 'sequence length' and the E60 law frames-1 was
+right for CPU feeding? -> likely: SPSCR = frames-1 for CPU-fed bursts,
+selects-1 only correct for the stock's DMAC mode) — one register value,
+then the W1 completes and the whole chain (level<7 -> one-shot -> 8E91 ->
+0x24 -> rail) is staged. Bench on r01p, healthy.
