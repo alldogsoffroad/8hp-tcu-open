@@ -4,7 +4,7 @@
  * (manual §13.19, corrected 2026-11-09 after the r01/r01b bench showed the
  * timers never ran — the first-flash addresses were design guesses):
  *   TSTRD  0xFFFFF500 bit1 = STRD1 (NOT 0xF540 — that is TCNT1D2)
- *   ATUENR 0xFFFFF004 bit4 = TDE   (live bench: already 0x9F — set anyway)
+ *   ATUENR 0xFFFFF000 bit4 = TDE   (boot leaves 0x0163 live — TDE CLEAR; the app enables D)
  *   TCRD1  0xFFFFF53C bits 8-6 = CKSEL1D1: 3 = clock bus 3 = PSCR3 = 0 → Pφ
  *   TSRD1  0xFFFFF5CC bit4 = CMFAD10 (compare-A flag, write-0-after-read)
  *   TIERD1 0xFFFFF5CE bit4 = CMEAD10 (compare-A interrupt enable)
