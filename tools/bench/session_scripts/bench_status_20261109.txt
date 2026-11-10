@@ -55,3 +55,24 @@ reply-check decode (why don't the level/duty replies validate — read the
 rx buffers post-burst via 0x2A); (3) tick ISR still 0 — TCRD1 CKSEL
 question (read TCRD1 live; the stock runs 4MHz-class via PSCR1=4 bus);
 (4) revert superloop WDT kick when the tick proves live.
+
+=== 2026-11-10 CONTINUED (r01j live-cell session, no flash) ===
+THE CONVERSATION IS REAL: CTRL rx = aa00 abff abff 22ab 0f9f 0fa0,
+STAT rx = aa00 abdf 1eaa 06ab 14ab, EN/POS (single-select!) = aa00/aa45
+REAL replies, ALIGNED — POS even shows 0xAA45 (the E60y signature!).
+THE WALK STALL ROOT: stage LEVEL/DUTY = THE RAW TEMPLATES (8400 0a00
+1200 0c00 — the stagers NEVER composed; CELL_STAGED_84=0 proves the
+builder body never ran); s_in_flight/s_queued/s_q_walk ALL ZERO (nothing
+blocked) — the WALK SERVICE ITSELF stopped after ~4 fires (r01i).
+THE TIMERS: TCNT1D1/TCNT1D0 both FROZEN AT EXACTLY 0x00000000 with
+TSTRD=0x03 + ATUENR=0x0173 (started+enabled) — zero clock edges, or
+TCRD's counter-clear bits wiping them (TCRD0 reads 0x40 where 0xC0 was
+written — the TCRD writes STILL not landing as written). s_tick_count
+frozen at 256 (early fires then silence — brief clock window or a
+flag-byte alias). THE SINGLE OPEN QUESTION: the stock's true TCRD init
+value — decode the stock's timer-init from Ghidra (tcu_full project,
+the D1 tick init chain near os_timer_rearm 0x6791A's callers
+0x6E804/0x6E882) and copy it verbatim.
+ALSO: bus B interrupt vector still blanket-wired (444-455) — narrow by
+bisect once the walk unblocks; possible mid-read app reset (B counter
+70->37) unverified.
