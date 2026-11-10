@@ -11,7 +11,8 @@ Frontier / 2005–2015 Xterra). Nissan-side work has not started.
 
 | Path | Content |
 |---|---|
-| `docs/spec/` | The specification, one file per subsystem (start with `docs/spec/README.md`). This is the project's source of truth. |
+| `docs/spec/` | The specification, one file per subsystem (start with `docs/spec/README.md`). This is the project's source of truth. Specs 19–26 are the 100 % function catalog and the top-down syntheses (chronology, supervisor protocol, latch conditions, task inventory, chip ID) that the rebuilt firmware is written against. |
+| `firmware/` | **The open reimplementation** — rewritten top-down from the specs (2026-11-09): platform (interrupt-per-frame RSPI engine, the ATU timer fabric, WDT, CAN), a cooperative scheduler, the full supervisor service (the 14-job engine, the walk FSM, the certification ladder, the cell map at the stock's RAM addresses so bench tooling reads it unchanged), bus-A drivers, solenoid control. 20/20 host tests; boots, walks and converses on the stock controller. |
 | `docs/reference/` | Reference material that is not part of the specification (e.g. preliminary Nissan CAN notes). |
 | `1034420267_*.csv` | Data tables extracted during the analysis (CAN messages and signals, fault groups, DTCs, EEPROM records, measurement list). |
 | `1034420267_sh2a.seeds.tsv` | Function entry seeds for the disassembler. |
@@ -53,19 +54,19 @@ write operation it performed is reproduced (and documented) by the open flasher.
 
 | Area | Complete | Basis |
 |---|---|---|
-| Stock-firmware reverse engineering (specs 01–15) | **88 %** | every subsystem's structure is mapped; the full 10,982-function decompile is indexed; the supervisor's protocol/word semantics are bench-measured (spec 03 §4.4); **the stock itself runs on the bench again (2026-10-31, full pristine restore + ring, spec 16 §11)** — live-stock probing (0x361 RAM reads, input-driven behaviour) is now possible; **2026-11-04: the RTOS question closed at runtime (no ITRON, no AUTOSAR — bare superloop confirmed mid-actuation, spec 02 §7); the supervisor's full driving-time conversation reconstructed from staged RAM buffers, the `0x22` echo/grant law decoded, and the boot-mailbox handshake decoded and ruled off the drive path (spec 03 §6.2–6.2d)**; open: CAN signal meanings, chip identities, the duty-class cyclic job |
-| Code-flash independence — read / write / recover (specs 16–18, [8hp-teensy-flasher](https://github.com/alldogsoffroad/8hp-teensy-flasher)) | **95 %** | Teensy-only write and restore proven on the bench (2026-10-30, spec 17 §5l); remaining: an end-to-end shakedown of the released tool suite as packaged |
-| Open firmware, bench-proven (milestones M0–M6, [§8](docs/firmware/00-architecture.md)) | **62 %** | M0–M3 done (boot, CAN + measurement, sensors, solenoid outputs; 19/19 host tests) plus the RCAN fix proven live with the first working measurement responder (2026-11-04); M4's driver-supply gate is no longer a mystery — localized to the supervisor's echo grant with the ladder/commissioning proven correct and three precise divergences named (spec 03 §6.2b–6.2d, spec 12 §2d addendum); M4 commissioning, M5 limp mode, M6 shifting remain |
+| Stock-firmware reverse engineering (specs 01–26) | **95 %** | every subsystem's structure is mapped; **the full 10,982-function decompile is cataloged (spec 19, 10,898/10,898 classified)**; the top-down synthesis complete (specs 20–26: walk reconciliation, power-on chronology, the 14-job supervisor protocol, rail latch conditions, task/ISR inventory, chip identification); the supervisor's protocol/word semantics bench-measured; the stock runs on the bench for live probing; RTOS question closed at runtime (no ITRON, no AUTOSAR); the supervisor's full driving-time conversation reconstructed, the `0x22` echo/grant law decoded, the boot-mailbox handshake ruled off the drive path; open: CAN signal fine meanings, chip part numbers |
+| Code-flash independence — read / write / recover (specs 16–18, [8hp-teensy-flasher](https://github.com/alldogsoffroad/8hp-teensy-flasher)) | **95 %** | Teensy-only write and restore proven on the bench; remaining: an end-to-end shakedown of the released tool suite as packaged |
+| Open firmware, bench-proven (milestones M0–M6, [§8](docs/firmware/00-architecture.md)) | **78 %** | **the full top-down rebuild (P0–P7, 2026-11-09/10): the whole firmware rewritten from the validated specs — 20/20 host tests, boots, walks, converses on the bench.** The commissioning walk runs the complete FSM ladder to steady supervision; the bus-B conversation flows at full stock cadence; **the chip answers the 84-class walk words with real replies (rx_level live)**; the certification chain fires end-to-end on the bench arm (letters → the stock's exact `0x9020` engaged pair on the wire); both buses' RSPI interrupts deliver; every timer/interrupt register law decoded from the stock (the U-compare walk tick, the byte idioms, IPR nibble map, SPSCR=selects−1). Remaining to the rail: the level-nibble harvest store (one decoded function — FB_0C frozen), then the one-shot → `0x8E91` → the 0x24 latch verdict; then M5 limp mode, M6 shifting |
 | Vehicle integration (M7: Nissan profile, on-car validation) | **0 %** | not started |
 
-**Overall: ~61 %** — the straight average of the four areas. Gen 2 (8HP50/75/95)
+**Overall: ~67 %** — the straight average of the four areas. Gen 2 (8HP50/75/95)
 coverage is deferred and deliberately excluded from the figure.
 
 How the numbers move: closing a spec's open items (e.g. a signal-meaning table)
 moves row 1; tooling polish moves row 2; each completed milestone moves row 3
 (M4–M6 are 15 % each); row 4 begins with the first Nissan-side work. Static
 analysis alone is well advanced — bench and vehicle validation are what the
-percentages now track. *Last updated: 2026-11-04.*
+percentages now track. *Last updated: 2026-11-10.*
 
 Static analysis of the stock firmware is well advanced (hardware I/O, CAN, measurement protocol,
 shift strategy, lockup, shift execution, line pressure, solenoid outputs, park/range, fault
