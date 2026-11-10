@@ -110,3 +110,10 @@ CELL_MODE_BYTE & 0x11 == 0x11 (bench mode cell = 0). NEXT EXPERIMENT
 0x8E word (extend the bench arm: set the mode-gate cell or add dialect
 bits in the composer via the arm) — the chip's context must match the
 engaged conversation it is being asked to certify.
+R01N (the dialect experiment): the arm engaged BIT7 ONLY (0x8E80; the full
+engaged pair 0x8E91/0x8E81 never materialized — bit4 never toggles, bit0
+didn't ride). Letters re-landed (0x9020 staged). THE CHIP STILL ANSWERS
+0xAA00 (ack-but-refused). VERDICT: the dialect is INVOLVED but the mode
+gate alone doesn't fully engage the composer — trace sup_ctrl_compose's
+engaged branch (bit4's toggle source + the bit0/request path under the
+engaged mode) vs the 0x91C86 stock law. The refusal signature unchanged.
