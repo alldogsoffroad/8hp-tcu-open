@@ -146,12 +146,13 @@ static void plat_rspi_isr_body(uint8_t bus)
     rspi_chan_t *c = &s_chan[bus];
     c->isr_count++;
 
-    /* the stock's entry protocol (0x96590 decode): clock-gate acknowledge
-     * on every ISR entry — 0xFFFE6030 = 0xF3. The gate read closed on the
-     * r01/r01b bench (live 0x0000); the stock never lets it stay that way. */
+    /* the stock's entry protocol (0x96590 decode): ADMATE0 acknowledge on
+     * every entry, PER-BUS value (spi_job_dmac_launch 0x9655c/0x96580:
+     * bus A writes 0xFC, bus B writes 0xF3 — each clears its own A-DMAC
+     * channel end flags; 0xFFFE6030 IS ADMATE0, not a clock gate). */
     volatile uint8_t *const gate = (volatile uint8_t *)0xFFFE6030u;
     (void)*gate;
-    *gate = 0xF3u;
+    *gate = bus ? 0xF3u : 0xFCu;
 
     if (c->state != CH_FEEDING) {
         return;                                 /* spurious */
@@ -163,14 +164,26 @@ static void plat_rspi_isr_body(uint8_t bus)
     c->rx[c->idx - 1u] = *spdr(bus);
 
     if (c->idx < c->frames) {
-        /* feed the next frame (unconditional-feed order — E56 shape) */
+        /* feed the next frame. THE SPTEF WAIT IS MANDATORY on EVERY feed
+         * (not just frame 0): an SPDR write while the TX buffer is full is
+         * silently dropped, the sequence desyncs one word, and the burst
+         * completes with overrun garbage — the r01g reply-misalignment
+         * class (SPSR=0xA0, ECHO_22 lost, REG_14 the lone survivor). */
         volatile uint8_t *sr = spsr(bus);
         volatile uint16_t *dr = spdr(bus);
-        (void)*sr;
-        *dr = c->tx[c->idx];
-        (void)*sr;
-        *sr = 0u;
-        c->idx++;
+        uint32_t guard;
+        for (guard = 20000u; guard != 0u && (*sr & SPSR_SPTEF) == 0u; guard--) {
+        }
+        if (guard != 0u) {
+            (void)*sr;
+            *dr = c->tx[c->idx];
+            (void)*sr;
+            *sr = 0u;
+            c->idx++;
+        }
+        /* guard expiry: leave idx unchanged — the next poll/ISR retries
+         * the same frame instead of desyncing (the burst stalls visibly
+         * rather than corrupting silently) */
     } else {
         /* burst end: disarm, hand the replies to the completion handler */
         *spcr(bus) = 0x08u;                     /* idle = MSTR only */
@@ -241,11 +254,12 @@ void plat_rspi_init(void)
     memset(s_chan, 0, sizeof s_chan);
     s_chan[0].bus = 0u;
     s_chan[1].bus = 1u;
-    /* the clock gate the stock's ISR acknowledges on every entry
-     * (0x96590 decode; read closed live on the r01/r01b bench) */
+    /* ADMATE0 (0xFFFE6030) acknowledge at init too — the per-bus values
+     * clear both buses' stale A-DMAC flags once (stock per-bus on entry) */
     volatile uint8_t *const gate = (volatile uint8_t *)0xFFFE6030u;
     (void)*gate;
     *gate = 0xF3u;
+    *gate = 0xFCu;
     /* both buses idle = MSTR only (stock's live idle) */
     *spcr(0) = 0x08u;
     *spcr(1) = 0x08u;

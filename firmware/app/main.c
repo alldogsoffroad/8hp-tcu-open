@@ -140,8 +140,12 @@ static const plat_ipr_ent_t s_ipr_entries[] = {
     {  5u,  0u, 0xEu },      /* WDT ITI (interval mode)    */
     { 10u, 12u,  6u },       /* ATU-D0 walk compare        */
     { 10u,  0u,  6u },       /* ATU-D1 tick                */
-    { 27u, 12u,  4u },       /* RSPI-A SPRIA — nibble 15-12 (spec 24 §rspi, @0x963CC) */
-    { 27u,  8u,  4u },       /* RSPI-B SPRIB — nibble 11-8 (spec 24; the first flash had these two nibbles swapped → A masked, B at the wrong vector) */
+    { 27u,  8u,  4u },       /* RSPI-A SPRIA — IPR27 bits 11-8 |= 0x400 (stock 0x963CC
+                             * bus-0 branch: and 0xF0FF, or 0x400; E60c-proven live).
+                             * Spec 24's "A=nibble15-12" row was WRONG. */
+    { 27u,  4u,  4u },       /* RSPI-B SPRIB — IPR27 bits 7-4 |= 0x40 (stock bus-1 branch:
+                             * and 0xFF0F, bset#6). NEITHER 15-12 nor 11-8 — r01g's 190
+                             * A-deliveries with zero B-deliveries proved it. */
 };
 static const plat_ipr_map_t s_ipr_map = {
     s_ipr_entries, sizeof(s_ipr_entries) / sizeof(s_ipr_entries[0]),
