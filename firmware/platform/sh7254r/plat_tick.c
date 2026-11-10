@@ -28,7 +28,12 @@
 #define TCRD1     REG16(0xFFFFF53Cu)   /* bits 8-6 = CKSEL1D1 */
 #define TSTRD     REG8(0xFFFFF500u)    /* bit1 = STRD1 */
 
-#define TICK_COUNTS 20000u             /* 1 ms at Pφ = 20 MHz */
+#define TICK_CAL 1000u                   /* the stock's cal-rate table entry (0x66468)
+                                     * — the <<8 FRACTION CONVENTION (os_timer_rearm decode):
+                                     *   OCR = ((TCNT >> 8) + cal) << 8
+                                     * the counter's low 8 bits are fractional. If the tick rate
+                                     * reads wrong on the bench, adjust cal ONCE from the
+                                     * heartbeat's uptime field. */
 #define CMFA10_BYTE 0x10u
 
 static volatile uint32_t s_tick_count;
@@ -53,7 +58,7 @@ bool plat_tick_poll_hw(void)
         return false;
     }
     TSRD1_ACK &= 0xEFu;                      /* ack (stock byte idiom) */
-    OCRD10 = TCNT1D1 + TICK_COUNTS;          /* re-arm */
+    OCRD10 = (uint32_t)((((TCNT1D1 >> 8) + TICK_CAL) & 0x00FFFFFFu) << 8);
     s_tick_count++;
     return true;
 }
@@ -63,10 +68,10 @@ void plat_tick_start(void)
     ATUENR |= ATUENR_TDE;                       /* timer D enable (boot leaves it clear) */
     TCRD1 = (uint16_t)((TCRD1 & ~0x01C0u) | (3u << 6));  /* TCNT1D1 ← bus 3 = Pφ */
     /* arm the first compare, clear any pending flag, enable, start */
-    OCRD10 = TCNT1D1 + TICK_COUNTS;
+    OCRD10 = (uint32_t)((((TCNT1D1 >> 8) + TICK_CAL) & 0x00FFFFFFu) << 8);
     TSRD1_ACK &= 0xEFu;                      /* CMFAD10 ack (stock byte idiom) */
     TIERD1_EN |= 0x10u;                      /* CMEAD10 enable (stock byte idiom) */
-    TSTRD |= 0x02u;
+    TSTRD = 0x0Fu;   /* the stock starts ALL FOUR D-subblocks (init 0x970FC) */
 }
 
 /* the ISR body — called from the vector-table entry at slot 228 */
@@ -75,7 +80,7 @@ void plat_tick_isr(void)
     /* ack the compare-match (stock byte idiom) */
     TSRD1_ACK &= 0xEFu;
     /* re-arm: next compare = current + 1 ms */
-    OCRD10 = TCNT1D1 + TICK_COUNTS;
+    OCRD10 = (uint32_t)((((TCNT1D1 >> 8) + TICK_CAL) & 0x00FFFFFFu) << 8);
     s_tick_count++;
     s_tick_isr_count++;
     sched_tick_isr();                      /* bounded: timestamp + due scan */

@@ -30,7 +30,7 @@
 #define TCRD0     REG16(0xFFFFF52Cu)   /* bits 8-6 = CKSEL1D0 */
 #define TSTRD     REG8(0xFFFFF500u)    /* bit0 = STRD0 */
 
-#define MS_COUNTS 20000u                /* 1 ms at Pφ = 20 MHz */
+#define WALK_CAL 1000u                   /* ms-class cal, same table convention as the tick */
 #define CMFA00_BYTE 0x10u
 
 /* forward: the walk service entry (sup_walk.c) */
@@ -40,7 +40,10 @@ static bool s_walk_tmr_running;
 
 static uint32_t next_ocr(uint32_t now)
 {
-    return now + (uint32_t)SUP_WALK_TICK_MS * MS_COUNTS;
+    /* the stock's <<8 fraction convention (os_timer_rearm decode):
+     * compare = (units + TCNT>>8) << 8, units = ms × TICK_CAL_SCALE.
+     * Scale 1 → 1ms-class ticks like the tick timer's cal 1000 at /1. */
+    return (uint32_t)((((now >> 8) + (uint32_t)SUP_WALK_TICK_MS * WALK_CAL) & 0x00FFFFFFu) << 8);
 }
 
 bool plat_walktmr_running(void)
@@ -58,7 +61,7 @@ void plat_walktmr_start(void)
     OCRD00 = next_ocr(TCNT1D0);
     TSRD0_ACK &= 0xEFu;                      /* CMFAD00 ack (stock byte idiom) */
     TIERD0_EN |= 0x10u;                      /* CMEAD00 enable (stock byte idiom) */
-    TSTRD |= 0x01u;                          /* start D0 */
+    TSTRD = 0x0Fu;   /* the stock starts all four D-subblocks */
     s_walk_tmr_running = true;
 }
 
