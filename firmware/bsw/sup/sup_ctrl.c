@@ -100,6 +100,15 @@ void sup_c9_compose(void)
     CELL_J1_C9_STAGED = (uint16_t)(0xC900u | c9);
 }
 
+void sup_ctrl_bench_dialect(bool on)
+{
+    if (on) {
+        CELL_MODE_BYTE |= 0x11u;   /* the engaged-dialect gate */
+    } else {
+        CELL_MODE_BYTE &= (uint8_t)~0x11u;
+    }
+}
+
 void sup_enable_request(bool on)
 {
     if (on) {

@@ -595,6 +595,18 @@ static int sup_lab_start(const uint8_t *in, uint16_t n)
         s_sup_mode = 2u;
         return 0;
     }
+    if (in[0] == 17u) {                                    /* dialect bench arm (the
+                                                            * r01m 0xAA00 follow-up):
+                                                            * [1] = engage the composer's
+                                                            * engaged-dialect mode gate
+                                                            * (the 0x91/0x81 pair, stock
+                                                            * 0x91C86), [0] = normal. */
+        if (n != 2u || in[1] > 1u) {
+            return -NRC_IMLOIF;
+        }
+        sup_ctrl_bench_dialect(in[1] != 0u);
+        return 0;
+    }
     if (in[0] != 5u && in[0] != 7u && in[0] != 8u && CELL_WALK_STATE != SUP_WALK_IDLE) {
         return -NRC_CNC;             /* raw one-shots would stop the walk's stream */
     }
@@ -910,6 +922,7 @@ int bench_routine(uint8_t type, uint16_t rid, const uint8_t *in, uint16_t n, uin
         if (type == 2u) {
             sup_enable_request(false);          /* stop: the request cell disarmed */
             sup_letters_bench_arm(false);       /* stop: the letters arm disarmed */
+            sup_ctrl_bench_dialect(false);      /* stop: the dialect arm disarmed */
             s_sup_mode = 0u;
             return 0;
         }

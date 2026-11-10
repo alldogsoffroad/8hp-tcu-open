@@ -26,6 +26,14 @@ void sup_c9_compose(void);
 /* the request-cell setter (stock 0x6C612 park_store_request_state):
  * on  → request cell 1, outputs-disabled 0
  * off → outputs-disabled 1, request cell 0 (boot-handover disable shape) */
+/* FE13 sub-17 bench arm: force the ENGAGED dialect's mode gate
+ * (CELL_MODE_BYTE |= 0x11) so the composer emits the 0x91/0x81
+ * engaged pair (bit7 held + bit4 toggling, the 0x91C86 law)
+ * instead of the normal 0x8E04. The stock certifies the rail
+ * INSIDE this dialect (the 0xAA00 ack-but-refused on r01m rode
+ * the normal dialect). Reversible: off clears the gate bits. */
+void sup_ctrl_bench_dialect(bool on);
+
 void sup_enable_request(bool on);
 
 /* the per-pass echo-derived condense (stock 0x90ACC/0x91ACA law): grant
