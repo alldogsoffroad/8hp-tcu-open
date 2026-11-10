@@ -152,3 +152,12 @@ then the one-shot -> 0x8E91 -> 0x24 verdict -> the rail. Heartbeat flags this
 boot: 0x10/0x00 (no grant yet — the CTRL echo shape changed with SPSCR fixed;
 the old 'grant' may have been the wrong-chip ABFF artifact!). Full report:
 ~/tcu_sweep/walk_job_empty_trace.md
+THE NIBBLE CHECK (live): FB_0C@0x90550 = 0xF0C8 FROZEN (two reads identical)
+— the stock law would extract LVL=(0xF0C8>>4)&7=4, but LVL_REPORTED stays 7:
+the harvest store is NOT executing on this value. Suspects: the handler that
+writes FB_0C from the W2 reply writes once/wrongly (0xF0C8 doesn't match any
+rx_level word aa00/aa06/aac8 shape), or the reply-processor's three-check gate
+rejects before the store. NEXT: trace sup_resp_level's FB_0C write + the reply
+processor's check order vs the stock 0x6C1EA law (store-then-check vs
+check-then-store), and the selector cell (BA6 read 0x0010 — odd vs the stock
+selector=FB_0C&0xF=8). Session closed here; bench on r01o, healthy.
