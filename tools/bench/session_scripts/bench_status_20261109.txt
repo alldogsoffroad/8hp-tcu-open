@@ -26,3 +26,32 @@ disasm for the real TCRD1/TIERD1 recipe (0x6791A re-arm decoded: the
 <<8 fraction convention + cal-rate table 0x66468); (4) walk unblocks
 with (1); (5) ATU tick live -> CMT self-retires (coded).
 Bench on r01g (functional, harmless). All committed+pushed. Memory updated.
+
+=== 2026-11-10 MORNING (r01h-r01j, three flashes) ===
+THE MORNING DECODES (all offline, stock image disassembly):
+- IPR27 TRUE MAP (rspi_bus_start 0x963CC): A=bits 11-8 (and 0xF0FF, or
+  0x400; E60c-proven), B=bits 7-4 (and 0xFF0F, bset#6). Spec 24 AND the
+  design doc had B wrong; the idle fn's IPR27&=0xF000 reconciles all.
+- THE BYTE IDIOM (catalog unit_06, os_timer_rearm 0x6791A): ack =
+  byte@F5CD &= 0xEF, enable = byte@F5CF |= 0x10 — our 16-bit TSRD/TIERD
+  writes landed MIRRORED (the enable went to OVE1Dn = the wrong bit; the
+  tick and walk-timer interrupts never requested).
+- ADMATE0 (0xFFFE6030) identified: the A-DMAC transfer-end register; the
+  stock acks per-bus (A=0xFC, B=0xF3).
+- THE STOCK'S FLASH VECTOR TABLE IS ALL PARK-STUBS (0x408E4 = bra-self at
+  every entry) — the stock builds its table at runtime; spec 24's vector
+  numbers are RAM-dump inference. A@v445 bench-proven; B's = unknown.
+- SPTEF wait is mandatory on EVERY frame feed (the r01g OVRN class).
+FLASH RESULTS:
+- r01h: SPSR clean added (0xA0->0x20 between bursts); A=174/B=0
+- r01i: byte idiom — THE WALK TIMER ALIVE (LEVEL jobs launching, JOB_MODE
+  cycling); tick ISR still 0 (the CKSEL/clock question open); A=189/B=0
+- r01j: THE VECTOR BLANKET (444-455 -> v_rspi_b) — **BUS B INTERRUPTS
+  ALIVE: 70+ true deliveries, first time ever.** A=135. Walk reply
+  checks still not passing (reply cells 0, ECHO_22 0, REG_14 lands);
+  possible app reset mid-read (B counter 70->37) — verify next boot.
+NEXT: (1) narrow B's vector slot (bisect the blanket); (2) the walk
+reply-check decode (why don't the level/duty replies validate — read the
+rx buffers post-burst via 0x2A); (3) tick ISR still 0 — TCRD1 CKSEL
+question (read TCRD1 live; the stock runs 4MHz-class via PSCR1=4 bus);
+(4) revert superloop WDT kick when the tick proves live.
