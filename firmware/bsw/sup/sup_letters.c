@@ -48,6 +48,15 @@ void mon2_chan_enable(uint8_t ch, bool enable)
     CELL_LETTERS[ch] = enable ? (uint8_t)'c' : 0u;
 }
 
+void sup_letters_bench_arm(bool on)
+{
+    /* Slot 0 only: the rail is output 0; outputs 1/2 are faulted on the
+     * bench (0x14 bits 6/7) and the NR-8 staging mask strips their bits
+     * anyway. With slot 0 armed the staged word is the stock's exact
+     * engaged enables byte 0x9020 (spec 22 §6.4). */
+    mon2_chan_enable(0u, on);
+}
+
 void sup_selftest_step(void)
 {
     uint8_t ch;

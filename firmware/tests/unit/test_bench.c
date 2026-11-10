@@ -326,6 +326,44 @@ int main(void)
         /* disarm stops the request */
         uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x09, 0x00 }, 6u);
         CHECK(CELL_REQUEST == 0u);
+
+        /* ---- sub 16 (0x10): the letters bench arm (spec 23 chain) ----
+         * The phase-2 gate (sup_selftest_step, 0x8BB34 law) keeps the ladder
+         * below phase 8 while 0x14 bit 1 is clear (chip-side), so the staged
+         * 0x90 word carries no letter bit. The arm forces the slot-0 letter
+         * through the stock enable cell; the staged word must become the
+         * stock's engaged 0x9020 (spec 22 §6.4). The arm must work while the
+         * walk owns the stream (the raw one-shot guard must not catch it).
+         * Hermetic precondition: earlier scripted replies in this test
+         * (sup_garbage, the 0xA8BD one-shot) carried 0x14 bit 1 for a few
+         * passes and the reduced ladder's phase-8 enable is one-way per
+         * boot, so the letter cells may already be set — clear them. On the
+         * bench bit 1 has never come up, so the ladder never writes there. */
+        CELL_WALK_STATE = 0x07u;
+        for (uint8_t i = 0u; i < 3u; i++) {
+            CELL_LETTERS[i] = 0u;
+        }
+        run_10ms(1u);
+        CHECK(CELL_J2_STAGED == 0x9000u);       /* no letter bits without the arm */
+        uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x10, 0x01 }, 6u);
+        CHECK(memcmp(&last_rsp()[1], "\x71\x01\xFE\x13", 4) == 0);
+        CHECK(CELL_LETTERS[0] == (uint8_t)'c');
+        run_10ms(1u);                           /* the batch stages + queues the enables */
+        CHECK(CELL_EN_90 == 0x20u);             /* the enables byte (0x91758 law) */
+        CHECK(sup_job_table[JOB_EN].tx_stage[0] == 0x9020u);   /* NR-8-masked word */
+        CHECK(sup_job_table[JOB_EN].tx_stage[1] == 0x2400u);
+        CHECK(CELL_J2_STAGED == 0x9020u);       /* the bench's staging mirror */
+        /* disarm: the word loses the letter bit again */
+        uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x10, 0x00 }, 6u);
+        CHECK(CELL_LETTERS[0] == 0u);
+        run_10ms(1u);
+        CHECK(CELL_J2_STAGED == 0x9000u);
+        /* arm again, then the FE13 stop disarms it */
+        uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x10, 0x01 }, 6u);
+        CHECK(CELL_LETTERS[0] == (uint8_t)'c');
+        uds_req((const uint8_t[]){ 0x31, 0x02, 0xFE, 0x13 }, 4u);
+        CHECK(CELL_LETTERS[0] == 0u);
+        CELL_WALK_STATE = 0u;
     }
 
     if (fails == 0) {

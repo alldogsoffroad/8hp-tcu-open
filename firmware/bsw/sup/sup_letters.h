@@ -23,6 +23,15 @@ void sup_selftest_step(void);
  * (stock 0x8C7A8 mon2_chan_enable) */
 void mon2_chan_enable(uint8_t ch, bool enable);
 
+/* FE13 sub-16 bench arm (spec 23 §2 candidate #1): force the slot-0 letter
+ * ('c' — the rail's letter, spec 23 §A1) through the stock's own enable cell
+ * 0x8C7A8, past the phase-2 gate (0x8BB34) whose input — the chip's 0x14
+ * bit 1 — is chip-side and clear on the bench. Deliberate bench ARM only:
+ * the arm and the real ladder share the cell, so if the chip ever reports
+ * bit 1 the ladder's phase 8 re-enables through the same path and this hook
+ * becomes redundant. Disarm restores letters[0] = 0. */
+void sup_letters_bench_arm(bool on);
+
 /* compose the 0x90 enables byte (stock 0x91758 switch_status_build):
  * base & 0x1D | letter bits (slots 0/1/2 → bits 5/6/7) | calib<<5 (0) |
  * bit3 source; one-way clear latch strips 0x60. Writes the enables cell

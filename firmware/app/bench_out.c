@@ -3,6 +3,7 @@
 #include "bsw/sup/sup_jobs.h"
 #include "bsw/sup/sup_cells.h"
 #include "bsw/sup/sup_ctrl.h"
+#include "bsw/sup/sup_letters.h"        /* sup_letters_bench_arm (FE13 sub 16) */
 #include "bsw/sup/sup_walk.h"           /* SUP_WALK_* states (the one-shot guard) */
 #include "bsw/drv/drv_jobs.h"
 #include "io/actuators/sol_ctl.h"
@@ -503,7 +504,8 @@ static int rspi_dump(uint8_t type, uint8_t *out, uint16_t max)
  * to SSLB0 — the wire shapes of the stock cyclic jobs, byte-identical
  * (design §11). Words with 0x8E bit 0 (output enable) or bit 7 set are the
  * danger words: they reset or re-flash the TCU when sent without context.
- * Subs 2/3/7/8/9 arm the request cell (the composer carries bit 0); the
+ * Subs 2/3/7/8/9 arm the request cell (the composer carries bit 0); sub 16
+ * arms the letters chain (the 0x90 word's letter bits, spec 23); the
  * cyclic word stream itself is the stock batch now and cannot be overridden.
  */
 #define SUP_LAB_MAX 100u
@@ -565,14 +567,32 @@ static int sup_lab_start(const uint8_t *in, uint16_t n)
         return 0;
     }
     if (in[0] == 9u) {                                     /* walk view arm / disarm:
-                                                             * [1 = request on] /
-                                                             * [2 = request + outputs
-                                                             *  enabled] / 0 = disarm */
+                                                            * [1 = request on] /
+                                                            * [2 = request + outputs
+                                                            *  enabled] / 0 = disarm */
         if (n < 2u || n > 3u || in[1] > 2u) {
             return -NRC_IMLOIF;
         }
         sup_enable_request(in[1] != 0u);
         s_sup_mode = 3u;
+        return 0;
+    }
+    if (in[0] == 16u) {                                    /* letters bench arm (spec 23
+                                                            * §2 #1): [1] = force the
+                                                            * slot-0 letter past the
+                                                            * phase-2 gate (0x8BB34)
+                                                            * whose input (0x14 bit 1)
+                                                            * is chip-side and clear
+                                                            * on the bench; [0] =
+                                                            * disarm. Readout mode 2:
+                                                            * the cyclic view's JOB_EN
+                                                            * replies carry the 0x24
+                                                            * certification echo */
+        if (n != 2u || in[1] > 1u) {
+            return -NRC_IMLOIF;
+        }
+        sup_letters_bench_arm(in[1] != 0u);
+        s_sup_mode = 2u;
         return 0;
     }
     if (in[0] != 5u && in[0] != 7u && in[0] != 8u && CELL_WALK_STATE != SUP_WALK_IDLE) {
@@ -889,6 +909,7 @@ int bench_routine(uint8_t type, uint16_t rid, const uint8_t *in, uint16_t n, uin
         }
         if (type == 2u) {
             sup_enable_request(false);          /* stop: the request cell disarmed */
+            sup_letters_bench_arm(false);       /* stop: the letters arm disarmed */
             s_sup_mode = 0u;
             return 0;
         }
