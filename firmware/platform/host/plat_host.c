@@ -144,6 +144,11 @@ uint32_t plat_sr_i(void)
     return 0xEu;
 }
 
+void plat_sr_set(uint32_t level)
+{
+    (void)level;   /* host model: single-threaded, nothing to mask */
+}
+
 /* ---- Walk timer model: the walk's own clock (design §5.4) ---- */
 static bool s_walk_run;
 

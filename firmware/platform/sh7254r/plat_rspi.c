@@ -60,14 +60,43 @@ static volatile uint16_t *spcmd(uint8_t bus, uint8_t n)
     return (volatile uint16_t *)((bus ? 0xFFFFB810u : 0xFFFFB010u) + 2u * n);
 }
 
-/* ── launch (task context; caller holds SR if the model is windowed) ──── */
-
+/* ── launch (any context: task, RX ISR at IPR 4, walk tick at IPR 6) ─────
+ *
+ * W1-WEDGE FIX (r01p bench): the registration is ONE indivisible trigger.
+ * The stock's launcher (spi_job_dmac_launch 0x96468) arms the DMAC
+ * descriptor and fires SPCR in one hardware-atomic sequence — the DMAC
+ * either owns the channel or it does not. This CPU-fed port's equivalent
+ * window is IDLE-check .. fields .. state=ARMED, and it must be equally
+ * indivisible: launch_job runs from the RX-completion ISR (IPR 4) and the
+ * batch/handler pumps (task), while the walk tick launches from IPR 6 —
+ * ABOVE the RX ISR. Without the window closed, the walk tick can preempt
+ * this launch AFTER the IDLE check but BEFORE the state=ARMED commit; its
+ * own engine pump then reads state==IDLE, launches the next queued walk
+ * job over this half-written registration, and on resume the pending
+ * state=ARMED store re-arms the channel over the NEW burst. The resumed
+ * launch still "succeeds": s_in_flight[id]=1 and USE[id]++ are committed
+ * for a job whose channel registration was overwritten — its done handler
+ * never runs, the in-flight flag never clears, and sup_job_check_free
+ * refuses the builder forever. r01p ground truth: USE[JOB_DUTY]=1 frozen,
+ * rx_duty untouched (the channel carried the OTHER job's rx buffer),
+ * err[DUTY]=0, while LEVEL and every cyclic job kept cycling — the channel
+ * is free, the one-in-flight flag is the wedge.
+ *
+ * The window is a dozen stores (µs); the walk tick's compare-match stays
+ * pending and fires the moment SR.I is restored, so no tick is lost. The
+ * pump after the registration is deliberately OUTSIDE the window: it
+ * spins on SPTEF and every other context already sees state==ARMED/FEEDING
+ * (busy) the instant the commit lands. */
 bool plat_rspi_launch(uint8_t bus, uint8_t job_id, uint16_t *tx, uint16_t *rx,
                       uint8_t frames, const uint16_t *sel_cfg, uint8_t n_sel,
                       rspi_done_fn done)
 {
     rspi_chan_t *c = &s_chan[bus];
+    uint32_t sr_i = plat_sr_i();
+
+    plat_sr_close();
     if (c->state != CH_IDLE || frames == 0u || n_sel == 0u) {
+        plat_sr_set(sr_i);
         return false;                           /* busy or invalid */
     }
     c->tx = tx;
@@ -78,7 +107,8 @@ bool plat_rspi_launch(uint8_t bus, uint8_t job_id, uint16_t *tx, uint16_t *rx,
     c->done = done;
     c->job_id = job_id;
     c->idx = 0u;
-    c->state = CH_ARMED;
+    c->state = CH_ARMED;                        /* the commit point */
+    plat_sr_set(sr_i);
     return true;
 }
 

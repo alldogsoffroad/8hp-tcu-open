@@ -70,6 +70,7 @@ void plat_intc_setup(const plat_ipr_map_t *m);
 void plat_sr_open(void);               /* SR.I = 0xE (stock order 21) */
 void plat_sr_close(void);              /* SR.I = 0xF (critical sections) */
 uint32_t plat_sr_i(void);              /* current SR.I level */
+void plat_sr_set(uint32_t level);      /* SR.I = level exactly (nestable windows) */
 
 /* ---- 1 ms tick (rebuild design §5.3, ATU-D1 CMID10) ---- */
 void plat_tick_start(void);

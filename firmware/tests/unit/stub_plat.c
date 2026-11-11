@@ -513,6 +513,11 @@ uint32_t plat_sr_i(void)
     return 0xEu;
 }
 
+void plat_sr_set(uint32_t level)
+{
+    (void)level;   /* host model: single-threaded, nothing to mask */
+}
+
 void plat_tick_start(void)
 {
 }

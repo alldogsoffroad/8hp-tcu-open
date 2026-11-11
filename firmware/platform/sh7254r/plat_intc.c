@@ -56,3 +56,19 @@ uint32_t plat_sr_i(void)
     __asm__ volatile ("stc sr, %0" : "=r"(sr));
     return (sr >> 4) & 0xFu;
 }
+
+void plat_sr_set(uint32_t level)
+{
+    /* SR.I = level, exact — the nestable form. plat_sr_open/close are
+     * boot/section-wide; the RSPI engine's launch window (see
+     * plat_rspi_launch) runs from task context, the RX ISR (4) AND the
+     * walk tick (6), and must restore the exact entry level, not a fixed
+     * one (the W1-wedge fix, r01p). */
+    uint32_t sr;
+    /* "memory" on both asm blocks: the setter is also the compiler barrier
+     * that pins the launch registration's field stores inside the closed
+     * window (no store may sink below the SR.I restore). */
+    __asm__ volatile ("stc sr, %0" : "=r"(sr) : : "memory");
+    sr = (uint32_t)((sr & ~0xF0u) | ((level & 0xFu) << 4));
+    __asm__ volatile ("ldc %0, sr" : : "r"(sr) : "memory");
+}
