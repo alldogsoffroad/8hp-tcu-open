@@ -50,15 +50,37 @@
 #define WALK_ERA_1F          0x1838u  /* the 0x1F era period (0x1F x 200)      */
 #define WALK_PERIOD_MAX      0x3139u  /* 0x6C48C range law: value < 0x3139     */
 #define WALK_LEVEL_MAX       7u
-#define WALK_ERA_TAIL_MS     2400u    /* the 0x960 tick tail of every era      */
-#define WALK_DWELL_UNIT_US   1000u    /* era unit ≈ 1 ms (spec 22 §6.3 [I])    */
+#define WALK_ERA_TAIL_COUNTS 2400u    /* the 0x960 tick tail of every era (raw
+                                       * TCNTA counts — stock 0x6C542 compares
+                                       * elapsed counts vs period + 2400, no
+                                       * scaling; 2026-11-10 decode) */
 
 /* budgets (spec 22 budget_table; lengths [I], structure [O]) */
 #define WALK_S8_BUDGET_PASSES   4000u  /* state 8 supervise (~20 s at 5 ms)  */
 #define WALK_S23_TIMEOUT_PASSES 4000u  /* 0x8D1BA duty-era timeout (~20 s)   */
 
 #define WALK_ECHO_RETRIES    3u        /* 0x6C742 confirm retry bound        */
-#define WALK_REPLY_WINDOW_US 4000u     /* state-7 sample window [I]          */
+
+/* The state-7 sample window is the stock's GUARD CELL 0xFFF93844, which
+ * 0x6C594 recomputes from the era period on every era change (the second
+ * call site 0x6C7AC, right after the value*200 store). The stock's exact
+ * integer law, mirrored instruction-for-instruction from 0x6C5DA-0x6C610
+ * (period = era value x 200, e.g. 0x3138 → window 11722 counts):
+ *   window = (((period - 16) * 31160 >> 15) - 136) * 32472 >> 15
+ * (the subtract 136 is extu.b of the 165640 literal; the >> 15 are shld
+ * -15). The old flat 4000 [I] was 3x short of the stock's steady-era
+ * window and made the state-7 stale verdicts fire ~3 eras early. */
+static uint16_t walk_reply_window(void)
+{
+    const uint32_t period = CELL_PERIOD;
+    uint32_t w = (period - 16u) * 31160u;
+
+    w >>= 15;
+    w -= 136u;
+    w *= 32472u;
+    w >>= 15;
+    return (uint16_t)w;
+}
 /* F1 (protocol_audit §1): the staging confirm loop has no timeout of its
  * own — the stock gets its bound from the WDT, our port feeds the WDT from
  * the tick task, so a stall parked in COLD_STAGED/WARM_PENDING spun
@@ -106,9 +128,13 @@ static bool reply_fresh_now(void);
 
 static void program_timer(void)
 {
-    uint32_t now = plat_frt_us();
-    CELL_ERA_BASE = now;                          /* 0xFFF9240C */
-    CELL_ERA_DEADLINE = now + WALK_REPLY_WINDOW_US;   /* 0xFFF92410 */
+    /* the deadline cell is ELAPSED-relative: the stock's programmer
+     * (0x6C0BA tail, 0x6C11C-0x6C124) stores window + elapsed_at_program —
+     * and the state-7 gate compares (TCNTA - base) against it. The old
+     * absolute `now + window` form could never elapse against an elapsed
+     * gate (the state-7 park that the FRT=0 read masked). */
+    CELL_ERA_BASE = plat_frt_us();                /* 0xFFF9240C */
+    CELL_ERA_DEADLINE = walk_reply_window();      /* 0xFFF92410, guard cell 0xFFF93844 */
     /* dispatch starts on the first compare tick (E60ab: no silence gap) */
     plat_walktmr_start();
 }
@@ -201,9 +227,9 @@ void sup_walk_init(void)
     /* era counter pair = 1 / ~1 */
     CELL_ERA_COUNT = 1u;
     CELL_ERA_COMPL = 0xFEu;
-    /* time base = now; guard windows derived */
+    /* time base = now; guard windows derived (elapsed-relative, stock law) */
     CELL_ERA_BASE = plat_frt_us();
-    CELL_ERA_DEADLINE = CELL_ERA_BASE + WALK_REPLY_WINDOW_US;
+    CELL_ERA_DEADLINE = walk_reply_window();
     /* machine cells */
     CELL_BOOT_FLAG = 1u;                          /* 0xFFF9500E: walk armed  */
     CELL_WALK_STATE = 0u;                         /* 0xFFF93BA3 (RAM-cleared)*/
@@ -256,18 +282,21 @@ static void one_shot_enable(void)
 
 /* ── era stepper (stock 0x6C542) ────────────────────────────────────────── */
 
+/* era stepper (stock 0x6C542, decoded 2026-11-10): elapsed = TCNTA(base)
+ * compared RAW against *(u16)0xFFF93848 + 2400 counts — no unit scaling —
+ * and the base advances by the threshold itself (drift-free). The 32-bit
+ * FRT deltas make the unsigned compare wrap-safe. */
 static void era_stepper(void)
 {
     uint32_t elapsed = plat_frt_us() - CELL_ERA_BASE;
-    uint32_t threshold = ((uint32_t)CELL_PERIOD + WALK_ERA_TAIL_MS)
-                         * WALK_DWELL_UNIT_US;
+    uint32_t threshold = (uint32_t)CELL_PERIOD + WALK_ERA_TAIL_COUNTS;
 
     if (elapsed < threshold) {
         return;
     }
     /* advance the era base */
     CELL_ERA_BASE = plat_frt_us();
-    CELL_ERA_DEADLINE = CELL_ERA_BASE + WALK_REPLY_WINDOW_US;
+    CELL_ERA_DEADLINE = walk_reply_window();   /* elapsed-relative (stock law) */
     /* the era counter pair steps */
     CELL_ERA_COUNT++;
     CELL_ERA_COMPL = (uint8_t)~CELL_ERA_COUNT;
@@ -467,8 +496,9 @@ static void walk_task(void)
 {
     switch (CELL_WALK_STATE) {
     case SUP_WALK_SAMPLE:
-        /* state 7: wait for the sample point, then process */
-        if ((uint32_t)(plat_frt_us() - CELL_ERA_BASE) >= WALK_REPLY_WINDOW_US) {
+        /* state 7: wait for the sample point, then process (stock 0x6C64E
+         * compares the elapsed delta against the deadline CELL 0xFFF92410) */
+        if ((uint32_t)(plat_frt_us() - CELL_ERA_BASE) >= CELL_ERA_DEADLINE) {
             if (!reply_fresh_now()) {
                 /* stale reply: stall++, stop the timer, → 0x19 — and ride
                  * the stock's own restart law so the ladder never sits

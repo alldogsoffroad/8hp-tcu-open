@@ -39,9 +39,13 @@ void plat_wdt_capture_reset_cause(void)
 
 void plat_wdt_kick(void)
 {
-    /* WTCNT ← 0x5A key << 8 | count; WTCR ← 0xA5 key << 8 | config */
+    /* F6 (platform_audit #6/P0): WTCNT only — the stock's periodic superloop
+     * feed (0x920F6) writes WTCNT=0x5ADB alone; WTCR belongs to the init and
+     * mode-switch sites (0x95456 / the 16-bit RMW helpers 0x97850-0x9789E).
+     * The old WTCR rewrite here re-armed watchdog RESET mode on every 1 ms
+     * pass, silently undoing plat_wdt_mode(true) within one tick — interval
+     * mode (and its ITI ISR) never survived past the switch. */
     REG16(WTCNT_ADDR) = 0x5AB7u;        /* ~30.3 ms margin (design §3) */
-    REG16(WTCR_ADDR) = 0xA567u;         /* watchdog mode, /5120 — bench-proven */
 }
 
 void plat_wdt_mode(bool interval)

@@ -256,5 +256,12 @@
 #define ATU_D0_TCRD   REG16(0xFFFFF52Cu)    /* 0x4000, written once (stock 0x97152) */
 #define ATU_D0_TSTR   REG8(0xFFFFF500u)     /* TSTRD, counter starts (stock init 0x9718C) */
 
-/* FRT (free-running timer, 1 MHz µs timestamp) */
-#define FRT_TCNTA     REG16(0xFFFFF220u)
+/* FRT — free-running counter A (the stock's timestamp). 32-BIT register
+ * (manual §13: "Free-running counter A TCNTA 32 H'FFFFF220"); every stock
+ * access is a 32-bit mov.l load of 0xFFFFF220: era stepper 0x6C542, walk
+ * task 0x6C64E, timer programmers 0x6C0CA/0x6C166, boot stamp sampler
+ * 0x67128/0x67152. Bench r01q (2026-11-10) proved the old 16-bit read took
+ * the HIGH half, which reads 0x0000 while the live count runs in the low
+ * half (byte reads 0xFFFFF220..223 = 00 00 E0 73 → wrapped → 00 00 A9 C4):
+ * plat_frt_us() returned 0 forever and the walk parked in state 7. */
+#define FRT_TCNTA     REG32(0xFFFFF220u)

@@ -25,14 +25,18 @@
 #define CELL_REPLY_FRESH    (*(volatile uint8_t  *)0xFFF90540u) /* |=1 duty, |=2 level */
 #define CELL_TOKEN_LAST     (*(volatile uint32_t *)0xFFF90548u)
 #define CELL_LEVEL_COUNT    (*(volatile uint16_t *)0xFFF9054Cu) /* level reply counter (spec 22 §4.8) */
-/* duty reply counter is a BYTE: as a u16 at 0x9054D it shared byte 4D with
- * LEVEL_COUNT and byte 4E with STAGED_84 — the stock cannot hold both as
- * u16s there (protocol_audit F3; spec 22 §4.9 + spec 23 §A4) */
-#define CELL_DUTY_COUNT     (*(volatile uint8_t  *)0xFFF9054Du) /* duty reply counter */
 #define CELL_ECHO_0A        (*(volatile uint8_t  *)0xFFF9054Fu) /* 0x0A echo */
 #define CELL_FB_0C          (*(volatile uint8_t  *)0xFFF90550u) /* 0x0C feedback */
 #define CELL_COMMIT_12      (*(volatile uint8_t  *)0xFFF90551u) /* 0x12 commit status */
 #define CELL_STAGED_84      (*(volatile uint8_t  *)0xFFF9054Eu) /* staged level value */
+/* F3/D1 completed 2026-11-10 (protocol_audit F3): the duty counter moved OFF
+ * byte 0x9054D — even as a byte it aliased LEVEL_COUNT's high byte (the u16
+ * at 4C spans bytes 4C-4D), so every duty reply corrupted the level counter
+ * and every level increment reset the duty counter (live now that real W2
+ * replies land — r01o). The free window 0x90552-53 sits inside the reserved
+ * .sup_walk range (linker.ld). Bench decode note: DUTY_COUNT is no longer
+ * at 0x9054D; read USE[JOB_DUTY] as the truth as before. */
+#define CELL_DUTY_COUNT     (*(volatile uint8_t  *)0xFFF90552u) /* duty reply counter */
 
 /* ── protocol cells (linker .sup_cells at 0xFFF90740) ─────────────────── */
 #define CELL_J1_OK          (*(volatile uint8_t  *)0xFFF907C8u)

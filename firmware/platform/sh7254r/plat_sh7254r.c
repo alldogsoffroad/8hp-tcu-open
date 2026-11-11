@@ -1259,20 +1259,33 @@ void plat_init(void)
 
 /* ---- Rebuild additions (design §5) --------------------------------------------- */
 
-/* FRT microsecond timestamp (design §3): timer A counts at 1 MHz (16-bit).
- * The wrap is tracked in software: this is called at least once per 65 ms
- * (every 5 ms batch pass and every era check), so one compare suffices. */
+/* FRT timestamp — the stock's own read (design §3, corrected 2026-11-10).
+ *
+ * ONE 32-bit load of TCNTA (0xFFFFF220), the stock's mov.l form at every
+ * access site: era stepper 0x6C542, walk task 0x6C64E, timer programmers
+ * 0x6C0CA/0x6C166, boot stamp sampler 0x67124/0x67152 (manual §13: TCNTA is
+ * a 32-bit register). A single aligned 32-bit load is atomic against the
+ * counter's own update, so the old s_last/s_hi wrap tracker is gone — it
+ * was shared state read-modify-written from several call sites (5 ms batch,
+ * walk monitor) and silently lost a whole 16-bit wrap on any call gap over
+ * one low-half wrap period. Callers compare two's-complement deltas of raw
+ * counts, exactly like the stock:
+ *   era stepper 0x6C542: (u32)(TCNTA - 0xFFF9240C) >= *(u16)0xFFF93848 + 2400
+ *   walk task   0x6C64E: (u32)(TCNTA - 0xFFF9240C) >= *(u32)0xFFF92410
+ *   boot gates  0x66DF0: (u32)(TCNTA - prev)       >  0xFFFF
+ * so the comparison unit is RAW COUNTS (sup_walk.c's constants are counts).
+ * RATE: spec 02 §2 / artifact2 hold TCNTA is the stock's 1 MHz-class µs
+ * timestamp — 1 count = 1 µs (the boot's own gates fit only that scale:
+ * the −3000-count WDT-feed backdate is a ms-scale backdate and the
+ * 0x65536-count loop gate is one 65.5 ms µs-counter wrap). Bench r01q
+ * calibration: live reads 00 00 E0 73 → 00 00 A9 C4 with a low-half wrap
+ * in ~0.4 s spans k=5-6 low-half wraps (0.379-0.445 s) at 1 MHz; the
+ * single-wrap reading (~129 kHz) is not excluded by one pair — the era
+ * math above is rate-independent in raw counts, and the rate measurement
+ * (two reads over a timed interval) stays on the next-boot checklist. */
 uint32_t plat_frt_us(void)
 {
-    static uint16_t s_last;
-    static uint32_t s_hi;               /* whole wraps since start */
-    const uint16_t now = FRT_TCNTA;
-
-    if (now < s_last) {
-        s_hi += 0x10000u;
-    }
-    s_last = now;
-    return s_hi | (uint32_t)now;
+    return FRT_TCNTA;
 }
 
 /* Bus-A bit-rate accessor for the RSPI engine (plat_rspi.c pump). */
