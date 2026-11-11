@@ -148,7 +148,31 @@ static const rspi_done_fn s_handlers[JOB_COUNT] = {
 
 bool sup_job_check_free(uint8_t id)
 {
-    return id < JOB_COUNT && s_in_flight[id] == 0u && !s_queued[id];
+    if (id >= JOB_COUNT) {
+        return false;
+    }
+    if (s_in_flight[id] != 0u && !s_queued[id] &&
+        !plat_rspi_busy(sup_job_table[id].bus)) {
+        /* STALE-BURST RECOVERY — the stock's busy-find law (0x93B8E, the
+         * shared check-free every builder calls: 0x91086 duty, 0x91190 level,
+         * all cyclic builders). The stock does NOT silently skip a busy job:
+         * state != armed ('@') means the job's completion never came, and the
+         * check-free CALLS the job's release function (desc+0x14: W1 0x910EE,
+         * W2 0x911D8), which counts the discard in the per-job error cell
+         * (0x90541 bit0/bit1) and clears the state byte — so a stuck burst
+         * can never wedge its builder: the next pass relaunches fresh. The
+         * armed state is exempt (the burst-end handoff); its port is the
+         * engine's handoff flag, held across plat_rspi_busy for exactly that
+         * window (plat_rspi.c). Ours additionally requires the channel idle:
+         * in-flight with the channel ARMED/FEEDING is a live burst and waits
+         * (stock '@' behavior). The r01r duty investigation proved the
+         * one-launch wedge class is real in this port: without this law an
+         * orphaned s_in_flight is permanent and the builder dies silently
+         * forever (the stock's 0x93B8E is why it never could). */
+        sup_job_err_bump(id);
+        s_in_flight[id] = 0u;
+    }
+    return s_in_flight[id] == 0u && !s_queued[id];
 }
 
 bool sup_job_queue(uint8_t id)

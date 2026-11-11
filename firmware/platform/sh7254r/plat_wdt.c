@@ -15,7 +15,12 @@
 #include "regs.h"
 
 static bool s_interval;
-static uint8_t s_wovf_count;      /* .noinit — survives resets, not power-off */
+/* .noinit FOR REAL (r01r duty session): the plain static landed in .bss, which
+ * start.S zeroes on EVERY boot — the reset discriminator counted nothing
+ * across the r01r reset loop (bench: s_wovf_count read 0 after 4+ reboot
+ * boundaries). In .noinit it survives resets (cleared only by power-off) and
+ * accumulates one count per WDT reset per power session. */
+static uint8_t s_wovf_count __attribute__((section(".noinit")));
 
 uint8_t plat_wdt_wovf_count(void)
 {

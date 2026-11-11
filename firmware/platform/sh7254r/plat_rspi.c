@@ -28,6 +28,11 @@ typedef struct {
     const uint16_t *sel_cfg;        /* SPCMD values for this transaction */
     rspi_done_fn done;
     uint8_t job_id;
+    volatile bool handoff;          /* burst-end window guard (the stock's
+                                     * '@' state, 0x93A08: set before the
+                                     * snapshot handoff, cleared before the
+                                     * done handler runs — see the burst-end
+                                     * branch below) */
     uint32_t isr_count;             /* ISR entries (P8 diagnostic) */
 } rspi_chan_t;
 
@@ -172,7 +177,12 @@ void plat_rspi_pump(uint8_t bus)
 
 bool plat_rspi_busy(uint8_t bus)
 {
-    return s_chan[bus].state != CH_IDLE;
+    /* the handoff flag holds the channel busy across the burst-end window
+     * (state=IDLE .. done handler) — the port of the stock's armed state
+     * 0x40 '@' (0x93A08 sets it before the release-fn harvest): the job is
+     * STILL owned by its completion until in_flight clears, so the job
+     * engine must neither launch over it nor "recover" it as an orphan. */
+    return s_chan[bus].state != CH_IDLE || s_chan[bus].handoff;
 }
 
 uint32_t plat_rspi_isr_count(uint8_t bus)
@@ -244,6 +254,16 @@ static void plat_rspi_isr_body(uint8_t bus)
         uint8_t job_id = c->job_id;
         uint16_t *rx = c->rx;
         uint8_t frames = c->frames;
+        c->handoff = true;                      /* '@' open: the job stays
+                                                 * owned until its done
+                                                 * handler's release lands —
+                                                 * the guard the stock runs in
+                                                 * 0x93B8E (the armed state 0x40
+                                                 * is exempt from the busy-find
+                                                 * cancel). Pumps inside the
+                                                 * window see busy and hold;
+                                                 * the trailing pump below
+                                                 * delivers anything queued. */
         *spcr(bus) = 0x08u;                     /* idle = MSTR only */
         (void)*spsr(bus);
         *spsr(bus) = 0x20u;
@@ -252,6 +272,8 @@ static void plat_rspi_isr_body(uint8_t bus)
         if (done) {
             done(bus, job_id, rx, frames);
         }
+        c->handoff = false;                     /* '@' closed: release has
+                                                 * landed, in_flight is clear */
         /* the done handler may queue the next job; pump it now for
          * gapless chaining (the stock's DMA engine behaves the same) */
         plat_rspi_pump(bus);

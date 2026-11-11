@@ -16,6 +16,17 @@
  * them by ELF symbol until the stock decode resolves the F8 conflict. */
 static volatile uint8_t s_job_err_cnt[JOB_COUNT];
 
+/* the per-job discard counter bump for the job engine's stale-burst recovery
+ * (sup_jobs.c check_free — the stock's 0x93B8E busy-find law counts the
+ * discard in the per-job error cell via the release fn's bad path; the
+ * counter lives here beside the reply handlers that own it) */
+void sup_job_err_bump(uint8_t id)
+{
+    if (id < JOB_COUNT) {
+        s_job_err_cnt[id]++;
+    }
+}
+
 /* ── J1: {8E|ctrl, C9, 22, 09} — handler sup_resp_ctrl ─────────────────── */
 
 void sup_resp_ctrl(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
