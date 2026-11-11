@@ -582,10 +582,18 @@ static void outer_fsm(void)
         break;
 
     case SUP_FSM_SUPERVISE:
-        /* mode_transition_supervise: budget countdown to the target (>= 5);
-         * reached → mode_seq_step advances to 0x12; not reached → walk
-         * restart */
-        if (CELL_LVL_REPORTED >= 5u) {
+        /* C2, THE ERA-DWELL LAW (the first-500ms diff, D3): the stock sits
+         * in state 8 / era 1 (84|06 ONLY) for the full era dwell — 0x4B0 +
+         * 0x960 = 3600 ms — observed advancing 8→0x12/0x23 at ~+3.85 s
+         * absolute (spec 21 §1 [O-bench]); the duty drag starts ~+3.9 s,
+         * LONG after the letters flip (+150-250 ms). The old `lvl>=5`
+         * early advance was a mis-port: with it the FIRST 84|06 reply
+         * (level 6) advanced the FSM within 2-3 passes and the chip heard
+         * 88-duty tokens in its flip window instead of 84|06 alone — the
+         * one remaining first-500ms divergence after C1's refutation.
+         * The dwell is elapsed-relative against CELL_ERA_BASE (stamped by
+         * program_timer at the era staging; plat_frt_us counts µs). */
+        if ((uint32_t)(plat_frt_us() - CELL_ERA_BASE) >= 3600000u) {
             CELL_FSM_RETURN = SUP_FSM_SUPERVISE;
             CELL_OUTER_FSM = SUP_FSM_REARM;
             CELL_BOOT_FLAG = 1u;
