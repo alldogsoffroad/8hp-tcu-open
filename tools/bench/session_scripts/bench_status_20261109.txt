@@ -206,3 +206,15 @@ early window. NEXT: (1) decode plat_frt_us vs the stock's 32-bit TCNTA
 read + the live rate; (2) re-stamp era base on the first sane FRT read.
 Bench on r01q; one TCU confirmed (read-garbling is internal — likely the
 meas responder racing the heartbeat under load).
+R01R (2026-11-11 morning): THE WALK BREATHES — state 7<->0 cycling at a real
+~17s rhythm with GRANT live throughout (heartbeat ground truth; the state-7
+park is GONE). Cells: USE[LEVEL]=0x1051c climbing live (level jobs at FULL
+cadence!); USE[DUTY]=1 still wedged (the launch-race fix helped LEVEL — the
+twin! — but DUTY still sticks at 1 launch: the W1 wedge has ANOTHER face);
+rx_duty zero; LVL_REP=7/STATE oscillating; outer=0x23; 0x8E=0x8E00 (bit2
+gone — the echo complement moved; no request). NOTE: the r01q atomic-launch
+fixed the LEVEL job (now cycles!) — the same race was killing BOTH; DUTY's
+survivor wedge is a different mechanism (its 7-word staging? the W1 handler?
+the duty builder's token source?). NEXT: one focused trace on DUTY-only
+differences (frames=7, the token staging, sup_resp_duty) — LEVEL works, so
+the diff is small and enumerable. Bench on r01r.
