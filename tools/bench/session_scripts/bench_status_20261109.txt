@@ -196,3 +196,13 @@ verify ONE board powered (the read hygiene); (2) live-read the FRT (TCNTA
 @0xFFFFF220 advancing?); if dead -> the FRT init/clock law is the next decode
 (spec 02: timer A free-run — the stock reads TCNTA 32-bit, we read 16!).
 Bench on r01q.
+THE FRT CHECK (live): TCNTA IS ALIVE and counting FAST — 0xE073 -> wrapped
+-> 0xA9C4 in 0.4s (~130 kHz-class, NOT the ~1 MHz assumption and NOT dead).
+The state-7 park is therefore NOT a dead FRT: prime suspect is the WRONG
+SCALE in plat_frt_us (we read TCNTA 16-bit + wrap-count; the stock reads
+32-BIT — spec 02's 1 MHz free-run may hold at the 32-bit view while our
+16-bit wrap math under/over-counts) or a stale-zero era stamp from the
+early window. NEXT: (1) decode plat_frt_us vs the stock's 32-bit TCNTA
+read + the live rate; (2) re-stamp era base on the first sane FRT read.
+Bench on r01q; one TCU confirmed (read-garbling is internal — likely the
+meas responder racing the heartbeat under load).
