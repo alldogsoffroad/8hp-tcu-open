@@ -87,6 +87,9 @@ void sup_batch_init(void)
     s_pass = 0u;
     s_stamp = 0u;
     sup_enable_request(false);          /* request 0, outputs-disabled 1 */
+    CELL_SHUTDOWN_ST = 1u;              /* stock serial_rx_init 0x91DD2: shutdown-selftest
+                                         * flag SET at init (C9 bit 4 stays clear; live
+                                         * stock 0xFFF9094D = 01, first500_reads 2026-11-11) */
     CELL_SSLB2_RAW = 0x8000u;           /* the sentinel */
     /* the first bus-B job: J5 ID staged and queued */
     batch_stage_id();
