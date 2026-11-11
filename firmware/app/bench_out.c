@@ -577,16 +577,19 @@ static int sup_lab_start(const uint8_t *in, uint16_t n)
         s_sup_mode = 3u;
         return 0;
     }
-    if (in[0] == 16u) {                                    /* letters bench arm (spec 23
-                                                            * §2 #1): [1] = force the
-                                                            * slot-0 letter past the
-                                                            * phase-2 gate (0x8BB34)
-                                                            * whose input (0x14 bit 1)
-                                                            * is chip-side and clear
-                                                            * on the bench; [0] =
-                                                            * disarm. Readout mode 2:
-                                                            * the cyclic view's JOB_EN
-                                                            * replies carry the 0x24
+    if (in[0] == 16u) {                                    /* letters bench arm, TAMPER-
+                                                            * INTERLOCKED (r01u bench
+                                                            * 2026-11-11: an arm while the
+                                                            * phase-2 gate is closed stages
+                                                            * 0x9020 unearned and the chip
+                                                            * answers with the latched
+                                                            * anti-tamper reset loop): [1] =
+                                                            * set the slot-0 request cell
+                                                            * (0x85E64 law) — refused while
+                                                            * 0x14 bit 1 (CELL_SSLB0_BIT2) is
+                                                            * clear; [0] = disarm. Readout
+                                                            * mode 2: the cyclic view's
+                                                            * JOB_EN replies carry the 0x24
                                                             * certification echo */
         if (n != 2u || in[1] > 1u) {
             return -NRC_IMLOIF;
@@ -922,6 +925,10 @@ int bench_routine(uint8_t type, uint16_t rid, const uint8_t *in, uint16_t n, uin
         if (type == 2u) {
             sup_enable_request(false);          /* stop: the request cell disarmed */
             sup_letters_bench_arm(false);       /* stop: the letters arm disarmed */
+            sup_letters_reladder();             /* stop: re-ladder (the stock's mode
+                                                 * re-entry law) — earned letters are
+                                                 * withdrawn and re-earned only
+                                                 * through the gate */
             sup_ctrl_bench_dialect(false);      /* stop: the dialect arm disarmed */
             s_sup_mode = 0u;
             return 0;

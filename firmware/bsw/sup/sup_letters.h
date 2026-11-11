@@ -14,23 +14,36 @@
 #include <stdbool.h>
 
 /* one step of the reduced self-test ladder, all 3 channels in parallel
- * (phases 1/2/4/8; command codes 0x11/0x16 per channel; phase 2 gates on
- * the 0x14 bit-1 mirror — fail latches the error bit and restarts the
- * channel's ladder, stock 0x8BB34 law). Call once per 5 ms pass. */
+ * (phases 1/2/4/8 then done; phase 2 gates on the 0x14 bit-1 mirror — fail
+ * latches the error bit and restarts the channel's ladder, stock 0x8BB34
+ * law; ladder init clears the request cell, stock phase-1 0x85E64(ch,0)
+ * law; the enable follows the request cell EVERY pass — the seq2 FSM law
+ * 0x85828 → 0x8C7A8 — so a restart revokes the letters). DECODE (r01u):
+ * the 0x11/0x16 command states never reach the wire — the earn path's only
+ * wire content is the cyclic J6 STAT exchange whose 0x14 reply frame
+ * carries the gate bit. Call once per 5 ms pass. */
 void sup_selftest_step(void);
 
 /* enable/disable a monitor channel: letters[ch] = 'c' or 0
  * (stock 0x8C7A8 mon2_chan_enable) */
 void mon2_chan_enable(uint8_t ch, bool enable);
 
-/* FE13 sub-16 bench arm (spec 23 §2 candidate #1): force the slot-0 letter
- * ('c' — the rail's letter, spec 23 §A1) through the stock's own enable cell
- * 0x8C7A8, past the phase-2 gate (0x8BB34) whose input — the chip's 0x14
- * bit 1 — is chip-side and clear on the bench. Deliberate bench ARM only:
- * the arm and the real ladder share the cell, so if the chip ever reports
- * bit 1 the ladder's phase 8 re-enables through the same path and this hook
- * becomes redundant. Disarm restores letters[0] = 0. */
+/* FE13 sub-16 bench arm, TAMPER-INTERLOCKED (r01u bench, 2026-11-11):
+ * REFUSED while the phase-2 gate is closed (CELL_SSLB0_BIT2 == 0) — with
+ * the gate closed the staged 0x9020 is a certification write in a state
+ * the stock can never produce (0x91758 folds only earned letter bits),
+ * and the chip answers with the latched anti-tamper reset loop (~1.15 s
+ * period, outlives RAM, until power-off). Accepted arms set the slot-0
+ * request cell (0x85E64 law); the per-pass seq2 law performs the enable
+ * and a later gate close revokes it like any ladder restart. Disarm
+ * withdraws the request (letters[0] = 0). */
 void sup_letters_bench_arm(bool on);
+
+/* restart the ladder from phase 0 (the stock's mode-sequencer re-entry law,
+ * 0x85160 → 0x8B7A8; the reduction's seam for it): the next pass re-runs
+ * phase 1, whose init clears the request cells (0x85E64(ch,0)) — earned
+ * letters are withdrawn and only re-earned through the gate. Bench stop. */
+void sup_letters_reladder(void);
 
 /* compose the 0x90 enables byte (stock 0x91758 switch_status_build):
  * base & 0x1D | letter bits (slots 0/1/2 → bits 5/6/7) | calib<<5 (0) |

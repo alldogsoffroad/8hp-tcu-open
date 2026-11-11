@@ -148,8 +148,11 @@ void sup_resp_stat(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
     if (SSLB1_OK(rx[4])) {
         /* THE 0x14 REGISTER — bits 5-7 = per-output fault flags */
         CELL_REG_14 = (uint8_t)(rx[4] & 0xFFu);
-        CELL_SSLB0_BIT2 = (uint8_t)(rx[4] & 0x02u);   /* bit 1 */
-        CELL_SSLB0_BIT4 = (uint8_t)(rx[4] & 0x10u);   /* bit 4 */
+        /* the bit mirrors are BOOLEANS in the stock (0x92BBE:48/49:
+         * DAT_fff90959 = (rx & 2) != 0, DAT_fff90956 = (rx & 0x10) != 0) —
+         * 1/0, not the mask, so the bench witness reads the stock's values */
+        CELL_SSLB0_BIT2 = ((rx[4] & 0x02u) != 0u) ? 1u : 0u;   /* bit 1 */
+        CELL_SSLB0_BIT4 = ((rx[4] & 0x10u) != 0u) ? 1u : 0u;   /* bit 4 */
         /* NR-8: any fault bit → queue the fault twin */
         if (CELL_REG_14 & 0xE0u) {
             sup_job_queue(JOB_FLT);
