@@ -176,3 +176,12 @@ right for CPU feeding? -> likely: SPSCR = frames-1 for CPU-fed bursts,
 selects-1 only correct for the stock's DMAC mode) — one register value,
 then the W1 completes and the whole chain (level<7 -> one-shot -> 8E91 ->
 0x24 -> rail) is staged. Bench on r01p, healthy.
+THE SPSCR DECODE (0x96468, definitive): SPSCR = *(r11+3)-1 where r11+3 =
+the descriptor's SPCMD-entry count (the same r1 drives the SPCMD copy loop
+at 0x964fc-0x964fe) — SPSCR = selects-1 CONFIRMED as the stock's only law,
+in BOTH DMAC and (per r01o's CTRL evidence: 4 frames on 2 selects cycling
+auto-repeat with 4 real replies) CPU-feed modes. THE R01P WEDGE IS NOT THE
+SPSCR VALUE — the W1's single-select auto-repeat should clock 7 CPU-fed
+frames exactly like CTRL clocks 4. The wedge is elsewhere in the W1 path
+(launch context from the walk ISR? the 7-word staging? the in-flight
+release?). NEXT: one focused trace on the W1 launch-to-completion path.
