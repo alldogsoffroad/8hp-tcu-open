@@ -3,9 +3,12 @@
  * The stock's machine, ported from the top-down decode (spec 22 §6 and
  * artifact2 §6; stock addresses in every comment). Structure:
  *
- *   monitor pass (5 ms, 0x873F0):  one-shot enable → token stage (0x7EE8A)
- *   → walk task (0x6C63E) → outer FSM 0xFFF95010 (parked while the walk
- *   state is non-zero).
+ *   monitor pass (5 ms, 0x873F0):  token stage (0x7EE8A) → THE OPENING
+ *   LAW: everything below is gated on the chip's 0x14 bit 1 (the gate
+ *   cell, harvested from the cyclic J6 reply) — pre-gate the wire is the
+ *   stock's pre-flip batch only; the one-shot enable, walk task (0x6C63E)
+ *   and outer FSM 0xFFF95010 arm at the first gate-open pass (parked
+ *   while the walk state is non-zero).
  *
  *   walk task: state 7 samples (FRT deadline gate, stale reply → stall++,
  *   stop the timer → 0x19), state 0x19 = era stepper + reply processor,
@@ -672,8 +675,35 @@ static void outer_fsm(void)
 void sup_monitor_poll(void)
 {
     /* the monitor integrity sweep computes and stages the token each pass
-     * (stock 0x7EE8A; the challenge selector rotates under chip control) */
+     * (stock 0x7EE8A; the challenge selector rotates under chip control).
+     * RAM-only staging: no wire word. */
     sup_token_stage(CELL_SELECTOR);
+
+    /* THE OPENING LAW (r01w, the gate decode): pre-gate the wire is the
+     * stock's PRE-FLIP opening — the cyclic batch only. The stock's own
+     * order at every boot is flip FIRST, register conversation SECOND:
+     * its letters can only be earned through the selftest's phase-2 gate
+     * (0x8BB34: 0x14 bit 1 — 0x8C7A8 has exactly ONE caller, the seq2 FSM,
+     * and every seq2 state path that enables passes either the request
+     * cell set by that gate or the mode-'L' transition that also requires
+     * bit 1), so the stock's ~+250 ms letters flip proves its chip
+     * reported bit 1 SET from its earliest J6 replies. Its first
+     * 84/88-class word and its bit-0 ask both arm at the monitor's FIRST
+     * pass — AFTER that flip (0x873F0: one-shot + 0x6C48C 0x06-era staging
+     * in one pass; NR-1). Every replica that walked or asked inside the
+     * chip's power-on window never saw the flip: the m4-era probe/token
+     * rings, E60i's granted-but-gateless stream, and this build's W2 8406
+     * from pass 1 (r01v bench: gate 0 forever, walk alive from boot). The
+     * boot-region bytes are identical (r01v image 0x0-0x40000 == stock),
+     * so the only remaining first-words deltas WERE the early walk and the
+     * early ask. Hold both until the gate cell — harvested from the
+     * already-cyclic J6 STAT reply every pass — reports the engaged
+     * context, then let the stock's own monitor-pass law co-arm them
+     * (NR-1: the ask follows the walk's first replies dragging the
+     * reported level below 7, never a silent bus). */
+    if (CELL_SSLB0_BIT2 == 0u) {
+        return;
+    }
 
     one_shot_enable();
 

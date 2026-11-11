@@ -248,6 +248,65 @@ static void test_batch_and_condense(void)
     CHECK(CELL_GRANT == 1u);                /* the 0x22 echo's bit 0 */
 }
 
+/* THE OPENING LAW (r01w): the stock's order at every boot is flip FIRST,
+ * register conversation SECOND — its letters can only be earned through the
+ * selftest's phase-2 gate (0x14 bit 1), so its ~+250 ms letters flip proves
+ * the chip reported bit 1 SET from the earliest J6 replies, and its walk +
+ * ask both arm at the monitor's first pass AFTER that flip (NR-1). Pre-gate
+ * the monitor arms NOTHING: no one-shot, no FSM advance, no walk timer, no
+ * 84/88-class word. */
+static void test_opening_law(void)
+{
+    unsigned lvl0, duty0, starts0;
+
+    sup_jobs_init();
+    sup_walk_init();
+    sup_batch_init();
+    /* the use counters carry across sections — assert deltas */
+    lvl0 = CELL_USE_COUNTER(JOB_LEVEL);
+    duty0 = CELL_USE_COUNTER(JOB_DUTY);
+    starts0 = stub.walktmr_starts;
+
+    /* pre-gate: the monitor pass is a no-op beyond the token staging */
+    for (unsigned i = 0u; i < 10u; i++) {
+        stub.frt_us += 5000u;
+        sup_monitor_poll();
+    }
+    CHECK(CELL_OUTER_FSM == SUP_FSM_BOOT);  /* the FSM never left boot */
+    CHECK(CELL_WALK_STATE == 0u);
+    CHECK(stub.walktmr_starts == starts0);  /* the walk timer never armed */
+    CHECK(!plat_walktmr_running());
+    CHECK(CELL_REQUEST == 0u);              /* no ask into the silent bus */
+    CHECK(CELL_EN_ONESHOT == 0u);
+    CHECK(CELL_USE_COUNTER(JOB_LEVEL) == lvl0);  /* no 84-class word ever */
+    CHECK(CELL_USE_COUNTER(JOB_DUTY) == duty0);  /* no 88-class word ever */
+    CHECK(CELL_VALUE == 0x3Fu);             /* the init pair unstaged */
+
+    /* THE FLIP (hermetic: the chip's bit 1, as the J6 harvest delivers it) */
+    CELL_SSLB0_BIT2 = 1u;
+    sup_monitor_poll();
+    CHECK(CELL_OUTER_FSM == SUP_FSM_SUPERVISE);  /* the 0x06 era staged → 8 */
+    CHECK(stub.walktmr_starts > starts0);        /* the walk timer armed */
+    CHECK(plat_walktmr_running());
+    CHECK(CELL_VALUE == 0x06u);                  /* the 0x06 era, not 0x3F */
+    /* the ask follows the walk's first replies (the stock's one-shot law:
+     * level < 7 — the reported cell still holds the boot init 7 here) */
+    CHECK(CELL_REQUEST == 0u);
+    CHECK(CELL_EN_ONESHOT == 0u);
+    CELL_LVL_REPORTED = 6u;                      /* the first 0x06-era replies */
+    sup_monitor_poll();
+    CHECK(CELL_REQUEST == 1u);                   /* the ask arms (NR-1: the
+                                                  * conversation is rolling) */
+    CHECK(CELL_EN_ONESHOT == 1u);
+    CHECK(CELL_OUTPUTS_DIS == 0u);
+    CELL_SSLB0_BIT2 = 0u;                        /* a later gate close does NOT
+                                                  * un-arm (the stock never
+                                                  * re-flips; the ladder owns
+                                                  * revocation) */
+    sup_monitor_poll();
+    CHECK(CELL_OUTER_FSM == SUP_FSM_SUPERVISE);
+}
+
 int main(void)
 {
     test_scheduler();
@@ -255,6 +314,7 @@ int main(void)
     test_ctrl_composer();
     test_walk_init();
     test_batch_and_condense();
+    test_opening_law();
     if (fails == 0) {
         printf("test_rebuild: ok\n");
     }
