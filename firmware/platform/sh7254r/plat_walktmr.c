@@ -1,37 +1,76 @@
-/* plat_walktmr.c — ATU-D0 UDID00 U-compare ISR for the walk timer (spec 22 §1,
- * spec 24 §2.1 vector 224, stock 0x9106C "the park/supervisor PWM-servo compare ISR").
+/* plat_walktmr.c — ATU-D0 down-counter DCNTD00 underflow ISR for the walk
+ * timer (spec 22 §1, spec 24 §2.1 vector 224 = "UDID00" — U = UNDERFLOW
+ * interrupt D00, NOT a "U-compare": manual section 8 INTC table, vector
+ * 224 row "UDID00" / IPR10 bits 7-4; ISR = stock 0x9106C).
  *
- * WALK-TIMER REGISTER MAP CORRECTED 2026-11-10 (bench r01n live reads + the
- * stock's own executed bytes — the old map below sat on the wrong compare
- * family and the walk never ticked: USE[DUTY]=USE[LEVEL]=0 after 16 min,
- * OCR 0xFFFFF590 never re-armed, TCNT1D0 1.6M×256 counts past it, flag
- * byte 0xFFFFF58D stuck 0x00 while byte 0xFFFFF58C held 0x30):
+ * WALK-TIMER MAP CORRECTED AGAIN 2026-11-11 (r01s bench live reads + the
+ * stock's own executed bytes; the 2026-11-10 "U-compare" map below had the
+ * right ADDRESSES but the wrong REGISTER MODEL — every address sits in the
+ * ATU-D0 DOWN-COUNTER register group, manual section 31 list verbatim):
  *
- *   OLD (wrong — ATU-D0 C-compare channel 0, "CMID00", vector 216):
- *     OCR 0xFFFFF590, flag/ack byte 0xFFFFF58D bit 4, enable byte
- *     0xFFFFF58F bit 4, TSTRD 0xFFFFF500 bit 0. The stock's own
- *     multi-channel arming loop (0x90010) arms ch0's OCR but touches NO
- *     flag/enable bit for it (bVar6=0 for ch0 while ch1/ch2 get 0x20/0x40)
- *     — C-channel 0 does not deliver an interrupt on this silicon, and
- *     neither our ISR (vector 216) nor the poll ever saw a flag.
+ *   DCNTD00  0xFFFFF5B0 32-bit — TIMER DOWN COUNTER D00 (manual §13.19.17,
+ *            §31 list "Timer down counter D00 DCNTD00 H'FFFFF5B0"). 24-bit
+ *            counter, bits 7:0 read 0. Counts DOWN on the TCRD0.DCSELDn0
+ *            clock (TCRD0 = 0x4000 → bus 0 = 1 MHz → 1 count = 1 µs).
+ *            HOLDS H'000000 on underflow and STOPS there (one-shot).
+ *   DSTRD0   0xFFFFF585  8-bit — down counter STARTING register (§13.19.5).
+ *            Bit 0 = DSTDn0 "write 1 → DCNTD00 starts". STROBE: "writing 0
+ *            is ignored; this bit is always read as 0 even if 1 is written"
+ *            — this is why arm @585 reads 0x00 forever on the bench (the
+ *            write LANDS and starts the counter; the bit just never reads
+ *            back). "When DCNTDn = H'000000, writing 1 to these bits has no
+ *            effect" → the LOAD must precede the TRIGGER.
+ *   TSRD0    0xFFFFF58C 16-bit — bit 8 = UDFDn0, the DCNTD00 UNDERFLOW flag
+ *            (§13.19.8: bits 11:8 = UDFDn3..0; set on decrement-at-0, clear
+ *            by writing 0). Stock ISR 0x9106C: bclr.b #0,@(12,r4) with
+ *            r4 = 0xFFFFF580 → byte 0xF58C bit 0 = register bit 8. THIS IS
+ *            the walk flag byte (0x9106C is vector 224's own ISR).
+ *   TIERD0   0xFFFFF58E 16-bit — bit 8 = UDEDn0, DCNTD00 underflow interrupt
+ *            enable (§13.19.9: bits 11:8 = UDEDn3..0). Stock arm 0x91004:
+ *            bset.b #0,@(14,r5); stock stop 0x91058: bclr.b #0,@(14,r1).
+ *   DSRD0    0xFFFFF587  8-bit — down counter STATUS: bit 0 = DSFDn0
+ *            "counter enabled" (set on start, cleared on underflow-stop) —
+ *            the bench discriminator for "is the countdown alive".
+ *   DCRD0    0xFFFFF588 16-bit — TRGSELDn0[2:0] start/stop trigger select;
+ *            stock init 0x97138 writes ch (=0) → compare-match triggers
+ *            OFF, the counter is manual-start only (DSTRD0). Never a
+ *            runtime write in the stock.
+ *   IPR10    0xFFFE0C0E word, bits 7-4 = priority 6 (stock init 0x970FC
+ *            writes IPR10 = 0x6665; 0x97198 raises to 8); vector 224
+ *            (stock table 0x40070 + 4*224 → 0x9106C).
  *
- *   NEW (stock verbatim — ATU-D0 U-compare channel 0, "UDID00", vector 224):
- *     OCR      0xFFFFF5B0 word = remaining << 8          (programmer 0x6C0BA)
- *     TIER     0xFFFFF585 byte |= 0x01 (enable bit 0)    (0x6C0BA)
- *     TSR      0xFFFFF58C byte &= 0xFE (ack bit 0)       (ISR 0x9106C idiom;
- *                                                          servo twin 0x92060 bit 2)
- *     TSTR     0xFFFFF58E byte |= 0x01 (start bit 0)     (0x6C0BA)
- *              0xFFFFF58E byte &= 0xFE (stop bit 0)      (0x91058 walk stop)
- *     IPR10    0xFFFE0C0E nibble bits 7-4 = 6            (stock init 0x970FC
- *                                                          arms 6; 0x97198 → 8)
- *     vector   224 (stock table: 0x40070 + 4*224 -> 0x9106C)
+ * THE 2026-11-10 REGRESSION, DECODED (why r01s launched each walk job
+ * ~once per boot): the OLD code treated DCNTD00 as a COMPARE register and
+ * re-armed it with next_ocr() = ((TCNT1D0>>8) + quanta)<<8 — the absolute
+ * compare idiom. Written into a DOWN COUNTER that value means "count down
+ * (TCNT_quanta mod 2^24)+4 quanta" — the counter became a TCNT SHADOW
+ * (r01s bench: DCNTD00 tracks TCNT1D0 at offset −0.6..−2.3 s and RISES,
+ * because the task-context restart law re-programs it every ~1-2 s with a
+ * fresh absolute value). It can only underflow when TCNT_quanta is still
+ * tiny — i.e. the FIRST arm of a boot → exactly one tick → USE[DUTY] and
+ * USE[LEVEL] freeze at 1. The ISR's re-arm made it worse twice over: a
+ * DCNTD00 write alone does NOT restart a terminated counter (manual: "not
+ * decremented until the counter stopping source is activated"; DSRD0.DSFDn0
+ * cleared by the underflow), and even while running a re-trigger is a
+ * documented no-op — the stock NEVER relies on the ISR to re-arm; its
+ * programmer (0x91004, the tail of 0x6C0BA) reloads DCNTD00 AND sets DSTDn0
+ * every call:
+ *   0x9102E  mov.l r2,@(48,r5)   DCNTD00 @0xFFFFF5B0 ← remaining << 8
+ *   0x91030  bset.b #0,@(5,r5)   DSTRD0  @0xFFFFF585 |= 0x01 (START)
+ *   0x91042  bclr.b #0,@(12,r5)   TSRD0   bit 8 clear (ack, first-time)
+ *   0x91046  bset.b #0,@(14,r5)   TIERD0  bit 8 set   (enable, first-time)
+ * (r01r-vs-r01s is therefore NOT a register-behavior diff: byte-identical
+ * plat_walktmr.c, same first-tick-only law. r01r's ~35 s reset windows
+ * spanned the first 3-4 terms of the doubling sequence tick→re-arm→tick at
+ * ~2T, so its windows showed "repeated" launches; r01s's ~16 s windows cut
+ * the sequence after the first term. 601029d is exonerated: it touched the
+ * RSPI completion handoff, not the timer.)
  *
- * The compared counter is the subblock counter TCNT1D0 0xFFFFF520 (32-bit
- * register, only bits 31:8 compare — OCR writes are longwords with bits 7:0
- * = 0, the <<8 quanta law; 24-bit µs counter, TCNTA 0xFFFFF220 is its
- * low-half view). Rate = SUP_WALK_TICK_MS steps of WALK_QUANTA x 256 µs
- * (bus 0: 1024 µs per walk step). The ISR feeds the WDT first (stock law
- * 0x6C1BA), then sup_walk_isr() builds and queues the current walk job.
+ * THE PORT LAW: the stock sustains the tick by re-programming from its 5 ms
+ * pass; our walk FSM is tick-driven (no every-pass programmer), so the ISR
+ * and the poll repeat the stock's own load+trigger pair after every
+ * underflow — DCNTD00 = WALK_COUNTS, then DSTRD0 |= 1 — a self-sustaining
+ * SUP_WALK_TICK_MS stream with the stock's exact idiom and order.
  */
 #include "platform.h"
 #include "regs.h"
@@ -41,36 +80,46 @@
 #define SUP_WALK_TICK_MS 1u
 #endif
 
-/* ATU-D0 subblock: counter + the U-compare control set (stock walk tick) */
-#define TCNT1D0    REG32(0xFFFFF520u)
-#define OCRDU00    REG32(0xFFFFF5B0u)   /* U-compare compare value, ch 0 (stock 0x6C0BA) */
-#define TSRC_ACK   REG8(0xFFFFF58Cu)    /* TSR: U-compare status/ack, bit 0 (stock 0x9106C) */
-#define TIERU_EN   REG8(0xFFFFF585u)    /* TIER: U-compare enable, bit 0 (stock 0x6C0BA) */
-#define TSTRE_U    REG8(0xFFFFF58Eu)    /* TSTR: U-compare start/stop bit 0 (0x6C0BA / 0x91058) */
+/* ATU-D0 subblock 0: the down-counter control set (stock walk tick) */
+#define TCNT1D0    REG32(0xFFFFF520u)   /* subblock counter, 1 MHz (bus 0)  */
+#define DCNTD00    REG32(0xFFFFF5B0u)   /* down counter D00 (stock 0x91004) */
+#define DSTRD0     REG8(0xFFFFF585u)    /* START strobe bit 0 (0x91004; reads 0) */
+#define DSRD0      REG8(0xFFFFF587u)    /* status: bit 0 = DSFDn0 "enabled" */
+#define TSRD0_ACK  REG8(0xFFFFF58Cu)    /* TSRD0 bit 8 = UDFDn0 ack (0x9106C) */
+#define TIERD0_EN  REG8(0xFFFFF58Eu)    /* TIERD0 bit 8 = UDEDn0 (0x91004/0x91058) */
 #define TSTRD      REG8(0xFFFFF500u)    /* counter starts, stock init 0x9718C = 0x0F */
 
 /* TCRD0 0xFFFFF52C stays 0x4000 (stock boot table word, written once at
- * 0x97152; clock-bus 0). The counter runs from plat_tick_start's
- * TSTRD = 0x0F; this module only re-asserts it when arming. */
+ * 0x97152; OBREDn | CKSEL1Dn=0 and DCSELDn=000 → counter clocks = bus 0,
+ * 1 MHz: TCNT1D0 and DCNTD00 both tick at 1 count/us). Re-written here
+ * every arm (idempotent — the r01o dead-channel revival law keeps each arm
+ * a full channel restore; the stock's one-time init 0x97138 leaves
+ * DCRD0 = 0x0000 = compare triggers off, manual-start only). */
 #define TCRD0_INIT 0x4000u
 #define TCRD0      REG16(0xFFFFF52Cu)
 
-/* OCR step in 256-count quanta (same <<8 hardware law as the tick timer):
- * SUP_WALK_TICK_MS x 4 quanta x 256 µs = 1024 µs per walk step on bus 0. */
-#define WALK_QUANTA 4u
-#define UCOMP_BIT   0x01u
+/* Countdown = SUP_WALK_TICK_MS x WALK_QUANTA x 256 counts (bus 0 = 1 MHz,
+ * 1 count = 1 us): 1 x 4 x 256 = 1024 counts = 1024 us per walk step. The
+ * <<8 quanta form stays because DCNTD00's bits 7:0 don't exist (same 24-bit
+ * law as OCRD, manual §13.19.17 bit table). */
+#define WALK_QUANTA  4u
+#define UCOMP_DSTD   0x01u
+#define WALK_COUNTS  ((uint32_t)SUP_WALK_TICK_MS * WALK_QUANTA * 256u)
 
 /* forward: the walk service entry (sup_walk.c) */
 extern void sup_walk_isr(void);
 
 static bool s_walk_tmr_running;
 
-static uint32_t next_ocr(uint32_t now)
+/* the stock's load+trigger pair (0x9102E/0x91030): a nonzero DCNTD00 load
+ * MUST precede the DSTDn0 trigger — "when DCNTDn = H'000000, writing 1 to
+ * these bits has no effect" (manual §13.19.5). While running, the trigger
+ * is a documented no-op and the load resets the remaining count (the
+ * stock's steady-state reload law), so both orders of re-arm are safe. */
+static void walktmr_arm_count(void)
 {
-    /* the stock's <<8 fraction convention (os_timer_rearm decode):
-     * compare = (units + TCNT>>8) << 8; units are 256-count quanta
-     * (OCRD bits 7:0 don't exist — timer_audit §3). */
-    return (uint32_t)((((now >> 8) + (uint32_t)SUP_WALK_TICK_MS * WALK_QUANTA) & 0x00FFFFFFu) << 8);
+    DCNTD00 = WALK_COUNTS;
+    DSTRD0 |= UCOMP_DSTD;
 }
 
 bool plat_walktmr_running(void)
@@ -80,35 +129,22 @@ bool plat_walktmr_running(void)
 
 void plat_walktmr_start(void)
 {
-    /* NO running-guard: the stock's programmers (0x6C0BA level / 0x6BF9C
-     * duty twin) re-write ALL FOUR registers on EVERY call, and the stock's
-     * steady state calls them every 5 ms pass (0x8799C → 0x8D020/0x8CEDC →
-     * 0x6C802 → 0x6BF9C). Bench r01o proved why the guard is fatal: the
-     * U-compare channel died mid-boot once (OCR@5B0 frozen at its last
-     * re-arm, TIER@585 readback 0x00, TSR@58C bit0 never asserts again,
-     * TCNT1D0 running 24-bit wraps past the stale compare forever) and the
-     * guarded start() could never revive it — the walk sat silent for the
-     * rest of the boot (USE[DUTY]=USE-LEVEL frozen, W1 never dispatched,
-     * LVL_REPORTED stuck 7, the one-shot never fired). A compare event can
-     * be lost for good (missed while TCNT is already past the OCR — the
-     * next match would be a full 24-bit wrap away), so every arm must
-     * restore the complete channel state, exactly like the stock. */
-    /* stock order (timer_audit §5: config → arm → enable → start; the
-     * programmer 0x6C0BA writes OCR@5B0, TIER@585|=1, then on the staged
-     * transition TSR@58C&=0xFE + TSTR@58E|=1) */
+    /* NO running-guard: the stock's programmers re-write the whole channel
+     * on EVERY call (0x91004 reloads + re-triggers every 5 ms pass; the
+     * bench r01o proved a guarded start() could never revive a dead
+     * channel). Order: config → load+trigger → ack → enable → counters. */
     TCRD0 = (uint16_t)TCRD0_INIT;            /* word store, stock 0x97152 */
-    OCRDU00 = next_ocr(TCNT1D0);
-    TSRC_ACK &= (uint8_t)~UCOMP_BIT;         /* U-compare ack (stock 0x9106C idiom) */
-    TIERU_EN |= UCOMP_BIT;                   /* U-compare enable (stock 0x6C0BA) */
+    walktmr_arm_count();                     /* DCNTD00 load + DSTDn0 (stock 0x9102E/0x91030) */
+    TSRD0_ACK &= (uint8_t)~UCOMP_DSTD;       /* UDFDn0 ack (stock 0x91042) */
+    TIERD0_EN |= UCOMP_DSTD;                 /* UDEDn0 enable (stock 0x91046) */
     TSTRD = 0x0Fu;                           /* counter starts (stock init 0x9718C) */
-    TSTRE_U |= UCOMP_BIT;                    /* U-compare start bit 0 (stock 0x6C0BA) */
     ATUENR |= ATUENR_TDE;                    /* TDE last (boot leaves it clear) */
     s_walk_tmr_running = true;
 }
 
 void plat_walktmr_stop(void)
 {
-    TSTRE_U &= (uint8_t)~UCOMP_BIT;          /* U-compare stop bit 0 (stock 0x91058) */
+    TIERD0_EN &= (uint8_t)~UCOMP_DSTD;       /* UDEDn0 disable — stock 0x91058 verbatim */
     s_walk_tmr_running = false;
 }
 
@@ -117,29 +153,33 @@ uint32_t plat_walktmr_count(void)
     return TCNT1D0;                          /* P8 step 0: must advance when running */
 }
 
-/* superloop fallback (r01e): harvest the U-compare flag directly.
+/* superloop fallback (r01e): harvest the underflow flag directly.
  * Mirror of the ISR body (WDT feed first — the stock law). */
 bool plat_walktmr_poll(void)
 {
-    if ((TSRC_ACK & UCOMP_BIT) == 0u) {
+    if ((TSRD0_ACK & UCOMP_DSTD) == 0u) {
         return false;
     }
-    TSRC_ACK &= (uint8_t)~UCOMP_BIT;
-    OCRDU00 = next_ocr(TCNT1D0);
+    TSRD0_ACK &= (uint8_t)~UCOMP_DSTD;       /* UDFDn0 ack (stock 0x9106C idiom) */
+    walktmr_arm_count();                     /* reload + re-trigger */
     plat_wdt_kick();
     sup_walk_isr();
     return true;
 }
 
-/* the ISR body — called from the vector-table entry at slot 220 (VECTOR 224,
- * ATU-D0 UDID00 — the stock's walk tick vector; the stock table holds
- * 0x9106C at 0x40070 + 4*224) */
+/* the ISR body — called from the vector-table entry at index 220 (VECTOR
+ * 224, ATU-D0 UDID00 = DCNTD00 underflow — the stock's walk tick vector;
+ * the stock table holds 0x9106C at 0x40070 + 4*224) */
 void plat_walktmr_isr(void)
 {
-    /* ack the compare-match (stock byte idiom, 0x9106C: bclr bit0 @0xFFFFF58C) */
-    TSRC_ACK &= (uint8_t)~UCOMP_BIT;
-    /* re-arm */
-    OCRDU00 = next_ocr(TCNT1D0);
+    /* ack the underflow (stock byte idiom, 0x9106C: bclr bit0 @0xFFFFF58C
+     * = TSRD0 bit 8 = UDFDn0) */
+    TSRD0_ACK &= (uint8_t)~UCOMP_DSTD;
+    /* re-arm: the stock never re-arms from the ISR — its 5 ms pass
+     * programmer (0x91004) does the load+trigger; our tick-driven FSM has
+     * no every-pass programmer, so the ISR repeats the stock's own pair
+     * (walktmr_arm_count) to sustain SUP_WALK_TICK_MS. */
+    walktmr_arm_count();
     /* WDT feed first (stock law: the walk service 0x6C1BA feeds before
      * dispatching — the walk's liveness IS the WDT's liveness) */
     plat_wdt_kick();
