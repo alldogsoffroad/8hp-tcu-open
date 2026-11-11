@@ -563,12 +563,20 @@ static void walk_task(void)
 
 /* ── the outer FSM (0xFFF95010 — the era sequence) ──────────────────────── */
 
+/* the supervise dwell stamp: set on ENTRY to state 8 (dedicated — the era
+ * stepper re-stamps CELL_ERA_BASE, so counting the dwell from it wedges;
+ * the r01y witness: DUTY stayed 0 for 294 s with the ERA_BASE anchor) */
+static uint32_t s_sup_dwell_base;
+
 static void outer_fsm(void)
 {
     switch (CELL_OUTER_FSM) {
     case SUP_FSM_BOOT:
         /* boot flag → mode_req_set(5); stage the 0x06 era (the first 84|06
-         * on the wire); → 8 */
+         * on the wire); → 8. The dwell stamp fires on ENTRY to supervise
+         * (dedicated: the era stepper re-stamps CELL_ERA_BASE, which the
+         * r01y witness proved wedges the dwell forever — DUTY stayed 0 for
+         * 294 s because `now - ERA_BASE` never reached 3600 ms). */
         if (CELL_BOOT_FLAG != 0u) {
             CELL_BOOT_FLAG = 0u;
             mode_req_set(5u);
@@ -579,6 +587,7 @@ static void outer_fsm(void)
         CELL_FSM_RETURN = SUP_FSM_BOOT;
         CELL_OUTER_FSM = SUP_FSM_SUPERVISE;
         s_s8_budget = WALK_S8_BUDGET_PASSES;
+        s_sup_dwell_base = plat_frt_us();
         break;
 
     case SUP_FSM_SUPERVISE:
@@ -589,11 +598,9 @@ static void outer_fsm(void)
          * LONG after the letters flip (+150-250 ms). The old `lvl>=5`
          * early advance was a mis-port: with it the FIRST 84|06 reply
          * (level 6) advanced the FSM within 2-3 passes and the chip heard
-         * 88-duty tokens in its flip window instead of 84|06 alone — the
-         * one remaining first-500ms divergence after C1's refutation.
-         * The dwell is elapsed-relative against CELL_ERA_BASE (stamped by
-         * program_timer at the era staging; plat_frt_us counts µs). */
-        if ((uint32_t)(plat_frt_us() - CELL_ERA_BASE) >= 3600000u) {
+         * 88-duty tokens in its flip window instead of 84|06 alone.
+         * Elapsed-relative against the dedicated dwell stamp (µs counts). */
+        if ((uint32_t)(plat_frt_us() - s_sup_dwell_base) >= 3600000u) {
             CELL_FSM_RETURN = SUP_FSM_SUPERVISE;
             CELL_OUTER_FSM = SUP_FSM_REARM;
             CELL_BOOT_FLAG = 1u;
@@ -684,6 +691,7 @@ static void outer_fsm(void)
  * the stock's scheduler-imposed window (0x67B16 gated on boot-state 3) */
 #define OPENING_LEAD_IN_PASSES 20u
 static uint8_t s_opening_passes;
+
 
 void sup_monitor_poll(void)
 {
