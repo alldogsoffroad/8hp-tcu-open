@@ -98,13 +98,21 @@
 #define TCRD0_INIT 0x4000u
 #define TCRD0      REG16(0xFFFFF52Cu)
 
-/* Countdown = SUP_WALK_TICK_MS x WALK_QUANTA x 256 counts (bus 0 = 1 MHz,
- * 1 count = 1 us): 1 x 4 x 256 = 1024 counts = 1024 us per walk step. The
- * <<8 quanta form stays because DCNTD00's bits 7:0 don't exist (same 24-bit
- * law as OCRD, manual §13.19.17 bit table). */
+/* Countdown, BENCH-CALIBRATED on r01t (2026-11-11): DCNTD00 drained the
+ * r01t load (1024 counts) in ~112 µs — the down-counter's effective clock
+ * is ~9.1 MHz observed (Pφ/2 = 10 MHz offered, one-in-flight gating at the
+ * ~112 µs burst time delivered 8,890 launches/s with metronome deltas) —
+ * NOT the 1 MHz the TCNT quanta law assumed. DCNTD00's own DCSELDn0 field
+ * (TCRD0 bits?) is NOT yet decoded [D: TODO]; the load below is calibrated
+ * to the STOCK'S WALK-PASS CADENCE (the stock's 5 ms programmer reload,
+ * ~200 walk services/s): 0xB000 = 176 quanta = 45,056 counts ≈ 4.5 ms at
+ * 10 MHz / 4.95 ms at 9.1 MHz — stock class either way, which un-starves
+ * the cyclic batch (r01t's 9 k/s duty flood held NIB at 0 — the 84-class
+ * silence law is the risk that cadence carries). Bits 7:0 don't exist
+ * (24-bit law, manual §13.19.17); 0xB000 is <<8-clean. */
 #define WALK_QUANTA  4u
 #define UCOMP_DSTD   0x01u
-#define WALK_COUNTS  ((uint32_t)SUP_WALK_TICK_MS * WALK_QUANTA * 256u)
+#define WALK_COUNTS  0xB000u
 
 /* forward: the walk service entry (sup_walk.c) */
 extern void sup_walk_isr(void);
