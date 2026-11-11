@@ -185,3 +185,14 @@ SPSCR VALUE — the W1's single-select auto-repeat should clock 7 CPU-fed
 frames exactly like CTRL clocks 4. The wedge is elsewhere in the W1 path
 (launch context from the walk ISR? the 7-word staging? the in-flight
 release?). NEXT: one focused trace on the W1 launch-to-completion path.
+R01Q: heartbeat shows WALK ALIVE parked in state 7 (sampling); reads: walk-job
+counters ~0-1 (not thousands — EITHER the W1 wedge has a second mechanism OR
+the reads are unreliable per the agent's ~57% disagreement warning — possible
+SECOND 0x398 respondent on bus 1), rx_duty zero, LVL 7/EXP 6. THE PRIME
+SUSPECT NOW: the flagged FRT-DEAD issue — the agent saw ERA_BASE=0/ERA_DEADLINE
+stale; the state-7 deadline gate reads plat_frt_us(); if the FRT reads 0 the
+walk parks in state 7 FOREVER (matches the heartbeat exactly). NEXT: (1)
+verify ONE board powered (the read hygiene); (2) live-read the FRT (TCNTA
+@0xFFFFF220 advancing?); if dead -> the FRT init/clock law is the next decode
+(spec 02: timer A free-run — the stock reads TCNTA 32-bit, we read 16!).
+Bench on r01q.
