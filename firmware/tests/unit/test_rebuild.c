@@ -267,8 +267,10 @@ static void test_opening_law(void)
     duty0 = CELL_USE_COUNTER(JOB_DUTY);
     starts0 = stub.walktmr_starts;
 
-    /* pre-gate: the monitor pass is a no-op beyond the token staging */
-    for (unsigned i = 0u; i < 10u; i++) {
+    /* THE LEAD-IN (the stock's scheduler-imposed ~95 ms batch-only window,
+     * 0x67B16 gated on boot-state 3): 20 monitor passes are no-ops beyond
+     * the token staging */
+    for (unsigned i = 0u; i < 20u; i++) {
         stub.frt_us += 5000u;
         sup_monitor_poll();
     }
@@ -282,8 +284,9 @@ static void test_opening_law(void)
     CHECK(CELL_USE_COUNTER(JOB_DUTY) == duty0);  /* no 88-class word ever */
     CHECK(CELL_VALUE == 0x3Fu);             /* the init pair unstaged */
 
-    /* THE FLIP (hermetic: the chip's bit 1, as the J6 harvest delivers it) */
-    CELL_SSLB0_BIT2 = 1u;
+    /* THEN THE ARM — pass 21, UNCONDITIONALLY (the stock's monitor 0x873F0
+     * has no bit-1 gate; the lead-in is the stock's only window) */
+    stub.frt_us += 5000u;
     sup_monitor_poll();
     CHECK(CELL_OUTER_FSM == SUP_FSM_SUPERVISE);  /* the 0x06 era staged → 8 */
     CHECK(stub.walktmr_starts > starts0);        /* the walk timer armed */
@@ -299,12 +302,17 @@ static void test_opening_law(void)
                                                   * conversation is rolling) */
     CHECK(CELL_EN_ONESHOT == 1u);
     CHECK(CELL_OUTPUTS_DIS == 0u);
-    CELL_SSLB0_BIT2 = 0u;                        /* a later gate close does NOT
+    CELL_SSLB0_BIT2 = 0u;                        /* a gate close does NOT
                                                   * un-arm (the stock never
                                                   * re-flips; the ladder owns
                                                   * revocation) */
     sup_monitor_poll();
-    CHECK(CELL_OUTER_FSM == SUP_FSM_SUPERVISE);
+    CHECK(CELL_OUTER_FSM != SUP_FSM_BOOT);   /* the ladder ADVANCES past
+                                              * supervise (the r01w freeze was
+                                              * the old gate's artifact; the
+                                              * stock's FSM never stops on a
+                                              * gate close — only letters
+                                              * are revoked) */
 }
 
 int main(void)

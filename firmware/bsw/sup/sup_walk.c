@@ -672,6 +672,11 @@ static void outer_fsm(void)
 
 /* ── the 5 ms monitor task (stock 0x873F0) ─────────────────────────────── */
 
+/* the opening lead-in: ~20 monitor passes ≈ 100 ms of batch-only wire,
+ * the stock's scheduler-imposed window (0x67B16 gated on boot-state 3) */
+#define OPENING_LEAD_IN_PASSES 20u
+static uint8_t s_opening_passes;
+
 void sup_monitor_poll(void)
 {
     /* the monitor integrity sweep computes and stages the token each pass
@@ -679,29 +684,24 @@ void sup_monitor_poll(void)
      * RAM-only staging: no wire word. */
     sup_token_stage(CELL_SELECTOR);
 
-    /* THE OPENING LAW (r01w, the gate decode): pre-gate the wire is the
-     * stock's PRE-FLIP opening — the cyclic batch only. The stock's own
-     * order at every boot is flip FIRST, register conversation SECOND:
-     * its letters can only be earned through the selftest's phase-2 gate
-     * (0x8BB34: 0x14 bit 1 — 0x8C7A8 has exactly ONE caller, the seq2 FSM,
-     * and every seq2 state path that enables passes either the request
-     * cell set by that gate or the mode-'L' transition that also requires
-     * bit 1), so the stock's ~+250 ms letters flip proves its chip
-     * reported bit 1 SET from its earliest J6 replies. Its first
-     * 84/88-class word and its bit-0 ask both arm at the monitor's FIRST
-     * pass — AFTER that flip (0x873F0: one-shot + 0x6C48C 0x06-era staging
-     * in one pass; NR-1). Every replica that walked or asked inside the
-     * chip's power-on window never saw the flip: the m4-era probe/token
-     * rings, E60i's granted-but-gateless stream, and this build's W2 8406
-     * from pass 1 (r01v bench: gate 0 forever, walk alive from boot). The
-     * boot-region bytes are identical (r01v image 0x0-0x40000 == stock),
-     * so the only remaining first-words deltas WERE the early walk and the
-     * early ask. Hold both until the gate cell — harvested from the
-     * already-cyclic J6 STAT reply every pass — reports the engaged
-     * context, then let the stock's own monitor-pass law co-arm them
-     * (NR-1: the ask follows the walk's first replies dragging the
-     * reported level below 7, never a silent bus). */
-    if (CELL_SSLB0_BIT2 == 0u) {
+    /* THE OPENING LAW, SECOND REVISION (the first-500ms diff, r01x): the
+     * r01w pre-gate return was WRONG — the stock's monitor 0x873F0 runs
+     * walk task + one-shot + outer FSM UNCONDITIONALLY (decompile lines
+     * 43-47: the one-shot is `latch==0 && reported<7`, no bit-1 gate in
+     * the function). The stock's real opening: the 5 ms batch does not
+     * run for ~95 ms (scheduler 0x67B16 hard-gated on boot-state
+     * 0xFFF93B32==3 — the chip hears J5 ID then ~95 ms of lawful
+     * silence), THEN the first effective monitor pass arms walk+ask at
+     * ~+100 ms; the first 84|06 reply drags reported to 6 and the ask
+     * fires ~5-10 ms later; the flip follows ~+150-250 ms. r01v (arm
+     * immediately) and r01w (never arm) were both refuted on the bench —
+     * the LEAD-IN-THEN-ARM sequence was the one untested cell. The lead-in
+     * below reproduces the stock's ~20-pass batch-only window; after it,
+     * the stock's body runs unconditionally every pass. The letters
+     * ladder stays honestly bit-1-gated (0x8BB34) and the tamper
+     * interlock is untouched. */
+    if (s_opening_passes < OPENING_LEAD_IN_PASSES) {
+        s_opening_passes++;
         return;
     }
 
