@@ -155,7 +155,7 @@ static const rspi_done_fn s_handlers[JOB_COUNT] = {
  * the fifth — J6's 0x14 frame — in the former pad word).
  * Written from the RX ISR (IPR 4) and, for stale recoveries, from task/walk
  * context under the engine lock (SR.I >= 6) — never interleaved. */
-#define OPEN_N 32u                      /* r02l: 32 (was 16 — the r02k death window lay past entry 16) */
+#define OPEN_N 16u                      /* r02n: back to 16 — the opening is fully recorded by r02l/r02m (identical boots); the 1 KB funds the rolling trace ring */
 typedef struct {
     uint16_t t_us;
     uint8_t  job;
@@ -231,6 +231,7 @@ static void job_done(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
         s_handlers[job_id](bus, job_id, rx, n);
     }
     plat_alive(0x100u | job_id);
+    plat_trace((uint8_t)'C', job_id, n, tx0, rx, sup_job_table[job_id].frames);   /* r02n */
     open_record(job_id, tx0, rx, n);
 }
 
@@ -341,6 +342,7 @@ static bool launch_job(uint8_t id)
      * reference/initial images only — copying them over the staging here
      * would clobber every composed word. */
     (void)d->tx_tmpl;
+    plat_trace((uint8_t)'L', id, d->frames, d->tx_stage[0], (const uint16_t *)0, 0u);   /* r02n */
     if (!plat_rspi_launch(d->bus, id, d->tx_stage, d->rx, d->frames,
                           d->sel_cfg, d->n_sel, job_done)) {
         return false;

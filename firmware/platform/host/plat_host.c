@@ -238,6 +238,11 @@ uint32_t plat_boot_tcnta(void)
 {
     return 0u;
 }
+void plat_trace(uint8_t kind, uint8_t job, uint8_t n, uint16_t tx0, const uint16_t *rx, uint8_t nrx)
+{
+    (void)kind; (void)job; (void)n; (void)tx0; (void)rx; (void)nrx;
+}
+
 void plat_alive(uint32_t code)
 {
     (void)code;

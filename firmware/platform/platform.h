@@ -137,7 +137,10 @@ void plat_dei5_isr(void);                 /* 0x95FC4 -> 0x8F058, vector 128 */
 void plat_dei4_isr(void);                 /* 0x95FEA, vector 124 */
 uint32_t plat_boot_index(void);
 uint32_t plat_boot_tcnta(void);
-void plat_alive(uint32_t code);          /* breadcrumb: TCNTA + code */
+void plat_alive(uint32_t code);
+/* r02n: .noinit rolling event ring (two rings; the previous boot's is kept).
+ * kind: 'L' launch, 'C' completion, 'M' monitor tick, 'B' batch tick */
+void plat_trace(uint8_t kind, uint8_t job, uint8_t n, uint16_t tx0, const uint16_t *rx, uint8_t nrx);          /* breadcrumb: TCNTA + code */
 
 /* ---- FRT microsecond timestamp (design §3) ---- */
 uint32_t plat_frt_us(void);

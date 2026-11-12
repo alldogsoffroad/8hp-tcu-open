@@ -47,6 +47,22 @@ volatile uint32_t s_alive_code __attribute__((section(".noinit")));
  * a huge prev count, a stuck handler as an entry breadcrumb with no exit. */
 volatile uint32_t s_isr_n[4] __attribute__((section(".noinit")));
 volatile uint32_t s_isr_prev[4] __attribute__((section(".noinit")));
+/* r02n: two 32-entry rolling rings of bus-B events; s_trc_cur names the
+ * ring of THIS boot (toggled at entry), the other holds the previous boot's
+ * last 32 events up to its reset. s_trc_head[r] = total events written. */
+typedef struct {
+    uint32_t t;          /* raw TCNTA (us) */
+    uint8_t  kind;
+    uint8_t  job;
+    uint8_t  n;
+    uint8_t  sr;         /* SR.I at the call */
+    uint16_t tx0;
+    uint16_t rx[3];
+} trc_rec_t;             /* 16 bytes (stack guard: 2 x 32 x 16 = 1 KB) */
+#define TRC_N 32u
+trc_rec_t s_trc[2][TRC_N] __attribute__((section(".noinit")));
+volatile uint32_t s_trc_head[2] __attribute__((section(".noinit")));
+volatile uint32_t s_trc_cur __attribute__((section(".noinit")));
 
 void plat_wdt_early_capture(void)
 {
@@ -63,6 +79,11 @@ void plat_wdt_early_capture(void)
         s_isr_prev[i] = warm ? s_isr_n[i] : 0u;
         s_isr_n[i] = 0u;
     }
+    s_trc_cur = warm ? ((s_trc_cur & 1u) ^ 1u) : 0u;
+    if (!warm) {
+        s_trc_head[1] = 0u;
+    }
+    s_trc_head[s_trc_cur] = 0u;
     s_rst.boots++;
     s_rst.wtcr = REG16(WTCR_ADDR);
     s_rst.wtcnt = REG16(WTCNT_ADDR);
@@ -83,6 +104,26 @@ uint32_t plat_boot_index(void)
 uint32_t plat_boot_tcnta(void)
 {
     return s_rst.tcnta;
+}
+
+void plat_trace(uint8_t kind, uint8_t job, uint8_t n, uint16_t tx0, const uint16_t *rx, uint8_t nrx)
+{
+    const uint32_t lk = plat_sr_i();
+    plat_sr_set(15u);
+    const uint32_t r = s_trc_cur & 1u;
+    const uint32_t h = s_trc_head[r];
+    trc_rec_t *e = &s_trc[r][h % TRC_N];
+    e->t = FRT_TCNTA;
+    e->kind = kind;
+    e->job = job;
+    e->n = n;
+    e->sr = (uint8_t)lk;
+    e->tx0 = tx0;
+    for (uint8_t i = 0u; i < 3u; i++) {
+        e->rx[i] = (rx != (const uint16_t *)0 && i < nrx) ? rx[i] : 0u;
+    }
+    s_trc_head[r] = h + 1u;
+    plat_sr_set(lk);
 }
 
 void plat_alive(uint32_t code)

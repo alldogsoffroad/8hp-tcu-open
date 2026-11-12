@@ -183,12 +183,14 @@ static void task_1ms(void)
 /* ── 5 ms: the supervisor batch (design §7.5, stock 0x8EE82) ─────────── */
 static void task_sup_batch(void)
 {
+    plat_trace((uint8_t)'B', 0u, 0u, 0u, (const uint16_t *)0, 0u);   /* r02n */
     sup_batch_5ms();
 }
 
 /* ── 2.5 ms (2/3 ms alternation): the walk monitor (stock 0x873F0) ────── */
 static void task_sup_monitor(void)
 {
+    plat_trace((uint8_t)'M', 0u, 0u, 0u, (const uint16_t *)0, 0u);   /* r02n */
     sup_monitor_poll();
 }
 

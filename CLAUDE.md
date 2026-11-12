@@ -235,3 +235,14 @@ A human/AI pair produced this project (see CONTRIBUTORS.md). Early commits were 
 - **CORRECTION to the r02l "CPU stops" reading [O logic]:** the superloop rewrites the breadcrumb on every pass (every few µs), so an 01 breadcrumb does not show a frozen CPU. It timestamps the reset itself, within one superloop pass. Read correctly, r02k/r02l/r02m all say the same thing: **an external reset arrives while the CPU runs normally, at a fixed phase of the schedule** — r02m: ~0.1 ms after a ms ≡ 0 (mod 5) tick, where task_1ms and the walk monitor (phase 0) run; r02k: entry +7.33 ms, inside the phase-2 batch. Sub-100 µs repeatability across six deaths points to a reaction to a specific bus event, not a timeout [I].
 - Survivors show the r02l disturbance again: gate 00 on one read and 0x14 = C5, rep/exp 4/6 and 4/5, W2 error completions. J2 TX 9000 throughout.
 - **Next discriminator:** a `.noinit` rolling ring of the last 64 bus-B LAUNCHES and completions (TCNTA, job, tx0, frames, rx), not only the first 32 completions. The frame in flight at the reset has a launch and no completion, so the ring names it, along with the monitor's action at that tick. Desk in parallel: the A-DMAC ch0 destination access (width/address of the PGDR write) against our port G use — PG0–7 sit in the same register.
+
+**r02n = r02m + THE ROLLING TRACE RING (2026-11-12; built, NOT flashed, `build/r02n_IFla.bin`, app CRC `45A295DE`, one block vs r02m)** — diagnostic only; host 22/22:
+- `plat_trace()` (plat_wdt.c) writes a 16-byte record under SR.I = 15: raw TCNTA, kind, job, frames, SR.I at the call, tx0, rx[0..2]. The kinds are `L` (launch_job, before plat_rspi_launch), `C` (job_done, after the handler), `M` (walk monitor tick) and `B` (batch tick).
+- Two `.noinit` rings of 32 entries. `s_trc_cur` toggles at entry, so the previous boot's last 32 events survive its reset.
+- The opening record went back to OPEN_N 16, to stay inside the 4 KB stack guard; boots are identical, and r02l/r02m captured the 32-entry opening.
+- **.noinit addresses (nm):** `s_trc_cur` 0xFFF9E624, `s_trc_head[2]` 0xE628, `s_trc[2][32]` 0xE630 (ring stride 512), `s_isr_prev` 0xEA30, `s_isr_n` 0xEA40, `s_rst` 0xEA58 (boots 0xEA5C), `s_wovf_count` 0xEA74, `s_open_n` 0xEA78, `s_open` 0xEA7C (stride 256). Witness `/tmp/witness_r02n.py` (prints both rings, times from entry), install `/tmp/install_r02n.py`.
+- **PREDICTION (rule 1):** [high] restarts as r02m, at a 5 ms phase. The previous boot's ring ends at the reset:
+  - its last `L` with no matching `C` is the frame in flight. The [I] lead is a walk-monitor job, given the ms ≡ 0 (mod 5) phase.
+  - if the last event is a `C` or `M` with nothing in flight, the reset is not a reaction to a bus-B frame. The candidates then turn to the chain's own output (the PG mux stepping or Timer G) at that phase.
+
+  The trace adds ~2 µs per event under a full mask, which may move the death again without changing its cause.
