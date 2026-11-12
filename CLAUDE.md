@@ -260,3 +260,15 @@ A human/AI pair produced this project (see CONTRIBUTORS.md). Early commits were 
   - [check] PGDR's high byte constant across reads; the mux readings collapse to one input, all channels equal or nearly so.
   - (A) [I ~55 %] **stepping is the cause** — no AB-class replies, J4 `FF03` on every boot, gate 1 on every read, no restarts after 500 ms (`s_rst.boots` = 1).
   - (B) still restarts with corruption → stepping is cleared, and the suspects become the scans/DMACs/DEIs and the shared ADMATE0 flags (next: hold DMAC4/ADC_B alone).
+
+**r02o BENCH RESULT (2026-11-12 16:14 install, block 0x40000 sig `1c65e1746a6c00df`, all 21 verifies OK; power-cycle; witness 16:15–16:16 `/tmp/witness_r02o.log`) — (A) CONFIRMED: THE MUX STEPPING IS THE CAUSE** [O]:
+- **No restarts:** `s_rst.boots` = 1, now_ms 22 915 → 33 614 over six rounds (the boot was ~22 s old at the first read). That is 33 s of life with the rest of the chain running, against r02n's 0.5–20 s.
+- **The conversation is r02j-clean:** 0x14 = C7 and gate = 1 on every read, level 3↔4 at target 3, REQ/GRANT 01/01, A8 OK 0x77, AA OK 7, J2 TX 9000. jerr[W2] reads 0 → 1 over 10 s (r02n: 1–2/s; r02j: 0). In boot 1's opening record J4 answers `FF03`, and no AB-class reply appears in any record entry.
+- **The check holds:** the port G block 0xFFFFC830..43 reads identical across three reads. The mux readings collapse to one input — mux 8/10/11 = 14 978 mV, mux 13 = 20 970 (the same raw 39 264 on its 35 V scale) — so PG12–15 hold one address (the high byte reads FF → input 15) [I on the input number].
+- **The DEI4/DEI5 ISRs, the scans, the AN0 ring and the finisher are cleared:** all ran at normal rates (DEI4 10 702, DEI5 21 406 at ~22 s).
+- Still open: the live ring was torn by the reads (one record mixes J4's `00FF` with a `0D23` reply), so not every J4 in this boot is verified.
+- **What this leaves [I]:** stepping PG12–15 every 12.75 µs corrupts bus B — AB-class replies, J4 `0Dxx`, bad W2s — until the supervisor resets the MCU. The stock steps the same pins every boot without harm, so the difference is in OUR port G / bus-B setup.
+- **Next (desk, rule 2):**
+  1. which pins carry bus B on our build (SCK/MOSI/MISO/SSLB0–3 — the SSL pins on PG8–11 or elsewhere) and whether any CPU code writes PGDR or the PG direction/PFC registers while the DMA writes it;
+  2. whether ch0's destination is PGDR's high byte (a byte write) or the whole word — a word write would also rewrite PG0–7/PG8–11 data;
+  3. the stock's PFC/PGIOR for PG8–15 against ours (0x962E2 routes pins AFTER the timer config; ours routes first).
