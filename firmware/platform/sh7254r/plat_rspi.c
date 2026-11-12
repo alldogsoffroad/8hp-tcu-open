@@ -161,6 +161,9 @@ void plat_rspi_pump(uint8_t bus)
     if (c->state != CH_ARMED) {
         return;                                 /* nothing to start */
     }
+    if (bus == 1u) {
+        plat_adcmux_mux_hold();                 /* r02p: no PG12-15 edge in a bus-B burst */
+    }
 
     /* reload SPCMD registers from the transaction's table */
     for (uint8_t i = 0u; i < c->n_sel && i < 8u; i++) {
@@ -333,6 +336,9 @@ static void burst_end(rspi_chan_t *c, bool err)
     *spcr(bus) = 0x08u;                         /* idle = MSTR only */
     (void)*spsr(bus);
     *spsr(bus) = 0x20u;
+    if (bus == 1u) {
+        plat_adcmux_mux_release();              /* r02p: SSL negated — stepping resumes */
+    }
     if (err && !c->retried) {
         c->retried = true;
         c->err = false;
@@ -443,6 +449,9 @@ bool plat_rspi_lab(uint8_t bus, const uint16_t *tx, uint16_t *rx,
         if (plat_tick_count() - t0 > timeout_ms) {
             /* abort: disarm */
             *spcr(bus) = 0x08u;
+            if (bus == 1u) {
+                plat_adcmux_mux_release();      /* r02p */
+            }
             c->state = CH_IDLE;
             return false;
         }

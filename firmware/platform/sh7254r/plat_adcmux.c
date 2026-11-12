@@ -44,6 +44,7 @@
  *       plat_intc_setup; we leave it 0 (CMIG0..5 never reach the CPU).
  */
 #include <stdint.h>
+#include "platform/platform.h"
 
 #if defined(TCU_RAM_APP)
 /* the RAM application's layout does not reserve the stock DMA/ring ranges:
@@ -56,6 +57,8 @@ void plat_adcmux_finish_5ms(void) {}
 void plat_adcmux_status_5ms(void) {}
 void plat_dei5_isr(void) {}
 void plat_dei4_isr(void) {}
+void plat_adcmux_mux_hold(void) {}
+void plat_adcmux_mux_release(void) {}
 #else
 
 #define R8(a)  (*(volatile uint8_t  *)(uintptr_t)(a))
@@ -297,6 +300,37 @@ static void adc_dmac_init(void)
     R16(IPR04) = (uint16_t)((R16(IPR04) & 0x0FFFu) | 0xE000u);   /* DEI4 = E  */
 }
 
+/* ---- r02p DISCRIMINATOR: no PG12-15 edge during a bus-B burst --------
+ * r02o proved the ch0 stepping corrupts bus B (deaths/AB replies gone with
+ * CMEG2 off). Here the stepping runs, but plat_rspi clears CMEG2 at every
+ * bus-B burst start (pump) and sets it again at burst end (SSL negated), so
+ * the mux address never changes while an SSLB select is asserted. NOT a
+ * stock behaviour (the stock's DMA-fed bus B overlaps the stepping freely).
+ * Ring samples taken during a burst keep the previous address [I]. */
+static volatile uint8_t s_mux_armed;
+volatile uint32_t s_mux_hold_n;           /* diagnostic: holds performed */
+
+void plat_adcmux_mux_hold(void)
+{
+    if (s_mux_armed != 0u) {
+        const uint32_t lk = plat_sr_i();
+        plat_sr_set(15u);
+        R8(TMRG + 0xA0u) = (uint8_t)(R8(TMRG + 0xA0u) & (uint8_t)~1u);   /* CMEG2 off */
+        s_mux_hold_n++;
+        plat_sr_set(lk);
+    }
+}
+
+void plat_adcmux_mux_release(void)
+{
+    if (s_mux_armed != 0u) {
+        const uint32_t lk = plat_sr_i();
+        plat_sr_set(15u);
+        R8(TMRG + 0xA0u) = (uint8_t)(R8(TMRG + 0xA0u) | 1u);            /* CMEG2 on */
+        plat_sr_set(lk);
+    }
+}
+
 /* ---- 0x96900 (+ 0x9696A): A-DMAC ch0/ch1, AN0 interrupt conversion ----- */
 static void adma_init(void)
 {
@@ -315,12 +349,8 @@ static void adma_init(void)
     R16(ADMA + 0x66u) = 160u;                          /* ADMARTCR1          */
     R16(ADMA + 0x64u) = 160u;                          /* ADMATCR1           */
     R8(TMRG + 0xA1u) = (uint8_t)(R8(TMRG + 0xA1u) & (uint8_t)~1u);   /* CMFG2 */
-    /* r02o DISCRIMINATOR: CMEG2 NOT set — Timer G2 never requests A-DMAC
-     * ch0, so the mux address on PG12-15 (PGDR[15:8]) never steps. Every
-     * other part of the chain (G1 -> AN0 -> ch1 ring, the ADC_A/ADC_B scans,
-     * DEI4/DEI5, the finisher) runs as in r02n. The stock sets it (0x96900).
-     * Readings then all come from ONE mux input (whatever PG12-15 hold). */
-    /* R8(TMRG + 0xA0u) = (uint8_t)(R8(TMRG + 0xA0u) | 1u);    CMEG2 */
+    R8(TMRG + 0xA0u) = (uint8_t)(R8(TMRG + 0xA0u) | 1u);            /* CMEG2 */
+    s_mux_armed = 1u;   /* r02p: bus-B bursts may now hold/release it */
     R16(ADC_A + 0x04u) = (uint16_t)(R16(ADC_A + 0x04u) | 1u);   /* ADTRGE0 */
 }
 
