@@ -222,6 +222,13 @@ void plat_wdt_early_capture(void)
 void plat_app_init(void)
 {
 }
+void plat_adcmux_dma_global_init(void) {}
+void plat_adcmux_timer_g_init(void) {}
+void plat_adcmux_init(void) {}
+void plat_adcmux_finish_5ms(void) {}
+void plat_adcmux_status_5ms(void) {}
+void plat_dei5_isr(void) {}
+void plat_dei4_isr(void) {}
 uint32_t plat_boot_index(void)
 {
     return s_boot_idx;

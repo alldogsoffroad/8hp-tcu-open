@@ -169,6 +169,22 @@ static void v_rspi_b(void)
     plat_rspi_isr(1u);
 }
 
+/* L0-sense: the ADC scan DMA ends (stock 0x95FEA / 0x95FC4; IPR04 E / 4) */
+extern void plat_dei4_isr(void);
+extern void plat_dei5_isr(void);
+
+__attribute__((interrupt_handler))
+static void v_dei4(void)
+{
+    plat_dei4_isr();
+}
+
+__attribute__((interrupt_handler))
+static void v_dei5(void)
+{
+    plat_dei5_isr();
+}
+
 #else
 
 #define v_wdt_iti default_handler
@@ -176,6 +192,8 @@ static void v_rspi_b(void)
 #define v_tick default_handler
 #define v_rspi_a default_handler
 #define v_rspi_b default_handler
+#define v_dei4 default_handler
+#define v_dei5 default_handler
 
 #endif
 
@@ -222,8 +240,8 @@ void (*const app_vectors[508])(void) = {
     default_handler, default_handler, default_handler, default_handler,
     default_handler, default_handler, default_handler, default_handler,
     default_handler, default_handler, default_handler, default_handler,
-    default_handler, default_handler, default_handler, default_handler,
-    default_handler, default_handler, default_handler, default_handler,
+    v_dei4,  /* index 120 = VECTOR 124 (DMAC4 end, L0-sense) */ default_handler, default_handler, default_handler,
+    v_dei5,  /* index 124 = VECTOR 128 (DMAC5 end, L0-sense) */ default_handler, default_handler, default_handler,
     default_handler, default_handler, default_handler, default_handler,
     default_handler, default_handler, default_handler, default_handler,
     default_handler, default_handler, default_handler, default_handler,

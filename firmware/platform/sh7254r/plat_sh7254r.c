@@ -1278,6 +1278,9 @@ static void stock_gpio_init(void)
         (void)B8(PC + 30u);                      /* bld.b #6,@(30,r5): PCPR */
     }
     BCLR(PC + 2u, 7); BSET(PC + 6u, 7);          /* PC15 = 0 */
+#if !defined(TCU_RAM_APP)
+    plat_adcmux_dma_global_init();               /* 0x96010 (slot 14, after 0x8FB96) */
+#endif
     /* 0x96FC8 — THE TIMER C INIT (r02i; atu_init_audit.md, bytes re-checked
      * 0x96FC8..0x9703A, table 0x40F68 = 4444 00 | 4440 09 | 4440 09 |
      * 4444 00 | 4444 00). In the stock it runs inside the ATU init 0x91FA4
@@ -1314,6 +1317,11 @@ static void stock_gpio_init(void)
         *(volatile uint16_t *)0xFFFE0C0Cu = 0u;
         B8(0xFFFFF400u) = 0x1Fu;
     }
+#if !defined(TCU_RAM_APP)
+    plat_adcmux_timer_g_init();                  /* 0x97744 (in 0x91FA4, after 0x96FC8) */
+    plat_adcmux_init();                          /* 0x8F9EC (0x8EF1A's first entry) —
+                                                  * Timer G starts with ATUENR |= 0x3FF */
+#endif
     /* 0x91ED4 — TIMER C START (r02h; c9_bit4_decode.md). The stock's init
      * batch 0x8EF1A runs it second (pool 0x8F014), before 0x90D12. Without
      * it the PD4/PD8 timer-function pins (PFC field 01, port_init) carry no

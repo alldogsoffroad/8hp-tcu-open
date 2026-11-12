@@ -59,9 +59,21 @@ SECTIONS
         __sup_stage2_start = .; *(.sup_stage2) . += 0x16; __sup_stage2_end = .;
     } > RAM
 
+    /* L0-sense: the stock's ADC DMA buffers/ring at their stock addresses
+     * (plat_adcmux.c; adc_chain_port.md); the 80-byte mux sequence moved to
+     * 0xFFF88500 (D1: the stock's 0xFFF8844C overlaps .sup_stage2) */
+    .adc_dma_a 0xFFF88130 (NOLOAD) : { . += 0x3C; } > RAM   /* DMAC5 29 words + guard 0x8816A */
+    .adc_dma_b 0xFFF884BA (NOLOAD) : { . += 0x22; } > RAM   /* DMAC4 16 words + guard 0x884DA */
+    .adc_seq   0xFFF88500 (NOLOAD) : { . += 0x50; } > RAM   /* mux sequence (D1) */
+
     .sup_j7 0xFFF885E0 (NOLOAD) : {        /* JOB_NIB: 0000                  */
         __sup_j7_start = .; *(.sup_j7) . += 0x02; __sup_j7_end = .;
     } > RAM
+
+    .adc_ring  0xFFF885E8 (NOLOAD) : { . += 0x142; } > RAM  /* A-DMAC ring 160 words + guard 0x88728 */
+    .adc_cells 0xFFF90000 (NOLOAD) : { . += 0xB0; } > RAM   /* descriptor states + windows */
+    .adc_out   0xFFF90184 (NOLOAD) : { . += 0x08; } > RAM   /* 0x90184..0x9018B */
+    .adc_ms    0xFFF90628 (NOLOAD) : { . += 0x04; } > RAM
 
     .sup_walk 0xFFF90540 (NOLOAD) : {      /* walk reply cells .. 0x90551    */
         __sup_walk_start = .; *(.sup_walk) . += 0x14; __sup_walk_end = .;
@@ -70,6 +82,8 @@ SECTIONS
     .sup_cells 0xFFF90740 (NOLOAD) : {     /* protocol cells 0x907C8-0x9097B */
         __sup_cells_start = .; *(.sup_cells) . += 0x240; __sup_cells_end = .;
     } > RAM
+
+    .adc_span  0xFFF910FC (NOLOAD) : { . += 0x0C; } > RAM   /* 0x910FC..0x91107 */
 
     .sup_era 0xFFF9240C (NOLOAD) : {       /* era FRT stamps + staged token  */
         __sup_era_start = .; *(.sup_era) . += 0x0C; __sup_era_end = .;

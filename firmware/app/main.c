@@ -140,8 +140,8 @@ static const uds_app_t s_uds_app = { leave_allowed, read_did, app_routine };
 
 /* ── IPR map (design §5.2; the interrupt sources we enable) ────────────── */
 static const plat_ipr_ent_t s_ipr_entries[] = {
-    {  4u, 12u, 0xEu },      /* DMAC4 (ADC_A end)          */
-    {  4u,  8u,  4u },       /* DMAC5 (ADC_B end)          */
+    {  4u, 12u, 0xEu },      /* DMAC4 (ADC_B end — spec 24 had A/B swapped) */
+    {  4u,  8u,  4u },       /* DMAC5 (ADC_A end, the 1 ms 0x8F058)        */
     {  5u,  0u, 0xEu },      /* WDT ITI (interval mode)    */
     { 10u,  4u,  6u },       /* ATU-D0 UDID00 U-compare — the walk tick (VECTOR 224;
                               * stock init 0x970FC arms IPR10 bits 7-4 = 6, raised
@@ -222,6 +222,14 @@ static void task_100ms(void)
     (void)plat_can_send(CAN_BUS1, &s_hb);
 }
 
+/* L0-sense: the AN0 multiplexer 5 ms finisher (stock 0x8F62C via 0x8EDEA)
+ * and the descriptor status ramp (0x8F5A0 part) */
+static void task_adc_5ms(void)
+{
+    plat_adcmux_finish_5ms();
+    plat_adcmux_status_5ms();
+}
+
 /* ── the task table (design §6) ────────────────────────────────────────── */
 static const sched_ent_t s_tasks[] = {
     {    1u,    0u, task_1ms,         RT_1MS  },
@@ -232,6 +240,7 @@ static const sched_ent_t s_tasks[] = {
      * the stock's own 25 ms / 9-pass (2.78 ms) supervision ceiling. */
     {    5u,    0u, task_sup_monitor, RT_5MS  },
     {    5u,    3u, task_sup_monitor, RT_5MS  },
+    {    5u,    4u, task_adc_5ms,     RT_5MS  },   /* L0-sense: 0x8F62C + 0x8F5A0 */
     {   10u,    1u, task_10ms,        RT_10MS },
     {  100u,    5u, task_100ms,       RT_100MS },
 };

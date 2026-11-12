@@ -124,6 +124,16 @@ typedef struct {
 } plat_rst_t;
 void plat_wdt_early_capture(void);       /* app: BEFORE plat_init (wdt_init) */
 void plat_app_init(void);                /* app: after plat_init (not the loader) */
+/* L0-sense: the stock's AN0 external-multiplexer acquisition (plat_adcmux.c,
+ * ~/tcu_sweep/adc_chain_port.md) — publishes 0x90188 (mux 8, output node),
+ * 0x907E2 (mux 11, supply), 0x907E4/0x907FC (mux 13 mean/min) */
+void plat_adcmux_dma_global_init(void);   /* 0x96010 */
+void plat_adcmux_timer_g_init(void);      /* 0x97744 */
+void plat_adcmux_init(void);              /* 0x8F9EC */
+void plat_adcmux_finish_5ms(void);        /* 0x8F62C */
+void plat_adcmux_status_5ms(void);        /* 0x8F5A0 (status ramp part) */
+void plat_dei5_isr(void);                 /* 0x95FC4 -> 0x8F058, vector 128 */
+void plat_dei4_isr(void);                 /* 0x95FEA, vector 124 */
 uint32_t plat_boot_index(void);
 uint32_t plat_boot_tcnta(void);
 void plat_alive(uint32_t code);          /* breadcrumb: TCNTA + code */

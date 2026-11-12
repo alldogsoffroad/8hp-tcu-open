@@ -84,6 +84,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         platform/sh7254r/plat_walktmr.c
         platform/sh7254r/plat_wdt.c
         platform/sh7254r/plat_rspi.c
+        platform/sh7254r/plat_adcmux.c
         platform/sh7254r/libc_min.c
         ${CORE_SOURCES}
     )
@@ -135,6 +136,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         platform/sh7254r/plat_walktmr.c
         platform/sh7254r/plat_wdt.c
         platform/sh7254r/plat_rspi.c
+        platform/sh7254r/plat_adcmux.c
         platform/sh7254r/libc_min.c
         ${CORE_SOURCES}
     )
