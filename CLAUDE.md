@@ -215,3 +215,16 @@ A human/AI pair produced this project (see CONTRIBUTORS.md). Early commits were 
 - **Boots ≥ 2 [O]:** J4 (SSLB2) replies `0D2B`/`0D57` instead of `FF03`, and J6 rx[0] reads AA80 — the r02k after-death signature, again only after the first death (boot 1 reads FF03).
 - **Re-reading r02k [I, strong]:** in both builds the last breadcrumb is the SUPERLOOP at a fixed µs, then nothing — no completion, no further superloop pass, no exception frame. That is a CPU that stops running at a deterministic moment (a stuck ISR or an interrupt storm at a level above the superloop), then is reset externally about 41 ms of boot side later. It is not "the supervisor kills a live conversation at the ask". The ask is cleared of blame by r02l's opening.
 - **Prime suspects (desk; one variable each):** (1) DEI4 — IPR E, the highest level in the system; the handler only clears the DMAC4 flag; ADC_B + DMAC4 complete "every 2 scans"; a stuck-flag or re-trigger storm at level 14 would freeze the superloop with no exception. (2) ADCSR1 = 0x10 (ADIE) — if ADC_B's ADI is not the DMA trigger on our setup, an unrouted ADI vector. (3) The 1 ms DEI5 body (`adcmux_1ms`) at IPR 4 — it shares the level with RSPI-B, which fits the W2 errors in survivors. **Next:** put a breadcrumb at entry and exit of DEI4/DEI5 (codes 07/08) plus a per-vector counter in .noinit, so the next death names the ISR it died in. Optionally hold DMAC4/ADC_B alone (ADC_B feeds nothing the ladder needs: mux 8/11 come from AN0 + ADC_A/DMAC5).
+
+**r02m = r02l + DEATH INSTRUMENTATION ONLY (2026-11-12; built, NOT flashed, `build/r02m_IFla.bin`, app CRC `FBD57412`, one block vs r02l)** — no functional change; host 22/22; the loader is unchanged (the new breadcrumb in the shared exception body is app-only):
+- DEI4/DEI5 wrappers write breadcrumbs at entry (07/08) and exit (87/88). The default exception/unwired-vector body writes `0xDE000000 | PC[23:0]` before its 0x7F5 announce and hang.
+- `.noinit` per-boot ISR entry counts `s_isr_n[4]` (DEI4, DEI5, RSPI any, walk) at 0xFFF9E634. The previous boot's final counts are copied to `s_isr_prev[4]` at 0xFFF9E624 in `plat_wdt_early_capture`.
+- **.noinit moved:** `s_rst` 0xFFF9E64C (boots 0xE650), `s_wovf_count` 0xE668, `s_open_n` 0xE66C, `s_open` 0xE670. Witness `/tmp/witness_r02m.py` (prints both ISR count sets), install `/tmp/install_r02m.py` (sigs `/tmp/r02m_sigs.json`).
+- **PREDICTION (rule 1):** [high] behaviour as r02l — opening survives, most boots die at app ≈ +525 ms, an occasional survivor. The breadcrumb then names the death, one reading each:
+  - prev code **07** (DEI4 entry, no exit) → stuck inside the DEI4 handler;
+  - **87/07** with `s_isr_prev[0]` far above ~25 → a DEI4 storm;
+  - **08/88** with a huge `s_isr_prev[1]` → a DEI5 storm;
+  - **0xDExxxxxx** → an exception or unwired vector at that PC;
+  - still **01** with ordinary prev counts → the CPU stops in the superloop itself (a busy-wait, or the bus/flash stalled under DMA), not in an ISR.
+
+  The timing (one instrumentation write per ISR) may shift the death by µs. It should not change the outcome.

@@ -42,16 +42,26 @@ uint8_t plat_wdt_wovf_count(void)
 plat_rst_t s_rst __attribute__((section(".noinit")));
 volatile uint32_t s_alive_t __attribute__((section(".noinit")));
 volatile uint32_t s_alive_code __attribute__((section(".noinit")));
+/* r02m: per-boot interrupt entry counts (0 DEI4, 1 DEI5, 2 RSPI any, 3 walk)
+ * and the previous boot's final counts — a storm in the dying boot shows as
+ * a huge prev count, a stuck handler as an entry breadcrumb with no exit. */
+volatile uint32_t s_isr_n[4] __attribute__((section(".noinit")));
+volatile uint32_t s_isr_prev[4] __attribute__((section(".noinit")));
 
 void plat_wdt_early_capture(void)
 {
     uint32_t prev_t = s_alive_t, prev_code = s_alive_code;
 
-    if (s_rst.magic != RST_MAGIC) {
+    const bool warm = (s_rst.magic == RST_MAGIC);
+    if (!warm) {
         s_rst.magic = RST_MAGIC;
         s_rst.boots = 0u;
         prev_t = 0u;
         prev_code = 0u;
+    }
+    for (uint32_t i = 0u; i < 4u; i++) {
+        s_isr_prev[i] = warm ? s_isr_n[i] : 0u;
+        s_isr_n[i] = 0u;
     }
     s_rst.boots++;
     s_rst.wtcr = REG16(WTCR_ADDR);

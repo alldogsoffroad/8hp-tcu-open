@@ -83,6 +83,9 @@ __attribute__((used))              /* referenced only from the naked asm; keep u
 void default_body(uint32_t pc, uint32_t sr)
 {
     can_frame_t f = { .id = 0x7F5u, .dlc = 8u, .data = { 0xDEu, 0xADu, 0, 0, 0, 0, 0, 0 } };
+#if !defined(TCU_LOADER)
+    plat_alive(0xDE000000u | (pc & 0x00FFFFFFu));   /* r02m: survives the reset */
+#endif
     f.data[2] = (uint8_t)(pc >> 24);
     f.data[3] = (uint8_t)(pc >> 16);
     f.data[4] = (uint8_t)(pc >> 8);
@@ -145,9 +148,13 @@ static void v_wdt_iti(void)
     plat_wdt_kick();                    /* interval mode: reload on overflow */
 }
 
+/* r02m: per-boot ISR entry counts (.noinit, plat_wdt.c) */
+extern volatile uint32_t s_isr_n[4];
+
 __attribute__((interrupt_handler))
 static void v_walktmr(void)
 {
+    s_isr_n[3]++;
     plat_walktmr_isr();
 }
 
@@ -160,12 +167,14 @@ static void v_tick(void)
 __attribute__((interrupt_handler))
 static void v_rspi_a(void)
 {
+    s_isr_n[2]++;
     plat_rspi_isr(0u);
 }
 
 __attribute__((interrupt_handler))
 static void v_rspi_b(void)
 {
+    s_isr_n[2]++;
     plat_rspi_isr(1u);
 }
 
@@ -176,13 +185,19 @@ extern void plat_dei5_isr(void);
 __attribute__((interrupt_handler))
 static void v_dei4(void)
 {
+    s_isr_n[0]++;
+    plat_alive(0x07u);                  /* r02m: DEI4 entry */
     plat_dei4_isr();
+    plat_alive(0x87u);                  /* r02m: DEI4 exit  */
 }
 
 __attribute__((interrupt_handler))
 static void v_dei5(void)
 {
+    s_isr_n[1]++;
+    plat_alive(0x08u);                  /* r02m: DEI5 entry */
     plat_dei5_isr();
+    plat_alive(0x88u);                  /* r02m: DEI5 exit  */
 }
 
 #else
