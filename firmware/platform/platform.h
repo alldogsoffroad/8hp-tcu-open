@@ -49,11 +49,23 @@ bool plat_rspi_launch(uint8_t bus, uint8_t job_id, uint16_t *tx, uint16_t *rx,
                       rspi_done_fn done);
 /* Start the staged transaction if the bus is idle (task or init context). */
 void plat_rspi_pump(uint8_t bus);
-/* Returns true while a transaction is in flight on this bus. */
+/* Returns true while a transaction is armed or feeding on this bus (the
+ * launch gate: false inside a completion handler, so the handler's engine
+ * pump chains the next job — stock 0x93A08 launches via 0x93902 BEFORE the
+ * release function runs). */
 bool plat_rspi_busy(uint8_t bus);
+/* busy OR inside the burst-end completion window (the stock's '@' state):
+ * the finishing job is still owned by its handler. Used ONLY by the stale-
+ * burst recovery in sup_job_check_free, never as a launch gate. */
+bool plat_rspi_owned(uint8_t bus);
 /* ISR-entry count per bus (P8 diagnostic: verifies the IPR assignment). */
 uint32_t plat_rspi_isr_count(uint8_t bus);
-bool plat_rspi_poll(uint8_t bus);      /* r01e superloop fallback: harvest SPRF */
+bool plat_rspi_poll(uint8_t bus);      /* r01e superloop fallback: harvest SPRF (lab only) */
+/* S3: error-complete a channel ARMED/FEEDING longer than max_us (call with
+ * SR.I >= the bus's IPR). A completion with frames == 0 is an ERROR
+ * completion (S2: OVRF/MODF/PERF twice, a dead SPTEF, or a reap). */
+bool plat_rspi_reap(uint8_t bus, uint32_t max_us);
+uint32_t plat_rspi_err_count(uint8_t bus);
 /* Blocking single transaction for lab/diagnostic use (FE13). */
 bool plat_rspi_lab(uint8_t bus, const uint16_t *tx, uint16_t *rx,
                    uint8_t frames, const uint16_t *sel_cfg, uint8_t n_sel,
@@ -84,6 +96,7 @@ void plat_walktmr_start(void);
  * `us` microseconds — deliberately SHORT (the DCNTD00 clock select is not
  * decoded; ~28 µs/tick measured, armed at 32 µs/tick). The service closes
  * the loop on TCNTA and re-arms for any remainder. The ISR never re-arms. */
+void plat_walktmr_calibrate(void);     /* B2: time DCNTD00 against TCNTA at boot */
 void plat_walktmr_arm_us(uint32_t us);
 void plat_walktmr_wait_until(uint32_t t);   /* spin until TCNTA reaches t (< 40 µs) */
 void plat_walktmr_stop(void);
@@ -98,6 +111,22 @@ void plat_wdt_quick_reset(void) __attribute__((noreturn));
 bool plat_wdt_is_interval(void);
 void plat_wdt_capture_reset_cause(void); /* once at init */
 uint8_t plat_wdt_wovf_count(void);
+/* S11 reset-cause witness (.noinit, magic-guarded): raw WDT registers and
+ * TCNTA captured at entry BEFORE wdt_init, a boot counter since power-on,
+ * and the previous boot's last-alive breadcrumb. */
+typedef struct {
+    uint32_t magic;
+    uint32_t boots;             /* 1 = first boot since power-on */
+    uint16_t wtcr, wtcnt, wtsr, wrcr;   /* raw at entry */
+    uint32_t tcnta;             /* TCNTA at entry */
+    uint32_t prev_alive_t;      /* the previous boot's last breadcrumb */
+    uint32_t prev_alive_code;
+} plat_rst_t;
+void plat_wdt_early_capture(void);       /* app: BEFORE plat_init (wdt_init) */
+void plat_app_init(void);                /* app: after plat_init (not the loader) */
+uint32_t plat_boot_index(void);
+uint32_t plat_boot_tcnta(void);
+void plat_alive(uint32_t code);          /* breadcrumb: TCNTA + code */
 
 /* ---- FRT microsecond timestamp (design §3) ---- */
 uint32_t plat_frt_us(void);

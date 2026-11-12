@@ -4,6 +4,7 @@
  */
 #include "bsw/sup/sup_jobs.h"
 #include "bsw/sup/sup_cells.h"
+#include "bsw/sup/sup_letters.h"
 #include "platform.h"
 
 /* class checks (spec 22 §4 preamble) */
@@ -27,139 +28,250 @@ void sup_job_err_bump(uint8_t id)
     }
 }
 
-/* ── J1: {8E|ctrl, C9, 22, 09} — handler sup_resp_ctrl ─────────────────── */
+/* ── THE STOCK BIT MAP (S5/S6/S8, baseline review 2026-11-11) ────────────
+ * Ported 1:1 from the stock handlers' decompiles (~/tcu_sweep/decomp/
+ * r08_app/0x92D94, 0x92ED4, 0x92FD0, 0x93096, 0x931D4, 0x92AC0, 0x92BBE):
+ *   A8 (SSLB1) class → 0x907C8 OK / 0x907C9 ERR / 0x907CA ECHOFAIL,
+ *     bits J5 0x01, J1 0x02, J6 0x04, J2 0x10, F 0x20, J3 0x40;
+ *   AA (SSLB0) class → 0x90973 OK / 0x90974 ERR / 0x90975 ECHOFAIL,
+ *     bits J5 1, J1 2 (the C9 echo), J6 4.
+ * Each class test covers the frames of ONE select as a group (stride 2 on
+ * the two-select jobs); echo tests compare against the word the burst
+ * actually SENT (the job's TX staging, stock 0xFFF88424/34/3C), never the
+ * composer's newer cell. Echo harvests (0x907D5, 0x907D7) are
+ * unconditional. Per-round clearing is the 0x93126 summarizer below. */
+
+static bool grp_ok(const uint16_t *rx, uint8_t first, uint8_t count, bool b0)
+{
+    for (uint8_t i = 0u; i < count; i++) {
+        uint16_t w = rx[first + 2u * i];
+        if (b0 ? !SSLB0_OK(w) : !SSLB1_OK(w)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* ── J1: {8E|ctrl, C9, 22, 09} — stock 0x92D94 ─────────────────────────── */
 
 void sup_resp_ctrl(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
 {
+    const uint16_t *tx = sup_job_table[JOB_CTRL].tx_stage;
+    bool ok;
+
     (void)bus; (void)job_id; (void)n;
-    /* frames 0,2 → SSLB1 (A8 class); frames 1,3 → SSLB0 (AA class) */
-    if (!SSLB1_OK(rx[0])) CELL_J1_ERR |= 1u;
-    if (!SSLB0_OK(rx[1])) CELL_J1_ERR |= 2u;
-    if (!SSLB1_OK(rx[2])) CELL_J1_ERR |= 4u;
-    if (!SSLB0_OK(rx[3])) CELL_J1_ERR |= 8u;
-    /* THE ECHO CELL: rx[2] low byte = the 0x22 echo. Harvested
-     * UNCONDITIONALLY — error bits and cell harvests are separate acts in
-     * the stock's cell law (spec 22 §4.4 lists the 0xFFF907D5 row
-     * unconditionally; F4/D6: the old goto-fin on the class verdict skipped
-     * it and permanently killed CELL_ECHO_22/CELL_GRANT on the bench's real
-     * 0xAB-class reply, locking sup_ctrl's bit-2 life sign at 0x04). */
-    CELL_ECHO_22 = (uint8_t)(rx[2] & 0xFFu);
-    /* echo test: (rx[2] ^ staged_ctrl) & 0xDF — bit 5 excluded (NR-8:
-     * the rail is the chip's own telemetry, never asserted by us) */
-    if (((rx[2] & 0xFFu) ^ CELL_CTRL_STAGED) & 0xDFu) {
-        CELL_J1_ECHOFAIL |= 2u;
-    } else {
-        CELL_J1_OK |= 2u;
+    if (n == 0u) {                       /* error completion: the stock's not-'@' branch */
+        CELL_B0_ERR |= 2u;
+        CELL_J1_ERR |= 2u;
+        goto fin;
     }
-    /* C9 echo: rx[3] low byte == staged C9 (SSLB0 mirrors on the next read) */
-    if ((uint8_t)(rx[3] & 0xFFu) == CELL_C9_STAGED) {
-        CELL_J1_OK |= 0x20u;
+    /* SSLB0 frames 1,3: class, then the C9 echo (rx[3] low byte vs the
+     * staged C9 DATA byte — 0x92DDE movu.b @(3,r13) with r13 = 0xFFF88424
+     * reads 0xFFF88427; the decompile's "0xFFF88426" is the word base) */
+    ok = grp_ok(rx, 1u, 2u, true);
+    if (!ok) {
+        CELL_B0_ERR |= 2u;
+    }
+    if (!ok || (uint8_t)(rx[3] & 0xFFu) != (uint8_t)(tx[1] & 0xFFu)) {
+        CELL_B0_ECHOFAIL |= 2u;
     } else {
-        CELL_J1_ECHOFAIL |= 0x20u;
+        CELL_B0_OK |= 2u;
+    }
+    /* SSLB1 frames 0,2: class; the 0x22 echo harvested UNCONDITIONALLY;
+     * OK only when the class passed AND the echo matches the SENT word
+     * (bit 5 excluded — NR-8: the chip's own rail telemetry) */
+    ok = grp_ok(rx, 0u, 2u, false);
+    if (!ok) {
+        CELL_J1_ERR |= 2u;
+    }
+    CELL_ECHO_22 = (uint8_t)(rx[2] & 0xFFu);
+    if (ok && (((rx[2] ^ tx[0]) & 0xDFu) == 0u)) {
+        CELL_J1_OK |= 2u;
+    } else {
+        CELL_J1_ECHOFAIL |= 2u;
     }
     /* grant: echo bit 0 → the confirmation cell */
     CELL_GRANT = (CELL_ECHO_22 & 0x01u) != 0u ? 1u : 0u;
     /* handover readiness latch */
     CELL_HANDOVER_RDY = (uint8_t)(CELL_REG_14 & 0x01u);
+fin:
     sup_job_release(JOB_CTRL);
     sup_job_engine_pump();
 }
 
-/* ── J2: {90|en, 24} — handler sup_resp_en ─────────────────────────────── */
+/* the J2 / F shape (stock 0x92ED4 / 0x92FD0): both frames SSLB1, the 0x24
+ * echo harvested unconditionally, cert mask 0x15 against the SENT 0x90 */
+static void resp_enables(const uint16_t *rx, const uint16_t *tx, uint8_t bit)
+{
+    bool ok = SSLB1_OK(rx[0]) && SSLB1_OK(rx[1]);
+
+    if (!ok) {
+        CELL_J1_ERR |= bit;
+    }
+    CELL_ECHO_24 = (uint8_t)(rx[1] & 0xFFu);
+    if (ok && (((rx[1] ^ tx[0]) & 0x15u) == 0u)) {
+        CELL_J1_OK |= bit;
+    } else {
+        CELL_J1_ECHOFAIL |= bit;
+    }
+}
+
+/* ── J2: {90|en, 24} — stock 0x92ED4 ───────────────────────────────────── */
 
 void sup_resp_en(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
 {
     (void)bus; (void)job_id; (void)n;
-    if (!SSLB1_OK(rx[0]) || !SSLB1_OK(rx[1])) {
+    if (n == 0u) {                       /* error completion: the stock's not-'@' branch */
         CELL_J1_ERR |= 0x10u;
-    } else {
-        /* the 0x24 certification echo */
-        CELL_ECHO_24 = (uint8_t)(rx[1] & 0xFFu);
-        /* cert mask: bits 0,2,4 of the reply must match the staged 0x90 */
-        if (((rx[1] & 0xFFu) ^ CELL_EN_90) & 0x15u) {
-            CELL_J1_ECHOFAIL |= 0x10u;
-        } else {
-            CELL_J1_OK |= 0x10u;
-        }
+        goto fin;
     }
+    resp_enables(rx, sup_job_table[JOB_EN].tx_stage, 0x10u);
+fin:
     sup_job_release(JOB_EN);
     sup_job_engine_pump();
 }
 
-/* ── J3: {28, 2E} — handler sup_resp_pos ──────────────────────────────── */
+/* ── J3: {28, 2E} — stock 0x93096 ──────────────────────────────────────── */
 
 void sup_resp_pos(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
 {
     (void)bus; (void)job_id; (void)n;
-    if (!SSLB1_OK(rx[0]) || !SSLB1_OK(rx[1])) {
+    if (n == 0u) {                       /* error completion: the stock's not-'@' branch */
         CELL_J1_ERR |= 0x40u;
-    } else {
-        CELL_TELEM_VALID = (uint8_t)((rx[0] & 0x40u) != 0u ? 1u : 2u);
+        CELL_TELEMETRY = 0xFFFFu;          /* 0x93096: uVar6 = 0xFFFF stored on every path */
+        goto fin;
+    }
+    if (SSLB1_OK(rx[0]) && SSLB1_OK(rx[1])) {
+        CELL_TELEM_VALID = (uint8_t)((rx[0] & 0x40u) != 0u ? 1u : 0u);
         CELL_TELEMETRY = (uint16_t)(((rx[0] & 0x0Fu) << 6) | (rx[1] & 0x3Fu));
         CELL_J1_OK |= 0x40u;
+    } else {
+        CELL_TELEM_VALID = 2u;
+        CELL_TELEMETRY = 0xFFFFu;
+        CELL_J1_ERR |= 0x40u;
     }
+fin:
     sup_job_release(JOB_POS);
     sup_job_engine_pump();
 }
 
-/* ── J4: {00FF} — handler sup_resp_sslb2 (no header check) ─────────────── */
+/* ── J4: {00FF} — stock 0x931D4 (no header check; 0x908EE only — the
+ *    0x908CC copy is the reply processor's, sup_reply_condense) ───────── */
 
 void sup_resp_sslb2(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
 {
     (void)bus; (void)job_id; (void)n;
     CELL_SSLB2_RAW = rx[0];
-    CELL_SSLB2_COPY = rx[0];
     sup_job_release(JOB_SSLB2);
     sup_job_engine_pump();
 }
 
-/* ── J5: {06, 03, 00, 00} — handler sup_resp_id ────────────────────────── */
+/* ── J5: {06, 03, 00, 00} — stock 0x92AC0 (all-or-nothing per select) ── */
 
 void sup_resp_id(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
 {
     (void)bus; (void)job_id; (void)n;
-    /* frames 0,2 → SSLB1 (A8); frames 1,3 → SSLB0 (AA) */
-    if (SSLB1_OK(rx[0])) CELL_ID_B1_06 = (uint8_t)(rx[0] & 0xFFu);
-    if (SSLB0_OK(rx[1])) CELL_ID_B0_06 = (uint8_t)(rx[1] & 0xFFu);
-    if (SSLB1_OK(rx[2])) CELL_ID_B1_00 = (uint8_t)(rx[2] & 0xFFu);
-    if (SSLB0_OK(rx[3])) CELL_ID_B0_00 = (uint8_t)(rx[3] & 0xFFu);
+    if (n == 0u) {                       /* error completion: the stock's not-'@' branch */
+        CELL_J1_ERR |= 1u;
+        CELL_B0_ERR |= 1u;
+        goto fin;
+    }
+    if (grp_ok(rx, 1u, 2u, true)) {
+        CELL_ID_B0_06 = (uint8_t)(rx[1] & 0xFFu);
+        CELL_ID_B0_00 = (uint8_t)(rx[3] & 0xFFu);
+        CELL_B0_OK |= 1u;
+    } else {
+        CELL_B0_ERR |= 1u;
+    }
+    if (grp_ok(rx, 0u, 2u, false)) {
+        CELL_ID_B1_06 = (uint8_t)(rx[0] & 0xFFu);
+        CELL_ID_B1_00 = (uint8_t)(rx[2] & 0xFFu);
+        CELL_J1_OK |= 1u;
+    } else {
+        CELL_J1_ERR |= 1u;
+    }
+fin:
     sup_job_release(JOB_ID);
     sup_job_engine_pump();
 }
 
-/* ── J6: {18, 0C, 1E, 06, 14} — handler sup_resp_stat ──────────────────── */
+/* ── J6: {18, 0C, 1E, 06, 14} — stock 0x92BBE ──────────────────────────
+ * The SSLB1 group test covers rx[0] and rx[2] ONLY (2 iterations, stride
+ * 2): rx[4] — the 0x14 gate register — is never class-checked (S5: ours
+ * required it, so a 0xA9-class 0x14 reply dropped the gate bit the stock
+ * keeps). The F re-fire tests the 0x907D1 CELL, harvested or not. The
+ * direction bits (0x9095E) are the reply processor's (0x91ACA), not here. */
 
 void sup_resp_stat(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
 {
     (void)bus; (void)job_id; (void)n;
-    /* frames 0,2,4 → SSLB1; frames 1,3 → SSLB0 */
-    if (SSLB1_OK(rx[0])) CELL_STAT_18 = (uint8_t)(rx[0] & 0xFFu);
-    if (SSLB0_OK(rx[1])) {
+    if (n == 0u) {                       /* error completion: the stock's not-'@' branch */
+        CELL_J1_ERR |= 4u;
+        CELL_B0_ERR |= 4u;              /* no F re-fire on this branch */
+        goto fin;
+    }
+    if (grp_ok(rx, 1u, 2u, true)) {
         CELL_STAT_B0_0C = (uint8_t)(rx[1] & 0xFFu);
-        CELL_SSLB0_NIB = (uint8_t)((rx[1] & 0x0Fu) ^ 0x0Fu);
+        CELL_STAT_B0_06 = (uint8_t)(rx[3] & 0xFFu);
+        CELL_SSLB0_NIB = (uint8_t)((CELL_STAT_B0_0C & 0x0Fu) ^ 0x0Fu);
+        CELL_B0_OK |= 4u;
+    } else {
+        CELL_B0_ERR |= 4u;
     }
-    if (SSLB1_OK(rx[2])) {
+    if (grp_ok(rx, 0u, 2u, false)) {
+        CELL_STAT_18 = (uint8_t)(rx[0] & 0xFFu);
         CELL_STAT_1E = (uint8_t)(rx[2] & 0xFFu);
-        /* direction bits */
-        if (rx[2] & 0x10u) CELL_DIR_BITS |= 0x01u; else CELL_DIR_BITS &= ~0x01u;
-        if (rx[2] & 0x20u) CELL_DIR_BITS |= 0x02u; else CELL_DIR_BITS &= ~0x02u;
-    }
-    if (SSLB0_OK(rx[3])) CELL_STAT_B0_06 = (uint8_t)(rx[3] & 0xFFu);
-    if (SSLB1_OK(rx[4])) {
-        /* THE 0x14 REGISTER — bits 5-7 = per-output fault flags */
+        /* the bit mirrors are BOOLEANS (0x92BBE: 0x90959 = (rx&2)!=0,
+         * 0x90956 = (rx&0x10)!=0) */
+        CELL_SSLB0_BIT2 = ((rx[4] & 0x02u) != 0u) ? 1u : 0u;   /* bit 1 = THE GATE */
         CELL_REG_14 = (uint8_t)(rx[4] & 0xFFu);
-        /* the bit mirrors are BOOLEANS in the stock (0x92BBE:48/49:
-         * DAT_fff90959 = (rx & 2) != 0, DAT_fff90956 = (rx & 0x10) != 0) —
-         * 1/0, not the mask, so the bench witness reads the stock's values */
-        CELL_SSLB0_BIT2 = ((rx[4] & 0x02u) != 0u) ? 1u : 0u;   /* bit 1 */
-        CELL_SSLB0_BIT4 = ((rx[4] & 0x10u) != 0u) ? 1u : 0u;   /* bit 4 */
-        /* NR-8: any fault bit → queue the fault twin */
-        if (CELL_REG_14 & 0xE0u) {
-            sup_job_queue(JOB_FLT);
-        }
+        CELL_SSLB0_BIT4 = ((rx[4] & 0x10u) != 0u) ? 1u : 0u;
+        CELL_J1_OK |= 4u;
+    } else {
+        CELL_J1_ERR |= 4u;
     }
+    /* NR-8: any fault bit → the F queuer 0x92F7C (check-free first) */
+    if ((CELL_REG_14 & 0xE0u) != 0u) {
+        sup_flt_requeue();
+    }
+fin:
     sup_job_release(JOB_STAT);
     sup_job_engine_pump();
+}
+
+/* ── the 0x93126 summarizer (stock 0x931F8 twice; runs in 0x91DAA, the
+ *    batch's J6/J1 step): fold each triple into its summary byte — bit 1
+ *    any ERR, bit 2 ECHOFAIL without ERR, bit 0 OK-only — and CLEAR the
+ *    triple once every expected handler has reported (mask 7 / 0x77);
+ *    otherwise keep accumulating and carry the previous summary's low 3
+ *    bits. Bit 7: the 0xBB / 0xBC ID markers (0x90977, 0x907CF). The
+ *    0x9094E = 0x2D/0x2E consumer of the summaries is not decoded [D]. */
+static uint8_t sum_fold(volatile uint8_t *t, uint8_t prev, uint8_t mask)
+{
+    uint8_t ok = t[0], err = t[1], ef = t[2];
+    uint8_t r = 0u;
+
+    if (err != 0u) r = 2u;
+    if ((ef & (uint8_t)~err) != 0u) r |= 4u;
+    if ((ok & (uint8_t)~err & (uint8_t)~ef) != 0u) r |= 1u;
+    if (mask == (uint8_t)((ok | err | ef) & mask)) {
+        t[0] = 0u; t[1] = 0u; t[2] = 0u;
+    } else {
+        r |= (uint8_t)(prev & 7u);
+    }
+    return r;
+}
+
+void sup_reply_summarize(void)
+{
+    uint8_t r;
+
+    r = sum_fold(&CELL_B0_OK, CELL_SUM_B0, 7u);
+    if (CELL_ID_B0_00 == 0xBBu) r |= 0x80u;
+    CELL_SUM_B0 = r;
+    r = sum_fold(&CELL_J1_OK, CELL_SUM_B1, 0x77u);
+    if (CELL_ID_B1_00 == 0xBCu) r |= 0x80u;
+    CELL_SUM_B1 = r;
 }
 
 /* ── J7: {00} — handler sup_resp_nib (class check tolerated) ───────────── */
@@ -235,16 +347,17 @@ fin:
     sup_job_engine_pump();
 }
 
-/* ── F: {90|en, 24} — handler sup_resp_flt (same shape as J2) ──────────── */
+/* ── F: {90|en, 24} — stock 0x92FD0 (the J2 shape, bit 0x20) ──────────── */
 
 void sup_resp_flt(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
 {
     (void)bus; (void)job_id; (void)n;
-    if (SSLB1_OK(rx[0]) && SSLB1_OK(rx[1])) {
-        if (((rx[1] & 0xFFu) ^ CELL_EN_90) & 0x15u) {
-            /* echo fail — count but don't fault (the stock: error bits only) */
-        }
+    if (n == 0u) {                       /* error completion: the stock's not-'@' branch */
+        CELL_J1_ERR |= 0x20u;
+        goto fin;
     }
+    resp_enables(rx, sup_job_table[JOB_FLT].tx_stage, 0x20u);
+fin:
     sup_job_release(JOB_FLT);
     sup_job_engine_pump();
 }

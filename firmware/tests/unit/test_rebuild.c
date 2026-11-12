@@ -13,6 +13,7 @@
 #include "bsw/sup/sup_batch.h"
 #include "bsw/sup/sup_ctrl.h"
 #include "bsw/sup/sup_cells.h"
+#include "bsw/sup/sup_token.h"
 #include "tests/unit/stub_plat.h"
 
 #include <stdio.h>
@@ -87,6 +88,47 @@ static void test_job_engine(void)
     CHECK(CELL_USE_COUNTER(JOB_DUTY) == 1u);
     CHECK(CELL_USE_COUNTER(JOB_STAT) == 2u);
 
+    /* B1 (baseline review): completions CHAIN. One pump, then only the RX
+     * interrupt: every queued job must reach the wire through the reply
+     * handlers' own engine pumps (stock 0x93A08 → 0x93902). r01s..r02f held
+     * plat_rspi_busy true across the handler, so only the first job ran. */
+    {
+        uint16_t u_stat = CELL_USE_COUNTER(JOB_STAT);
+        uint16_t u_id = CELL_USE_COUNTER(JOB_ID);
+        uint16_t u_ctrl = CELL_USE_COUNTER(JOB_CTRL);
+
+        CHECK(sup_job_queue(JOB_STAT));
+        CHECK(sup_job_queue(JOB_ID));
+        CHECK(sup_job_queue(JOB_CTRL));
+        sup_job_engine_pump();
+        drain_rspi();                       /* ISR only — no further pumps */
+        CHECK(CELL_USE_COUNTER(JOB_STAT) == (uint16_t)(u_stat + 1u));
+        CHECK(CELL_USE_COUNTER(JOB_ID) == (uint16_t)(u_id + 1u));
+        CHECK(CELL_USE_COUNTER(JOB_CTRL) == (uint16_t)(u_ctrl + 1u));
+        CHECK(sup_job_check_free(JOB_STAT));
+        CHECK(sup_job_check_free(JOB_ID));
+        CHECK(sup_job_check_free(JOB_CTRL));
+    }
+
+    /* S2: an ERROR completion (frames = 0) harvests nothing, frees the
+     * slot, and still chains the next queued job */
+    {
+        uint16_t u_id = CELL_USE_COUNTER(JOB_ID);
+
+        CELL_ECHO_22 = 0x5Au;
+        CHECK(sup_job_queue(JOB_CTRL));
+        CHECK(sup_job_queue(JOB_ID));
+        sup_job_engine_pump();
+        stub.rspi_err_next = true;
+        drain_rspi();
+        CHECK(CELL_ECHO_22 == 0x5Au);       /* J1's error burst: no harvest */
+        CHECK((CELL_J1_ERR & 2u) != 0u);    /* SF1: the error branch's bits */
+        CHECK((CELL_B0_ERR & 2u) != 0u);
+        CHECK(CELL_USE_COUNTER(JOB_ID) == (uint16_t)(u_id + 1u));
+        CHECK(sup_job_check_free(JOB_CTRL));
+        CHECK(sup_job_check_free(JOB_ID));
+    }
+
     /* the lab job path (design §7.2): blocking, one at a time */
     {
         uint16_t tx[2] = { 0x2200u, 0x0900u };
@@ -110,8 +152,9 @@ static void test_ctrl_composer(void)
     CELL_CTRL_BIT1_SRC = 0u;
     sup_ctrl_compose();
     CHECK(CELL_CTRL_STAGED == 0x04u);
-    CHECK(sup_job_table[JOB_CTRL].tx_stage[0] == 0x8E04u);
-    CHECK(CELL_J1_STAGED == 0x8E04u);
+    /* S7: the composer never touches the TX staging (J1 may be in flight);
+     * the J1 arm in the batch stages 0x8E00|CELL_CTRL_STAGED check-free */
+    CHECK(sup_job_table[JOB_CTRL].tx_stage[0] == 0x8E00u);
     /* the request cell is NOT forced while outputs are disabled (boot law) */
     CHECK(CELL_REQUEST == 0u);
 
@@ -119,7 +162,6 @@ static void test_ctrl_composer(void)
     CELL_ECHO_22 = 0x04u;
     sup_ctrl_compose();
     CHECK(CELL_CTRL_STAGED == 0x00u);
-    CHECK(sup_job_table[JOB_CTRL].tx_stage[0] == 0x8E00u);
 
     /* ── the request cell: forced every pass once outputs are enabled ──────── */
     CELL_OUTPUTS_DIS = 0u;
@@ -158,11 +200,104 @@ static void test_ctrl_composer(void)
     CELL_SHUTDOWN_ST = 0u;
     sup_c9_compose();
     CHECK(CELL_C9_STAGED == 0x10u);
-    CHECK(sup_job_table[JOB_CTRL].tx_stage[1] == 0xC910u);
     CELL_SHUTDOWN_ST = 1u;
     sup_c9_compose();
     CHECK(CELL_C9_STAGED == 0x00u);
     CELL_SHUTDOWN_ST = 0u;
+}
+
+/* SF2 (r02g review): the handlers against the stock bit map — each check
+ * here fails if the old r02f handler behaviour comes back */
+extern void sup_resp_ctrl(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n);
+extern void sup_resp_stat(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n);
+extern void sup_resp_en(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n);
+
+static void clear_triples(void)
+{
+    CELL_J1_OK = 0u; CELL_J1_ERR = 0u; CELL_J1_ECHOFAIL = 0u;
+    CELL_B0_OK = 0u; CELL_B0_ERR = 0u; CELL_B0_ECHOFAIL = 0u;
+}
+
+static void test_handlers(void)
+{
+    sup_jobs_init();
+
+    /* J6 (0x92BBE): rx[4] — the 0x14 gate register — is NEVER class-
+     * checked; an 0xA9-class 0x14 reply still harvests the gate bit */
+    {
+        uint16_t rx[5] = { 0xA818u, 0xAA0Cu, 0xA81Eu, 0xAA06u, 0xA902u };
+        clear_triples();
+        CELL_SSLB0_BIT2 = 0u;
+        sup_resp_stat(1u, JOB_STAT, rx, 5u);
+        CHECK(CELL_SSLB0_BIT2 == 1u);
+        CHECK(CELL_REG_14 == 0x02u);
+        CHECK((CELL_J1_OK & 4u) != 0u);
+        CHECK((CELL_B0_OK & 4u) != 0u);
+    }
+    /* J1 (0x92D94): an SSLB1 class failure is ERR|=2 and ECHOFAIL|=2, never
+     * OK — even when the echo byte matches; the echo is still harvested */
+    {
+        uint16_t *tx = sup_job_table[JOB_CTRL].tx_stage;
+        uint16_t rx[4] = { 0xA800u, 0xAA00u, 0xAB05u, 0xAA10u };
+        tx[0] = 0x8E05u; tx[1] = 0xC910u;
+        clear_triples();
+        sup_resp_ctrl(1u, JOB_CTRL, rx, 4u);
+        CHECK((CELL_J1_ERR & 2u) != 0u);
+        CHECK((CELL_J1_ECHOFAIL & 2u) != 0u);
+        CHECK((CELL_J1_OK & 2u) == 0u);
+        CHECK(CELL_ECHO_22 == 0x05u);
+        CHECK((CELL_B0_OK & 2u) != 0u);           /* C9 echo 10 == staged 10 */
+        CHECK((CELL_J1_OK & 0x20u) == 0u);        /* 0x20 is F's bit, not C9 */
+        /* class ok, echo matches the SENT word (bit 5 ignored) */
+        rx[2] = 0xA825u;
+        clear_triples();
+        sup_resp_ctrl(1u, JOB_CTRL, rx, 4u);
+        CHECK((CELL_J1_OK & 2u) != 0u);
+    }
+    /* J2 (0x92ED4): the 0x24 echo harvested unconditionally */
+    {
+        uint16_t rx[2] = { 0xA800u, 0xAB77u };
+        clear_triples();
+        CELL_ECHO_24 = 0u;
+        sup_resp_en(1u, JOB_EN, rx, 2u);
+        CHECK(CELL_ECHO_24 == 0x77u);
+        CHECK((CELL_J1_ERR & 0x10u) != 0u);
+    }
+    /* SF1: the error completion (n = 0) takes each handler's not-'@'
+     * branch: error bits, no harvest, no F re-fire */
+    {
+        uint16_t rx[5] = { 0xA8FFu, 0xAAFFu, 0xA8FFu, 0xAAFFu, 0xA8E2u };
+        clear_triples();
+        CELL_REG_14 = 0x00u;
+        sup_resp_stat(1u, JOB_STAT, rx, 0u);
+        CHECK((CELL_J1_ERR & 4u) != 0u);
+        CHECK((CELL_B0_ERR & 4u) != 0u);
+        CHECK(CELL_REG_14 == 0x00u);
+        CHECK(sup_job_check_free(JOB_FLT));       /* not re-fired */
+    }
+    /* the 0x93126 summarizer: a complete round folds and clears */
+    {
+        clear_triples();
+        CELL_J1_OK = 0x77u;
+        CELL_B0_OK = 0x07u;
+        CELL_ID_B0_00 = 0u; CELL_ID_B1_00 = 0u;
+        sup_reply_summarize();
+        CHECK(CELL_SUM_B1 == 0x01u && CELL_J1_OK == 0u);
+        CHECK(CELL_SUM_B0 == 0x01u && CELL_B0_OK == 0u);
+        CELL_J1_OK = 0x02u;                       /* partial round: kept */
+        sup_reply_summarize();
+        CHECK(CELL_J1_OK == 0x02u);
+    }
+}
+
+/* S12: the token table against the stock driving dump (walkdata review):
+ * 0x92414 staged = 63936C9C (selector 6), 0x90548 last sent = 2CDC23D3
+ * (selector 7); the fresh-chip opening token (selector 0) = FF0FF000 */
+static void test_token_table(void)
+{
+    CHECK(sup_token_compute(6u) == 0x63936C9Cu);
+    CHECK(sup_token_compute(7u) == 0x2CDC23D3u);
+    CHECK(sup_token_compute(0u) == 0xFF0FF000u);
 }
 
 static void test_walk_init(void)
@@ -306,6 +441,8 @@ static void test_opening_law(void)
 
 int main(void)
 {
+    test_handlers();
+    test_token_table();
     test_scheduler();
     test_job_engine();
     test_ctrl_composer();

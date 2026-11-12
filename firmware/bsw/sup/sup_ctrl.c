@@ -77,9 +77,9 @@ void sup_ctrl_compose(void)
     }
 
     CELL_CTRL_STAGED = w;
-    sup_job_table[JOB_CTRL].tx_stage[0] = (uint16_t)(0x8E00u | w);
-    /* the J1 staging mirror the bench reads at 0xFFF88424 */
-    CELL_J1_STAGED = (uint16_t)(0x8E00u | w);
+    /* S7: the TX words are written by the J1 arm (sup_batch.c, stock
+     * 0x92D38: check-free first) — never here, where J1 may be in flight
+     * (on the target 0xFFF88424 IS the live TX buffer) */
 }
 
 void sup_c9_compose(void)
@@ -95,8 +95,8 @@ void sup_c9_compose(void)
         c9 |= 0x80u;
     }
     CELL_C9_STAGED = c9;
-    sup_job_table[JOB_CTRL].tx_stage[1] = (uint16_t)(0xC900u | c9);
-    /* NO separate mirror store (2026-11-11 decode): on the target the J1
+    /* the TX word is staged by the J1 arm (S7, see sup_ctrl_compose).
+     * NO separate mirror store (2026-11-11 decode): on the target the J1
      * stage IS linker-pinned at 0xFFF88424, so frame 1 lives at 0xFFF88426
      * and CELL_J1_C9_STAGED (u8 at 0xFFF88426) is its big-endian HIGH byte
      * — the 0xC9 command byte. The old `CELL_J1_C9_STAGED = 0xC900|c9`
@@ -144,14 +144,41 @@ void sup_reply_condense(void)
         s_wdt_interval = true;
     }
 
+    /* direction bits from the J6 0x1E harvest (stock 0x91ACA computes
+     * 0x9095E from 0x907D3 — moved here from the J6 handler, S5) */
+    if (CELL_STAT_1E & 0x10u) CELL_DIR_BITS |= 0x01u; else CELL_DIR_BITS &= (uint8_t)~0x01u;
+    if (CELL_STAT_1E & 0x20u) CELL_DIR_BITS |= 0x02u; else CELL_DIR_BITS &= (uint8_t)~0x02u;
+
     /* SSLB2 copy + sentinel re-arm (stock 0x91ACA law) */
     CELL_SSLB2_COPY = CELL_SSLB2_RAW;
     CELL_SSLB2_RAW = 0x8001u;
 
-    /* 4-sample boxcar average of the 10-bit telemetry into 0xFFF908CA */
-    s_avg_sum -= s_avg_win[s_avg_i];
-    s_avg_win[s_avg_i] = CELL_TELEMETRY;
-    s_avg_sum += s_avg_win[s_avg_i];
-    s_avg_i = (uint8_t)((s_avg_i + 1u) & 3u);
-    CELL_TELEM_AVG = (uint16_t)(s_avg_sum >> 2);
+    /* the telemetry average into 0xFFF908CA (stock 0x91ACA law, r02g
+     * review N1): an invalid sample (0x907CC = 0xFFFF) propagates; after
+     * an invalid average (or the first pass) the window is reseeded with
+     * the sample; otherwise a 4-slot ring, rounded (sum + 2) >> 2. [D] the
+     * stock gates all of it on 0x9095B != 0 and mirrors 0x9095D = 0x907CE —
+     * 0x9095B's producer is not ported. */
+    {
+        static bool s_avg_seeded;
+        uint16_t smp = CELL_TELEMETRY;
+
+        if (smp == 0xFFFFu) {
+            CELL_TELEM_AVG = 0xFFFFu;
+        } else if (!s_avg_seeded || CELL_TELEM_AVG == 0xFFFFu) {
+            for (uint8_t i = 0u; i < 4u; i++) {
+                s_avg_win[i] = smp;
+            }
+            s_avg_sum = 4u * (uint32_t)smp;
+            s_avg_i = 0u;
+            s_avg_seeded = true;
+            CELL_TELEM_AVG = smp;
+        } else {
+            s_avg_sum -= s_avg_win[s_avg_i];
+            s_avg_win[s_avg_i] = smp;
+            s_avg_sum += smp;
+            s_avg_i = (uint8_t)((s_avg_i + 1u) & 3u);
+            CELL_TELEM_AVG = (uint16_t)((s_avg_sum + 2u) >> 2);
+        }
+    }
 }

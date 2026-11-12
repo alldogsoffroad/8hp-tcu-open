@@ -33,46 +33,73 @@ __attribute__((weak)) void drv_id_kick(void)
     /* bus-A service not yet built (P4) — no-op until the strong symbol lands */
 }
 
-/* ── the constant-frame stagers ─────────────────────────────────────────── */
+/* ── the queuers (S7, baseline review): every stock queuer (0x92D38 J1,
+ *    0x92B82 J6, 0x92A84 J5, 0x9305A J3, 0x93198 J4) calls check-free
+ *    0x93B8E FIRST and returns if busy; only then copies the template, ORs
+ *    in the data, CLEARS the last reply word and queues. Staging before the
+ *    check could tear an in-flight burst (the ISR feeds tx[idx] live). ── */
 
-static void batch_stage_stat(void)
+static bool q_begin(uint8_t id)
 {
+    return sup_job_check_free(id);
+}
+
+static void q_commit(uint8_t id)
+{
+    sup_job_table[id].rx[sup_job_table[id].frames - 1u] = 0u;
+    (void)sup_job_queue(id);
+}
+
+static void queue_stat(void)                    /* J6, 0x92B82 */
+{
+    if (!q_begin(JOB_STAT)) return;
     uint16_t *st = sup_job_table[JOB_STAT].tx_stage;
     st[0] = 0x1800u;
     st[1] = 0x0C00u;
     st[2] = 0x1E00u;
     st[3] = 0x0600u;
     st[4] = 0x1400u;
+    q_commit(JOB_STAT);
 }
 
-static void batch_stage_ctrl_tail(void)
+static void queue_ctrl(void)                    /* J1, 0x92D38 */
 {
-    /* frames 2/3: the 0x22/0x09 read commands (frames 0/1 are the
-     * composers' — sup_ctrl_compose / sup_c9_compose) */
+    if (!q_begin(JOB_CTRL)) return;
     uint16_t *st = sup_job_table[JOB_CTRL].tx_stage;
+    st[0] = (uint16_t)(0x8E00u | CELL_CTRL_STAGED);
+    st[1] = (uint16_t)(0xC900u | CELL_C9_STAGED);
     st[2] = 0x2200u;
     st[3] = 0x0900u;
+    CELL_J1_STAGED = st[0];                     /* bench mirror; on the
+                                                 * target st IS 0xFFF88424 */
+    q_commit(JOB_CTRL);
 }
 
-static void batch_stage_id(void)
+static void queue_id(void)                      /* J5, 0x92A84 */
 {
+    if (!q_begin(JOB_ID)) return;
     uint16_t *st = sup_job_table[JOB_ID].tx_stage;
     st[0] = 0x0600u;
     st[1] = 0x0300u;
     st[2] = 0x0000u;
     st[3] = 0x0000u;
+    q_commit(JOB_ID);
 }
 
-static void batch_stage_pos(void)
+static void queue_pos(void)                     /* J3, 0x9305A */
 {
+    if (!q_begin(JOB_POS)) return;
     uint16_t *st = sup_job_table[JOB_POS].tx_stage;
     st[0] = 0x2800u;
     st[1] = 0x2E00u;
+    q_commit(JOB_POS);
 }
 
-static void batch_stage_sslb2(void)
+static void queue_sslb2(void)                   /* J4, 0x93198 */
 {
+    if (!q_begin(JOB_SSLB2)) return;
     sup_job_table[JOB_SSLB2].tx_stage[0] = 0x00FFu;
+    q_commit(JOB_SSLB2);
 }
 
 /* ── init (stock 0x91DD2 serial_rx_init law) ────────────────────────────── */
@@ -86,8 +113,7 @@ void sup_batch_init(void)
                                          * stock 0xFFF9094D = 01, first500_reads 2026-11-11) */
     CELL_SSLB2_RAW = 0x8000u;           /* the sentinel */
     /* the first bus-B job: J5 ID staged and queued */
-    batch_stage_id();
-    (void)sup_job_queue(JOB_ID);
+    queue_id();
 }
 
 /* ── the 5 ms batch (stock 0x8EE82 pool order, 1:1) ─────────────────────── */
@@ -122,7 +148,7 @@ void sup_batch_5ms(void)
     /* THE POOL ORDER, 1:1 for real (first500ms_diff §1 row 3; the transcript
      * tool caught the old order staging J6/J1 first with J3/J4 at the tail —
      * the reverse of the stock's wire sequence on every pass):
-     *   1. reply proc 0x91ACA — queues J4 (0x93198), J3 (0x9305A)
+     *   1. reply proc 0x91ACA — queues J3 (0x9305A), then J4 (0x93198)
      *   2. stage J2 0x91804 (→0x91758+0x92E80), stage F 0x91810
      *   3. compose 0x91C86 → queue J6 0x92B82 + arm J1 0x92D38
      *   4. 0x91E12 letters chain
@@ -143,33 +169,34 @@ void sup_batch_5ms(void)
      * a word on the wire every 2nd pass that the chip never hears from the
      * stock. The descriptor and handler stay (dead, as in the stock). */
     s_stamp = plat_frt_us();
+    plat_alive(0x05u);                  /* S11 breadcrumb: the 5 ms batch */
 
-    /* 1. the reply proc: condense the previous pass, then the starters */
+    /* 1. the reply proc 0x91ACA: condense the previous pass, then the
+     *    starters — J3 FIRST, then J4 (S4, baseline review: 0x91C12 calls
+     *    0x9305A via pool 0x91CE8, then 0x91C16 calls 0x93198 via 0x91CEC;
+     *    first500ms_diff.md §1 row 3 and r02a..r02f carried J4 first) */
     sup_reply_condense();
-    batch_stage_sslb2();
-    (void)sup_job_queue(JOB_SSLB2);
-    batch_stage_pos();
-    (void)sup_job_queue(JOB_POS);
+    queue_pos();
+    queue_sslb2();
 
     /* 2. stage J2 + F (the enables pair; the letters chain folds in below
      *    per the 0x91E12 law — the stock runs it after the J1 arm) */
     sup_enables_stage();
 
-    /* 3. the composers (0x91C86 + 0x93126): queue J6, arm J1 */
+    /* 3. compose 0x91C86, then 0x91DAA: the 0x93126 summarizer, queue J6
+     *    (0x92B82), arm J1 (0x92D38) */
     sup_ctrl_compose();
     sup_c9_compose();
-    batch_stage_stat();
-    (void)sup_job_queue(JOB_STAT);
-    batch_stage_ctrl_tail();
-    (void)sup_job_queue(JOB_CTRL);
+    sup_reply_summarize();
+    queue_stat();
+    queue_ctrl();
 
     /* 4. the letters chain (0x91E12: the selftest runs in the batch pass —
      *    the stock's mode-sequencer slot, AFTER the J1 arm) */
     sup_selftest_step();
 
     /* 5. queue JOB_ID (0x92A84) */
-    batch_stage_id();
-    (void)sup_job_queue(JOB_ID);
+    queue_id();
 
     /* 6/7. bus-A kick (0x921A0: queue the ID job + engine kick) */
     drv_id_kick();

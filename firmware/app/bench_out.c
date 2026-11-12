@@ -73,7 +73,12 @@ static bool supervisor_healthy(void)
 {
     static bool seen;
 
-    if ((CELL_J1_OK & 0x5Eu) != 0u) {
+    /* r02g review SF3: NOT the stock OK bit — that needs J1's reply class
+     * to pass, and protocol_audit §5 recorded the chip answering 0x22 with
+     * 0xABFF (class fail): every bench output test would be refused. The
+     * gate is ours: one J1 exchange done and the echo matching once. */
+    if (CELL_USE_COUNTER(JOB_CTRL) != 0u &&
+        ((CELL_ECHO_22 ^ CELL_CTRL_STAGED) & 0xDFu) == 0u) {
         seen = true;
     }
     return seen && ((CELL_ECHO_22 ^ CELL_CTRL_STAGED) & 0xDFu) == 0u;
@@ -774,10 +779,14 @@ static void sup_rx_words(uint16_t w[8])
  * echo_ok / echo_bad (0x22 echo), a8_bad (SSLB1 class), aa_bad (SSLB0 class) */
 static void sup_echo_counts(uint16_t *ok, uint16_t *bad, uint16_t *a8, uint16_t *aa)
 {
-    *ok  = (uint16_t)(CELL_J1_OK & 0x22u);
-    *bad = (uint16_t)(CELL_J1_ECHOFAIL & 0x22u);
-    *a8  = (uint16_t)(CELL_J1_ERR & 0x15u);
-    *aa  = (uint16_t)(CELL_J1_ERR & 0x0Au);
+    /* S6: the stock map — bit 1 = J1's 0x22 echo (0x907C8/CA), bit 5 =
+     * the C9 echo (0x90973/75 bit 1); a8 = every SSLB1 class error
+     * (0x907C9 & 0x77), aa = every SSLB0 class error (0x90974 & 7). The
+     * triples clear each round (0x93126), so these are this round's. */
+    *ok  = (uint16_t)((CELL_J1_OK & 0x02u) | ((CELL_B0_OK & 0x02u) << 4));
+    *bad = (uint16_t)((CELL_J1_ECHOFAIL & 0x02u) | ((CELL_B0_ECHOFAIL & 0x02u) << 4));
+    *a8  = (uint16_t)(CELL_J1_ERR & 0x77u);
+    *aa  = (uint16_t)(CELL_B0_ERR & 0x07u);
 }
 
 static int sup_lab_results(uint8_t *out, uint16_t max)

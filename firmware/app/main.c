@@ -243,7 +243,9 @@ int main(void)
     plat_mb_capture();
 
     /* order 3.1-5: peripheral bring-up + first WDT feed */
+    plat_wdt_early_capture();           /* S11: before wdt_init rewrites WRCR/WTSR */
     plat_init();
+    plat_app_init();                    /* S10 pin drives + B2 walk-timer calibration */
     plat_stock_init_mirror();           /* the stock's system writes (spec 03 6.2) */
     plat_wdt_capture_reset_cause();     /* once, before the first feed */
     plat_wdt_kick();                    /* the stock's first feed */
@@ -292,9 +294,11 @@ int main(void)
      * the HOST simulator's 1 ms source (the target's tick is the ATU-D1 ISR;
      * its poll always returns false). */
     for (;;) {
-        if (plat_tick_poll()) {
-            sched_tick_isr();
-        }
+        /* S13 (baseline review): the unconditional CMT poll that stood here
+         * fed the scheduler a second tick source alongside the ATU — double
+         * rate the moment the ATU tick lives. The CMT now runs ONLY as the
+         * gated fallback below (the host's 1 ms source takes that path too:
+         * its plat_tick_isr_count() is 0, so s_atu_retired stays false). */
         /* r01e/g POLLED FALLBACKS: the superloop harvests every interrupt
          * flag directly — the firmware runs even with a dead INTC, and the
          * ISR counters (s_tick_isr_count, s_vec_count) tell the bench which
@@ -324,9 +328,14 @@ int main(void)
         if (!s_atu_retired && plat_tick_poll()) {
             sched_tick_isr();                        /* CMT fallback (r01b) */
         }
+        plat_alive(0x01u);                       /* S11 breadcrumb: superloop */
         (void)plat_walktmr_poll();
-        (void)plat_rspi_poll(0u);
-        (void)plat_rspi_poll(1u);
+        /* S1 (baseline review): NO RSPI polls. With interrupts open the
+         * vector could fire between the poll's SPRF check and the body's
+         * SPDR read — one frame processed twice, the replies shifted a slot,
+         * the burst ended early (r02f: >= 40 frames sent, s_vec_count[1] =
+         * 35). Vector delivery on both buses is proven on the bench, and the
+         * stock has no polled path. plat_rspi_poll stays for the lab tools. */
         /* r01d DIAGNOSTIC: superloop WDT kick (a dead tick starves the
          * task-side kick; a hung SUPERLOOP still resets) */
         plat_wdt_kick();

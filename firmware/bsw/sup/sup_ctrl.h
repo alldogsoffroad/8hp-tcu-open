@@ -42,4 +42,8 @@ void sup_enable_request(bool on);
  * + sentinel re-arm, and the 4-sample telemetry average. */
 void sup_reply_condense(void);
 
+/* the 0x93126 summarizer (sup_handlers.c): fold + per-round clear of the
+ * OK/ERR/ECHOFAIL triples (stock 0x931F8) */
+void sup_reply_summarize(void);
+
 #endif /* TCU_SUP_CTRL_H */

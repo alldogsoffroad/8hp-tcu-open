@@ -144,6 +144,95 @@ static const rspi_done_fn s_handlers[JOB_COUNT] = {
     [JOB_FLT]   = sup_resp_flt,
 };
 
+/* ── the completion dispatcher ──────────────────────────────────────────── */
+
+/* S11 THE OPENING RECORD (.noinit): the first OPEN_N bus-B completions of
+ * boots 1, 2 and 3 after power-on, and of the CURRENT boot (slot 3, re-
+ * written every boot from 4 on) — today no bench read sees the opening:
+ * every read lands ~18 ms into the Nth restart. Entry: µs since the boot's
+ * entry TCNTA (saturating), job id, frames (0 = error completion), the
+ * first TX word and up to four reply words (raw; zeroed on a walk error).
+ * Written from the RX ISR (IPR 4) and, for stale recoveries, from task/walk
+ * context under the engine lock (SR.I >= 6) — never interleaved. */
+#define OPEN_N 16u                      /* r02g review S-5: stack budget */
+typedef struct {
+    uint16_t t_us;
+    uint8_t  job;
+    uint8_t  n;
+    uint16_t tx0;
+    uint16_t rx[4];
+    uint16_t pad;
+} open_rec_t;
+open_rec_t s_open[4][OPEN_N] __attribute__((section(".noinit")));
+uint8_t s_open_n[4] __attribute__((section(".noinit")));
+static uint8_t s_open_slot = 0xFFu;
+
+static void open_record(uint8_t job_id, uint16_t tx0, const uint16_t *rx, uint8_t n)
+{
+    uint32_t lk = plat_sr_i();
+
+    if (lk < 6u) {
+        plat_sr_set(6u);                /* the walk ISR also completes jobs */
+    }
+    if (s_open_slot == 0xFFu) {
+        uint32_t b = plat_boot_index();
+        s_open_slot = (uint8_t)(b >= 1u && b <= 3u ? b - 1u : 3u);
+        s_open_n[s_open_slot] = 0u;
+    }
+    uint8_t k = s_open_n[s_open_slot];
+    if (k < OPEN_N) {
+        open_rec_t *e = &s_open[s_open_slot][k];
+        uint32_t dt = plat_frt_us() - plat_boot_tcnta();
+        e->t_us = (uint16_t)(dt > 0xFFFFu ? 0xFFFFu : dt);
+        e->job = job_id;
+        e->n = n;
+        e->tx0 = tx0;
+        for (uint8_t i = 0u; i < 4u; i++) {
+            e->rx[i] = (i < sup_job_table[job_id].frames) ? rx[i] : 0u;
+        }
+        e->pad = 0u;
+        s_open_n[s_open_slot] = (uint8_t)(k + 1u);
+    }
+    plat_sr_set(lk);
+}
+
+/* S2/S3 (baseline review): every burst completes through here. frames == 0
+ * is the platform's ERROR completion (stock 0x93A74 after its one retry)
+ * and also the stale-burst recovery below (stock 0x93B8E calls the release
+ * fn): EVERY job runs its handler's error branch (r02g review SF1/SF5 —
+ * the stock's handlers each have one: J1 0x90974|=2 + 0x907C9|=2, J5 |=1,
+ * J6 |=4, J2 0x10, F 0x20, J3 0x40 + 0x907CC = 0xFFFF, J4 copies rx[0]).
+ * The walk handlers have no n check: their bad path IS the release fns'
+ * error path (0x910EE / 0x911D8: stamp, count, 0x90541 |= 1/2), reached
+ * through a zeroed reply that fails every class check. The handler runs
+ * FIRST — the walk handlers stamp TCNTA - 0x29 at entry (the era base the
+ * slot law aims from) — then the diagnostics (r02g review N2). */
+static void job_done(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
+{
+    if (job_id >= JOB_COUNT) {
+        return;
+    }
+    uint16_t tx0 = sup_job_table[job_id].tx_stage[0];   /* the word SENT (a
+                                         * walk ISR may restage it after the
+                                         * handler releases the job) */
+    if (n == 0u) {
+        sup_job_err_bump(job_id);
+        if (job_id == JOB_DUTY || job_id == JOB_LEVEL) {
+            uint8_t nf = sup_job_table[job_id].frames;
+            for (uint8_t i = 0u; i < nf; i++) {
+                rx[i] = 0u;                     /* fails every class check */
+            }
+            s_handlers[job_id](bus, job_id, rx, nf);
+        } else {
+            s_handlers[job_id](bus, job_id, rx, 0u);
+        }
+    } else {
+        s_handlers[job_id](bus, job_id, rx, n);
+    }
+    plat_alive(0x100u | job_id);
+    open_record(job_id, tx0, rx, n);
+}
+
 /* ── the engine ─────────────────────────────────────────────────────────── */
 
 /* THE ENGINE LOCK (2026-11-11 decode): the stock's queue 0x937F8, engine
@@ -179,8 +268,11 @@ bool sup_job_check_free(uint8_t id)
         return false;
     }
     lk = q_lock();
+    /* S3: a channel ARMED/FEEDING for over 1 ms is dead (the longest burst
+     * is ~80 µs) — error-complete it so the bus can never wedge */
+    (void)plat_rspi_reap(sup_job_table[id].bus, 1000u);
     if (s_in_flight[id] != 0u && !s_queued[id] &&
-        !plat_rspi_busy(sup_job_table[id].bus)) {
+        !plat_rspi_owned(sup_job_table[id].bus)) {
         /* STALE-BURST RECOVERY — the stock's busy-find law (0x93B8E, the
          * shared check-free every builder calls: 0x91086 duty, 0x91190 level,
          * all cyclic builders). The stock does NOT silently skip a busy job:
@@ -190,15 +282,19 @@ bool sup_job_check_free(uint8_t id)
          * (0x90541 bit0/bit1) and clears the state byte — so a stuck burst
          * can never wedge its builder: the next pass relaunches fresh. The
          * armed state is exempt (the burst-end handoff); its port is the
-         * engine's handoff flag, held across plat_rspi_busy for exactly that
+         * engine's handoff flag, read through plat_rspi_owned for exactly that
          * window (plat_rspi.c). Ours additionally requires the channel idle:
          * in-flight with the channel ARMED/FEEDING is a live burst and waits
          * (stock '@' behavior). The r01r duty investigation proved the
          * one-launch wedge class is real in this port: without this law an
          * orphaned s_in_flight is permanent and the builder dies silently
          * forever (the stock's 0x93B8E is why it never could). */
-        sup_job_err_bump(id);
-        s_in_flight[id] = 0u;
+        /* r02g review SF5: fail it through its handler's error branch,
+         * as 0x93B8E calls the release fn — and report NOT free this pass
+         * (the stock returns busy; the builder relaunches next pass) */
+        job_done(sup_job_table[id].bus, id, sup_job_table[id].rx, 0u);
+        q_unlock(lk);
+        return false;
     }
     free_now = (s_in_flight[id] == 0u && !s_queued[id]);
     q_unlock(lk);
@@ -245,7 +341,7 @@ static bool launch_job(uint8_t id)
      * would clobber every composed word. */
     (void)d->tx_tmpl;
     if (!plat_rspi_launch(d->bus, id, d->tx_stage, d->rx, d->frames,
-                          d->sel_cfg, d->n_sel, s_handlers[id])) {
+                          d->sel_cfg, d->n_sel, job_done)) {
         return false;
     }
     s_in_flight[id] = 1u;

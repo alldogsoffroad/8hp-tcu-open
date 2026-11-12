@@ -136,18 +136,99 @@ static void walktmr_arm_count(void)
 
 /* ONE-SHOT ARM (r02f, the stock's 0x6C0BA/0x6BF9C tail 0x91004): load the
  * down counter and trigger it; the underflow stops the counter and the ISR
- * does NOT re-arm — the walk's programmers arm every shot. Scale: the stock
- * loads delay<<8 for a µs delay; in our clock setup one DCNTD00 tick (bits
- * 31:8) measured ~28 µs (r01t: 4 ticks ≈ 112 µs per launch; r01u: 0xB0
- * ticks ≈ 4.9 ms), the clock select (TCRD0/DCSELDn0) is not decoded. Arm at
- * 32 µs/tick — always SHORT of the target, never late — and let the walk
- * service (sup_walk_isr) close the loop on TCNTA and re-arm the remainder. */
-#define WALK_US_PER_TICK_ARM 32u
+ * does NOT re-arm — the walk's programmers arm every shot.
+ *
+ * THE SCALE, MEASURED NOT ASSUMED (B2, baseline review 2026-11-11). Two
+ * readings disagree: TCRD0=0x4000 selects clock bus 0, our own
+ * ATU_PSCR(0)=19 makes bus 0 = 20 MHz/20 = 1 MHz, and the stock loads
+ * delay<<8 for a µs delay → 1 µs/tick [I strong]; r02f armed at 32 µs/tick
+ * from launch rates (r01t/r01u) that the SPI burst and the 5 ms task
+ * limited [refuted as a counter measurement]. At 1 µs/tick a ÷32 arm fires
+ * 32x early and the closed loop re-enters the priority-6 ISR ~100 times per
+ * shot. So the platform times the counter against TCNTA (1 MHz [O]) once at
+ * boot, interrupts closed: load 64 ticks (1024 if that took < 0.5 ms),
+ * start, poll the underflow flag. s_walk_q8 = µs per tick × 256 (the bench
+ * witness: 0x100 = 1 µs/tick, 0x1C00 = 28 µs/tick); s_walk_cal = 1 ok /
+ * 2 timeout (fallback 32 µs/tick, the r02f arm). */
+#define WALK_CAL_LIMIT_US 20000u
+#define WALK_CAL_SPIN_MAX 4000000u              /* r02g review S-4: exit even if
+                                                 * TCNTA is not running */
+#define WALK_Q8_FALLBACK  (32u * 256u)
+#define WALK_Q8_MIN       64u                   /* 0.25 µs/tick */
+#define WALK_Q8_MAX       (320u * 256u)         /* 320 µs/tick (S-4: the old
+                                                 * 64 µs cap armed LATE above it) */
 
+volatile uint32_t s_walk_q8 = WALK_Q8_FALLBACK;
+volatile uint32_t s_walk_cal_us;         /* raw: TCNTA counts for s_walk_cal_ticks */
+volatile uint32_t s_walk_cal_ticks;
+volatile uint8_t  s_walk_cal;            /* 0 not run, 1 ok, 2 timeout */
+
+/* one probe: load `ticks`, start, poll the underflow flag; returns the
+ * TCNTA span, or 0xFFFFFFFF on timeout (flag never rose / TCNTA dead) */
+static uint32_t walk_cal_probe(uint32_t ticks)
+{
+    uint32_t t0, dt, spins = 0u;
+
+    TSRD0_ACK &= (uint8_t)~UCOMP_DSTD;
+    t0 = plat_frt_us();
+    DCNTD00 = ticks << 8;
+    DSTRD0 |= UCOMP_DSTD;
+    do {
+        dt = plat_frt_us() - t0;
+        if (++spins >= WALK_CAL_SPIN_MAX) {
+            dt = WALK_CAL_LIMIT_US;
+            break;
+        }
+    } while ((TSRD0_ACK & UCOMP_DSTD) == 0u && dt < WALK_CAL_LIMIT_US);
+    TSRD0_ACK &= (uint8_t)~UCOMP_DSTD;
+    return dt >= WALK_CAL_LIMIT_US ? 0xFFFFFFFFu : dt;
+}
+
+void plat_walktmr_calibrate(void)
+{
+    uint32_t ticks = 64u, dt, q8;
+
+    TIERD0_EN &= (uint8_t)~UCOMP_DSTD;       /* no vector during the probe */
+    TCRD0 = (uint16_t)TCRD0_INIT;
+    TSTRD = 0x0Fu;
+    ATUENR |= ATUENR_TDE;
+    dt = walk_cal_probe(ticks);
+    if (dt != 0xFFFFFFFFu && dt < 500u) {
+        /* a fast counter (64 ticks < 0.5 ms): re-measure over 1024 ticks
+         * (<= 8 ms) so the 1 µs TCNTA grain is < 0.1 % of the span */
+        ticks = 1024u;
+        dt = walk_cal_probe(ticks);
+    }
+    s_walk_cal_ticks = ticks;
+    if (dt == 0xFFFFFFFFu) {
+        s_walk_cal_us = 0xFFFFFFFFu;
+        s_walk_cal = 2u;
+        s_walk_q8 = WALK_Q8_FALLBACK;
+        return;
+    }
+    s_walk_cal_us = dt;
+    q8 = (dt * 256u) / ticks;                /* dt < 20000 → no overflow */
+    if (q8 < WALK_Q8_MIN) q8 = WALK_Q8_MIN;
+    if (q8 > WALK_Q8_MAX) q8 = WALK_Q8_MAX;
+    s_walk_q8 = q8;
+    s_walk_cal = 1u;
+}
+
+/* the arm law (r02g review S-3): aim (20 µs + 1/32) SHORT of the target —
+ * the 20 µs absorbs ISR entry latency, the 1/32 the calibration error —
+ * so the walk service always wakes with time left and closes the last
+ * stretch on TCNTA (re-arm above 40 µs, spin below). 32-bit arithmetic
+ * only (no __udivdi3 inside the ISR / the SR.I = 0xF window). */
 void plat_walktmr_arm_us(uint32_t us)
 {
-    uint32_t ticks = us / WALK_US_PER_TICK_ARM;
+    uint32_t q8 = s_walk_q8;
+    uint32_t aim, ticks;
 
+    if (us > 1000000u) {
+        us = 1000000u;                       /* us * 256 stays < 2^32 */
+    }
+    aim = us > 20u + us / 32u ? us - 20u - us / 32u : 1u;
+    ticks = (aim * 256u) / q8;
     if (ticks == 0u) {
         ticks = 1u;
     }
@@ -199,7 +280,19 @@ uint32_t plat_walktmr_count(void)
  * Mirror of the ISR body (WDT feed first — the stock law). */
 bool plat_walktmr_poll(void)
 {
+    /* S1 (baseline review): race-free. With SR.I open the vector could fire
+     * between the flag check and the ack and the walk would be serviced
+     * twice (a double shot). Raise to the vector's own level (6, IPR10) so
+     * check+ack+service are atomic against vector 224, exactly as the ISR
+     * itself runs. Vector 224 delivery is not yet proven on the bench, so
+     * the fallback stays. */
+    uint32_t prev = plat_sr_i();
+
+    if (prev < 6u) {
+        plat_sr_set(6u);
+    }
     if ((TSRD0_ACK & UCOMP_DSTD) == 0u) {
+        plat_sr_set(prev);
         return false;
     }
     TSRD0_ACK &= (uint8_t)~UCOMP_DSTD;       /* UDFDn0 ack (stock 0x9106C idiom) */
@@ -207,6 +300,7 @@ bool plat_walktmr_poll(void)
     s_walk_poll_count++;
     plat_wdt_kick();
     sup_walk_isr();                          /* may re-arm (closed loop) */
+    plat_sr_set(prev);
     return true;
 }
 

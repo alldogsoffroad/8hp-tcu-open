@@ -45,6 +45,7 @@ typedef struct {
     bool lab_fail;              /* plat_rspi_lab: bus timeout */
     unsigned walktmr_starts;    /* plat_walktmr_start() calls */
     uint32_t walk_fire_us;       /* r02f: when the armed one-shot underflows */
+    bool rspi_err_next;         /* S2: complete the next burst with frames=0 */
 } stub_plat_t;
 
 extern stub_plat_t stub;

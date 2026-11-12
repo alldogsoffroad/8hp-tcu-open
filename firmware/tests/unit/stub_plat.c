@@ -442,6 +442,29 @@ bool plat_rspi_busy(uint8_t bus)
     return s_rs[bus].armed || s_rs[bus].feeding;
 }
 
+/* the target's '@' window, modelled: set across the done handler. The
+ * launch gate (plat_rspi_busy) must NOT include it — B1: test_rebuild's
+ * chaining check fails if it does (negative-tested 2026-11-12). */
+static bool s_rs_handoff[2];
+
+bool plat_rspi_owned(uint8_t bus)
+{
+    return plat_rspi_busy(bus) || s_rs_handoff[bus];
+}
+
+bool plat_rspi_reap(uint8_t bus, uint32_t max_us)
+{
+    (void)bus;
+    (void)max_us;
+    return false;
+}
+
+uint32_t plat_rspi_err_count(uint8_t bus)
+{
+    (void)bus;
+    return 0u;
+}
+
 uint32_t plat_rspi_isr_count(uint8_t bus)
 {
     return s_rs_isr[bus];
@@ -478,9 +501,16 @@ void stub_rspi_isr(uint8_t bus)
         return;
     }
     c->feeding = false;
+    s_rs_handoff[bus] = true;           /* target: plat_rspi.c burst end */
     if (c->done != NULL) {
-        c->done(bus, c->job_id, c->rx, c->frames);
+        uint8_t n = c->frames;
+        if (stub.rspi_err_next) {       /* target: error completion (S2) */
+            stub.rspi_err_next = false;
+            n = 0u;
+        }
+        c->done(bus, c->job_id, c->rx, n);
     }
+    s_rs_handoff[bus] = false;
 }
 
 bool stub_rspi_busy(uint8_t bus)
@@ -556,19 +586,30 @@ void plat_walktmr_stop(void)
     s_walk_run = false;
 }
 
-/* one-shot model (r02f): the platform arms at 32 µs/tick, the real counter
- * runs ~28 µs/tick (r01t/r01u) — so a shot lands EARLY and the walk service
- * must close the loop on TCNTA. The harness fires the ISR at walk_fire_us. */
+/* B2 model: the counter's TRUE rate (q8 µs/tick; 0 → 1 µs/tick, the
+ * reading the clock tree supports) and the target's arm law — calibrated
+ * exactly at boot, (20 µs + 1/32) short. The transcript runs both 1 µs and 28 µs. */
+uint32_t plat_walk_true_q8;
+int plat_walk_cal_err_permil;           /* calibrated rate = true x (1 - e) */
+uint32_t plat_walk_isr_latency_us;      /* ISR entry latency after underflow */
+void plat_walktmr_calibrate(void)
+{
+}
+
 void plat_walktmr_arm_us(uint32_t us)
 {
-    uint32_t ticks = us / 32u;
+    uint32_t q8 = plat_walk_true_q8 ? plat_walk_true_q8 : 256u;
+    uint32_t cal = (uint32_t)((int64_t)q8 * (1000 - plat_walk_cal_err_permil) / 1000);
+    uint32_t aim = us > 20u + us / 32u ? us - 20u - us / 32u : 1u;
+    uint32_t ticks = (aim * 256u) / (cal ? cal : 1u);   /* the target's arm law */
 
     if (ticks == 0u) {
         ticks = 1u;
     }
     s_walk_run = true;
     stub.walktmr_starts++;
-    stub.walk_fire_us = stub.frt_us + ticks * 28u;
+    stub.walk_fire_us = stub.frt_us + (uint32_t)(((uint64_t)ticks * q8) / 256u)
+                        + plat_walk_isr_latency_us;
 }
 
 bool plat_walktmr_running(void)
@@ -584,6 +625,26 @@ uint32_t plat_walktmr_count(void)
 /* ---- WDT model ---- */
 void plat_wdt_kick(void)
 {
+}
+
+static uint32_t s_boot_idx = 1u;
+void plat_wdt_early_capture(void)
+{
+}
+void plat_app_init(void)
+{
+}
+uint32_t plat_boot_index(void)
+{
+    return s_boot_idx;
+}
+uint32_t plat_boot_tcnta(void)
+{
+    return 0u;
+}
+void plat_alive(uint32_t code)
+{
+    (void)code;
 }
 
 void plat_wdt_capture_reset_cause(void)

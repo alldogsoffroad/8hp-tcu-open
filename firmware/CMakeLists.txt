@@ -211,6 +211,7 @@ else()
         bsw/sup/sup_letters.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
         tests/unit/stub_plat.c)
     add_test(NAME transcript COMMAND transcript)
+    add_test(NAME transcript_28us COMMAND transcript 7168)
     add_test(NAME dump COMMAND test_dump)
     add_executable(test_rebuild tests/unit/test_rebuild.c bsw/sched/sched.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_walk.c bsw/sup/sup_batch.c
@@ -220,7 +221,7 @@ else()
     # project flasher on the simulated flash controller (spec 16 section 7)
     set(FL_HOST_SOURCES flasher/fl_core.c flasher/fl_fcu.c tests/unit/fl_sim.c)
     add_executable(test_flasher tests/unit/test_flasher.c ${FL_HOST_SOURCES} app/flash_entry.c
-        bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c tests/unit/stub_plat.c)
+        bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_letters.c tests/unit/stub_plat.c)
     target_compile_definitions(test_flasher PRIVATE FL_HOST)
     add_test(NAME flasher COMMAND test_flasher)
     add_executable(test_loader tests/unit/test_loader.c loader/ld_image.c)

@@ -176,17 +176,26 @@ void plat_walktmr_stop(void)
     s_walk_shot = false;
 }
 
+/* B2 model: the counter's TRUE rate (q8 µs/tick; 0 → 1 µs/tick, the
+ * reading the clock tree supports) and the target's arm law — calibrated
+ * exactly at boot, (20 µs + 1/32) short. The transcript runs both 1 µs and 28 µs. */
+uint32_t plat_walk_true_q8;
+void plat_walktmr_calibrate(void)
+{
+}
+
 void plat_walktmr_arm_us(uint32_t us)
 {
-    /* mirror the target: armed at 32 µs/tick, the counter runs ~28 µs/tick */
-    uint32_t ticks = us / 32u;
+    uint32_t q8 = plat_walk_true_q8 ? plat_walk_true_q8 : 256u;
+    uint32_t aim = us > 20u + us / 32u ? us - 20u - us / 32u : 1u;
+    uint32_t ticks = (aim * 256u) / q8;     /* the target's arm law */
 
     if (ticks == 0u) {
         ticks = 1u;
     }
     s_walk_run = true;
     s_walk_shot = true;
-    s_walk_fire_us = host_us() + ticks * 28u;
+    s_walk_fire_us = host_us() + (uint32_t)(((uint64_t)ticks * q8) / 256u);
 }
 
 bool plat_walktmr_running(void)
@@ -204,6 +213,26 @@ static bool s_wdt_interval;
 
 void plat_wdt_kick(void)
 {
+}
+
+static uint32_t s_boot_idx = 1u;
+void plat_wdt_early_capture(void)
+{
+}
+void plat_app_init(void)
+{
+}
+uint32_t plat_boot_index(void)
+{
+    return s_boot_idx;
+}
+uint32_t plat_boot_tcnta(void)
+{
+    return 0u;
+}
+void plat_alive(uint32_t code)
+{
+    (void)code;
 }
 
 void plat_wdt_capture_reset_cause(void)
@@ -301,6 +330,24 @@ void plat_rspi_pump(uint8_t bus)
 bool plat_rspi_busy(uint8_t bus)
 {
     return s_hc[bus].armed;
+}
+
+bool plat_rspi_owned(uint8_t bus)
+{
+    return plat_rspi_busy(bus);
+}
+
+bool plat_rspi_reap(uint8_t bus, uint32_t max_us)
+{
+    (void)bus;
+    (void)max_us;
+    return false;
+}
+
+uint32_t plat_rspi_err_count(uint8_t bus)
+{
+    (void)bus;
+    return 0u;
 }
 
 uint32_t plat_rspi_isr_count(uint8_t bus)

@@ -34,7 +34,38 @@ typedef struct {
                                      * done handler runs — see the burst-end
                                      * branch below) */
     uint32_t isr_count;             /* ISR entries (P8 diagnostic) */
+    bool err;                       /* S2: OVRF/MODF/PERF seen this burst */
+    bool retried;                   /* S2: the one retry (stock 0x93A74) used */
+    uint32_t launch_us;             /* S3: TCNTA at launch (the reaper) */
+    uint32_t err_count;             /* S2/S3: error completions (witness) */
+    uint32_t retry_count;           /* S2: retries launched (witness) */
+    volatile bool in_body;          /* r02g review S-1: an RX body is running
+                                     * (a walk ISR at IPR 6 may preempt it) —
+                                     * the reaper must not complete under it */
 } rspi_chan_t;
+
+/* SPSR error flag: OVRF (bit 0) only — the stock's burst-end ISR 0x965E4
+ * tests `tst #1` (OVRF) plus the DMA flags; MODF/PERF are unreachable with
+ * SPCR = 0xC8 and no parity (r02g review N2) */
+#define SPSR_ERRS 0x01u
+
+/* SPTEF wait, TIME-bounded (r02g review S-2): a frame is ~10 µs at
+ * Pφ/12; 200 µs of no SPTEF is a dead transmitter. The old 20000-poll
+ * guard spun for an unbounded-in-time stretch and, chained through the
+ * error completions, could drain every queued job in one masked cascade
+ * (~100 ms against a ~30 ms WDT). */
+#define SPTEF_WAIT_US 200u
+static bool sptef_wait(volatile uint8_t *sr)
+{
+    uint32_t t0 = plat_frt_us();
+
+    while ((*sr & SPSR_SPTEF) == 0u) {
+        if ((plat_frt_us() - t0) >= SPTEF_WAIT_US) {
+            return false;
+        }
+    }
+    return true;
+}
 
 static rspi_chan_t s_chan[2];       /* [0]=bus A, [1]=bus B */
 
@@ -112,10 +143,15 @@ bool plat_rspi_launch(uint8_t bus, uint8_t job_id, uint16_t *tx, uint16_t *rx,
     c->done = done;
     c->job_id = job_id;
     c->idx = 0u;
+    c->err = false;
+    c->retried = false;
+    c->launch_us = plat_frt_us();
     c->state = CH_ARMED;                        /* the commit point */
     plat_sr_set(sr_i);
     return true;
 }
+
+static void burst_end(rspi_chan_t *c, bool err);
 
 /* ── pump: start the highest-priority staged job (task or init context) ── */
 
@@ -159,11 +195,15 @@ void plat_rspi_pump(uint8_t bus)
      * burst never clocks (old plat_sh7254r.c:694) */
     volatile uint8_t *sr = spsr(bus);
     volatile uint16_t *dr = spdr(bus);
-    uint32_t guard;
-    for (guard = 20000u; guard != 0u && (*sr & SPSR_SPTEF) == 0u; guard--) {
-    }
-    if (guard == 0u) {
-        *spcr(bus) = 0x08u;                     /* can't start: disarm */
+    if (!sptef_wait(sr)) {
+        /* S3 + r02g review S-2: a dead transmitter. Disarm and leave the
+         * channel ARMED with its launch stamp: the reaper (sup_job_check_
+         * free, 1 ms, task or walk context, no recursion) error-completes
+         * it WITHOUT a retry. Completing here recursed through every
+         * queued job's handler pump in one cascade. */
+        *spcr(bus) = 0x08u;
+        c->err = true;
+        c->retried = true;
         return;
     }
     (void)*sr;                                  /* SPTEF read */
@@ -177,11 +217,24 @@ void plat_rspi_pump(uint8_t bus)
 
 bool plat_rspi_busy(uint8_t bus)
 {
-    /* the handoff flag holds the channel busy across the burst-end window
-     * (state=IDLE .. done handler) — the port of the stock's armed state
-     * 0x40 '@' (0x93A08 sets it before the release-fn harvest): the job is
-     * STILL owned by its completion until in_flight clears, so the job
-     * engine must neither launch over it nor "recover" it as an orphan. */
+    /* B1 FIX (baseline review 2026-11-11): the launch gate is the channel
+     * state ONLY. r01s..r02f also returned busy while `handoff` was set, so
+     * the sup_job_engine_pump() at the end of every reply handler — which
+     * runs INSIDE the handoff window — launched nothing, and the trailing
+     * plat_rspi_pump() below only starts an already-ARMED channel: queued
+     * jobs never chained and waited for an unrelated pump (batch, monitor,
+     * walk). J1, 6th in the per-pass queue, essentially never reached the
+     * wire. The stock's 0x93A08 launches the next job (0x93902) BEFORE it
+     * calls the release function. */
+    return s_chan[bus].state != CH_IDLE;
+}
+
+bool plat_rspi_owned(uint8_t bus)
+{
+    /* the '@' window (stock 0x93A08 sets it before the release-fn harvest;
+     * 0x93B8E exempts it from the busy-find cancel): the finishing job is
+     * still owned by its completion until in_flight clears, so the check-
+     * free recovery must not "recover" it as an orphan. */
     return s_chan[bus].state != CH_IDLE || s_chan[bus].handoff;
 }
 
@@ -214,10 +267,17 @@ static void plat_rspi_isr_body(uint8_t bus)
     if (c->state != CH_FEEDING) {
         return;                                 /* spurious */
     }
+    c->in_body = true;
 
     /* collect the reply of the frame that just completed (off-by-one law:
      * the reply to frame k is available at the k-1th interrupt — the
      * E60 lesson; first frame's reply available after feeding frame 1) */
+    /* S2: the stock's burst-end ISR 0x965E4 reads SPSR and routes any OVRF
+     * burst to the error completion 0x93A74 — never harvest corrupt data.
+     * Read the flags BEFORE the SPDR read (which clears SPRF). */
+    if ((*spsr(bus) & SPSR_ERRS) != 0u) {
+        c->err = true;
+    }
     c->rx[c->idx - 1u] = *spdr(bus);
 
     if (c->idx < c->frames) {
@@ -228,56 +288,116 @@ static void plat_rspi_isr_body(uint8_t bus)
          * class (SPSR=0xA0, ECHO_22 lost, REG_14 the lone survivor). */
         volatile uint8_t *sr = spsr(bus);
         volatile uint16_t *dr = spdr(bus);
-        uint32_t guard;
-        for (guard = 20000u; guard != 0u && (*sr & SPSR_SPTEF) == 0u; guard--) {
-        }
-        if (guard != 0u) {
+        if (sptef_wait(sr)) {
             (void)*sr;
             *dr = c->tx[c->idx];
             (void)*sr;
             *sr = 0u;
             c->idx++;
+        } else {
+            /* S3 + S-2: a dead transmitter mid-burst. The reply was read
+             * and SPRF cleared, so no further interrupt will come: disarm,
+             * mark, and let the reaper error-complete it (no retry, no
+             * recursion from inside the ISR). */
+            *spcr(bus) = 0x08u;
+            c->err = true;
+            c->retried = true;
         }
-        /* guard expiry: leave idx unchanged — the next poll/ISR retries
-         * the same frame instead of desyncing (the burst stalls visibly
-         * rather than corrupting silently) */
     } else {
-        /* burst end: disarm, CLEAN the SPSR (trailing flag/OVRN kill —
-         * see the pump note), hand the replies to the completion handler.
-         * F5 (protocol_audit §1): snapshot the handoff BEFORE clearing the
-         * state — the walk ISR runs at IPR 6 over this engine's 4 and can
-         * preempt the window between state=IDLE and the field reads; its
-         * pump then launches a queued walk job, overwriting done/job_id/rx
-         * and misdirecting THIS burst's completion (snapshot works in both
-         * entry paths and never delays the walk tick by raising SR). */
-        rspi_done_fn done = c->done;
-        uint8_t job_id = c->job_id;
-        uint16_t *rx = c->rx;
-        uint8_t frames = c->frames;
-        c->handoff = true;                      /* '@' open: the job stays
+        c->in_body = false;                     /* the handoff window owns it now */
+        burst_end(c, c->err);
+        return;
+    }
+    c->in_body = false;
+}
+
+/* burst end (success or error): disarm, CLEAN the SPSR (trailing flag/OVRN
+ * kill — see the pump note), hand the replies to the completion handler.
+ * F5 (protocol_audit §1): snapshot the registration BEFORE clearing the
+ * state — the walk ISR runs at IPR 6 over this engine's 4 and can preempt
+ * the window between state=IDLE and the field reads; its pump then launches
+ * a queued walk job, overwriting done/job_id/rx and misdirecting THIS
+ * burst's completion.
+ *
+ * S2 (stock 0x93A74): an errored burst is relaunched ONCE with the same
+ * registration; a second failure completes with frames = 0, the handlers'
+ * error path (sup_jobs.c job_done) — no corrupt word is ever harvested. */
+static void burst_end(rspi_chan_t *c, bool err)
+{
+    uint8_t bus = c->bus;
+    rspi_done_fn done = c->done;
+    uint8_t job_id = c->job_id;
+    uint16_t *rx = c->rx;
+    uint8_t frames = c->frames;
+
+    *spcr(bus) = 0x08u;                         /* idle = MSTR only */
+    (void)*spsr(bus);
+    *spsr(bus) = 0x20u;
+    if (err && !c->retried) {
+        c->retried = true;
+        c->err = false;
+        c->retry_count++;
+        c->idx = 0u;
+        c->launch_us = plat_frt_us();
+        c->state = CH_ARMED;
+        plat_rspi_pump(bus);                    /* may recurse once into
+                                                 * burst_end on a dead SPTEF;
+                                                 * retried is set, so the
+                                                 * recursion ends there */
+        return;
+    }
+    if (err) {
+        c->err_count++;
+        frames = 0u;                            /* the error completion */
+    }
+    c->handoff = true;                          /* '@' open: the job stays
                                                  * owned until its done
                                                  * handler's release lands —
                                                  * the guard the stock runs in
                                                  * 0x93B8E (the armed state 0x40
                                                  * is exempt from the busy-find
-                                                 * cancel). Pumps inside the
-                                                 * window see busy and hold;
-                                                 * the trailing pump below
-                                                 * delivers anything queued. */
-        *spcr(bus) = 0x08u;                     /* idle = MSTR only */
-        (void)*spsr(bus);
-        *spsr(bus) = 0x20u;
-        c->state = CH_IDLE;
-        c->idx = 0u;
-        if (done) {
-            done(bus, job_id, rx, frames);
-        }
-        c->handoff = false;                     /* '@' closed: release has
-                                                 * landed, in_flight is clear */
-        /* the done handler may queue the next job; pump it now for
-         * gapless chaining (the stock's DMA engine behaves the same) */
-        plat_rspi_pump(bus);
+                                                 * cancel) — read by
+                                                 * plat_rspi_owned only. The
+                                                 * handler's engine pump sees
+                                                 * the channel IDLE and chains
+                                                 * the next queued job. */
+    c->state = CH_IDLE;
+    c->idx = 0u;
+    if (done) {
+        done(bus, job_id, rx, frames);
     }
+    c->handoff = false;                         /* '@' closed */
+    plat_rspi_pump(bus);                        /* starts an ARMED channel
+                                                 * (a walk-ISR launch that
+                                                 * landed in the window) */
+}
+
+/* S3 reaper: a channel ARMED/FEEDING longer than max_us is dead (the
+ * longest burst, W1's 7 frames, is ~80 µs at Pφ/12) — error-complete it.
+ * Called from the job engine's check-free under the engine lock (SR.I ≥ 6),
+ * which stops a NEW RX ISR — but check-free also runs in the walk ISR
+ * (IPR 6), which can preempt an RX body already running (r02g review S-1):
+ * never reap under a live body, nor the lab path (job 0xFF, its own
+ * timeout; an FE13 burst may run past 1 ms). Returns true if it reaped. */
+bool plat_rspi_reap(uint8_t bus, uint32_t max_us)
+{
+    if (bus >= 2u) {
+        return false;
+    }
+    rspi_chan_t *c = &s_chan[bus];
+
+    if (c->state == CH_IDLE || c->in_body || c->handoff || c->job_id == 0xFFu ||
+        (plat_frt_us() - c->launch_us) < max_us) {
+        return false;
+    }
+    c->retried = true;                          /* no retry for a dead channel */
+    burst_end(c, true);
+    return true;
+}
+
+uint32_t plat_rspi_err_count(uint8_t bus)
+{
+    return bus < 2u ? s_chan[bus].err_count : 0u;
 }
 
 /* the TRUE interrupt entry (vector 445 bus A / 449 bus B) */
@@ -314,9 +434,10 @@ bool plat_rspi_lab(uint8_t bus, const uint16_t *tx, uint16_t *rx,
                           frames, sel_cfg, n_sel, NULL)) {
         return false;
     }
+    rspi_chan_t *c = &s_chan[bus];
+    uint32_t e0 = c->err_count;
     plat_rspi_pump(bus);
     /* busy-wait with a timeout (diagnostic context only) */
-    rspi_chan_t *c = &s_chan[bus];
     uint32_t t0 = plat_tick_count();
     while (c->state != CH_IDLE) {
         if (plat_tick_count() - t0 > timeout_ms) {
@@ -325,8 +446,11 @@ bool plat_rspi_lab(uint8_t bus, const uint16_t *tx, uint16_t *rx,
             c->state = CH_IDLE;
             return false;
         }
+        if (c->state == CH_ARMED && c->retried && c->err) {
+            burst_end(c, true);                 /* dead SPTEF: no reaper here */
+        }
     }
-    return true;
+    return c->err_count == e0;                  /* an error completion is a failure */
 }
 
 /* ── init ────────────────────────────────────────────────────────────────── */

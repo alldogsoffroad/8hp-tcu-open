@@ -60,6 +60,15 @@
 #define CELL_EN_90          (*(volatile uint8_t  *)0xFFF907D6u) /* staged 0x90 enables */
 #define CELL_ECHO_24        (*(volatile uint8_t  *)0xFFF907D7u) /* 0x24 cert echo */
 
+/* S6 (baseline review): the stock's SSLB0 result triple (0x92D94/0x92AC0/
+ * 0x92BBE) — bit 1 = J5, 2 = J1 (incl. the C9 echo), 4 = J6 — and the
+ * 0x93126 summaries; the A8-class triple is 0x907C8/C9/CA above with bits
+ * J5 0x01, J1 0x02, J6 0x04, J2 0x10, F 0x20, J3 0x40 (mask 0x77). */
+#define CELL_B0_OK          (*(volatile uint8_t  *)0xFFF90973u)
+#define CELL_B0_ERR         (*(volatile uint8_t  *)0xFFF90974u)
+#define CELL_B0_ECHOFAIL    (*(volatile uint8_t  *)0xFFF90975u)
+#define CELL_SUM_B0         (*(volatile uint8_t  *)0xFFF90971u) /* 0x931F8(&0x90973, ., 7) */
+#define CELL_SUM_B1         (*(volatile uint8_t  *)0xFFF90972u) /* 0x931F8(&0x907C8, ., 0x77) */
 #define CELL_ID_B0_06       (*(volatile uint8_t  *)0xFFF90978u)
 #define CELL_ID_B0_00       (*(volatile uint8_t  *)0xFFF90977u)
 #define CELL_STAT_B0_0C     (*(volatile uint8_t  *)0xFFF90979u)

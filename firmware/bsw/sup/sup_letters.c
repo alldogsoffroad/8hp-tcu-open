@@ -199,25 +199,36 @@ uint8_t sup_switch_status_build(void)
     return en;
 }
 
+/* the J2 / F queuers (stock 0x92E80 / 0x92F7C) — S7 (baseline review):
+ * check-free FIRST and return if busy; only then stage the word from the
+ * enables cell, fault-masked (NR-8: 0x907D6 & ~(0x907D1 & 0xE0)), clear
+ * the last reply word (0x8843A / 0x88442) and queue. The old order staged
+ * unconditionally — a re-stage while the job was in flight could tear the
+ * burst and the handler compared its echo against a word never sent. */
+static void enables_queue(uint8_t id)
+{
+    if (!sup_job_check_free(id)) {
+        return;
+    }
+    uint16_t word = (uint16_t)(0x9000u |
+        (uint8_t)(CELL_EN_90 & (uint8_t)~(CELL_REG_14 & 0xE0u)));
+    sup_job_table[id].tx_stage[0] = word;
+    sup_job_table[id].tx_stage[1] = 0x2400u;
+    sup_job_table[id].rx[1] = 0u;
+    if (id == JOB_EN) {
+        CELL_J2_STAGED = word;          /* bench mirror (= the stage on target) */
+    }
+    (void)sup_job_queue(id);
+}
+
+void sup_flt_requeue(void)
+{
+    enables_queue(JOB_FLT);
+}
+
 void sup_enables_stage(void)
 {
-    uint8_t en = sup_switch_status_build();
-    /* NR-8: fault-mask the letter bits from the 0x14 reply BEFORE sending */
-    uint8_t masked = (uint8_t)(en & (uint8_t)~(CELL_REG_14 & 0xE0u));
-    uint16_t word = (uint16_t)(0x9000u | masked);
-
-    /* stage both enables twins (the stagers own the words) */
-    sup_job_table[JOB_EN].tx_stage[0] = word;
-    sup_job_table[JOB_EN].tx_stage[1] = 0x2400u;
-    sup_job_table[JOB_FLT].tx_stage[0] = word;
-    sup_job_table[JOB_FLT].tx_stage[1] = 0x2400u;
-    /* the J2 staging mirror the bench reads at 0xFFF88434 */
-    CELL_J2_STAGED = word;
-    /* queue check-free — the gate is job-idle only (stock 0x93B8E law) */
-    if (sup_job_check_free(JOB_EN)) {
-        (void)sup_job_queue(JOB_EN);
-    }
-    if (sup_job_check_free(JOB_FLT)) {
-        (void)sup_job_queue(JOB_FLT);
-    }
+    (void)sup_switch_status_build();    /* 0x91758 → 0x907D6 */
+    enables_queue(JOB_EN);              /* 0x91804 → 0x92E80 */
+    enables_queue(JOB_FLT);             /* 0x91810 → 0x92F7C */
 }

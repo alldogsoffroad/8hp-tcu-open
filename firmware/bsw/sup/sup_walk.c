@@ -661,6 +661,7 @@ static void one_shot_enable(void)
 
 void sup_monitor_poll(void)
 {
+    plat_alive(0x02u);                                    /* S11 breadcrumb */
     /* (no per-pass token stage: the stock writes 0x92414 only in 0x6C802,
      *  at arm time — r02f review) */
     walk_task();                                          /* 0x876C4 → 0x6C63E */
@@ -726,10 +727,12 @@ void sup_duty_job(void)
     if (!sup_job_check_free(JOB_DUTY)) {
         return;
     }
+    /* VERBATIM (walkdata review #3): the stock's 0x8CEDC inverts the token
+     * BEFORE arming (ctx 0x19 → 0x6C802 stages ~token in 0x92414); 0x6C1BA
+     * and 0x91086 send 0x92414 as-is. The old builder-side inversion would
+     * double-invert the moment 0x8CEDC is ported — a port must pass ~token
+     * to token_arm. (Unreachable in r02f: only CTX_STEADY is armed.) */
     tok = CELL_TOKEN_STAGED;
-    if (CELL_DUTY_CTX == CTX_INV) {
-        tok = ~tok;                                       /* context 0x19 sends ~token */
-    }
     st = sup_job_table[JOB_DUTY].tx_stage;
     st[0] = (uint16_t)(0x8800u | ((tok >> 24) & 0xFFu));
     st[1] = (uint16_t)(0x8800u | ((tok >> 16) & 0xFFu));
@@ -746,6 +749,7 @@ void sup_duty_job(void)
 
 void sup_walk_isr(void)
 {
+    plat_alive(0x06u);                                    /* S11 breadcrumb */
     /* the WDT is fed by the platform ISR first (0x6C244 → 0x920C6) */
     if (!s_shot_armed) {
         return;

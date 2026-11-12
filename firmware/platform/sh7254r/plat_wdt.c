@@ -27,6 +27,60 @@ uint8_t plat_wdt_wovf_count(void)
     return s_wovf_count;
 }
 
+/* ── S11 RESET-CAUSE WITNESS (baseline review 2026-11-11) ─────────────────
+ * s_wovf_count alone cannot prove an external reset: a RES-pin reset clears
+ * WTSR (manual §14), and the boot MAT may clear WOVF. WRCR is the second
+ * discriminator — cleared only by a RES-pin / power-on reset, it SURVIVES a
+ * WDT reset; wdt_init rewrites it (0x5A80 → reads 0x80), so it must be read
+ * BEFORE wdt_init. Captured raw at entry, plus the previous boot's last-alive
+ * breadcrumb (TCNTA + a code naming what the firmware was doing). Readings:
+ *   wrcr & 0x80 set   → no RES since a firmware wdt_init: a WDT reset (or
+ *                       the boot side left it set)
+ *   wrcr & 0x80 clear → a RES-pin / power-on reset [M: manual §14.3.4]
+ * The record is magic-guarded: power-on garbage resets it (boots = 1). */
+#define RST_MAGIC 0x52535431u               /* 'RST1' */
+plat_rst_t s_rst __attribute__((section(".noinit")));
+volatile uint32_t s_alive_t __attribute__((section(".noinit")));
+volatile uint32_t s_alive_code __attribute__((section(".noinit")));
+
+void plat_wdt_early_capture(void)
+{
+    uint32_t prev_t = s_alive_t, prev_code = s_alive_code;
+
+    if (s_rst.magic != RST_MAGIC) {
+        s_rst.magic = RST_MAGIC;
+        s_rst.boots = 0u;
+        prev_t = 0u;
+        prev_code = 0u;
+    }
+    s_rst.boots++;
+    s_rst.wtcr = REG16(WTCR_ADDR);
+    s_rst.wtcnt = REG16(WTCNT_ADDR);
+    s_rst.wtsr = REG16(WTSR_ADDR);
+    s_rst.wrcr = REG16(WRCR_ADDR);
+    s_rst.tcnta = FRT_TCNTA;
+    s_rst.prev_alive_t = prev_t;
+    s_rst.prev_alive_code = prev_code;
+    s_alive_t = 0u;
+    s_alive_code = 0u;
+}
+
+uint32_t plat_boot_index(void)
+{
+    return s_rst.boots;
+}
+
+uint32_t plat_boot_tcnta(void)
+{
+    return s_rst.tcnta;
+}
+
+void plat_alive(uint32_t code)
+{
+    s_alive_t = FRT_TCNTA;
+    s_alive_code = code;
+}
+
 void plat_wdt_capture_reset_cause(void)
 {
     /* called ONCE at init, before the first feed (spec 24 §4.3).

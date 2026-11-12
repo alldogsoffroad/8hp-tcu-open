@@ -320,16 +320,13 @@ bool plat_speed_read(uint8_t ch, speed_raw_t *r)
  * A-DMAC only. So every frame here is stateless: setup -> SPDR -> poll SPRF -> read reply
  * (full duplex: the reply to THIS frame clocks in during its own transfer) -> SPSR=0. */
 
-static void sup_pfc_mux(void)
-{
-    /* pin mux the engine proved necessary (pf.c rspi_pfc); idempotent OR-masking */
-    (*(volatile uint16_t *)0xFFFFC840u) =
-        (uint16_t)((*(volatile uint16_t *)0xFFFFC840u & 0x0FFFu) | 0xA000u);
-    (*(volatile uint16_t *)0xFFFE3890u) =
-        (uint16_t)((*(volatile uint16_t *)0xFFFE3890u & 0x3FFFu) | 0xC000u);
-    (*(volatile uint16_t *)0xFFFE3896u) =
-        (uint16_t)((*(volatile uint16_t *)0xFFFE3896u & 0x3FFFu) | 0xC000u);
-}
+/* S9 (baseline review 2026-11-11): sup_pfc_mux REMOVED. Copied from
+ * pf.c, it wrote 0xFFFFC840 (PGCR2, not PGCR1) |= 0xA000 — PG15/PG14 to
+ * SSLA7/SSLA6 — and 0xC000 into the reserved bits 15:14 of PBCR4/PBCR1.
+ * The stock keeps PG14/15 as GPIO outputs driven high (0x961F0: PGIOR =
+ * PGDR = 0xFFFF) and its own pin-integrity check 0x9A148 requires PGCR2 ==
+ * 0x00AA exactly (ours read 0xA0AA); the RSPI pins are the stock 0x962E2
+ * set, already ported in port_init. */
 
 static void sup_frame_setup(void)
 {
@@ -348,7 +345,6 @@ static void sup_frame_setup(void)
 
 void plat_sup_init(void)
 {
-    sup_pfc_mux();
     sup_frame_setup();
 }
 
@@ -1240,6 +1236,75 @@ uint16_t plat_clock_probe(uint8_t *out, uint16_t max)
     return 16u;
 }
 
+/* ---- The stock's init-time GPIO drives (S10, baseline review) ---------------
+ * port_init equals the stock's safe-state block 0x961F0; these four init-
+ * table entries run after it in the stock and were missing here, leaving the
+ * pins floating inputs. Ported INSTRUCTION FOR INSTRUCTION from the flash
+ * disassembly (sh-elf-objdump -m sh2a -EB on the September image) — NOT the
+ * Ghidra text, which folds the set/clear pairs and moves the delays (r02g
+ * review X1). bset/bclr.b are byte read-modify-writes; big-endian, so +0 is
+ * bits 15..8 of a 16-bit port register (r5/r14 = 0xFFFE3900 port C,
+ * r13 = 0xFFFE3800 port A):
+ *   0x8FB96 (slot 14 via 0x8EEDC): PC11 = 0, out; PC12 = 1, out; PC13 = 1,
+ *     out (PC13/PC12 set again); PC15 = 1, out; 150 x bld.b #6,@(30,r5)
+ *     (PCPR reads — the stock's delay body); PC15 = 0, out. A PC15 HIGH
+ *     PULSE: the one edge in the set.
+ *   0x90D12 (slot 16 via 0x8EF1A): PA2 = 0, out; PC11 out; 0x90CBA(1):
+ *     PC11 = 0; PJ8 = 1 (0xFFFFC860 bit 8), out (0xFFFFC86C bit 8); PC10
+ *     out (still 0 — port_init); PC9 = 0, out; 0x90CC8(1): PC10 = 0, 75 x
+ *     bclr PC10 (its delay body), PC10 = 1; PA7 = 0, out; 0x90CF6(0):
+ *     0xFFF90920 = 0, PA7 = 0
+ *   0x91852 (slot 16): PACR3[3:0] = 0 (PA8 GPIO); PA8 = 0, out
+ *   0x67350 (slot 17): PACR4 low = 0; PA15..PA12 out; PACR4 high = 0
+ * Not driven in the stock before certification beyond these: PA7 runtime
+ * (0x8CE48, after 0x9095B > 14) and the PC12-14 handshake (cal 0x1918B2 =
+ * 0 disables it). PC12/PC13/PC15 are also plat_flash_enable's lines — the
+ * stock drives them like this on every boot; flashing enters through the
+ * boot hand-over before this runs. [I] which of these the supervisor reads. */
+#define B8(a) (*(volatile uint8_t *)(a))
+#define BSET(a, b) (B8(a) = (uint8_t)(B8(a) | (uint8_t)(1u << (b))))
+#define BCLR(a, b) (B8(a) = (uint8_t)(B8(a) & (uint8_t)~(1u << (b))))
+static void stock_gpio_init(void)
+{
+    const uint32_t PC = 0xFFFE3900u, PA = 0xFFFE3800u;
+
+    /* 0x8FB96 */
+    BCLR(PC + 2u, 3); BSET(PC + 6u, 3);          /* PC11 = 0, out */
+    BSET(PC + 2u, 4); BSET(PC + 6u, 4);          /* PC12 = 1, out */
+    BSET(PC + 2u, 5); BSET(PC + 6u, 5);          /* PC13 = 1, out */
+    BSET(PC + 2u, 5); BSET(PC + 2u, 4);          /* (stock repeats) */
+    BSET(PC + 2u, 7); BSET(PC + 6u, 7);          /* PC15 = 1, out */
+    for (uint32_t i = 0x96u; i != 0u; i--) {
+        (void)B8(PC + 30u);                      /* bld.b #6,@(30,r5): PCPR */
+    }
+    BCLR(PC + 2u, 7); BSET(PC + 6u, 7);          /* PC15 = 0 */
+    /* 0x90D12 */
+    BCLR(PA + 3u, 2); BSET(PA + 7u, 2);          /* PA2 = 0, out */
+    BSET(PC + 6u, 3);                            /* PC11 out */
+    BCLR(PC + 2u, 3);                            /* 0x90CBA(1): PC11 = 0 */
+    BSET(0xFFFFC860u, 0); BSET(0xFFFFC86Cu, 0);  /* PJ8 = 1, out */
+    BSET(PC + 6u, 2);                            /* PC10 out */
+    BCLR(PC + 2u, 1); BSET(PC + 6u, 1);          /* PC9 = 0, out */
+    BCLR(PC + 2u, 2);                            /* 0x90CC8(1): PC10 = 0 */
+    for (uint32_t i = 0x4Bu; i != 0u; i--) {
+        BCLR(PC + 2u, 2);                        /* its delay body */
+    }
+    BSET(PC + 2u, 2);                            /* PC10 = 1 */
+    BCLR(PA + 3u, 7); BSET(PA + 7u, 7);          /* PA7 = 0, out */
+    B8(0xFFF90920u) = 0u;                        /* 0x90CF6(0) */
+    BCLR(PA + 3u, 7);
+    /* 0x91852 */
+    B8(0xFFFE3813u) = (uint8_t)(B8(0xFFFE3813u) & 0xF0u);        /* PACR3: PA8 GPIO */
+    BCLR(PA + 2u, 0); BSET(PA + 6u, 0);          /* PA8 = 0, out */
+    /* 0x67350 */
+    B8(0xFFFE3811u) = 0u;                        /* PACR4 low */
+    B8(PA + 6u) = (uint8_t)(B8(PA + 6u) | 0xF0u);                 /* PA15..12 out */
+    B8(0xFFFE3810u) = 0u;                        /* PACR4 high */
+}
+#undef BSET
+#undef BCLR
+#undef B8
+
 /* ---- Start-up ----------------------------------------------------------------- */
 void plat_init(void)
 {
@@ -1254,6 +1319,20 @@ void plat_init(void)
     plat_toe_out_init();    /* park hold PWM, duty 0 (pin stays low) */
     (void)can_init(RCAN_A_BASE);
     (void)can_init(RCAN_C_BASE);
+    plat_wdt_service();
+}
+
+/* the APPLICATION's init additions (2026-11-12 baseline fixes) — called by
+ * app/main.c after plat_init, never by the loader (which shares plat_init;
+ * the loader is the flashing path). NOTE: the loader is NOT byte-identical
+ * to r02f's — S9's sup_pfc_mux removal is in the shared plat_sup_init. The
+ * bench install merges only the app block, so the on-bench loader is
+ * unchanged until a loader is deliberately rebuilt and flashed. */
+void plat_app_init(void)
+{
+    stock_gpio_init();          /* S10: the stock's init-table GPIO drives */
+    plat_wdt_service();
+    plat_walktmr_calibrate();   /* B2: <= 10 ms, interrupts still closed */
     plat_wdt_service();
 }
 
