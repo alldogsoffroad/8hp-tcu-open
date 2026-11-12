@@ -1278,6 +1278,33 @@ static void stock_gpio_init(void)
         (void)B8(PC + 30u);                      /* bld.b #6,@(30,r5): PCPR */
     }
     BCLR(PC + 2u, 7); BSET(PC + 6u, 7);          /* PC15 = 0 */
+    /* 0x91ED4 — TIMER C START (r02h; c9_bit4_decode.md). The stock's init
+     * batch 0x8EF1A runs it second (pool 0x8F014), before 0x90D12. Without
+     * it the PD4/PD8 timer-function pins (PFC field 01, port_init) carry no
+     * signal, and the chip's 0x14 bit 4 reads 1 — the stock's own
+     * "TIOC outputs cut" expectation (self-test 0x85788 / verdict 0x8C34C;
+     * bit 4 = 1 is OK only while 0x91E6C has the pins on GPIO). Bench r02g
+     * [O]: ATUENR 0x0173 (TCE clear), F400..F49F all at reset values, 0x14
+     * = D5. Bytes 0x91ED4..0x91F3C, r4 = 0xFFFFF400, r3 = 0xFFFFF462: */
+    {
+        volatile uint8_t  *const c400 = (volatile uint8_t  *)0xFFFFF400u;
+        volatile uint16_t *const w462 = (volatile uint16_t *)0xFFFFF462u;
+        volatile uint16_t *const w482 = (volatile uint16_t *)0xFFFFF482u;
+
+        *c400 = (uint8_t)(*c400 & (uint8_t)~0x02u);              /* bclr #1 */
+        *(volatile uint32_t *)0xFFFFF478u = 0xFFE0C100u;          /* @(120,r4) */
+        *(volatile uint32_t *)0xFFFFF468u = 0x00000100u;          /* @(104,r4) */
+        *w462 = (uint16_t)(*w462 & 0xFFF0u);
+        *w462 = (uint16_t)((*w462 & 0xFFF0u) | 3u);
+        *c400 = (uint8_t)(*c400 | 0x02u);                         /* bset #1 */
+        *c400 = (uint8_t)(*c400 & (uint8_t)~0x04u);              /* bclr #2 */
+        *(volatile uint32_t *)0xFFFFF498u = 0xFFE0C100u;          /* @(152,r4) */
+        *(volatile uint32_t *)0xFFFFF488u = 0x00000100u;          /* @(136,r4) */
+        *w482 = (uint16_t)(*w482 & 0xFFF0u);
+        *w482 = (uint16_t)((*w482 & 0xFFF0u) | 3u);
+        *c400 = (uint8_t)(*c400 | 0x04u);                         /* bset #2 */
+        B8(0xFFF90967u) = 1u;                                     /* delay slot */
+    }
     /* 0x90D12 */
     BCLR(PA + 3u, 2); BSET(PA + 7u, 2);          /* PA2 = 0, out */
     BSET(PC + 6u, 3);                            /* PC11 out */
@@ -1330,10 +1357,17 @@ void plat_init(void)
  * unchanged until a loader is deliberately rebuilt and flashed. */
 void plat_app_init(void)
 {
-    stock_gpio_init();          /* S10: the stock's init-table GPIO drives */
+    stock_gpio_init();          /* S10: the stock's init-table GPIO drives (+ Timer C) */
     plat_wdt_service();
     plat_walktmr_calibrate();   /* B2: <= 10 ms, interrupts still closed */
     plat_wdt_service();
+    /* 0x91F3E (the stock's mode-0 init list, index 21 via 0x8EF56, after
+     * the init batch): ATUENR = shadow | 0x3FF through 0x96F56 — every ATU
+     * timer channel enabled, TCE (bit 3, Timer C) among them; ours left
+     * TCE clear (bench r02g ATUENR = 0x0173). Not ported from 0x91F3E:
+     * the error-0x48 report when 0xFFFE0420 bit 7 is set, and the copy of
+     * 0xFFFFFF48 into 0xFFF90628 (no fault manager / no reader). */
+    ATUENR |= 0x03FFu;
 }
 
 /* ---- Rebuild additions (design §5) --------------------------------------------- */
