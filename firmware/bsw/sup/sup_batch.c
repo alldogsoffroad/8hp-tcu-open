@@ -112,8 +112,19 @@ void sup_batch_5ms(void)
      * 0x7DAA4) — r02a's gate here was a misattribution, and the bench
      * answered it with a ~196 ms restart loop (app life ~106 ms, restart
      * within ~10 ms of the release; WOVF counter flat, no exception
-     * frames). The MONITOR lead-in (sup_monitor_poll) is unchanged: its
-     * start time is still [I]. */
+     * frames). The monitor has no lead-in either (r02d: 0x873F0 runs
+     * every 2.5 ms from the first tick — see sup_monitor_poll).
+     *
+     * DECODED, NOT YET PORTED (post-certification, so outside the gate
+     * window): once the OS leaves mode 0 the stock moves this batch, the
+     * reply proc 0x8EE52 and the F stage 0x8EE30 to the 10 ms task (table
+     * 0x43430 row 6, entries 3/75/76) while the J2 stage 0x8EDF6 — which
+     * QUEUES J2 via 0x92E80 — stays at 5 ms. The switch (0x6F0B4 ->
+     * 0x66E06) waits on startup module 2 (0xFFF93B81) <- module 1 <-
+     * modules 7 and 11; module 11 (0xFFF93B85) is set by the mode
+     * sequencer 0x85160 when the selftest sub-state reads 0x40 (ladder
+     * complete) or its retry countdown 0xFFF9414D expires [length not
+     * decoded]. On a gate-closed chip we therefore stay at 5 ms. */
 
     /* THE POOL ORDER, 1:1 for real (first500ms_diff §1 row 3; the transcript
      * tool caught the old order staging J6/J1 first with J3/J4 at the tail —

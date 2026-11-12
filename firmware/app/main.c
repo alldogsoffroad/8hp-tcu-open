@@ -186,7 +186,7 @@ static void task_sup_batch(void)
     sup_batch_5ms();
 }
 
-/* ── 5 ms: the walk monitor (stock 0x873F0) ───────────────────────────── */
+/* ── 2.5 ms (2/3 ms alternation): the walk monitor (stock 0x873F0) ────── */
 static void task_sup_monitor(void)
 {
     sup_monitor_poll();
@@ -226,6 +226,11 @@ static void task_100ms(void)
 static const sched_ent_t s_tasks[] = {
     {    1u,    0u, task_1ms,         RT_1MS  },
     {    5u,    2u, task_sup_batch,   RT_5MS  },
+    /* the monitor runs every 2.5 ms in the stock (0x7EE2E -> 0x873F0, entry
+     * 2 of the 2.5 ms task list, all modes). Our tick is 1 ms, so two
+     * entries per 5 ms give a 2/3 ms alternation — the 2.5 ms mean, inside
+     * the stock's own 25 ms / 9-pass (2.78 ms) supervision ceiling. */
+    {    5u,    0u, task_sup_monitor, RT_5MS  },
     {    5u,    3u, task_sup_monitor, RT_5MS  },
     {   10u,    1u, task_10ms,        RT_10MS },
     {  100u,    5u, task_100ms,       RT_100MS },

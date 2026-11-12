@@ -68,9 +68,6 @@ void sup_monitor_poll(void);
  * One-in-flight: a busy job is skipped silently (stock 0x93B8E). Runs in
  * ISR context. */
 void sup_walk_isr(void);
-bool sup_opening_released(void);       /* the ~95ms silence window (stock
-                                        * OS state-3 gate): true once the
-                                        * batch+monitor may run at all */
 
 /* staging ping-pong value request (stock 0x6C48C park_pwm_learn_value):
  * value is the era period (level x 200; 0x4B0 = the 0x06 era, 0x1838 = the

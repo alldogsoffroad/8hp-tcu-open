@@ -223,32 +223,19 @@ static void test_batch_and_condense(void)
     CHECK(CELL_SSLB2_RAW == 0x8000u);       /* the sentinel */
 
     /* NO BATCH SILENCE (r02c): the stock's batch 0x8EE82 runs from the
-     * first OS tick (5 ms mode-0 task list 0x42CD8, entry 26) — the cyclic
-     * jobs flow through the 20-pass MONITOR lead-in, and only the walk and
-     * the ask wait for it */
-    for (int i = 0; i < 20; i++) {
-        stub.frt_us += 5000u;
-        sup_batch_5ms();
-        sup_monitor_poll();
-        drain_rspi();
-    }
-    CHECK(CELL_USE_COUNTER(JOB_ID) >= 20u); /* the init J5 + the cyclic J5s */
-    CHECK(CELL_REQUEST == 0u);              /* no ask in the lead-in (the walk's
-                                             * lead-in deltas are asserted in
-                                             * test_opening_law — the use
-                                             * counters carry across sections) */
-
-    /* released: the batch queues the cyclic jobs and the engine drains; the
-     * SSLB2 reply lands in the copy cell (the condense of the next pass
-     * copies the handler's cell) */
+     * first OS tick (5 ms mode-0 task list 0x42CD8, entry 26). This section
+     * drives the BATCH ALONE — the monitor (its own 2.5 ms task since r02d)
+     * is exercised in test_opening_law. Two 5 ms passes: the batch queues
+     * the cyclic jobs and the engine drains; the SSLB2 reply lands in the
+     * copy cell (the condense of the next pass copies the handler's cell) */
     stub.frt_us += 5000u;
     sup_batch_5ms();
-    sup_monitor_poll();
     drain_rspi();
-    CHECK(CELL_USE_COUNTER(JOB_ID) >= 2u);  /* pass 21's J5 (the cyclic batch) */
+    CHECK(CELL_REQUEST == 0u);              /* outputs still disabled */
+    CHECK(CELL_USE_COUNTER(JOB_ID) >= 1u);  /* the init J5 launched (pass 1's J5
+                                             * was refused: already queued) */
     stub.frt_us += 5000u;
     sup_batch_5ms();
-    sup_monitor_poll();
     drain_rspi();
     CHECK(CELL_SSLB2_COPY == 0xB400u);      /* the scripted SSLB2 reply */
 
@@ -257,56 +244,34 @@ static void test_batch_and_condense(void)
     sup_enable_request(true);               /* the request cell arms */
     stub.frt_us += 5000u;
     sup_batch_5ms();                        /* compose: bit 0 in the word */
-    sup_monitor_poll();
     drain_rspi();                           /* the echo returns bit 0 (staged ctrl) */
     sup_batch_5ms();                        /* the condense sees the confirmed edge */
-    sup_monitor_poll();
     drain_rspi();
     CHECK(plat_wdt_is_interval());
     CHECK(CELL_GRANT == 1u);                /* the 0x22 echo's bit 0 */
 }
 
-/* THE OPENING LAW (r01w): the stock's order at every boot is flip FIRST,
- * register conversation SECOND — its letters can only be earned through the
- * selftest's phase-2 gate (0x14 bit 1), so its ~+250 ms letters flip proves
- * the chip reported bit 1 SET from the earliest J6 replies, and its walk +
- * ask both arm at the monitor's first pass AFTER that flip (NR-1). Pre-gate
- * the monitor arms NOTHING: no one-shot, no FSM advance, no walk timer, no
- * 84/88-class word. */
+/* THE OPENING LAW (r02d, decoded from the stock's task table): the monitor
+ * 0x873F0 is entry 2 of the 2.5 ms task list in every mode (stub 0x7EE2E)
+ * and has no lead-in and no bit-1 gate — its FIRST pass stages the 0x06 era
+ * and arms the walk timer; the ask follows the first reply with level < 7
+ * (NR-1 holds structurally). The r01w pre-gate return and the r01x..r02c
+ * 20-pass lead-in were both [I] and are gone. */
 static void test_opening_law(void)
 {
-    unsigned lvl0, duty0, starts0;
+    unsigned starts0;
 
     sup_jobs_init();
     sup_walk_init();
     sup_batch_init();
     plat_walktmr_stop();       /* clear the previous section's flag — the
-                                * lead-in assertions below are about DELTAS */
-    /* the use counters carry across sections — assert deltas */
-    lvl0 = CELL_USE_COUNTER(JOB_LEVEL);
-    duty0 = CELL_USE_COUNTER(JOB_DUTY);
+                                * assertions below are about DELTAS */
     starts0 = stub.walktmr_starts;
-
-    /* THE LEAD-IN (the stock's scheduler-imposed ~95 ms batch-only window,
-     * 0x67B16 gated on boot-state 3): 20 monitor passes are no-ops beyond
-     * the token staging */
-    for (unsigned i = 0u; i < 20u; i++) {
-        stub.frt_us += 5000u;
-        sup_monitor_poll();
-    }
-    CHECK(CELL_OUTER_FSM == SUP_FSM_BOOT);  /* the FSM never left boot */
-    CHECK(CELL_WALK_STATE == 0u);
-    CHECK(stub.walktmr_starts == starts0);  /* the walk timer never armed */
-    CHECK(!plat_walktmr_running());
-    CHECK(CELL_REQUEST == 0u);              /* no ask into the silent bus */
-    CHECK(CELL_EN_ONESHOT == 0u);
-    CHECK(CELL_USE_COUNTER(JOB_LEVEL) == lvl0);  /* no 84-class word ever */
-    CHECK(CELL_USE_COUNTER(JOB_DUTY) == duty0);  /* no 88-class word ever */
+    CHECK(CELL_OUTER_FSM == SUP_FSM_BOOT);
     CHECK(CELL_VALUE == 0x3Fu);             /* the init pair unstaged */
 
-    /* THEN THE ARM — pass 21, UNCONDITIONALLY (the stock's monitor 0x873F0
-     * has no bit-1 gate; the lead-in is the stock's only window) */
-    stub.frt_us += 5000u;
+    /* THE ARM — the monitor's FIRST pass, unconditionally */
+    stub.frt_us += 2500u;
     sup_monitor_poll();
     CHECK(CELL_OUTER_FSM == SUP_FSM_SUPERVISE);  /* the 0x06 era staged → 8 */
     CHECK(stub.walktmr_starts > starts0);        /* the walk timer armed */

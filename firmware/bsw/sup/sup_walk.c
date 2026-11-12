@@ -3,12 +3,11 @@
  * The stock's machine, ported from the top-down decode (spec 22 §6 and
  * artifact2 §6; stock addresses in every comment). Structure:
  *
- *   monitor pass (5 ms, 0x873F0):  token stage (0x7EE8A) → THE OPENING
- *   LAW: everything below is gated on the chip's 0x14 bit 1 (the gate
- *   cell, harvested from the cyclic J6 reply) — pre-gate the wire is the
- *   stock's pre-flip batch only; the one-shot enable, walk task (0x6C63E)
- *   and outer FSM 0xFFF95010 arm at the first gate-open pass (parked
- *   while the walk state is non-zero).
+ *   monitor pass (2.5 ms, 0x873F0 — entry 2 of the stock's 2.5 ms task
+ *   list in every mode, no lead-in): token stage (0x7EE8A) → the one-shot
+ *   enable → walk task (0x6C63E) → outer FSM 0xFFF95010 (parked while the
+ *   walk state is non-zero). Nothing here is gated on the chip's 0x14
+ *   bit 1 — only the letters ladder is.
  *
  *   walk task: state 7 samples (FRT deadline gate, stale reply → stall++,
  *   stop the timer → 0x19), state 0x19 = era stepper + reply processor,
@@ -59,11 +58,11 @@
                                        * scaling; 2026-11-10 decode) */
 
 /* budgets (spec 22 budget_table; lengths [I], structure [O]) */
-#define WALK_S8_BUDGET_PASSES   4000u  /* state 8 supervise (~20 s at 5 ms)  */
-#define WALK_S23_TIMEOUT_PASSES 4000u  /* 0x8D1BA duty-era timeout (~20 s)   */
-
-/* the silence-window pass counter (per boot; reset in sup_walk_init) */
-static uint8_t s_opening_passes;
+/* r02d: the monitor pass is 2.5 ms (stock), so the pass counts double to
+ * keep the SAME durations the 5 ms port had — the durations themselves
+ * remain [I] (spec 22 gives structure, not lengths). */
+#define WALK_S8_BUDGET_PASSES   8000u  /* state 8 supervise (~20 s at 2.5 ms) */
+#define WALK_S23_TIMEOUT_PASSES 8000u  /* 0x8D1BA duty-era timeout (~20 s)    */
 
 #define WALK_ECHO_RETRIES    3u        /* 0x6C742 confirm retry bound        */
 
@@ -92,7 +91,7 @@ static uint16_t walk_reply_window(void)
  * the tick task, so a stall parked in COLD_STAGED/WARM_PENDING spun
  * forever. N passes without a fresh reply (100 x 5 ms = 0.5 s) re-stage
  * the era and re-arm the timer. */
-#define WALK_CONFIRM_TIMEOUT_PASSES 100u
+#define WALK_CONFIRM_TIMEOUT_PASSES 200u   /* 0.5 s at the 2.5 ms pass */
 
 /* duty contexts (see sup_token.c) */
 #define WALK_CTX_STEADY      0x1Eu
@@ -110,6 +109,28 @@ static uint16_t walk_reply_window(void)
 static uint16_t s_s8_budget;         /* the 0xFFF9417D countdown */
 static uint16_t s_s23_timeout;       /* the 0x8D1BA timeout */
 static uint16_t s_confirm_stale;     /* F1: confirm-loop staleness counter */
+/* The staging confirm's OWN freshness mark (r02d): the reply counter as it
+ * stood when the era value went on the wire. The confirm used to share the
+ * reply processor's last-seen cells — and the walk task runs the reply
+ * processor BEFORE the confirm in states 0/0x19, so the processor consumed
+ * every fresh reply first and the confirm never saw one (COLD_STAGED never
+ * committed; the F1 timeout then re-staged and flipped the job mode back
+ * to 7 inside the duty era). At the 5 ms pass the first post-stage pass
+ * happened to sit in state 7 behind the sample deadline, which hid it; the
+ * stock's 2.5 ms pass does not. [I]: the stock's 0x6C742 freshness source
+ * is not decoded — this keeps the documented law (confirm on a reply that
+ * arrived after the stage) without the ordering dependency. */
+static uint16_t s_pp_cnt_at_stage;
+
+static uint16_t pp_reply_count(void)
+{
+    return (CELL_JOB_MODE == 7u) ? CELL_LEVEL_COUNT : (uint16_t)CELL_DUTY_COUNT;
+}
+
+static bool pp_fresh(void)
+{
+    return pp_reply_count() != s_pp_cnt_at_stage;
+}
 
 /* The stock's hardware-condition gate (0x68BE0: 0xFFFF1001 bit 6 — "no
  * fault condition present"). The platform layer owns register reads; until
@@ -143,6 +164,7 @@ static void program_timer(void)
     CELL_ERA_DEADLINE = walk_reply_window();      /* 0xFFF92410, guard cell 0xFFF93844 */
     /* dispatch starts on the first compare tick (E60ab: no silence gap) */
     plat_walktmr_start();
+    s_pp_cnt_at_stage = pp_reply_count();         /* the confirm's own mark */
 }
 
 static void program_level(void)
@@ -221,9 +243,6 @@ static void mode_req_set(uint8_t target)
 
 void sup_walk_init(void)
 {
-    /* the silence window resets per boot (the stock's OS state cell does the
-     * same at its init) */
-    s_opening_passes = 0u;
     /* the commanded value pair */
     CELL_VALUE = WALK_VAL_INIT;
     CELL_VALUE_COMPL = 0xC0u;
@@ -397,7 +416,7 @@ static bool ping_pong_confirm(void)
     switch (CELL_WALK_SUBST) {
     case SUP_SUB_COLD_STAGED: {
         /* the era value is on the wire; confirm on a fresh reply's echo */
-        if (!reply_fresh_now()) {
+        if (!pp_fresh()) {
             return false;
         }
         if (CELL_ECHO_0A == CELL_STAGED_84) {
@@ -553,7 +572,7 @@ static void walk_task(void)
      * the echo-mismatch path uses) and re-arm the timer immediately. */
     if (CELL_WALK_SUBST == SUP_SUB_COLD_STAGED ||
         CELL_WALK_SUBST == SUP_SUB_WARM_PENDING) {
-        if (reply_fresh_now()) {
+        if (pp_fresh()) {
             s_confirm_stale = 0u;
         } else if (++s_confirm_stale >= WALK_CONFIRM_TIMEOUT_PASSES) {
             s_confirm_stale = 0u;
@@ -693,27 +712,16 @@ static void outer_fsm(void)
 
 /* ── the 5 ms monitor task (stock 0x873F0) ─────────────────────────────── */
 
-/* the opening lead-in: ~20 monitor passes ≈ 100 ms of batch-only wire,
- * the stock's scheduler-imposed window (0x67B16 gated on boot-state 3) */
-#define OPENING_LEAD_IN_PASSES 20u
-
-/* THE SILENCE WINDOW (the first500ms table's own row, misread by C1): the
- * stock's pre-flip wire is J5-at-init then ~95 ms of SILENCE — the cyclic
- * BATCH does not run either (all task-array work sits behind the OS state-3
- * gate 0x67B16). C1 gated only the monitor, so r01w/x/y put ~90 ms of
- * cyclic words (J6/J1/J2/F/J3...) into the chip's power-on window where
- * the stock gives it silence. Both tasks consult this release so they
- * start on the SAME pass (the stock's state-3 moment).
- *
- * SUPERSEDED (r02c): the batch no longer consults this release — the stock
- * has no batch silence (0x8EE82 runs from the first OS tick; see
- * sup_batch_5ms) and r02a's gate put the bench in a ~196 ms restart loop.
- * The release now describes the MONITOR lead-in only. */
-bool sup_opening_released(void)
-{
-    return s_opening_passes >= OPENING_LEAD_IN_PASSES;
-}
-
+/* THE MONITOR CADENCE (r02d, decode 2026-11-11): the stock's monitor
+ * 0x873F0 runs every 2.5 ms, in every mode, from the FIRST OS tick — stub
+ * 0x7EE2E (jmp 0x873F0) is entry 2 of the 2.5 ms task list (table 0x43430
+ * row 8) in modes 0-3. Two corroborations: the function supervises its own
+ * period (9 passes must span <= 25000 us — cal 0x1919FA=9 / 0x1912D6=0x61A8
+ * — else fault 0x223), and the stock driving RAM dump holds 2506 us in the
+ * span cell 0xFFF934C0. There is NO lead-in: walk task, one-shot and outer
+ * FSM run unconditionally from the first pass. The 20-pass lead-in of
+ * r01x..r02c was an [I] (ammeter-anchored "+100 ms") that the task table
+ * refutes; main.c now schedules this task twice per 5 ms. */
 
 void sup_monitor_poll(void)
 {
@@ -722,27 +730,10 @@ void sup_monitor_poll(void)
      * RAM-only staging: no wire word. */
     sup_token_stage(CELL_SELECTOR);
 
-    /* THE OPENING LAW, SECOND REVISION (the first-500ms diff, r01x): the
-     * r01w pre-gate return was WRONG — the stock's monitor 0x873F0 runs
-     * walk task + one-shot + outer FSM UNCONDITIONALLY (decompile lines
-     * 43-47: the one-shot is `latch==0 && reported<7`, no bit-1 gate in
-     * the function). The stock's real opening: the 5 ms batch does not
-     * run for ~95 ms (scheduler 0x67B16 hard-gated on boot-state
-     * 0xFFF93B32==3 — the chip hears J5 ID then ~95 ms of lawful
-     * silence), THEN the first effective monitor pass arms walk+ask at
-     * ~+100 ms; the first 84|06 reply drags reported to 6 and the ask
-     * fires ~5-10 ms later; the flip follows ~+150-250 ms. r01v (arm
-     * immediately) and r01w (never arm) were both refuted on the bench —
-     * the LEAD-IN-THEN-ARM sequence was the one untested cell. The lead-in
-     * below reproduces the stock's ~20-pass batch-only window; after it,
-     * the stock's body runs unconditionally every pass. The letters
-     * ladder stays honestly bit-1-gated (0x8BB34) and the tamper
-     * interlock is untouched. */
-    if (s_opening_passes < OPENING_LEAD_IN_PASSES) {
-        s_opening_passes++;
-        return;
-    }
-
+    /* the stock's body, unconditionally, every 2.5 ms pass (0x873F0
+     * decompile lines 43-47: the one-shot is `latch==0 && reported<7`; no
+     * bit-1 gate and no lead-in in the function). The letters ladder stays
+     * honestly bit-1-gated (0x8BB34); the tamper interlock is untouched. */
     one_shot_enable();
 
     /* the walk task runs every pass; the outer FSM is parked while the

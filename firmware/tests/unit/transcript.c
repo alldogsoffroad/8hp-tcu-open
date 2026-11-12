@@ -53,12 +53,20 @@ int main(void)
 
     for (unsigned p = 1u; p <= 100u; p++) {
         pass_mark[p] = stub_log_n;
-        stub.frt_us += 5000u;
-        sup_batch_5ms();
+        /* one 5 ms frame in main.c's order: monitor (phase 0), batch
+         * (phase 2), monitor (phase 3) — the monitor is the stock's 2.5 ms
+         * task (0x7EE2E -> 0x873F0), no lead-in */
+        stub.frt_us += 2500u;
         sup_monitor_poll();
-        if (plat_walktmr_running()) {            /* the tick only fires once
-                                                  * the monitor's first pass
-                                                  * arms the walk timer */
+        sup_batch_5ms();
+        drain();
+        stub.frt_us += 2500u;
+        sup_monitor_poll();
+        if (plat_walktmr_running()) {            /* ONE walk tick per frame:
+                                                  * the down-counter load
+                                                  * 0xB000 is ~4.5-4.95 ms,
+                                                  * and it only fires once
+                                                  * the monitor arms it */
             sup_walk_isr();
         }
         drain();
