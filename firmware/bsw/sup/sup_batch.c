@@ -6,8 +6,8 @@
  *   0x91804/0x91810 law; the letters/selftest chain runs in the same pass,
  *   the stock's mode-sequencer 0x85160 slot) → 0x92A84 (queue J5) →
  *   0x90ACC (echo-derived condense) → 0x921A0 (bus-A kick, queues the
- *   0x40A98 ID job) → 0x9305A/0x93198 (J3/J4 cyclic starters) and J7 on
- *   every 2nd pass (design §12 V4: "every rotation" not fully decoded).
+ *   0x40A98 ID job) → 0x9305A/0x93198 (J3/J4 cyclic starters). J7 is
+ *   never queued — the stock has no J7 queuer (see sup_batch_5ms).
  *
  * Staging model (design §7.1): the stagers write the descriptor's tx_stage
  * directly and the engine sends tx_stage as-is — the constant frames are
@@ -25,7 +25,6 @@
 #include "bsw/sup/sup_walk.h"
 #include "platform.h"
 
-static uint16_t s_pass;              /* the 2-pass divider for J7 */
 static uint32_t s_stamp;            /* the batch timing journal (FRT us) */
 
 void drv_id_kick(void);              /* bsw/drv P4: queue the bus-A ID job */
@@ -76,16 +75,10 @@ static void batch_stage_sslb2(void)
     sup_job_table[JOB_SSLB2].tx_stage[0] = 0x00FFu;
 }
 
-static void batch_stage_nib(void)
-{
-    sup_job_table[JOB_NIB].tx_stage[0] = 0x0000u;
-}
-
 /* ── init (stock 0x91DD2 serial_rx_init law) ────────────────────────────── */
 
 void sup_batch_init(void)
 {
-    s_pass = 0u;
     s_stamp = 0u;
     sup_enable_request(false);          /* request 0, outputs-disabled 1 */
     CELL_SHUTDOWN_ST = 1u;              /* stock serial_rx_init 0x91DD2: shutdown-selftest
@@ -135,8 +128,20 @@ void sup_batch_5ms(void)
      *   4. 0x91E12 letters chain
      *   5. queue J5 0x92A84
      *   6. 0x90ACC condense, 7. kick 0x921A0
-     * J7 rides the starter block (every 2nd pass; position [I] — the pool
-     * order above lists seven jobs, J7 unplaced in the decode). */
+     * J7 IS NEVER QUEUED — the stock never sends it (2026-11-11 decode,
+     * three independent [O] lines): (1) no queuer: the descriptor address
+     * 0x00040BC0 occurs nowhere in the flash image (every other bus-B
+     * descriptor has exactly one literal in its queuer's pool; spec22
+     * validation's caller-list absence agrees); (2) the stock driving RAM
+     * dump holds J7's TX/RX staging 0xFFF885E0..E3 = 0000 0000 while J4's
+     * neighbouring staging is live (00FF / 119F) — no reply ever landed;
+     * (3) the stock's own handler-completeness supervisor 0x93126 ->
+     * 0x931F8(&0x90973, ..., mask 7) expects only bits 0-2 — J7's handler
+     * 0x92CC8 owns bit 3, outside the expected set (dump: 0x90973 = 07).
+     * The NIB cell it would write (0x90979/0x90958) is fed every pass by
+     * the J6 handler 0x92BBE, as ours does (sup_handlers.c). r01..r02d put
+     * a word on the wire every 2nd pass that the chip never hears from the
+     * stock. The descriptor and handler stay (dead, as in the stock). */
     s_stamp = plat_frt_us();
 
     /* 1. the reply proc: condense the previous pass, then the starters */
@@ -145,11 +150,6 @@ void sup_batch_5ms(void)
     (void)sup_job_queue(JOB_SSLB2);
     batch_stage_pos();
     (void)sup_job_queue(JOB_POS);
-    s_pass++;
-    if ((s_pass & 1u) == 0u) {
-        batch_stage_nib();
-        (void)sup_job_queue(JOB_NIB);
-    }
 
     /* 2. stage J2 + F (the enables pair; the letters chain folds in below
      *    per the 0x91E12 law — the stock runs it after the J1 arm) */
