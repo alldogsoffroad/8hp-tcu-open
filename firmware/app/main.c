@@ -226,6 +226,13 @@ static void task_100ms(void)
  * and the descriptor status ramp (0x8F5A0 part) */
 static void task_adc_5ms(void)
 {
+    /* r02l discriminator: the chain's clock (Timer G) starts 500 ms in —
+     * well after the opening, the ask and the gate (r02j: C7 by ~15 ms) */
+    static bool s_adc_started;
+    if (!s_adc_started && sched_now_ms() >= 500u) {
+        plat_adcmux_start();
+        s_adc_started = true;
+    }
     plat_adcmux_finish_5ms();
     plat_adcmux_status_5ms();
 }

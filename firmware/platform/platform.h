@@ -130,6 +130,7 @@ void plat_app_init(void);                /* app: after plat_init (not the loader
 void plat_adcmux_dma_global_init(void);   /* 0x96010 */
 void plat_adcmux_timer_g_init(void);      /* 0x97744 */
 void plat_adcmux_init(void);              /* 0x8F9EC */
+void plat_adcmux_start(void);             /* r02l: Timer G enable (TGE), deferred */
 void plat_adcmux_finish_5ms(void);        /* 0x8F62C */
 void plat_adcmux_status_5ms(void);        /* 0x8F5A0 (status ramp part) */
 void plat_dei5_isr(void);                 /* 0x95FC4 -> 0x8F058, vector 128 */

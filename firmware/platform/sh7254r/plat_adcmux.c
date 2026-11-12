@@ -51,6 +51,7 @@
 void plat_adcmux_dma_global_init(void) {}
 void plat_adcmux_timer_g_init(void) {}
 void plat_adcmux_init(void) {}
+
 void plat_adcmux_finish_5ms(void) {}
 void plat_adcmux_status_5ms(void) {}
 void plat_dei5_isr(void) {}

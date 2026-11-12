@@ -151,10 +151,11 @@ static const rspi_done_fn s_handlers[JOB_COUNT] = {
  * written every boot from 4 on) — today no bench read sees the opening:
  * every read lands ~18 ms into the Nth restart. Entry: µs since the boot's
  * entry TCNTA (saturating), job id, frames (0 = error completion), the
- * first TX word and up to four reply words (raw; zeroed on a walk error).
+ * first TX word and up to five reply words (raw; zeroed on a walk error;
+ * the fifth — J6's 0x14 frame — in the former pad word).
  * Written from the RX ISR (IPR 4) and, for stale recoveries, from task/walk
  * context under the engine lock (SR.I >= 6) — never interleaved. */
-#define OPEN_N 16u                      /* r02g review S-5: stack budget */
+#define OPEN_N 32u                      /* r02l: 32 (was 16 — the r02k death window lay past entry 16) */
 typedef struct {
     uint16_t t_us;
     uint8_t  job;
@@ -190,7 +191,7 @@ static void open_record(uint8_t job_id, uint16_t tx0, const uint16_t *rx, uint8_
         for (uint8_t i = 0u; i < 4u; i++) {
             e->rx[i] = (i < sup_job_table[job_id].frames) ? rx[i] : 0u;
         }
-        e->pad = 0u;
+        e->pad = (sup_job_table[job_id].frames > 4u) ? rx[4] : 0u;   /* rx[4] */
         s_open_n[s_open_slot] = (uint8_t)(k + 1u);
     }
     plat_sr_set(lk);

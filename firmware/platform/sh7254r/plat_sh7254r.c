@@ -1410,8 +1410,19 @@ void plat_app_init(void)
      * timer channel enabled, TCE (bit 3, Timer C) among them; ours left
      * TCE clear (bench r02g ATUENR = 0x0173). Not ported from 0x91F3E:
      * the error-0x48 report when 0xFFFE0420 bit 7 is set, and the copy of
-     * 0xFFFFFF48 into 0xFFF90628 (no fault manager / no reader). */
-    ATUENR |= 0x03FFu;
+     * 0xFFFFFF48 into 0xFFF90628 (no fault manager / no reader).
+     * r02l DISCRIMINATOR: TGE (bit 7, Timer G — the ADC/mux chain's only
+     * clock) is held back here and set by plat_adcmux_start() 500 ms into
+     * the run (main.c task_adc_5ms). r02k, with TGE set here, restart-looped
+     * with a death ~7.3 ms in, around the second J1 burst. */
+    ATUENR |= 0x037Fu;
+}
+
+/* r02l: start the AN0 mux / ADC chain (Timer G) — the 0x91F3E TGE bit,
+ * deferred. Everything else of the chain was configured in plat_app_init. */
+void plat_adcmux_start(void)
+{
+    ATUENR |= 0x0080u;
 }
 
 /* ---- Rebuild additions (design §5) --------------------------------------------- */
