@@ -1278,6 +1278,42 @@ static void stock_gpio_init(void)
         (void)B8(PC + 30u);                      /* bld.b #6,@(30,r5): PCPR */
     }
     BCLR(PC + 2u, 7); BSET(PC + 6u, 7);          /* PC15 = 0 */
+    /* 0x96FC8 — THE TIMER C INIT (r02i; atu_init_audit.md, bytes re-checked
+     * 0x96FC8..0x9703A, table 0x40F68 = 4444 00 | 4440 09 | 4440 09 |
+     * 4444 00 | 4444 00). In the stock it runs inside the ATU init 0x91FA4
+     * (slot 14, BEFORE 0x91ED4 in slot 16). r02h ported only the 0x91ED4
+     * retune onto an unconfigured Timer C: TCRC1/2 stayed 0x00 (free-run,
+     * 1 MHz), so TIOC10/TIOC20 (PD4/PD8) toggled once per 2^24 µs — bench
+     * r02h [O]: PD4 = PD8 flip together exactly at each TCNTC1 wrap, ~16.8 s
+     * apart (/tmp/read_pdpr.py). TCRC = 0x09: PWM mode on clock-bus line 1.
+     * Per channel n (r5 = 0xFFFFF440 + 0x20n): TIORC (+2) = table word;
+     * TCRC (+0) = table byte; TIERC (+1) = 0; TSRC (+4) read & 0; TCNTC
+     * (+0x18) = 0; NCRC 0xFFFFF414 + 8n .. +3 = 0x32; NCCRC 0xFFFFF402 + n =
+     * 0x0F. Then IPR07 (0xFFFE0C08) = (x & 0xFF00) | 0x77, IPR08/09 = 0
+     * (plat_intc_setup later rewrites the IPRs; TIERC = 0 so no Timer C
+     * interrupt is enabled either way), TSTRC (0xFFFFF400) = 0x1F. */
+    {
+        static const uint16_t tior[5] = { 0x4444u, 0x4440u, 0x4440u, 0x4444u, 0x4444u };
+        static const uint8_t  tcr[5]  = { 0x00u, 0x09u, 0x09u, 0x00u, 0x00u };
+
+        for (uint32_t n = 0u; n < 5u; n++) {
+            uint32_t ch = 0xFFFFF440u + 0x20u * n;
+            uint32_t nc = 0xFFFFF410u + 8u * n;
+            *(volatile uint16_t *)(ch + 2u) = tior[n];
+            B8(ch) = tcr[n];
+            B8(ch + 1u) = 0u;
+            B8(ch + 4u) = (uint8_t)(B8(ch + 4u) & 0u);
+            *(volatile uint32_t *)(ch + 0x18u) = 0u;
+            B8(nc + 4u) = 0x32u; B8(nc + 5u) = 0x32u;
+            B8(nc + 6u) = 0x32u; B8(nc + 7u) = 0x32u;
+            B8(0xFFFFF402u + n) = 0x0Fu;
+        }
+        *(volatile uint16_t *)0xFFFE0C08u =
+            (uint16_t)((*(volatile uint16_t *)0xFFFE0C08u & 0xFF00u) | 0x77u);
+        *(volatile uint16_t *)0xFFFE0C0Au = 0u;
+        *(volatile uint16_t *)0xFFFE0C0Cu = 0u;
+        B8(0xFFFFF400u) = 0x1Fu;
+    }
     /* 0x91ED4 — TIMER C START (r02h; c9_bit4_decode.md). The stock's init
      * batch 0x8EF1A runs it second (pool 0x8F014), before 0x90D12. Without
      * it the PD4/PD8 timer-function pins (PFC field 01, port_init) carry no
