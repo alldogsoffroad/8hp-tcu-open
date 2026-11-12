@@ -14,6 +14,7 @@
 #include "bsw/diag/uds.h"
 #include "bsw/sup/sup_jobs.h"
 #include "bsw/sup/sup_batch.h"
+#include "bsw/sup/sup_walk.h"
 #include "bsw/sup/sup_cells.h"
 #include "io/actuators/sol_ctl.h"
 #include "tests/unit/stub_plat.h"
@@ -303,11 +304,13 @@ static void test_bench_suspension(void)
     run(20u);
     CHECK(ps->state == PC_HOLDING && stub.toe_duty == 1000u);
 
-    /* healthy supervisor so the bench start conditions pass */
-    sup_batch_5ms();
-    drain_rspi();
-    sup_batch_5ms();
-    drain_rspi();
+    /* healthy supervisor so the bench start conditions pass — through the
+     * ~95ms silence window (the opening releases at pass 20) */
+    for (int i = 0; i < 22; i++) {
+        sup_batch_5ms();
+        sup_monitor_poll();
+        drain_rspi();
+    }
     CHECK(bench_routine(1u, BENCH_PARK_RID, start_in, 2u, out, sizeof out) == 0);
     step();
     CHECK(bench_active());

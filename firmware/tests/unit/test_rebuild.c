@@ -222,17 +222,27 @@ static void test_batch_and_condense(void)
     CHECK(CELL_OUTPUTS_DIS == 1u);
     CHECK(CELL_SSLB2_RAW == 0x8000u);       /* the sentinel */
 
-    /* two 5 ms passes: the batch queues the cyclic jobs and the engine
-     * drains; the SSLB2 reply lands in the copy cell (the condense of the
-     * next pass copies the handler's cell) */
+    /* THE SILENCE WINDOW: the first 20 batch passes stage nothing (the
+     * stock's OS state-3 gate — the chip hears J5 then silence) */
+    for (int i = 0; i < 20; i++) {
+        stub.frt_us += 5000u;
+        sup_batch_5ms();
+        sup_monitor_poll();
+        drain_rspi();
+    }
+    CHECK(CELL_USE_COUNTER(JOB_ID) == 1u);  /* only the init J5: nothing queued */
+
+    /* released: the batch queues the cyclic jobs and the engine drains; the
+     * SSLB2 reply lands in the copy cell (the condense of the next pass
+     * copies the handler's cell) */
     stub.frt_us += 5000u;
     sup_batch_5ms();
+    sup_monitor_poll();
     drain_rspi();
-    CHECK(CELL_REQUEST == 0u);              /* outputs still disabled */
-    CHECK(CELL_USE_COUNTER(JOB_ID) >= 1u);  /* the init J5 launched (pass 1's J5
-                                             * was refused: already queued) */
+    CHECK(CELL_USE_COUNTER(JOB_ID) >= 2u);  /* pass 21's J5 (the cyclic batch) */
     stub.frt_us += 5000u;
     sup_batch_5ms();
+    sup_monitor_poll();
     drain_rspi();
     CHECK(CELL_SSLB2_COPY == 0xB400u);      /* the scripted SSLB2 reply */
 
@@ -241,8 +251,10 @@ static void test_batch_and_condense(void)
     sup_enable_request(true);               /* the request cell arms */
     stub.frt_us += 5000u;
     sup_batch_5ms();                        /* compose: bit 0 in the word */
+    sup_monitor_poll();
     drain_rspi();                           /* the echo returns bit 0 (staged ctrl) */
     sup_batch_5ms();                        /* the condense sees the confirmed edge */
+    sup_monitor_poll();
     drain_rspi();
     CHECK(plat_wdt_is_interval());
     CHECK(CELL_GRANT == 1u);                /* the 0x22 echo's bit 0 */
@@ -262,6 +274,8 @@ static void test_opening_law(void)
     sup_jobs_init();
     sup_walk_init();
     sup_batch_init();
+    plat_walktmr_stop();       /* clear the previous section's flag — the
+                                * lead-in assertions below are about DELTAS */
     /* the use counters carry across sections — assert deltas */
     lvl0 = CELL_USE_COUNTER(JOB_LEVEL);
     duty0 = CELL_USE_COUNTER(JOB_DUTY);

@@ -22,6 +22,7 @@
 #include "bsw/sup/sup_cells.h"
 #include "bsw/sup/sup_ctrl.h"
 #include "bsw/sup/sup_letters.h"
+#include "bsw/sup/sup_walk.h"
 #include "platform.h"
 
 static uint16_t s_pass;              /* the 2-pass divider for J7 */
@@ -100,6 +101,15 @@ void sup_batch_init(void)
 
 void sup_batch_5ms(void)
 {
+    /* THE SILENCE WINDOW: no cyclic words until the opening releases (the
+     * stock's OS state-3 gate holds the batch ~95 ms; the chip hears J5
+     * from init then silence — first500ms_diff §1 row 2, misread by C1) */
+    if (!sup_opening_released()) {
+        sup_job_engine_pump();      /* the init J5 still launches (the stock
+                                     * sends J5 DURING the silence) */
+        return;
+    }
+
     /* 1. timing stamp (FRT sample for the batch journal) */
     s_stamp = plat_frt_us();
 

@@ -189,7 +189,7 @@ else()
     add_test(NAME sol COMMAND test_sol)
     add_executable(test_bench tests/unit/test_bench.c app/bench_out.c io/actuators/sol_ctl.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
-        bsw/sup/sup_letters.c bsw/drv/drv_jobs.c bsw/drv/drv_handlers.c
+        bsw/sup/sup_letters.c bsw/sup/sup_walk.c bsw/sup/sup_token.c bsw/drv/drv_jobs.c bsw/drv/drv_handlers.c
         bsw/diag/uds.c bsw/diag/isotp.c bsw/diag/boot_record.c
         io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
         tests/unit/stub_plat.c)
@@ -201,7 +201,8 @@ else()
         bsw/drv/drv_jobs.c
     bsw/drv/drv_handlers.c
     bsw/com/crc8.c io/actuators/sol_ctl.c bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c
-        bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c bsw/sup/sup_letters.c tests/unit/stub_plat.c)
+        bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c bsw/sup/sup_letters.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
+        tests/unit/stub_plat.c)
     target_compile_definitions(test_park PRIVATE PARK_TEST_HOOKS TCU_M4B_OUTPUTS)
     add_test(NAME park COMMAND test_park)
     add_executable(test_dump tests/unit/test_dump.c app/bench_dump.c tests/unit/stub_plat.c)

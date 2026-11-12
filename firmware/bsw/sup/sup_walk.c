@@ -62,6 +62,9 @@
 #define WALK_S8_BUDGET_PASSES   4000u  /* state 8 supervise (~20 s at 5 ms)  */
 #define WALK_S23_TIMEOUT_PASSES 4000u  /* 0x8D1BA duty-era timeout (~20 s)   */
 
+/* the silence-window pass counter (per boot; reset in sup_walk_init) */
+static uint8_t s_opening_passes;
+
 #define WALK_ECHO_RETRIES    3u        /* 0x6C742 confirm retry bound        */
 
 /* The state-7 sample window is the stock's GUARD CELL 0xFFF93844, which
@@ -218,6 +221,9 @@ static void mode_req_set(uint8_t target)
 
 void sup_walk_init(void)
 {
+    /* the silence window resets per boot (the stock's OS state cell does the
+     * same at its init) */
+    s_opening_passes = 0u;
     /* the commanded value pair */
     CELL_VALUE = WALK_VAL_INIT;
     CELL_VALUE_COMPL = 0xC0u;
@@ -690,7 +696,18 @@ static void outer_fsm(void)
 /* the opening lead-in: ~20 monitor passes ≈ 100 ms of batch-only wire,
  * the stock's scheduler-imposed window (0x67B16 gated on boot-state 3) */
 #define OPENING_LEAD_IN_PASSES 20u
-static uint8_t s_opening_passes;
+
+/* THE SILENCE WINDOW (the first500ms table's own row, misread by C1): the
+ * stock's pre-flip wire is J5-at-init then ~95 ms of SILENCE — the cyclic
+ * BATCH does not run either (all task-array work sits behind the OS state-3
+ * gate 0x67B16). C1 gated only the monitor, so r01w/x/y put ~90 ms of
+ * cyclic words (J6/J1/J2/F/J3...) into the chip's power-on window where
+ * the stock gives it silence. Both tasks consult this release so they
+ * start on the SAME pass (the stock's state-3 moment). */
+bool sup_opening_released(void)
+{
+    return s_opening_passes >= OPENING_LEAD_IN_PASSES;
+}
 
 
 void sup_monitor_poll(void)
