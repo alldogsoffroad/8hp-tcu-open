@@ -222,15 +222,21 @@ static void test_batch_and_condense(void)
     CHECK(CELL_OUTPUTS_DIS == 1u);
     CHECK(CELL_SSLB2_RAW == 0x8000u);       /* the sentinel */
 
-    /* THE SILENCE WINDOW: the first 20 batch passes stage nothing (the
-     * stock's OS state-3 gate — the chip hears J5 then silence) */
+    /* NO BATCH SILENCE (r02c): the stock's batch 0x8EE82 runs from the
+     * first OS tick (5 ms mode-0 task list 0x42CD8, entry 26) — the cyclic
+     * jobs flow through the 20-pass MONITOR lead-in, and only the walk and
+     * the ask wait for it */
     for (int i = 0; i < 20; i++) {
         stub.frt_us += 5000u;
         sup_batch_5ms();
         sup_monitor_poll();
         drain_rspi();
     }
-    CHECK(CELL_USE_COUNTER(JOB_ID) == 1u);  /* only the init J5: nothing queued */
+    CHECK(CELL_USE_COUNTER(JOB_ID) >= 20u); /* the init J5 + the cyclic J5s */
+    CHECK(CELL_REQUEST == 0u);              /* no ask in the lead-in (the walk's
+                                             * lead-in deltas are asserted in
+                                             * test_opening_law — the use
+                                             * counters carry across sections) */
 
     /* released: the batch queues the cyclic jobs and the engine drains; the
      * SSLB2 reply lands in the copy cell (the condense of the next pass

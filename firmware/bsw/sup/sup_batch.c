@@ -101,14 +101,19 @@ void sup_batch_init(void)
 
 void sup_batch_5ms(void)
 {
-    /* THE SILENCE WINDOW: no cyclic words until the opening releases (the
-     * stock's OS state-3 gate holds the batch ~95 ms; the chip hears J5
-     * from init then silence — first500ms_diff §1 row 2, misread by C1) */
-    if (!sup_opening_released()) {
-        sup_job_engine_pump();      /* the init J5 still launches (the stock
-                                     * sends J5 DURING the silence) */
-        return;
-    }
+    /* NO SILENCE WINDOW (r02c, decode 2026-11-11): the stock's batch runs
+     * from the FIRST OS tick. 0x8EE82 is entry 26 of the 5 ms task's mode-0
+     * list (row 7 col 0, list 0x42CD8; task object 0x41378 enabled in mode
+     * 0 only; 0x66DA4 sets mode 0 at app entry). The OS tick (CMT, 2.5 ms,
+     * 0x91A30(0x186A,0x19)) starts on the 2nd main-loop pass: 0x7DAA4
+     * starts module 3 (0xFFF93B87, no deps in table 0x467D4) -> 0xFFF93B8C
+     * = 1 -> 0x6F144 sets 0xFFF93B40 = 1 -> 0x67A7C starts the tick. The
+     * state-3 gate 0x67B16 holds ONLY the background list (row 0: 0x6F144,
+     * 0x7DAA4) — r02a's gate here was a misattribution, and the bench
+     * answered it with a ~196 ms restart loop (app life ~106 ms, restart
+     * within ~10 ms of the release; WOVF counter flat, no exception
+     * frames). The MONITOR lead-in (sup_monitor_poll) is unchanged: its
+     * start time is still [I]. */
 
     /* THE POOL ORDER, 1:1 for real (first500ms_diff §1 row 3; the transcript
      * tool caught the old order staging J6/J1 first with J3/J4 at the tail —

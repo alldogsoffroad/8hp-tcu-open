@@ -703,7 +703,12 @@ static void outer_fsm(void)
  * gate 0x67B16). C1 gated only the monitor, so r01w/x/y put ~90 ms of
  * cyclic words (J6/J1/J2/F/J3...) into the chip's power-on window where
  * the stock gives it silence. Both tasks consult this release so they
- * start on the SAME pass (the stock's state-3 moment). */
+ * start on the SAME pass (the stock's state-3 moment).
+ *
+ * SUPERSEDED (r02c): the batch no longer consults this release — the stock
+ * has no batch silence (0x8EE82 runs from the first OS tick; see
+ * sup_batch_5ms) and r02a's gate put the bench in a ~196 ms restart loop.
+ * The release now describes the MONITOR lead-in only. */
 bool sup_opening_released(void)
 {
     return s_opening_passes >= OPENING_LEAD_IN_PASSES;
