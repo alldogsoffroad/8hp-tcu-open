@@ -72,11 +72,12 @@ void sup_walk_isr(void);
 /* staging ping-pong value request (stock 0x6C48C park_pwm_learn_value):
  * value is the era period (level x 200; 0x4B0 = the 0x06 era, 0x1838 = the
  * 0x1F era). Returns 0 accepted, 2 invalid (stock range law < 0x3139). */
-uint8_t sup_walk_stage(uint16_t value);
+uint8_t sup_walk_stage(uint16_t period, uint8_t tries);   /* stock 0x6C48C */
 
 /* bump and resend (stock 0x6C720 park_pwm_req_restart): re-stage the
  * current era value; the exchange re-syncs on the 0x0A echo. */
-void sup_walk_req_restart(void);
+bool sup_walk_resend(void);                  /* stock 0x6C720: true = busy */
+uint32_t sup_walk_shot_at(void);            /* TCNTA µs of the armed shot, 0 = none */
 
 /* the W2 level builder (stock 0x91190): stages 0x8400|value into the level
  * job's first word and queues JOB_LEVEL. One-in-flight check-free. */

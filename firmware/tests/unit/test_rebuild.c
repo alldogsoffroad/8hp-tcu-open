@@ -274,8 +274,12 @@ static void test_opening_law(void)
     stub.frt_us += 2500u;
     sup_monitor_poll();
     CHECK(CELL_OUTER_FSM == SUP_FSM_SUPERVISE);  /* the 0x06 era staged → 8 */
-    CHECK(stub.walktmr_starts > starts0);        /* the walk timer armed */
-    CHECK(plat_walktmr_running());
+    /* r02f: the first stage's delay is the stock's 5 µs floor, so the
+     * 84|06 goes out at once (no down-counter shot): it is staged and
+     * launched, not merely timer-armed */
+    (void)starts0;
+    CHECK(CELL_STAGED_84 == 0x06u);
+    CHECK(CELL_USE_COUNTER(JOB_LEVEL) != 0u);
     CHECK(CELL_VALUE == 0x06u);                  /* the 0x06 era, not 0x3F */
     /* the ask follows the walk's first replies (the stock's one-shot law:
      * level < 7 — the reported cell still holds the boot init 7 here) */

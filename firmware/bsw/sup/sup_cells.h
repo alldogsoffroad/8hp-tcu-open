@@ -24,7 +24,13 @@
 /* ── walk reply cells (linker .sup_walk at 0xFFF90540) ────────────────── */
 #define CELL_REPLY_FRESH    (*(volatile uint8_t  *)0xFFF90540u) /* |=1 duty, |=2 level */
 #define CELL_TOKEN_LAST     (*(volatile uint32_t *)0xFFF90548u)
-#define CELL_LEVEL_COUNT    (*(volatile uint16_t *)0xFFF9054Cu) /* level reply counter (spec 22 §4.8) */
+#define CELL_RX_ERR         (*(volatile uint8_t  *)0xFFF90541u) /* |=1 duty, |=2 level reply class fail (0x910EE/0x911D8) */
+#define CELL_REPLY_STAMP    (*(volatile uint32_t *)0xFFF90544u) /* TCNTA - 0x29 at each W1/W2 completion (0x910EE:13 / 0x911D8:13) */
+/* the stock's two reply counters are BYTES (0x910EE: 0x9054D++, 0x911D8:
+ * 0x9054C++). The old u16 LEVEL_COUNT at 4C spanned 4C-4D (the alias F3
+ * worked around by moving the duty counter to 0x90552, kept below). */
+#define CELL_LEVEL_COUNT    (*(volatile uint8_t  *)0xFFF9054Cu) /* level reply counter (0x911D8) */
+#define CELL_DUTY_RXCNT     (*(volatile uint8_t  *)0xFFF9054Du) /* duty reply counter (0x910EE) */
 #define CELL_ECHO_0A        (*(volatile uint8_t  *)0xFFF9054Fu) /* 0x0A echo */
 #define CELL_FB_0C          (*(volatile uint8_t  *)0xFFF90550u) /* 0x0C feedback */
 #define CELL_COMMIT_12      (*(volatile uint8_t  *)0xFFF90551u) /* 0x12 commit status */
@@ -78,11 +84,22 @@
 #define CELL_C9_STAGED      (*(volatile uint8_t  *)0xFFF9097Bu)
 
 /* ── walk FSM cells (linker .sup_fsm at 0xFFF93B40) ───────────────────── */
-#define CELL_PERIOD_BASE    (*(volatile uint16_t *)0xFFF93846u)
+/* the guard cells (stock 0x6C594, recomputed on every period change) and
+ * the burst guard 0x93846 = max(*(u16)0x40CA2, *(u16)0x40CA4) + 0xBB = 228
+ * (0x6C12C; flash 0x40CA2/4 = 0029 0029). Linker .sup_period starts 0x9383C. */
+#define CELL_WALK_ERRCNT    (*(volatile uint16_t *)0xFFF9383Cu) /* 0x6C1EA saturating error count */
+#define CELL_GUARD_OPEN     (*(volatile uint16_t *)0xFFF9383Eu) /* token window open   (period + 0x47A) */
+#define CELL_GUARD_CLOSE    (*(volatile uint16_t *)0xFFF93840u) /* token window close / 84 keep-out start */
+#define CELL_GUARD_END      (*(volatile uint16_t *)0xFFF93842u) /* 84 keep-out end */
+#define CELL_GUARD_SAMPLE   (*(volatile uint16_t *)0xFFF93844u) /* sample/late bound */
+#define CELL_BURST_GUARD    (*(volatile uint16_t *)0xFFF93846u) /* 228 */
 #define CELL_PERIOD         (*(volatile uint16_t *)0xFFF93848u) /* era period (ms) */
 #define CELL_WALK_SUBST     (*(volatile uint8_t  *)0xFFF93B43u)
-#define CELL_LAST_DUTY_CNT  (*(volatile uint16_t *)0xFFF93B48u)
-#define CELL_LAST_LEVEL_CNT (*(volatile uint16_t *)0xFFF93B49u)
+#define CELL_LAST_DUTY_CNT  (*(volatile uint8_t  *)0xFFF93B48u) /* last-seen 0x9054D (bytes, 0x6C1EA) */
+#define CELL_LAST_LEVEL_CNT (*(volatile uint8_t  *)0xFFF93B49u) /* last-seen 0x9054C */
+#define CELL_STAGE_SUB      (*(volatile uint8_t  *)0xFFF93B9Cu) /* 0x6C48C/0x6C742 staging sub-state 0/7/0x19 */
+#define CELL_RXERR_CNT      (*(volatile uint8_t  *)0xFFF93B9Fu) /* 0x6C1EA reply-error count */
+#define CELL_S8_FLAG        (*(volatile uint8_t  *)0xFFF93B96u) /* 0x8D136 clears / 0x8D020 consumes */
 #define CELL_TWO_PASS       (*(volatile uint8_t  *)0xFFF93B9Au) /* level-7-twice counter */
 #define CELL_JOB_MODE       (*(volatile uint8_t  *)0xFFF93B9Bu) /* 0=duty, 7=level */
 #define CELL_STALL_CNT      (*(volatile uint8_t  *)0xFFF93B9Eu)
@@ -105,6 +122,12 @@
 #define CELL_DUTY_CTX       (*(volatile uint8_t  *)0xFFF94FE7u)
 #define CELL_VALUE          (*(volatile uint8_t  *)0xFFF94FE8u) /* commanded 84 value */
 #define CELL_PENDING        (*(volatile uint8_t  *)0xFFF94FE9u) /* pending staging slot */
+#define CELL_PENDING_COMPL  (*(volatile uint8_t  *)0xFFF94E61u)
+#define CELL_TARGET         (*(volatile uint8_t  *)0xFFF95012u) /* 0x8D136 level target 0/5/3 */
+#define CELL_TARGET_COMPL   (*(volatile uint8_t  *)0xFFF94E8Au)
+/* linker .sup_s8 at 0xFFF9417C */
+#define CELL_S8_BUDGET      (*(volatile uint8_t  *)0xFFF9417Du) /* 0x8D136/0x8D020 budget */
+#define CELL_S8_KIND        (*(volatile uint8_t  *)0xFFF9417Eu) /* 0x8D020: 7 token / 0x19 resend / 0 attention */
 #define CELL_ERA_BASE_LO    (*(volatile uint8_t  *)0xFFF94FEAu)
 #define CELL_SYS_MODE       (*(volatile uint8_t  *)0xFFF9500Cu)
 #define CELL_BOOT_FLAG      (*(volatile uint8_t  *)0xFFF9500Eu) /* 1 = walk armed */

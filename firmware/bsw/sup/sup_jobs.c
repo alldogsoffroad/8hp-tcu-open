@@ -146,11 +146,39 @@ static const rspi_done_fn s_handlers[JOB_COUNT] = {
 
 /* ── the engine ─────────────────────────────────────────────────────────── */
 
+/* THE ENGINE LOCK (2026-11-11 decode): the stock's queue 0x937F8, engine
+ * 0x93902 and check-free 0x93B8E all bracket their work with 0x9665C(0x60)
+ * / 0x96674 — `stc sr; and #0xF0; cmp/ge r4; ... ldc r3,sr`: raise SR.I to
+ * 6 (never lower it), restore on exit. That masks the walk timer (IPR 6)
+ * and RSPI-B (IPR 4) while the rings are touched. Ours ran the same ring
+ * code from task context, the walk ISR and the RSPI done ISR with no lock:
+ * an ISR preempting a dequeue could double-take a slot and skip the next
+ * (the r02e witness: J1's handler never set an OK/ECHOFAIL bit in 5/5
+ * reads while J2/J3 completed [O]; the race as its cause is [I]). */
+static uint32_t q_lock(void)
+{
+    uint32_t prev = plat_sr_i();
+
+    if (prev < 6u) {
+        plat_sr_set(6u);
+    }
+    return prev;
+}
+
+static void q_unlock(uint32_t prev)
+{
+    plat_sr_set(prev);
+}
+
 bool sup_job_check_free(uint8_t id)
 {
+    bool free_now;
+    uint32_t lk;
+
     if (id >= JOB_COUNT) {
         return false;
     }
+    lk = q_lock();
     if (s_in_flight[id] != 0u && !s_queued[id] &&
         !plat_rspi_busy(sup_job_table[id].bus)) {
         /* STALE-BURST RECOVERY — the stock's busy-find law (0x93B8E, the
@@ -172,27 +200,37 @@ bool sup_job_check_free(uint8_t id)
         sup_job_err_bump(id);
         s_in_flight[id] = 0u;
     }
-    return s_in_flight[id] == 0u && !s_queued[id];
+    free_now = (s_in_flight[id] == 0u && !s_queued[id]);
+    q_unlock(lk);
+    return free_now;
 }
 
 bool sup_job_queue(uint8_t id)
 {
-    if (id >= JOB_COUNT || s_in_flight[id] != 0u || s_queued[id]) {
+    uint32_t lk;
+
+    if (id >= JOB_COUNT) {
+        return false;
+    }
+    lk = q_lock();
+    if (s_in_flight[id] != 0u || s_queued[id]) {
+        q_unlock(lk);
         return false;                           /* one-in-flight (NR-6) */
     }
     const sup_job_desc_t *d = &sup_job_table[id];
     if (d->queue == JOBQ_WALK) {
-        if (s_q_walk.count >= WALK_SLOTS) return false;
+        if (s_q_walk.count >= WALK_SLOTS) { q_unlock(lk); return false; }
         s_q_walk.ids[s_q_walk.head] = id;
         s_q_walk.head = (s_q_walk.head + 1u) % WALK_SLOTS;
         s_q_walk.count++;
     } else {
-        if (s_q_cyclic.count >= CYCLIC_SLOTS) return false;
+        if (s_q_cyclic.count >= CYCLIC_SLOTS) { q_unlock(lk); return false; }
         s_q_cyclic.ids[s_q_cyclic.head] = id;
         s_q_cyclic.head = (s_q_cyclic.head + 1u) % CYCLIC_SLOTS;
         s_q_cyclic.count++;
     }
     s_queued[id] = 1u;
+    q_unlock(lk);
     return true;
 }
 
@@ -222,12 +260,16 @@ static bool launch_job(uint8_t id)
 void sup_job_release(uint8_t id)
 {
     if (id < JOB_COUNT) {
-        s_in_flight[id] = 0u;
+        s_in_flight[id] = 0u;               /* single byte store: atomic */
     }
 }
 
 void sup_job_engine_pump(void)
 {
+    /* the whole dispatch runs under the engine lock, as the stock's 0x93902
+     * does (raise to 6; the walk ISR already sits at 6, the RSPI ISR at 4) */
+    uint32_t lk = q_lock();
+
     /* walk queue first (higher priority — the stock's walk timer has
      * priority over the 5 ms batch in the shared job engine) */
     while (s_q_walk.count > 0u && !plat_rspi_busy(1u)) {
@@ -249,6 +291,7 @@ void sup_job_engine_pump(void)
         }
     }
     /* bus A if we add it here later */
+    q_unlock(lk);
 }
 
 /* ── the ISR-context done handler wrapper ────────────────────────────────── */
@@ -307,7 +350,8 @@ void sup_cells_init(void)
         { 0xFFF90540u, 0x14u },   /* .sup_walk  walk reply cells               */
         { 0xFFF90740u, 0x240u },  /* .sup_cells protocol cells                 */
         { 0xFFF9240Cu, 0x0Cu },   /* .sup_era   FRT stamps + staged token      */
-        { 0xFFF93844u, 0x08u },   /* .sup_period era period cells              */
+        { 0xFFF9383Cu, 0x10u },   /* .sup_period guard cells + era period      */
+        { 0xFFF9417Cu, 0x04u },   /* .sup_s8    state-8 budget cells           */
         { 0xFFF93B40u, 0x68u },   /* .sup_fsm   walk FSM cells                 */
         { 0xFFF94218u, 0x1Cu },   /* .sup_use   job use counters (14 × u16)    */
         { 0xFFF94994u, 0x04u },   /* .sup_latch max-latch cell                 */

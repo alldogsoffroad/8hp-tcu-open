@@ -75,12 +75,16 @@ SECTIONS
         __sup_era_start = .; *(.sup_era) . += 0x0C; __sup_era_end = .;
     } > RAM
 
-    .sup_period 0xFFF93844 (NOLOAD) : {    /* era period cells 0x93846/48    */
-        __sup_period_start = .; *(.sup_period) . += 0x08; __sup_period_end = .;
+    .sup_period 0xFFF9383C (NOLOAD) : {    /* guard cells 0x9383C-44 + period 0x93846/48 */
+        __sup_period_start = .; *(.sup_period) . += 0x10; __sup_period_end = .;
     } > RAM
 
     .sup_fsm 0xFFF93B40 (NOLOAD) : {       /* walk FSM cells .. 0x93BA7      */
         __sup_fsm_start = .; *(.sup_fsm) . += 0x68; __sup_fsm_end = .;
+    } > RAM
+
+    .sup_s8 0xFFF9417C (NOLOAD) : {        /* state-8 budget cells 0x9417D/E */
+        __sup_s8_start = .; *(.sup_s8) . += 0x04; __sup_s8_end = .;
     } > RAM
 
     .sup_use 0xFFF94218 (NOLOAD) : {       /* job use counters (14 × u16)    */

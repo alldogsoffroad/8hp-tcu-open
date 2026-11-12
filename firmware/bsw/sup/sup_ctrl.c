@@ -96,8 +96,15 @@ void sup_c9_compose(void)
     }
     CELL_C9_STAGED = c9;
     sup_job_table[JOB_CTRL].tx_stage[1] = (uint16_t)(0xC900u | c9);
-    /* the J1 staging mirror the bench reads at 0xFFF88426 */
-    CELL_J1_C9_STAGED = (uint16_t)(0xC900u | c9);
+    /* NO separate mirror store (2026-11-11 decode): on the target the J1
+     * stage IS linker-pinned at 0xFFF88424, so frame 1 lives at 0xFFF88426
+     * and CELL_J1_C9_STAGED (u8 at 0xFFF88426) is its big-endian HIGH byte
+     * — the 0xC9 command byte. The old `CELL_J1_C9_STAGED = 0xC900|c9`
+     * truncated to the data byte and overwrote the command byte: the wire
+     * carried c9c9 (0x0000 since 8e9e431, 0x1010 before) where the stock
+     * sends C900 (driving dump 0xFFF88426 = C9 00; our disassembly
+     * 0x43ad6 mov.w then 0x43adc mov.b). Invisible on the host, where the
+     * stage array is not linked at the pinned address. */
 }
 
 void sup_ctrl_bench_dialect(bool on)

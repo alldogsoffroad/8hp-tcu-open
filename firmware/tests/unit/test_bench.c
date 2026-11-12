@@ -269,6 +269,12 @@ int main(void)
 
         uds_req((const uint8_t[]){ 0x31, 0x03, 0xFE, 0x13 }, 4u);
         CHECK(memcmp(&last_rsp()[1], "\x71\x03\xFE\x13\x00", 5) == 0);   /* idle */
+        /* r02f: the stock-law walk holds state 7 (a sample in flight)
+         * between passes, and raw one-shots are refused while it runs —
+         * park it for the raw one-shot checks (this harness never fires
+         * the walk shot, so nothing re-arms it until the next pass) */
+        plat_walktmr_stop();
+        CELL_WALK_STATE = SUP_WALK_IDLE;
         /* malformed one-shots: odd byte count, unknown sub, bare sub-09 */
         uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x01, 0x06 }, 6u);
         CHECK(last_nrc() == 0x13u);

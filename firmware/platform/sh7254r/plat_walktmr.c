@@ -118,6 +118,10 @@
 extern void sup_walk_isr(void);
 
 static bool s_walk_tmr_running;
+/* r02f witness (review finding 5): TRUE vector-224 deliveries vs polled
+ * harvests — a walk serviced by the superloop fallback stamps late */
+volatile uint32_t s_walk_isr_count;
+volatile uint32_t s_walk_poll_count;
 
 /* the stock's load+trigger pair (0x9102E/0x91030): a nonzero DCNTD00 load
  * MUST precede the DSTDn0 trigger — "when DCNTDn = H'000000, writing 1 to
@@ -128,6 +132,36 @@ static void walktmr_arm_count(void)
 {
     DCNTD00 = WALK_COUNTS;
     DSTRD0 |= UCOMP_DSTD;
+}
+
+/* ONE-SHOT ARM (r02f, the stock's 0x6C0BA/0x6BF9C tail 0x91004): load the
+ * down counter and trigger it; the underflow stops the counter and the ISR
+ * does NOT re-arm — the walk's programmers arm every shot. Scale: the stock
+ * loads delay<<8 for a µs delay; in our clock setup one DCNTD00 tick (bits
+ * 31:8) measured ~28 µs (r01t: 4 ticks ≈ 112 µs per launch; r01u: 0xB0
+ * ticks ≈ 4.9 ms), the clock select (TCRD0/DCSELDn0) is not decoded. Arm at
+ * 32 µs/tick — always SHORT of the target, never late — and let the walk
+ * service (sup_walk_isr) close the loop on TCNTA and re-arm the remainder. */
+#define WALK_US_PER_TICK_ARM 32u
+
+void plat_walktmr_arm_us(uint32_t us)
+{
+    uint32_t ticks = us / WALK_US_PER_TICK_ARM;
+
+    if (ticks == 0u) {
+        ticks = 1u;
+    }
+    if (ticks > 0x00FFFFFFu) {
+        ticks = 0x00FFFFFFu;
+    }
+    TCRD0 = (uint16_t)TCRD0_INIT;
+    DCNTD00 = ticks << 8;                    /* stock 0x9102E: load ... */
+    DSTRD0 |= UCOMP_DSTD;                    /* ... then trigger (0x91030) */
+    TSRD0_ACK &= (uint8_t)~UCOMP_DSTD;       /* first-time ack (0x91042) */
+    TIERD0_EN |= UCOMP_DSTD;                 /* enable (0x91046) */
+    TSTRD = 0x0Fu;
+    ATUENR |= ATUENR_TDE;
+    s_walk_tmr_running = true;
 }
 
 bool plat_walktmr_running(void)
@@ -169,9 +203,10 @@ bool plat_walktmr_poll(void)
         return false;
     }
     TSRD0_ACK &= (uint8_t)~UCOMP_DSTD;       /* UDFDn0 ack (stock 0x9106C idiom) */
-    walktmr_arm_count();                     /* reload + re-trigger */
+    s_walk_tmr_running = false;              /* one-shot: the counter stopped */
+    s_walk_poll_count++;
     plat_wdt_kick();
-    sup_walk_isr();
+    sup_walk_isr();                          /* may re-arm (closed loop) */
     return true;
 }
 
@@ -183,14 +218,21 @@ void plat_walktmr_isr(void)
     /* ack the underflow (stock byte idiom, 0x9106C: bclr bit0 @0xFFFFF58C
      * = TSRD0 bit 8 = UDFDn0) */
     TSRD0_ACK &= (uint8_t)~UCOMP_DSTD;
-    /* re-arm: the stock never re-arms from the ISR — its 5 ms pass
-     * programmer (0x91004) does the load+trigger; our tick-driven FSM has
-     * no every-pass programmer, so the ISR repeats the stock's own pair
-     * (walktmr_arm_count) to sustain SUP_WALK_TICK_MS. */
-    walktmr_arm_count();
+    /* NO re-arm (r02f): the stock's ISR 0x9106C → 0x6C1BA sends one job
+     * and returns; the programmers arm every shot. */
+    s_walk_tmr_running = false;
+    s_walk_isr_count++;
     /* WDT feed first (stock law: the walk service 0x6C1BA feeds before
      * dispatching — the walk's liveness IS the WDT's liveness) */
     plat_wdt_kick();
     /* dispatch the walk job */
     sup_walk_isr();
+}
+
+/* D1's final stretch (r02f): spin on TCNTA (1 MHz [O]) until `t` — called
+ * from the walk ISR with < 40 µs remaining */
+void plat_walktmr_wait_until(uint32_t t)
+{
+    while ((int32_t)(t - plat_frt_us()) > 0) {
+    }
 }

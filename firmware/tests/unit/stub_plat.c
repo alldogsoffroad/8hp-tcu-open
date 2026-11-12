@@ -449,8 +449,8 @@ uint32_t plat_rspi_isr_count(uint8_t bus)
 
 /* the RX ISR body: collect the reply of the frame that just completed, feed
  * the next one; at burst end disarm and run the completion handler */
-#define STUB_LOG_MAX 8192
-struct { uint8_t bus; uint8_t job; uint16_t word; } stub_log[STUB_LOG_MAX];
+#define STUB_LOG_MAX 32768
+struct { uint8_t bus; uint8_t job; uint16_t word; uint32_t t_us; } stub_log[STUB_LOG_MAX];
 unsigned stub_log_n;
 unsigned stub_log_dropped;          /* words past the buffer: a recorder that
                                      * truncates silently is no verifier */
@@ -467,6 +467,7 @@ void stub_rspi_isr(uint8_t bus)
         stub_log[stub_log_n].bus = bus;
         stub_log[stub_log_n].job = c->job_id;
         stub_log[stub_log_n].word = c->tx[c->idx - 1u];
+        stub_log[stub_log_n].t_us = stub.frt_us;
         stub_log_n++;
     } else {
         stub_log_dropped++;
@@ -555,6 +556,21 @@ void plat_walktmr_stop(void)
     s_walk_run = false;
 }
 
+/* one-shot model (r02f): the platform arms at 32 µs/tick, the real counter
+ * runs ~28 µs/tick (r01t/r01u) — so a shot lands EARLY and the walk service
+ * must close the loop on TCNTA. The harness fires the ISR at walk_fire_us. */
+void plat_walktmr_arm_us(uint32_t us)
+{
+    uint32_t ticks = us / 32u;
+
+    if (ticks == 0u) {
+        ticks = 1u;
+    }
+    s_walk_run = true;
+    stub.walktmr_starts++;
+    stub.walk_fire_us = stub.frt_us + ticks * 28u;
+}
+
 bool plat_walktmr_running(void)
 {
     return s_walk_run;
@@ -594,4 +610,12 @@ void plat_wdt_quick_reset(void)
 uint32_t plat_frt_us(void)
 {
     return stub.frt_us;
+}
+
+/* the target spins on TCNTA; the model advances the clock to `t` */
+void plat_walktmr_wait_until(uint32_t t)
+{
+    if ((int32_t)(t - stub.frt_us) > 0) {
+        stub.frt_us = t;
+    }
 }

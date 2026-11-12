@@ -80,6 +80,12 @@ bool plat_tick_poll_hw(void);         /* r01e superloop fallback: harvest the co
 
 /* ---- Walk timer (rebuild design §5.4, ATU-D0 compare) ---- */
 void plat_walktmr_start(void);
+/* one-shot walk timer (stock 0x6C0BA/0x6BF9C tail): arm a shot of about
+ * `us` microseconds — deliberately SHORT (the DCNTD00 clock select is not
+ * decoded; ~28 µs/tick measured, armed at 32 µs/tick). The service closes
+ * the loop on TCNTA and re-arms for any remainder. The ISR never re-arms. */
+void plat_walktmr_arm_us(uint32_t us);
+void plat_walktmr_wait_until(uint32_t t);   /* spin until TCNTA reaches t (< 40 µs) */
 void plat_walktmr_stop(void);
 bool plat_walktmr_running(void);
 uint32_t plat_walktmr_count(void);     /* P8 step-0 probe: must advance */

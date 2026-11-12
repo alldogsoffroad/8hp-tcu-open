@@ -179,6 +179,11 @@ void sup_resp_nib(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
 void sup_resp_duty(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
 {
     (void)bus; (void)job_id; (void)n;
+    /* stock 0x910EE: stamp the exchange (TCNTA - 0x29, the burst time) and
+     * count the completion FIRST, ok or not — the walk re-bases its windows
+     * on this stamp and the reply processor's freshness is this counter */
+    CELL_REPLY_STAMP = plat_frt_us() - 0x29u;
+    CELL_DUTY_RXCNT++;
     /* all 7 words must be A8 class */
     for (uint8_t i = 0u; i < 7u; i++) {
         if (!SSLB1_OK(rx[i])) goto bad;
@@ -186,11 +191,12 @@ void sup_resp_duty(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
     /* harvest: fb [5], commit [4], echo [6] */
     CELL_FB_0C = (uint8_t)(rx[5] & 0xFFu);
     CELL_COMMIT_12 = (uint8_t)(rx[4] & 0xFFu);
-    CELL_ECHO_0A = (uint8_t)(rx[6] & 0x3Fu);
+    CELL_ECHO_0A = (uint8_t)(rx[6] & 0xFFu);   /* 0x910EE: full byte */
     CELL_DUTY_COUNT++;
     CELL_REPLY_FRESH |= 1u;
     goto fin;
 bad:
+    CELL_RX_ERR |= 1u;                          /* 0x910EE: 0x90541 |= 1 */
     /* F4 (protocol_audit): keep the reject-all gate (spec-faithful, §5 —
      * never widen the masks to accept 0xAB as valid) but COUNT the discard:
      * the empty bad: label left the spec 22 §4 per-job error bookkeeping
@@ -207,17 +213,20 @@ fin:
 void sup_resp_level(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
 {
     (void)bus; (void)job_id; (void)n;
+    /* stock 0x911D8: stamp + count first (see sup_resp_duty) */
+    CELL_REPLY_STAMP = plat_frt_us() - 0x29u;
+    CELL_LEVEL_COUNT++;
     for (uint8_t i = 0u; i < 4u; i++) {
         if (!SSLB1_OK(rx[i])) goto bad;
     }
     /* harvest: echo [1], commit [2], fb [3] */
-    CELL_ECHO_0A = (uint8_t)(rx[1] & 0x3Fu);
+    CELL_ECHO_0A = (uint8_t)(rx[1] & 0xFFu);   /* 0x911D8: full byte */
     CELL_COMMIT_12 = (uint8_t)(rx[2] & 0xFFu);
     CELL_FB_0C = (uint8_t)(rx[3] & 0xFFu);
-    CELL_LEVEL_COUNT++;
     CELL_REPLY_FRESH |= 2u;
     goto fin;
 bad:
+    CELL_RX_ERR |= 2u;                          /* 0x911D8: 0x90541 |= 2 */
     /* F4 (protocol_audit): same bookkeeping law as W1 above — reject-all
      * stays, but the discard is counted per job (spec 22 §4 preamble). */
     s_job_err_cnt[JOB_LEVEL]++;

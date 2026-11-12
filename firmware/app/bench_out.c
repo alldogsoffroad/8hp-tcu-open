@@ -610,8 +610,13 @@ static int sup_lab_start(const uint8_t *in, uint16_t n)
         sup_ctrl_bench_dialect(in[1] != 0u);
         return 0;
     }
-    if (in[0] != 5u && in[0] != 7u && in[0] != 8u && CELL_WALK_STATE != SUP_WALK_IDLE) {
-        return -NRC_CNC;             /* raw one-shots would stop the walk's stream */
+    if (in[0] != 2u && in[0] != 3u && in[0] != 5u && in[0] != 7u && in[0] != 8u &&
+        CELL_WALK_STATE != SUP_WALK_IDLE) {
+        return -NRC_CNC;             /* raw one-shots would stop the walk's stream
+                                      * (modes 2/3 only set the request cell and
+                                      * the view — no raw word; exempt since r02f,
+                                      * whose stock-law walk sits in state 7 with
+                                      * a sample in flight between passes) */
     }
     if (in[0] == 1u) {                                     /* one-shot alternating
                                                              * (SSLB1/SSLB0, the J1/J5
@@ -788,7 +793,7 @@ static int sup_lab_results(uint8_t *out, uint16_t max)
         sup_echo_counts(&ok, &bad, &a8, &aa);
         out[o++] = 3u;
         out[o++] = CELL_OUTER_FSM;                 /* the walk's outer FSM */
-        out[o++] = CELL_WALK_SUBST;                /* staging ping-pong sub-state */
+        out[o++] = CELL_STAGE_SUB;                 /* staging sub-state 0x93B9C */
         out[o++] = CELL_LVL_REPORTED;
         out[o++] = CELL_PENDING != 0u ? CELL_PENDING : CELL_VALUE;
         out[o++] = CELL_WALK_STATE;

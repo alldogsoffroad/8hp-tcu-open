@@ -1,7 +1,35 @@
-/* transcript.c — THE BYTE-IDENTITY VERIFICATION (the never-run diff):
- * runs our firmware's first 100 scheduler passes with a bench-shaped reply
- * model and prints every bus-B word per pass. Diff against the stock's
- * documented composition (first500ms_diff.md §1). */
+/* transcript.c — THE BYTE-IDENTITY AND TIMING VERIFICATION.
+ *
+ * Runs our firmware's first 100 frames (5 ms each) on a 10 µs time step with
+ * a bench-shaped supervisor model and prints every bus-B word per frame;
+ * then judges:
+ *   1. the cyclic per-pass order (stock pool 0x8EE82 + engine 0x937F8):
+ *      J4, J3, J2, F, J6, J1, J5, F2 every frame — no J7 (no stock queuer);
+ *   2. THE WALK TIMING LAW (r02f; stock 0x6C0BA / 0x6BF9C / 0x6C594 for the
+ *      06 era, period 0x4B0): relative to the era base the programmer aimed
+ *      from (the last exchange stamp TCNTA - 0x29, or that plus whole 3600
+ *      µs cycles once the stepper re-bases), every W1 token launches at
+ *      fire - 1 = +2345 or +3206 µs (or the next cycle's +5945); no W2 84
+ *      write launches inside the keep-out (3206, 3774) µs;
+ *   3. the conversation shape (0x8D020): tokens AND resends both occur —
+ *      tokens drag the level down while it is above the target 5, resends
+ *      raise it at or below 5 — and no free-running walk stream exists.
+ *      (The first post-reply job is a RESEND, not a token: the bench's
+ *      first 84|06 reply reports 6 against the level programmer's expected
+ *      7, and 0x6C1EA answers that mismatch with attention 7 → 0x6C720.)
+ *
+ * Schedule = main.c: monitor at frame offsets 0 and 3 ms (the stock's 2.5 ms
+ * task as a 2/3 ms alternation), batch at 2 ms; the walk ISR fires when the
+ * stub's one-shot elapses (the stub runs 28 µs/tick against the platform's
+ * 32 µs/tick arm, so shots land early and the service's closed loop on
+ * TCNTA is exercised). RSPI transfers complete instantly at the step.
+ *
+ * Chip model [I, for the transcript only] — the stock's own expected-level
+ * bookkeeping read as a chip model (0x6C0BA bumps expected +1 per 84 write,
+ * 0x6BF9C ctx 0x1E lowers it -1 per in-window token): the first 84 of a new
+ * value sets the level to 6 (the bench's first reply); a repeat 84 raises
+ * it by one (cap 7); a token lowers it by one (floor 0); fb = level<<4.
+ */
 #include <stdio.h>
 #include <string.h>
 #include "platform.h"
@@ -11,24 +39,35 @@
 #include "bsw/sup/sup_walk.h"
 #include "stub_plat.h"
 
-#define STUB extern
-/* the recorder lives in stub_plat.c */
-extern struct { uint8_t bus; uint8_t job; uint16_t word; } stub_log[2048];
+extern struct { uint8_t bus; uint8_t job; uint16_t word; uint32_t t_us; } stub_log[32768];
 extern unsigned stub_log_n;
 extern unsigned stub_log_dropped;
 
-/* bench-shaped reply model (r01v/r01w live observations, gate closed):
- *  - walk 84|06/88 words: AA-class echoes; the 0C reply carries fb->level 6
- *  - CTRL 22xx: echo with the request bit (the chip's grant law)
- *  - STAT 1400: the 0x14 word = D5 (our bench chip, gate closed)
- *  - J5 ID: AA14 (the observed ID reply class)                             */
+static uint8_t s_level = 7u;         /* the chip's level (model) */
+static uint32_t s_base_at[32768];    /* CELL_ERA_BASE when each word was sent:
+                                      * the base the walk programmer aimed from
+                                      * (frozen while a shot is in flight) */
+static uint8_t s_echo;               /* the last 84 value (model) */
+
 static uint16_t bench_reply(uint16_t tx)
 {
     switch (tx & 0xFF00u) {
-    case 0x0C00u: return 0xAA60u;              /* fb nibble 6 -> level 6 */
-    case 0x1400u: return 0xAAD5u;              /* the gate-closed 0x14   */
+    case 0x8400u:                                  /* W2 frame 0: 84|v */
+        if ((uint8_t)tx != s_echo) {
+            s_level = 6u;                          /* a new era value */
+        } else if (s_level < 7u) {
+            s_level++;
+        }
+        s_echo = (uint8_t)tx;
+        return 0xAA00u;
+    case 0x8800u:                                  /* W1 token frames */
+        return 0xAA00u;
+    case 0x0A00u: return (uint16_t)(0xAA00u | s_echo);
+    case 0x0C00u: return (uint16_t)(0xAA00u | (uint16_t)(s_level << 4));
+    case 0x1200u: return 0xAA00u;                  /* commit 0 */
+    case 0x1400u: return 0xAAD5u;                  /* the gate-closed 0x14 */
     case 0x2200u: return (uint16_t)(0xAA00u | (CELL_REQUEST & 0x01u));
-    case 0x0600u: return 0xAA14u;              /* J5 ID                  */
+    case 0x0600u: return 0xAA14u;
     default:      return 0xAA00u;
     }
 }
@@ -38,84 +77,89 @@ static void drain(void)
     for (uint8_t b = 0u; b < 2u; b++) {
         unsigned guard = 512u;
         while (stub_rspi_busy(b) && guard-- != 0u) {
+            unsigned before = stub_log_n;
             stub_rspi_isr(b);
+            for (unsigned k = before; k < stub_log_n && k < 32768u; k++) {
+                s_base_at[k] = CELL_ERA_BASE;
+            }
+            /* a token's first frame lowers the model level once */
+            if (stub_log_n != before && stub_log[before].bus == 1u &&
+                (stub_log[before].word & 0xFF00u) == 0x8800u &&
+                stub_log[before].job == JOB_DUTY &&
+                (before == 0u || stub_log[before - 1u].job != JOB_DUTY ||
+                 (stub_log[before - 1u].word & 0xFF00u) != 0x8800u)) {
+                if (s_level != 0u) {
+                    s_level--;
+                }
+            }
         }
     }
 }
 
 int main(void)
 {
-    unsigned pass_mark[128];
+    static const char *JN[] = {"CTRL","EN","POS","SSLB2","ID","STAT","NIB",
+                               "DUTY","LEVEL","FLT"};
+    enum { FRAMES = 400 };              /* 2 s; P01-P100 printed */
+    unsigned pass_mark[FRAMES + 2];
+    uint32_t lcg = 0x2026111Bu;         /* seeded scheduler jitter */
+    int fail = 0;
+
     sup_jobs_init();
     sup_walk_init();
     sup_batch_init();
     stub.sup_reply_fn = bench_reply;
-    sup_job_engine_pump();                      /* main.c:289 — the init J5
-                                                 * launches before the tick */
+    sup_job_engine_pump();                      /* main.c:289 — the init J5 */
     drain();
     unsigned init_end = stub_log_n;
 
-    for (unsigned p = 1u; p <= 100u; p++) {
+    for (unsigned p = 1u; p <= FRAMES; p++) {
+        /* r02f review: jitter the task phases (0..900 µs, 10 µs grain) so
+         * the walk programmers run at many offsets from the exchange stamp
+         * — a fixed schedule never programs a resend near the keep-out */
+        unsigned j0, j1, jb;
+        lcg = lcg * 1664525u + 1013904223u; j0 = ((lcg >> 16) % 91u) * 10u;
+        lcg = lcg * 1664525u + 1013904223u; j1 = ((lcg >> 16) % 91u) * 10u;
+        lcg = lcg * 1664525u + 1013904223u; jb = ((lcg >> 16) % 91u) * 10u;
+        if (p <= 100u) { j0 = j1 = jb = 0u; }   /* P01-P100: main.c's exact phases */
         pass_mark[p] = stub_log_n;
-        /* one 5 ms frame in main.c's order: monitor (phase 0), batch
-         * (phase 2), monitor (phase 3) — the monitor is the stock's 2.5 ms
-         * task (0x7EE2E -> 0x873F0), no lead-in */
-        stub.frt_us += 2500u;
-        sup_monitor_poll();
-        sup_batch_5ms();
-        drain();
-        stub.frt_us += 2500u;
-        sup_monitor_poll();
-        if (plat_walktmr_running()) {            /* ONE walk tick per frame:
-                                                  * the down-counter load
-                                                  * 0xB000 is ~4.5-4.95 ms,
-                                                  * and it only fires once
-                                                  * the monitor arms it */
-            sup_walk_isr();
+        for (unsigned step = 0u; step < 500u; step++) {   /* 5 ms in 10 µs */
+            unsigned us = step * 10u;
+            if (us == j0 || us == 3000u + j1) {
+                sup_monitor_poll();
+                drain();
+            }
+            if (us == 2000u + jb) {
+                sup_batch_5ms();
+                drain();
+            }
+            if (plat_walktmr_running() &&
+                (int32_t)(stub.frt_us - stub.walk_fire_us) >= 0) {
+                plat_walktmr_stop();            /* the one-shot underflow */
+                sup_walk_isr();                 /* may re-arm (closed loop) */
+                drain();
+            }
+            stub.frt_us += 10u;
         }
-        drain();
     }
 
-    /* print: pass | job words */
-    static const char *JN[] = {"CTRL","EN","POS","SSLB2","ID","STAT","NIB",
-                               "DUTY","LEVEL","FLT"};
+    /* ── print ─────────────────────────────────────────────────────────── */
     printf("P00");
     for (unsigned j = 0u; j < init_end; j++) {
         if (stub_log[j].bus == 1u) printf(" %s:%04X", JN[stub_log[j].job % 10u], stub_log[j].word);
     }
+    pass_mark[FRAMES + 1u] = stub_log_n;
     for (unsigned p = 1u; p <= 100u; p++) {
+        unsigned end = pass_mark[p + 1u];
         printf("\nP%02u", p);
-        unsigned end = (p < 100u) ? pass_mark[p + 1u] : stub_log_n;
-        unsigned j = pass_mark[p];
-        int line = 0;
-        for (; j < end; j++) {
-            if (stub_log[j].bus != 1u) continue;           /* bus B only */
-            if (line++ == 0) printf(" ");
-            printf("%s:%04X ", JN[stub_log[j].job % 10u], stub_log[j].word);
+        for (unsigned j = pass_mark[p]; j < end; j++) {
+            if (stub_log[j].bus != 1u) continue;
+            printf(" %s:%04X", JN[stub_log[j].job % 10u], stub_log[j].word);
         }
     }
     printf("\n");
 
-    /* ── THE VERDICT: the transcript fails the build on any drift ──────────
-     * The stock's per-pass bus-B order in mode 0 (pool 0x8EE82 + the queue
-     * engine 0x937F8/0x93902), cyclic jobs only:
-     *   J4, J3, J2, F, J6, J1, J5, F2
-     * F2 = the J6-completion re-fire (0x92BBE -> 0x92F7C on 0x14 & 0xE0;
-     * the model's 0x14 = D5). F's descriptor 0x40C30 has priority byte 0 ->
-     * the normal ring, TAIL insert (0x937F8); J1/J5 are queued in the same
-     * CPU burst, long before J6's 5 frames complete behind a 9-frame
-     * backlog -> F2 lands after J5 [O ring/priority; I timing, strong].
-     * J7 never appears (no stock queuer). The walk-queue jobs (LEVEL, DUTY)
-     * are excluded: they ride the priority ring (stock descriptors 0x40A14 /
-     * 0x409F4 are the ONLY priority-1 bus-B descriptors; ours JOBQ_WALK)
-     * from the asynchronous timer tick, so their position is the tick's,
-     * not the pool's. */
-    static const uint8_t EXP[] = { JOB_SSLB2, JOB_POS, JOB_EN, JOB_FLT,
-                                   JOB_STAT, JOB_CTRL, JOB_ID, JOB_FLT };
-    static const uint8_t NFR[JOB_COUNT] = { [JOB_CTRL]=4u, [JOB_EN]=2u,
-        [JOB_POS]=2u, [JOB_SSLB2]=1u, [JOB_ID]=4u, [JOB_STAT]=5u,
-        [JOB_NIB]=1u, [JOB_DUTY]=7u, [JOB_LEVEL]=4u, [JOB_FLT]=2u };
-    int fail = 0;
+    /* ── verdict 0: the recorder ───────────────────────────────────────── */
     if (stub_log_dropped != 0u) {
         printf("FAIL: recorder dropped %u words\n", stub_log_dropped);
         fail = 1;
@@ -126,35 +170,117 @@ int main(void)
             fail = 1;
         }
     }
-    for (unsigned p = 1u; p <= 100u && !fail; p++) {
-        unsigned end = (p < 100u) ? pass_mark[p + 1u] : stub_log_n;
-        unsigned k = 0u, j = pass_mark[p];
-        while (j < end) {
-            uint8_t id = stub_log[j].job;
-            if (stub_log[j].bus != 1u || id == JOB_LEVEL || id == JOB_DUTY) {
-                j++;
-                continue;
+
+    /* ── verdict 1: the cyclic order (walk jobs excluded — they ride the
+     *    priority ring from the asynchronous one-shot) ─────────────────── */
+    {
+        static const uint8_t EXP[] = { JOB_SSLB2, JOB_POS, JOB_EN, JOB_FLT,
+                                       JOB_STAT, JOB_CTRL, JOB_ID, JOB_FLT };
+        static const uint8_t NFR[JOB_COUNT] = { [JOB_CTRL]=4u, [JOB_EN]=2u,
+            [JOB_POS]=2u, [JOB_SSLB2]=1u, [JOB_ID]=4u, [JOB_STAT]=5u,
+            [JOB_NIB]=1u, [JOB_DUTY]=7u, [JOB_LEVEL]=4u, [JOB_FLT]=2u };
+        for (unsigned p = 1u; p <= FRAMES && !fail; p++) {
+            unsigned end = pass_mark[p + 1u];
+            unsigned k = 0u, j = pass_mark[p];
+            while (j < end) {
+                uint8_t id = stub_log[j].job;
+                if (stub_log[j].bus != 1u || id == JOB_LEVEL || id == JOB_DUTY) {
+                    j++;
+                    continue;
+                }
+                if (id >= JOB_COUNT || k >= sizeof EXP || id != EXP[k]) {
+                    printf("FAIL: P%02u job slot %u: got %s, expected %s\n", p, k,
+                           JN[id % 10u], k < sizeof EXP ? JN[EXP[k]] : "(end)");
+                    fail = 1;
+                    break;
+                }
+                unsigned got = 0u;
+                while (j < end && got < NFR[id]) {
+                    if (stub_log[j].bus == 1u && stub_log[j].job == id) got++;
+                    j++;
+                }
+                k++;
             }
-            if (id >= JOB_COUNT || k >= sizeof EXP || id != EXP[k]) {
-                printf("FAIL: P%02u job slot %u: got %s, expected %s\n", p, k,
-                       JN[id % 10u], k < sizeof EXP ? JN[EXP[k]] : "(end)");
+            if (!fail && k != sizeof EXP) {
+                printf("FAIL: P%02u carried %u cyclic jobs, expected %u\n", p, k,
+                       (unsigned)sizeof EXP);
                 fail = 1;
-                break;
             }
-            /* consume this job's frames (walk frames may interleave) */
-            unsigned got = 0u;
-            while (j < end && got < NFR[id]) {
-                if (stub_log[j].bus == 1u && stub_log[j].job == id) got++;
-                j++;
-            }
-            k++;
         }
-        if (!fail && k != sizeof EXP) {
-            printf("FAIL: P%02u carried %u cyclic jobs, expected %u\n", p, k,
-                   (unsigned)sizeof EXP);
+    }
+
+    /* ── verdicts 2 and 3: the walk timing law and the conversation shape ─
+     * Walk job launches = the first frame of each W1/W2 burst. Each one's
+     * offset is taken from the PREVIOUS walk job's completion stamp: the
+     * launch time of its last frame (instant transfers) minus 0x29. */
+    {
+        enum { SLACK = 12 };             /* the 10 µs step + rounding */
+        bool have_stamp = false;
+        unsigned run_w2 = 0u, max_run_w2 = 0u;
+        unsigned n_tok = 0u, n_lvl = 0u, n_tok_ok = 0u;
+        unsigned printed = 0u;
+
+        printf("WALK: job  offset-from-stamp (µs)\n");
+        for (unsigned j = init_end; j < stub_log_n; j++) {
+            uint8_t id = stub_log[j].job;
+            bool first = (id == JOB_DUTY || id == JOB_LEVEL) &&
+                         (j == 0u || stub_log[j - 1u].job != id);
+            if (!first) continue;
+            unsigned nf = (id == JOB_DUTY) ? 7u : 4u;
+            int32_t off = (int32_t)(stub_log[j].t_us - s_base_at[j]);
+
+            if (printed < 24u) {
+                printf("WALK: %s %d\n", id == JOB_DUTY ? "W1 " : "W2 ", (int)off);
+                printed++;
+            }
+            if (id == JOB_DUTY) {
+                n_tok++;
+                if (have_stamp) {
+                    /* the stock fires at base + fire - 1 (0x6C0BA/0x6BF9C:
+                     * delay = fire - 1 - elapsed), so its realized slots are
+                     * 2345 / 3206 / 5945 */
+                    bool ok = (off >= 2345 && off <= 2345 + SLACK) ||
+                              (off >= 3206 && off <= 3206 + SLACK) ||
+                              (off >= 5945 && off <= 5945 + SLACK);
+                    if (ok) {
+                        n_tok_ok++;
+                    } else {
+                        printf("FAIL: W1 token at +%d µs (slots 2345/3206/5945)\n", (int)off);
+                        fail = 1;
+                    }
+                }
+            } else {
+                n_lvl++;
+                if (have_stamp && off > 3206 && off < 3774) {   /* (0x93840, 0x93842) - 1 */
+                    printf("FAIL: W2 84 write at +%d µs inside the keep-out (3206, 3774)\n",
+                           (int)off);
+                    fail = 1;
+                }
+            }
+            if (id == JOB_LEVEL) {
+                if (++run_w2 > max_run_w2) max_run_w2 = run_w2;
+            } else {
+                run_w2 = 0u;
+            }
+            have_stamp = true;
+        }
+        printf("WALK: %u W1 tokens (%u in slot), %u W2 writes over %u frames (jittered after P100)\n",
+               n_tok, n_tok_ok, n_lvl, (unsigned)FRAMES);
+        if (n_lvl == 0u) {
+            printf("FAIL: no W2 resend — the 0x8D020 level <= target path never ran\n");
+            fail = 1;
+        }
+        if (n_tok == 0u) {
+            printf("FAIL: no W1 token in 500 ms — the state-8 law never answered the chip\n");
+            fail = 1;
+        }
+        if (max_run_w2 > 4u) {
+            printf("FAIL: %u W2 writes in a row — a resend loop, not the 5<->6 "
+                   "oscillation of the 0x8D020 law\n", max_run_w2);
             fail = 1;
         }
     }
-    printf(fail ? "TRANSCRIPT: DRIFT\n" : "TRANSCRIPT: stock order holds, P01-P100\n");
+
+    printf(fail ? "TRANSCRIPT: DRIFT\n" : "TRANSCRIPT: stock order + walk timing law hold, 400 frames\n");
     return fail;
 }

@@ -75,7 +75,20 @@ void plat_init(void)
  * fire (the host tick rides plat_tick_poll above; RSPI replies complete
  * inside the stub's launch call) */
 bool plat_tick_poll_hw(void) { return false; }
-bool plat_walktmr_poll(void) { return false; }
+static bool s_walk_shot;
+static uint32_t s_walk_fire_us;
+extern void sup_walk_isr(void);
+static uint32_t host_us(void);
+bool plat_walktmr_poll(void)
+{
+    /* the one-shot model: fire once the armed time passes (no re-arm) */
+    if (!s_walk_shot || (int32_t)(host_us() - s_walk_fire_us) < 0) {
+        return false;
+    }
+    s_walk_shot = false;
+    sup_walk_isr();
+    return true;
+}
 bool plat_rspi_poll(uint8_t bus) { (void)bus; return false; }
 /* no host ATU ISR: 0 keeps main.c's F2 gate on the CMT fallback, which is
  * the host's tick source */
@@ -160,6 +173,20 @@ void plat_walktmr_start(void)
 void plat_walktmr_stop(void)
 {
     s_walk_run = false;
+    s_walk_shot = false;
+}
+
+void plat_walktmr_arm_us(uint32_t us)
+{
+    /* mirror the target: armed at 32 µs/tick, the counter runs ~28 µs/tick */
+    uint32_t ticks = us / 32u;
+
+    if (ticks == 0u) {
+        ticks = 1u;
+    }
+    s_walk_run = true;
+    s_walk_shot = true;
+    s_walk_fire_us = host_us() + ticks * 28u;
 }
 
 bool plat_walktmr_running(void)
@@ -610,3 +637,9 @@ void plat_drv_spbr_set(uint8_t spbr) { (void)spbr; }  /* host stub */
 
 bool plat_drv_xfer_irq(const uint16_t *tx, uint16_t *rx, uint8_t n) { (void)tx; (void)rx; (void)n; return true; }
 void plat_drv_irq_arm(bool on) { (void)on; }
+
+void plat_walktmr_wait_until(uint32_t t)
+{
+    while ((int32_t)(t - host_us()) > 0) {
+    }
+}
