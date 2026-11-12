@@ -449,6 +449,10 @@ uint32_t plat_rspi_isr_count(uint8_t bus)
 
 /* the RX ISR body: collect the reply of the frame that just completed, feed
  * the next one; at burst end disarm and run the completion handler */
+#define STUB_LOG_MAX 2048
+struct { uint8_t bus; uint8_t job; uint16_t word; } stub_log[STUB_LOG_MAX];
+unsigned stub_log_n;
+
 void stub_rspi_isr(uint8_t bus)
 {
     stub_rspi_t *c = &s_rs[bus];
@@ -457,6 +461,12 @@ void stub_rspi_isr(uint8_t bus)
         return;
     }
     s_rs_isr[bus]++;
+    if (stub_log_n < STUB_LOG_MAX) {
+        stub_log[stub_log_n].bus = bus;
+        stub_log[stub_log_n].job = c->job_id;
+        stub_log[stub_log_n].word = c->tx[c->idx - 1u];
+        stub_log_n++;
+    }
     c->rx[c->idx - 1u] = rspi_scripted(bus, c->tx[c->idx - 1u], (uint8_t)(c->idx - 1u), c->n_sel);
     if (c->idx < c->frames) {
         c->idx++;

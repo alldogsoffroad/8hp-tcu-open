@@ -110,45 +110,53 @@ void sup_batch_5ms(void)
         return;
     }
 
-    /* 1. timing stamp (FRT sample for the batch journal) */
+    /* THE POOL ORDER, 1:1 for real (first500ms_diff §1 row 3; the transcript
+     * tool caught the old order staging J6/J1 first with J3/J4 at the tail —
+     * the reverse of the stock's wire sequence on every pass):
+     *   1. reply proc 0x91ACA — queues J4 (0x93198), J3 (0x9305A)
+     *   2. stage J2 0x91804 (→0x91758+0x92E80), stage F 0x91810
+     *   3. compose 0x91C86 → queue J6 0x92B82 + arm J1 0x92D38
+     *   4. 0x91E12 letters chain
+     *   5. queue J5 0x92A84
+     *   6. 0x90ACC condense, 7. kick 0x921A0
+     * J7 rides the starter block (every 2nd pass; position [I] — the pool
+     * order above lists seven jobs, J7 unplaced in the decode). */
     s_stamp = plat_frt_us();
 
-    /* 2. the composers (0x91C86 + 0x93126) */
-    sup_ctrl_compose();
-    sup_c9_compose();
-
-    /* 3. queue JOB_STAT (0x92B82), queue JOB_CTRL (0x92D38) */
-    batch_stage_stat();
-    (void)sup_job_queue(JOB_STAT);
-    batch_stage_ctrl_tail();
-    (void)sup_job_queue(JOB_CTRL);
-
-    /* 4. the letters chain + J2/F staging (0x91E12 law; the self-test runs
-     *    in the batch pass — the stock's mode-sequencer slot) */
-    sup_selftest_step();
-    sup_enables_stage();
-
-    /* 5. queue JOB_ID (0x92A84) */
-    batch_stage_id();
-    (void)sup_job_queue(JOB_ID);
-
-    /* 6. reply condense (0x90ACC: grant, handover, WDT A-law, SSLB2,
-     *    telemetry average) */
+    /* 1. the reply proc: condense the previous pass, then the starters */
     sup_reply_condense();
-
-    /* 7. bus-A kick (0x921A0: queue the ID job + engine kick) */
-    drv_id_kick();
-
-    /* 8. the cyclic starters (0x9305A/0x93198) and J7 on every 2nd pass */
-    batch_stage_pos();
-    (void)sup_job_queue(JOB_POS);
     batch_stage_sslb2();
     (void)sup_job_queue(JOB_SSLB2);
+    batch_stage_pos();
+    (void)sup_job_queue(JOB_POS);
     s_pass++;
     if ((s_pass & 1u) == 0u) {
         batch_stage_nib();
         (void)sup_job_queue(JOB_NIB);
     }
+
+    /* 2. stage J2 + F (the enables pair; the letters chain folds in below
+     *    per the 0x91E12 law — the stock runs it after the J1 arm) */
+    sup_enables_stage();
+
+    /* 3. the composers (0x91C86 + 0x93126): queue J6, arm J1 */
+    sup_ctrl_compose();
+    sup_c9_compose();
+    batch_stage_stat();
+    (void)sup_job_queue(JOB_STAT);
+    batch_stage_ctrl_tail();
+    (void)sup_job_queue(JOB_CTRL);
+
+    /* 4. the letters chain (0x91E12: the selftest runs in the batch pass —
+     *    the stock's mode-sequencer slot, AFTER the J1 arm) */
+    sup_selftest_step();
+
+    /* 5. queue JOB_ID (0x92A84) */
+    batch_stage_id();
+    (void)sup_job_queue(JOB_ID);
+
+    /* 6/7. bus-A kick (0x921A0: queue the ID job + engine kick) */
+    drv_id_kick();
 
     /* the builder law (0x91C86 tail): force the request cell while outputs
      * are not disabled — the composer does it with bit 0; the batch makes

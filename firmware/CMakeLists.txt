@@ -206,6 +206,11 @@ else()
     target_compile_definitions(test_park PRIVATE PARK_TEST_HOOKS TCU_M4B_OUTPUTS)
     add_test(NAME park COMMAND test_park)
     add_executable(test_dump tests/unit/test_dump.c app/bench_dump.c tests/unit/stub_plat.c)
+    add_executable(transcript tests/unit/transcript.c
+        bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
+        bsw/sup/sup_letters.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
+        tests/unit/stub_plat.c)
+    add_test(NAME transcript COMMAND transcript)
     add_test(NAME dump COMMAND test_dump)
     add_executable(test_rebuild tests/unit/test_rebuild.c bsw/sched/sched.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_walk.c bsw/sup/sup_batch.c
