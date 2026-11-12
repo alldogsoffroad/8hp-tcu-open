@@ -315,7 +315,12 @@ static void adma_init(void)
     R16(ADMA + 0x66u) = 160u;                          /* ADMARTCR1          */
     R16(ADMA + 0x64u) = 160u;                          /* ADMATCR1           */
     R8(TMRG + 0xA1u) = (uint8_t)(R8(TMRG + 0xA1u) & (uint8_t)~1u);   /* CMFG2 */
-    R8(TMRG + 0xA0u) = (uint8_t)(R8(TMRG + 0xA0u) | 1u);            /* CMEG2 */
+    /* r02o DISCRIMINATOR: CMEG2 NOT set — Timer G2 never requests A-DMAC
+     * ch0, so the mux address on PG12-15 (PGDR[15:8]) never steps. Every
+     * other part of the chain (G1 -> AN0 -> ch1 ring, the ADC_A/ADC_B scans,
+     * DEI4/DEI5, the finisher) runs as in r02n. The stock sets it (0x96900).
+     * Readings then all come from ONE mux input (whatever PG12-15 hold). */
+    /* R8(TMRG + 0xA0u) = (uint8_t)(R8(TMRG + 0xA0u) | 1u);    CMEG2 */
     R16(ADC_A + 0x04u) = (uint16_t)(R16(ADC_A + 0x04u) | 1u);   /* ADTRGE0 */
 }
 
