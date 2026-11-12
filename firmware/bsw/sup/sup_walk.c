@@ -254,8 +254,11 @@ static void duty_prog(void)
 
 /* ── init (stock 0x6C12C, plus the machine cells the stock RAM-clears) ──── */
 
+static bool s_target3;                  /* r02j: the ladder's target-3 step taken */
+
 void sup_walk_init(void)
 {
+    s_target3 = false;
     CELL_PERIOD = WALK_PERIOD_INIT;
     CELL_VALUE = WALK_VAL_INIT;
     CELL_VALUE_COMPL = 0xC0u;
@@ -659,6 +662,7 @@ static void one_shot_enable(void)
 
 /* ── the monitor body (stock 0x873F0; 2.5 ms, every mode, no lead-in) ───── */
 
+
 void sup_monitor_poll(void)
 {
     plat_alive(0x02u);                                    /* S11 breadcrumb */
@@ -686,6 +690,21 @@ void sup_monitor_poll(void)
         state8_law();
         break;
     case SUP_FSM_SUPERVISE:
+        /* r02j — THE LADDER'S LEVEL SCHEDULE, first step (gate_bit1_decode.md,
+         * validated against the bytes 2026-11-12). The stock self-test
+         * ladder 0x8B7A8 sets the walk target: phase 1 0x8B974 target 5 and
+         * waits for reported >= 5; phase 2 0x8BB34 passes on 0x14 bit 1 == 0;
+         * phase 0x10 0x8BD40 ends with 0x8D136(3) (mov #3,r4 @ 0x8BDB8);
+         * phase 0x20 0x8BDD6 then REQUIRES bit 1 == 1 once 0x8D108(3) holds
+         * (reported <= 4) and arms the TIOC pin-cut test. The driving dump
+         * ends at target 0 / level 0 with 0x14 = C7. Ours held target 5
+         * forever (no ladder) — so bit 1 could not be 1. The ladder's other
+         * phases and the pin-cut test are not ported; the letters chain is
+         * held (sup_letters.c case 2), so no enable can follow. */
+        if (!s_target3 && level_target_reached(5u) && CELL_SSLB0_BIT2 == 0u) {
+            level_target_set(3u);                         /* 0x8BD40 → 0x8D136(3) */
+            s_target3 = true;
+        }
         state8_law();                                     /* 0x876E0 → 0x8D020 */
         break;
     default:

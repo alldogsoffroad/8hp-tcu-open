@@ -132,17 +132,20 @@ void sup_selftest_step(void)
             s_phase[ch] = 2u;
             break;
         case 2u:
-            /* THE GATE (0x8BB34): 0x14 bit 1 must be SET. */
-            if (CELL_SSLB0_BIT2 == 0u) {
-                s_err_latch |= (uint8_t)(1u << ch);   /* error latch 0xFFF93A8C */
-                s_phase[ch] = 1u;                     /* restart the ladder */
-                break;
+            /* r02j HOLD (gate_bit1_decode.md, validated 2026-11-12): the old
+             * test here was INVERTED. Stock phase 2 0x8BB34 PASSES on 0x14
+             * bit 1 == 0 (0x93A8C |= phase bit, sub-state 0x55) and fails
+             * with 0xF4 on bit 1 == 1; the finisher 0x8C0F2 needs 0x93A8C ==
+             * 0xFF (driving dump: 0x93A8C = 00FF, 0x9500D = AA). Bit 1 = 1 is
+             * EXPECTED only at walk level <= 4 (phase 0x20 0x8BDD6, after
+             * 0x8BD40 sets target 3). The old code set the request — and so
+             * staged 0x9020, a solenoid-rail command — the moment bit 1 rose.
+             * Until the stock ladder (0x8B7A8, all phases, the 0x85788 pin-
+             * cut test) is ported, NO request is ever set here: the 0x90
+             * word stays 0x9000. The gate state is only recorded. */
+            if (CELL_SSLB0_BIT2 != 0u) {
+                s_err_latch |= (uint8_t)(0x10u << ch);  /* diagnostic: bit 1 seen */
             }
-            /* gate open: set the request cell (0x85E64 law — only lands in
-             * the 0x11/0x16 states, which the restart loop guarantees) and
-             * issue the 0x16 command state */
-            s_req[ch] = 0x01u;
-            s_phase[ch] = 4u;
             break;
         case 4u:
             /* phase 4: issue the 0x11 code again (request holds) */

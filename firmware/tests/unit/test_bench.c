@@ -368,29 +368,18 @@ int main(void)
         CHECK(CELL_LETTERS[0] == 0u);           /* the tamper trigger cannot fire */
         run_10ms(1u);
         CHECK(CELL_J2_STAGED == 0x9000u);       /* nothing staged unearned */
-        /* THE EARN PATH: gate open (hermetic injection) — the ladder earns
-         * the letter on its own within 4 passes (init/gate/4/8) */
+        /* r02j: NO EARN PATH while the ladder is held. The old earn path
+         * (gate open → request → letters → 0x9020) was the INVERTED gate test
+         * (stock 0x8BB34 passes on bit 1 == 0; gate_bit1_decode.md): with
+         * bit 1 = 1 the held ladder records it and sets nothing. */
         CELL_SSLB0_BIT2 = 1u;
-        run_10ms(2u);
-        CHECK(CELL_LETTERS[0] == (uint8_t)'c'); /* earned, not forced */
-        run_10ms(1u);                           /* the batch stages + queues the enables */
-        CHECK(CELL_EN_90 == 0xE0u);             /* ALL channels earned (0x91758 law) */
-        CHECK(sup_job_table[JOB_EN].tx_stage[0] == 0x90E0u);
-        /* the NR-8 law at the bench's real shape (0x14 = 0xD5: bits 6/7 =
-         * outputs 1/2 faulted): the fault mask strips 0x40/0x80 pre-send —
-         * the staged word is the stock's engaged pair, the rail's bit alone */
-        CELL_REG_14 = 0xD5u;
-        sup_enables_stage();
-        CHECK(sup_job_table[JOB_EN].tx_stage[0] == 0x9020u);   /* NR-8-masked word */
-        CHECK(sup_job_table[JOB_EN].tx_stage[1] == 0x2400u);
-        CHECK(CELL_J2_STAGED == 0x9020u);       /* the bench's staging mirror */
-        CELL_REG_14 = 0x00u;
-        /* gate closes again: the COMPLETED ladder holds the letters (the
-         * stock's post-completion law — no restart outside a mode re-entry) */
+        run_10ms(3u);
+        CHECK(CELL_LETTERS[0] == 0u);           /* nothing earned */
+        CHECK(CELL_EN_90 == 0x00u);
+        CHECK(CELL_J2_STAGED == 0x9000u);       /* no rail command on the wire */
         CELL_SSLB0_BIT2 = 0u;
-        run_10ms(2u);
-        CHECK(CELL_LETTERS[0] == (uint8_t)'c');
-        CHECK(CELL_J2_STAGED == 0x90E0u);
+        run_10ms(1u);
+        CHECK(CELL_J2_STAGED == 0x9000u);
         /* disarm withdraws slot 0's request: the per-pass law revokes it
          * (channels 1/2 keep their ladder-earned letters — slot 0 is the
          * arm's scope) */
