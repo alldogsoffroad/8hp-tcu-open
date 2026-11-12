@@ -114,6 +114,14 @@ The bench runs r02a; the walk tick is alive at stock cadence; the supervisor chi
 - **PREDICTION (rule 1), r02j:** [high] no restarts; target reads 03, J2 TX stays 9000. [~85 %] reported level settles 3↔4. [~65 %] **0x14 = C7 and 0x90959 = 1** while level ≤ 4. Current: unchanged expected — treat as current-moving anyway (ammeter). **Do NOT arm FE13 sub 16** during the witness: the tamper interlock opens once bit 1 = 1. Refutations: level ≤ 4 with 0x14 still C5 → "level ≤ 4 + clock" refuted (next: the other ladder phases, state 0x23/target 0); level not dropping → check the token law at target 3 (0x93BA2..A7, 0x9417D) first.
 - **Then:** a 1:1 port of 0x85160 / 0x8B7A8 (all phases) + 0x85788/0x8C34C pin-cut test + 0x87766 states; before any letters, decode what keeps the stock's phase-8 requests from putting 0x9020 on the wire while bit 1 = 0 (the tamper boundary).
 
+**r02j BENCH RESULT (2026-11-12 11:12 install, block 0x40000 sig `fae3f39535b281fb`, all verifies OK; power-cycle; witness 11:16 `/tmp/witness_r02j.log`) — THE GATE IS OPEN: 0x14 = C7** [O]:
+- **0x14 = C7 and gate 0x90959 = 1 on every read** (m+0.1 → m+10.6, uptime 15–26 s) — the first time the supervisor's certification gate has opened under open-firmware control. The stock's value, bit for bit.
+- Level/target: target 0x95012 = 03; reported/expected 4/3 ↔ 3/4 (attention 0x19 on resends), selector rotating — the 0x8D020 law holding the stock's level-3 band. Predictions: target 3 [high] ✓, level 3↔4 [~85 %] ✓, **C7 [~65 %] ✓**.
+- **Held as designed:** J2 TX = 0x9000 every read (the letters ladder is held — no rail command reached the wire); REQ/GRANT 01/01; fsm 08.
+- Everything else as r02i: boots = 1 (no restarts); every job completes each pass (A8 OK 0x77, AA OK 7, error counts 0); Timer C stock-configured (TC1 09 00 4443, TCNTC1 0/0x100); walk cal 1 µs/tick; boot-1 opening identical (W2 commit AAC8 vs AACA, J3 rx[1] AA1D).
+- **The causal chain, now [O] end to end:** bit 4 ← Timer C PWM on TIOC10/20 (r02i); bit 1 ← walk level ≤ 4 with the clock present (r02j); both match the stock's own self-test expectations (0x8C34C, 0x8BDD6).
+- **Next, toward the rail (decode before drive):** port the stock self-test ladder 0x85160 → 0x8B7A8 1:1 (phases 1/2/4/8/0x10/0x20/0x40/0x80, the 0x85788/0x8C34C pin-cut test, 0x8C0F2 finisher, 0x87766 states incl. state 0x23 target 0), and FIRST decode the letters/request law (what the stock's phase 8 / seq2 0x85828 sets and when, so that 0x9020 reaches the wire only in the state the stock produces — the tamper boundary). FE13 sub 16 stays un-armed until then.
+
 ## The rules (each one earned)
 
 These are the user's standing directives. They are not suggestions.
