@@ -189,6 +189,7 @@ void plat_rspi_pump(uint8_t bus)
      * through r01g/r01h with zero vector deliveries while A delivered) */
     (void)*spsr(bus);
     *spsr(bus) = 0x20u;
+    (void)*spsr(bus);  /* r02z: manual 8.10.1 dummy read of the cleared flag */
 
     /* arm the interrupt: SPCR = 0xC8 (SPRIE + SPE + MSTR) */
     *spcr(bus) = 0xC8u;
@@ -213,6 +214,7 @@ void plat_rspi_pump(uint8_t bus)
     *dr = c->tx[0];                             /* SPDR write */
     (void)*sr;                                  /* SPSR read */
     *sr = 0u;                                   /* SPSR clear */
+    (void)*sr;  /* r02z: manual 8.10.1 dummy read of the cleared flag */
 
     c->idx = 1u;
     c->state = CH_FEEDING;
@@ -336,6 +338,7 @@ static void plat_rspi_isr_body(uint8_t bus)
                 s_rspi_w[bus][2]++;             /* r02y: OVRF inside the feed */
             }
             *sr = 0u;
+            (void)*sr;  /* r02z: manual 8.10.1 dummy read of the cleared flag */
             c->idx++;
         } else {
             /* S3 + S-2: a dead transmitter mid-burst. The reply was read
@@ -376,6 +379,7 @@ static void burst_end(rspi_chan_t *c, bool err)
     *spcr(bus) = 0x08u;                         /* idle = MSTR only */
     (void)*spsr(bus);
     *spsr(bus) = 0x20u;
+    (void)*spsr(bus);  /* r02z: manual 8.10.1 dummy read of the cleared flag */
     if (bus == 1u) {
         plat_adcmux_mux_release();              /* r02p: SSL negated — stepping resumes */
     }

@@ -658,3 +658,16 @@ A human/AI pair produced this project (see CONTRIBUTORS.md). Early commits were 
   1. **r02z:** add the dummy read after the clear (stock-correct; predict reent ≈ 0, errors still 0).
   2. A separate flash lifting the r02q bus-B mux hold, to test whether the r02k–n bus-B corruption was this same mechanism [I ~55 %].
   3. Then the request law (0x83DB0 gates, 0x89540 letters, 0x901A0 setpoints) and Timer E stage 0b, ahead of the D1 solenoid decision.
+
+**r02z = r02y + THE §8.10.1 DUMMY READS (2026-11-13; built, NOT flashed, `build/r02z_IFla.bin`, app CRC `45FBB5B2`, blocks 0x40000 + 0x50000 vs r02y; NOT committed at time of writing)** — one variable: `(void)` read-back of SPSR after each of the four flag clears in `plat_rspi.c`:
+- the pump's pre-arm clear (0x20);
+- the first-frame clear;
+- the per-frame feed clear (the one behind the re-entries);
+- `burst_end`'s clear.
+
+The entry guard and all witnesses stay. RAM addresses identical to r02y (data-symbol diff empty), so the witness `/tmp/witness_r02z.py` is r02y's. Install `/tmp/install_r02z.py` (both blocks None). Host 29/29.
+- **PREDICTION (rule 1):**
+  - [I ~75 %] **re-entries ≈ 0** on both buses (from ~9/s A and ~0.4/s B), minimum entry gap ≥ ~10 µs (one frame);
+  - [high] errors, reaps and slips stay 0, per-job errors 0;
+  - supervisor as r02y, current flat.
+  - **Refutation:** re-entries still ~9/s → the read-back is not the whole mechanism; the other suspect is the 36-instruction path from the clear to `rte` (the ADMATE0 write at entry is another flag clear without a read-back).
