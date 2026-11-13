@@ -91,9 +91,6 @@
 #include "bsw/sup/sup_letters.h"
 #include "platform.h"
 
-#if !SUP_L1_HOLD_PHASE8_REQUEST && defined(__sh__)
-#error "the phase-8 request hold (H1) may be released only in the host negative test"
-#endif
 #if !SUP_L1_HOLD_PHASE40 || !SUP_L1_HOLD_FAIL_FSM
 #error "L1 holds released: FSM 0x23/'E'/0x34 (0x873F0/0x87766/0x8CEDC) and the '3' diagnosis 0x85FC4 are not ported"
 #endif

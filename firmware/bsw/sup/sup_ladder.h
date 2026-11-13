@@ -20,9 +20,19 @@
 #include <stdbool.h>
 
 /* ── THE L1 HOLDS (safety; compile-time, see sup_ladder.c) ──────────────── */
-#ifndef SUP_L1_HOLD_PHASE8_REQUEST   /* overridden ONLY by the host test
-                                      * test_ladder_l2 (the negative test) */
-#define SUP_L1_HOLD_PHASE8_REQUEST 1  /* phase 8 'U' does NOT write 0x85E64(ch, 1)  */
+/* H1, phase 8's request: RELEASED on the target from r02s ("L2") — the
+ * stock's one-frame 0x9020 shut-off test at level >= 5 (phase 8 'U' writes
+ * 0x85E64(ch, 1); the output must stay off, class 0x22; the pass withdraws
+ * it the next tick). r02r (H1 held) ran the ladder to the phase-0x40 hold
+ * with pass mask 0x003F on the bench. The host keeps H1 held by default
+ * (test_ladder: J2 9000 on every frame); test_ladder_l2 builds with it
+ * released — the target's configuration, one 0x9020 frame. H2/H3 stay. */
+#ifndef SUP_L1_HOLD_PHASE8_REQUEST
+#if defined(__sh__)
+#define SUP_L1_HOLD_PHASE8_REQUEST 0  /* L2: phase 8 'U' writes 0x85E64(ch, 1)      */
+#else
+#define SUP_L1_HOLD_PHASE8_REQUEST 1  /* host default: held (test_ladder)          */
+#endif
 #endif
 #define SUP_L1_HOLD_PHASE40        1  /* 0x8B7A8 parks before phase 0x40 runs      */
 #define SUP_L1_HOLD_FAIL_FSM       1  /* 0x85160 never calls 0x87766 (FSM stays 8) */

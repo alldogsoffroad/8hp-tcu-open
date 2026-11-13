@@ -197,6 +197,66 @@ static void open_record(uint8_t job_id, uint16_t tx0, const uint16_t *rx, uint8_
     plat_sr_set(lk);
 }
 
+/* r02s (L2) THE 0x9020 WITNESS (.noinit): every bus-B launch whose first
+ * word is a 0x90 word with an enable bit set (tx0 & 0xFF00 == 0x9000, low
+ * byte nonzero), and the reply to the first one. One record per boot index
+ * (rec[1] = this boot, rec[0] = the last earlier boot that sent one), so a
+ * reset provoked by the frame still leaves its record. Diagnostic only. */
+typedef struct {
+    uint32_t boot;          /* plat_boot_index() of the record */
+    uint32_t n_launch;      /* such launches this boot */
+    uint32_t n_done;        /* their completions (frames != 0) */
+    uint32_t t_first_us;    /* first launch, µs since boot entry */
+    uint32_t t_last_us;     /* last launch */
+    uint8_t  job;           /* first launch's job id */
+    uint8_t  n;             /* first completion's frames */
+    uint16_t tx0;           /* first launch's word */
+    uint16_t rx[4];         /* first completion's reply */
+} w9020_rec_t;              /* 32 bytes */
+w9020_rec_t s_w9020[2] __attribute__((section(".noinit")));
+
+static bool w9020_word(uint16_t w)
+{
+    return (w & 0xFF00u) == 0x9000u && (w & 0x00FFu) != 0u;
+}
+
+static void w9020_launch(uint8_t id, uint16_t tx0)
+{
+    if (!w9020_word(tx0)) {
+        return;
+    }
+    const uint32_t b = plat_boot_index();
+    const uint32_t t = plat_frt_us() - plat_boot_tcnta();
+    w9020_rec_t *r = &s_w9020[1];
+    if (r->boot != b) {
+        if (r->boot != 0u && r->n_launch != 0u && r->n_launch < 0x10000000u) {
+            s_w9020[0] = *r;                     /* keep the earlier boot's */
+        }
+        r->boot = b; r->n_launch = 0u; r->n_done = 0u;
+        r->t_first_us = t; r->job = id; r->n = 0u; r->tx0 = tx0;
+        r->rx[0] = r->rx[1] = r->rx[2] = r->rx[3] = 0u;
+    }
+    r->n_launch++;
+    r->t_last_us = t;
+}
+
+static void w9020_done(uint16_t tx0, const uint16_t *rx, uint8_t n, uint8_t frames)
+{
+    w9020_rec_t *r = &s_w9020[1];
+    if (!w9020_word(tx0) || r->boot != plat_boot_index()) {
+        return;
+    }
+    if (r->n_done == 0u) {
+        r->n = n;
+        for (uint8_t i = 0u; i < 4u; i++) {
+            r->rx[i] = (i < frames && n != 0u) ? rx[i] : 0u;
+        }
+    }
+    if (n != 0u) {
+        r->n_done++;
+    }
+}
+
 /* S2/S3 (baseline review): every burst completes through here. frames == 0
  * is the platform's ERROR completion (stock 0x93A74 after its one retry)
  * and also the stale-burst recovery below (stock 0x93B8E calls the release
@@ -232,6 +292,7 @@ static void job_done(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
     }
     plat_alive(0x100u | job_id);
     plat_trace((uint8_t)'C', job_id, n, tx0, rx, sup_job_table[job_id].frames);   /* r02n */
+    w9020_done(tx0, rx, n, sup_job_table[job_id].frames);              /* r02s */
     open_record(job_id, tx0, rx, n);
 }
 
@@ -343,6 +404,7 @@ static bool launch_job(uint8_t id)
      * would clobber every composed word. */
     (void)d->tx_tmpl;
     plat_trace((uint8_t)'L', id, d->frames, d->tx_stage[0], (const uint16_t *)0, 0u);   /* r02n */
+    w9020_launch(id, d->tx_stage[0]);                                  /* r02s */
     if (!plat_rspi_launch(d->bus, id, d->tx_stage, d->rx, d->frames,
                           d->sel_cfg, d->n_sel, job_done)) {
         return false;
@@ -471,6 +533,9 @@ void sup_cells_init(void)
 
 void sup_jobs_init(void)
 {
+    if (plat_boot_index() <= 1u) {          /* r02s: cold boot — .noinit is garbage */
+        memset(s_w9020, 0, sizeof s_w9020);
+    }
     /* staging = the templates' initial images: NOLOAD windows are cleared
      * by sup_cells_init, so copy the reference words in for determinism
      * (every word the engine can send before its stager runs) */
