@@ -680,3 +680,11 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
 - **Next:**
   1. A flash lifting the r02q bus-B mux hold (`plat_adcmux_mux_hold/release` → no-ops, G1/G2 run free). It tests whether the r02k–n bus-B corruption/deaths were this same re-entry mechanism [I ~55 %]. If clean, the stock's free-running mux stepping is restored and the slot-mapping question of r02p disappears.
   2. Then the request law and Timer E stage 0b, toward the D1 decision.
+
+**r03a = r02z WITH THE BUS-B MUX HOLD LIFTED (2026-11-13; built, NOT flashed, `build/r03a_IFla.bin`, app CRC `5A85FA81`, blocks 0x40000 + 0x50000 vs r02z; NOT committed at time of writing)** — one variable: `plat_adcmux_mux_hold/release` compile to `rts` (`MUX_HOLD_ENABLED 0` in plat_adcmux.c). Timer G1/G2 and the A-DMAC mux stepping run free through bus-B bursts, as in the stock and as in r02k–n — but now with the §8.10.1 read-back and the entry guard. Host 29/29.
+- `s_mux_hold_n` is gone (gc'd). RAM moved a few bytes (witness remapped by symbol: `s_now_ms` 0xFFF956A8, `s_rst` 0xFFF9EB74, `s_w9020` 0xEB94; `s_rspi_w` 0xFFF955F8, `s_chan` 0xFFF95628, `s_vec_count` unchanged). Witness `/tmp/witness_r03a.py`, install `/tmp/install_r03a.py` (both blocks None).
+- **PREDICTION (rule 1):**
+  - [I ~55 %] **bus B stays clean:** no restarts (boots = 1), no AB-class replies, J4 `FF03` in the opening, per-job errors 0, re-entries 0 / guard counters 0 on both buses, C7 / gate 1, the full certification and rail as r02z. **Mux readings correct and stable** (mux 8 ≈ supply now that the rail is closed, supply ≈ 13.36 V, mux 10 ≈ 24.9 V): the slot mapping is the stock's again with no hold.
+  - [I ~50 %] the walk polled fallback drops back toward r02o's ~0.1/s (it rose with the r02q hold).
+  - **Refutation → stop and restore the hold:** restarts at a 5 ms phase, AB replies or W2 errors returning, re-entries rising. The stepping then disturbs bus B by another mechanism (P-bus contention on the CPU-fed bus itself).
+  - Current: flat (rail closed, channels disabled). Ammeter on.

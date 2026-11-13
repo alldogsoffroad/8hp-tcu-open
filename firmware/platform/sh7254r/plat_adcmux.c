@@ -314,9 +314,17 @@ static void adc_dmac_init(void)
 static volatile uint8_t s_mux_armed;
 volatile uint32_t s_mux_hold_n;           /* diagnostic: holds performed */
 
+/* r03a: THE HOLD IS LIFTED (both functions return at once). r02y/r02z
+ * proved the RSPI re-entry after a flag clear with no read-back (manual
+ * 8.10.1) behind every bus-A error; the same signature (doubled replies)
+ * marked r02k-n's bus-B corruption. With the read-back in place, this flash
+ * tests whether the free-running mux stepping (the stock's own behaviour)
+ * now coexists with bus B. Compile-time switch, kept for a one-line revert. */
+#define MUX_HOLD_ENABLED 0
+
 void plat_adcmux_mux_hold(void)
 {
-    if (s_mux_armed != 0u) {
+    if (MUX_HOLD_ENABLED && s_mux_armed != 0u) {
         const uint32_t lk = plat_sr_i();
         plat_sr_set(15u);
         R8(TMRG + 1u) = (uint8_t)(R8(TMRG + 1u) & (uint8_t)~TSTRG_MUX);   /* G1+G2 stop */
@@ -327,7 +335,7 @@ void plat_adcmux_mux_hold(void)
 
 void plat_adcmux_mux_release(void)
 {
-    if (s_mux_armed != 0u) {
+    if (MUX_HOLD_ENABLED && s_mux_armed != 0u) {
         const uint32_t lk = plat_sr_i();
         plat_sr_set(15u);
         R8(TMRG + 1u) = (uint8_t)(R8(TMRG + 1u) | TSTRG_MUX);              /* G1+G2 run  */
