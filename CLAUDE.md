@@ -795,3 +795,15 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
   1. raise E to its stock P value 8500 (850 mA) for a measurable supply step (+≈ 0.33 A [D]) — still inside the stock's own operating set;
   2. decode the chips' read registers (0x60/0xC0/0x66/0xD8 → a measured-current readback?) to confirm actual coil current without the ammeter;
   3. then the stock P set (A 50, D/B/E/C 850, WK 50, Sys 50 mA → 1.77 A total).
+
+**r03e = r03d WITH E AT ITS STOCK P VALUE (2026-11-13; built, NOT flashed, `build/r03e_IFla.bin`, app CRC `66205E1A`, blocks 0x40000 + 0x50000, app end 0x51108; NOT committed at time of writing)** — one variable: `DRV_RQ_PILOT_REQ` 500 → **8500 (850 mA)**, the stock's own P request for E (dump 0x2134), still inside the `_Static_assert` bound (≤ 8500, D/E/C only).
+- The compiled law carries 8500 on channel 3's path only, with no 500 left. RAM identical to r03d. The high-current rule (≥ 10000) is not reached.
+- Host: chip 1 mode 0x8818, E's setpoint **F588 / F589** ((8500 + 0/4/1)/6 — the dump's own F589), every other word as r03d. 40/40.
+- Witness `/tmp/witness_r03e.py` (= r03d's), install `/tmp/install_r03e.py`.
+- **PREDICTION (rule 1):**
+  - [high] staging `8810 8818 8810 8810 8815 | … | F000 F588/F589 F000 F000 F000`; config readback chip 1 A298; the read row returns **A588/A589** in chip 1's slot; RQLAW cur[3] = 0x2134; everything else as r03d.
+  - **Current [D]: a clear step of ≈ +0.3 A** (0.25–0.40 A) at 'U' (~+0.62 s after app start). An 850 mA chopped coil current in a 5.5–7 Ω coil at 13.3 V draws ≈ I²R/V ≈ 0.30–0.38 A from the supply, so the steady mean goes from ~195 mA to ≈ 0.50–0.57 A. This also tests the 5.5–7 Ω vs spec 12's "~25 Ω" conflict: at 25 Ω the chip could not reach 850 mA (13.3 V / 25 Ω = 0.53 A max), and the step would be ≈ +0.5 A at saturation.
+  - **Stop conditions:**
+    - total above ~0.9 A, or a step above ~0.7 A → power off;
+    - any channel other than E nonzero;
+    - restarts or bus errors.

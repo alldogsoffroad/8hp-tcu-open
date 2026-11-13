@@ -51,7 +51,7 @@
 #    define DRV_RQ_PILOT_CH   3u
 #  endif
 #  ifndef DRV_RQ_PILOT_REQ
-#    define DRV_RQ_PILOT_REQ  500u
+#    define DRV_RQ_PILOT_REQ  8500u   /* r03e: E's stock P value, 850 mA (r03d: 500) */
 #  endif
 _Static_assert(DRV_RQ_PILOT_CH == 1u || DRV_RQ_PILOT_CH == 3u || DRV_RQ_PILOT_CH == 4u,
                "drv_reqlaw pilot: only solenoid D (1), E (3) or C (4)");

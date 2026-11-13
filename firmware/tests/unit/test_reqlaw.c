@@ -434,6 +434,25 @@ int main(void)
         drv_cyclic_build(0, 8u);
         CHECK(drv_job_tx(DRV_CYC)[1] == 0x8814u && drv_job_tx(DRV_CYC)[21] == 0xF000u);   /* mode 0 -> E letter 2 */
     }
+    /* r03e: the pilot at E's stock P value 8500 (850 mA): chip 1 mode 0x18,
+     * E's setpoint (8500 + round) / 6 = 0x588 / 0x589 (the dump's F589) */
+    {
+        static const uint16_t PIL[10] = { 0, 0, 0, 8500, 0, 0, 0, 0, 0, 0 };
+        reset();
+        CELL_OUT_MV[0] = 0x3420u;
+        set_req(PIL);
+        CELL_SEQ2_STATE[0] = (uint8_t)'U';
+        for (int k = 0; k < 3; k++) {
+            const uint16_t *cy = drv_job_tx(DRV_CYC);
+            drv_cyclic_build(0, 8u);
+            CHECK(cy[0] == 0x8810u && cy[1] == 0x8818u && cy[2] == 0x8810u &&
+                  cy[3] == 0x8810u && cy[4] == 0x8815u);
+            CHECK(cy[21] == (uint16_t)(0xF000u | (uint16_t)((8500u + CELL_RQ_ROUND) / 6u)));
+            CHECK(cy[21] == 0xF588u || cy[21] == 0xF589u);
+            CHECK(cy[11] == 0xE800u && cy[20] == 0xF000u && cy[22] == 0xF000u);
+            CHECK(CELL_RQ_CUR[3] == 8500u && CELL_RQ_LETTER[3] == (uint8_t)'!');
+        }
+    }
     printf("test_reqlaw: %s (%d failures)\n", fails ? "FAIL" : "ok", fails);
     return fails ? 1 : 0;
 }
