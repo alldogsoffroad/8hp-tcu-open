@@ -688,3 +688,14 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
   - [I ~50 %] the walk polled fallback drops back toward r02o's ~0.1/s (it rose with the r02q hold).
   - **Refutation → stop and restore the hold:** restarts at a 5 ms phase, AB replies or W2 errors returning, re-entries rising. The stepping then disturbs bus B by another mechanism (P-bus contention on the CPU-fed bus itself).
   - Current: flat (rail closed, channels disabled). Ammeter on.
+
+**r03a BENCH RESULT (2026-11-13 16:05 install, blocks 0x40000 `dca882423f310a38` + 0x50000 `c389afcd51444fb6`, all 21 verifies OK; power-on ≈ 16:05:56 under the ammeter; witness 16:06:43–48 at uptime ~44 s `/tmp/witness_r03a.log`) — THE MUX STEPPING RUNS FREE AND BUS B STAYS CLEAN: THE r02k–n CORRUPTION WAS THE RE-ENTRY MECHANISM** [O]:
+- **With no hold** (PGDR's high byte steps C0/D0/E0 between reads): boots = 1, no restarts; boot-1 opening J4 `FF03`, no AB-class reply; per-job errors **all 0**; re-entries 0 on both buses, OVRF 0, min entry gap 14 µs (A and B); bus A 0 errors / 0 reaps, **4 261 cyclics, 0 slips**. Prediction [I ~55 %] ✓.
+- **Readings correct and stable, the stock's slot mapping:** **mux 8 (the rail node) 13 337 mV ≈ supply (mux 11) 13 360 mV — the rail is closed**; mux 10 24 916; mux 13 13 364 / min 13 338–13 347; mux 14 13 567; span20 20 000 µs.
+- Supervisor: letter 'c', 0x907D6 0x20, 'U', J2 9020 (16 748 launches), mode 1, C7 / gate 1, FSM 'E' level 0↔2. Current ~185–190 mA flat (inrush 440 mA).
+- **Walk polled fallback NOT reduced** (~12–15/s; prediction [I ~50 %] ✗). The hold was not its cause. It is still open and low priority (no level or error effect).
+- **What this settles [O + I strong]:** the r02k–r02n deaths and bus-B corruption (doubled replies, AB words, bad W2s) were the RSPI re-entry after a flag clear with no read-back, made frequent by the mux DMA's P-bus traffic. The r02q hold treated a symptom and is retired (compiled out, `MUX_HOLD_ENABLED 0`). Our acquisition now runs exactly as the stock's.
+- **Status:** certification, the engaged rail, mode 1, a clean bus A carrying the stock's post-'U' driver content, and stock-exact ADC acquisition — all under open firmware. **Next toward D1 (first solenoid current):**
+  1. the request law (0x83DB0 gates incl. the 'U' and ≥ 7400 mV rail checks, 0x89540 letters, 0x901A0 setpoints = (I + 0x9090A)/6, the 0x85ED4 engaged-output monitor already ported) with all requests 0 — a no-current flash;
+  2. Timer E stage 0b (TEE off → 0x97198 → duty zeroing → TEE on, the 11 pins high per D3);
+  3. D1: the user's choice of first channel and setpoint.
