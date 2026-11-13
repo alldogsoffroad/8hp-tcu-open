@@ -818,3 +818,14 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
 - **The law and the wire, as predicted:** modes 01 01 01 **03** …; letter **'!'** on ch 3; **cur[3] = 0x2134 (8500)**; records +7 0x10 **0x18** 0x10 0x10 0x15; cyclic `8810 8818 8810 8810 8815 | … | F000 **F589** F000 F000 F000`; config readback chip 1 **A298**; read row **A588** in chip 1's slot (the setpoint register, at the 0x588 rounding phase).
 - **Everything else steady:** 'c', J2 9020, mode 1, C7, boots = 1; bus A 5 893 cyclics, 0 slips; re-entries 0; job errors 0.
 - **Next:** the stock P set — A 500, D/B/E/C 8500, WK 500, Sys 500, park release 0 — total ≈ 1.77 A per the stock measurement on this bench. This needs the pilot widened from one channel to the stock's own per-channel table (still compile-time constants on SH, each bounded by the stock P value, park release fixed 0), with a per-step ammeter prediction (four 850 mA coils ≈ 4 × 0.38 A + three 50 mA ≈ +1.55 A → ≈ 1.75 A total [D]).
+
+**r03f = THE STOCK P SET (2026-11-13; built, NOT flashed, `build/r03f_IFla.bin`, app CRC `8D0F79B9`, blocks 0x40000 + 0x50000, app end 0x50F1C; NOT committed at time of writing)** — user: "Build stock P set":
+- On SH the request source is a compile-time table `DRV_RQ_P0..P7` = **A 500, D 8500, B 8500, E 8500, C 8500, WK 500, Sys 500, park release 0** (+ ch 8/9 0). It is `_Static_assert`-ed entry by entry against the stock's P values (driving dump 0xFFF94EE8), park release asserted 0. Still no runtime source, setter or RAM read. The single-channel pilot macros are removed. The 20-byte table sits once in rodata at 0x50632 (block 0x50000).
+- **Host (40/40):** before 'U' the zero-request content; at 'U' the **dump's own mode words 881A 881A 881A 8812 8815**, setpoints (I + 0/4/1)/6 — 0x53/0x54 for 500, 0x588/0x589 for 8500 (the dump's E853/ED89/F589/F053, minus the adaptive correction 0x9337C, which is 0 here); park release letter 0, current 0. RAM identical to r03e. Witness `/tmp/witness_r03f.py`, install `/tmp/install_r03f.py`.
+- **PREDICTION (rule 1):**
+  - [high] the law: modes 0x94FD8 = 03 ×7, 01, 00 00; letters '!' ×7, 00, '2' '2'; currents 01F4 2134 ×4 01F4 01F4 0000; records +7 = 1A 1A 1A 12 15; cyclic `881A 881A 881A 8812 8815 | A000×5 | E853/54 E588/89 E588/89 E853/54 E800 | A600×5 | F588/89 F588/89 F053/54 F000 F000 | reads`; config readbacks A29A A29A A29A A292.
+  - **Current [D, from r03e's 0.380 A per 850 mA coil]:** four 850 mA coils ≈ +1.52 A, three 50 mA ≈ +0.01 A, so **≈ 1.70–1.80 A total** — the stock's measured 1.77 A on this bench. Supply sag deeper (~13.0 V). Expect the step at ~0.8 s after power-on.
+  - **Stop conditions:**
+    - total above ~2.3 A → power off;
+    - park release (ch 7) nonzero anywhere;
+    - restarts, bus errors, or a supervisor fall-back ('U' → '4' — the 0x85E82 engaged-output monitor drops the letter if the rail node strays > 1500 mV from supply under load).

@@ -453,6 +453,31 @@ int main(void)
             CHECK(CELL_RQ_CUR[3] == 8500u && CELL_RQ_LETTER[3] == (uint8_t)'!');
         }
     }
+    /* r03f: the stock P set as the target builds it (no adaptive correction):
+     * modes 881A 881A 881A 8812 8815 (the dump's), setpoints (I + round)/6 */
+    {
+        static const uint16_t PS[10] = { 500, 8500, 8500, 8500, 8500, 500, 500, 0, 0, 0 };
+        static const uint16_t M[5] = { 0x881A, 0x881A, 0x881A, 0x8812, 0x8815 };
+        reset();
+        CELL_OUT_MV[0] = 0x3420u;
+        set_req(PS);
+        CELL_SEQ2_STATE[0] = 0x11u;
+        drv_cyclic_build(0, 8u);
+        CHECK(zero_content(PRE, 0u));               /* before 'U': nothing */
+        CELL_SEQ2_STATE[0] = (uint8_t)'U';
+        for (int k = 0; k < 3; k++) {
+            const uint16_t *cy = drv_job_tx(DRV_CYC);
+            drv_cyclic_build(0, 8u);
+            const uint16_t r = CELL_RQ_ROUND;
+            for (unsigned c = 0u; c < 5u; c++) {
+                CHECK(cy[c] == M[c]);
+                const uint16_t i0 = PS[2u * c], i1 = PS[2u * c + 1u];
+                CHECK(cy[10u + c] == (uint16_t)(0xE800u | (i0 >= 500u ? (uint16_t)((i0 + r) / 6u) : 0u)));
+                CHECK(cy[20u + c] == (uint16_t)(0xF000u | (i1 >= 500u ? (uint16_t)((i1 + r) / 6u) : 0u)));
+            }
+            CHECK(CELL_RQ_LETTER[7] == 0u && CELL_RQ_CUR[7] == 0u);   /* park release off */
+        }
+    }
     printf("test_reqlaw: %s (%d failures)\n", fails ? "FAIL" : "ok", fails);
     return fails ? 1 : 0;
 }

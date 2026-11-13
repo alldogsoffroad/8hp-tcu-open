@@ -71,9 +71,10 @@ static inline uint16_t rq_request(uint8_t ch)
 {
 #if DRV_RQ_REQUEST_SOURCE
     return CELL_RQ_REQ[ch];
-#elif defined(__sh__) && defined(DRV_RQ_PILOT_CH)
-    /* r03d: the single compile-time pilot request (drv_reqlaw.h) */
-    return (ch == DRV_RQ_PILOT_CH) ? (uint16_t)DRV_RQ_PILOT_REQ : 0u;
+#elif defined(__sh__) && defined(DRV_RQ_PSET)
+    /* r03f: the stock P set (drv_reqlaw.h), compile-time constants */
+    static const uint16_t PSET[10] = DRV_RQ_PSET_TABLE;
+    return (ch < 10u) ? PSET[ch] : 0u;
 #else
     (void)ch;
     return 0u;          /* SAFETY: the target has no request source */

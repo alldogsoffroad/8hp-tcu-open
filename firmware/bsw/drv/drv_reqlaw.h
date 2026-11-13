@@ -39,24 +39,32 @@
      _Static_assert(0, "drv_reqlaw: no solenoid request source on SH builds (safety frame)")
 #  define drv_rq_corr_inject(ch, corr) \
      _Static_assert(0, "drv_reqlaw: no solenoid request source on SH builds (safety frame)")
-/* r03d: THE D1 PILOT (user decision 2026-11-13: "as long as we stay within
- * operating ranges"): exactly ONE channel gets ONE constant request on the
- * target; every other channel stays a compile-time 0 and there is still
- * no runtime source, setter or RAM read. Channel 3 = solenoid E (chip 1
- * SSLA2, ch 1; dump request 0x2134 = 850 mA); 500 (0.1 mA) = 50 mA, the
- * stock's own lowest request (A/WK/Sys in P) and the min-current law's
- * threshold (< 500 is zeroed). Bounds: only C/D/E (ch 4/1/3, no spring-off
- * pressure risk) and never above the stock's own P value 8500. */
-#  ifndef DRV_RQ_PILOT_CH
-#    define DRV_RQ_PILOT_CH   3u
-#  endif
-#  ifndef DRV_RQ_PILOT_REQ
-#    define DRV_RQ_PILOT_REQ  8500u   /* r03e: E's stock P value, 850 mA (r03d: 500) */
-#  endif
-_Static_assert(DRV_RQ_PILOT_CH == 1u || DRV_RQ_PILOT_CH == 3u || DRV_RQ_PILOT_CH == 4u,
-               "drv_reqlaw pilot: only solenoid D (1), E (3) or C (4)");
-_Static_assert(DRV_RQ_PILOT_REQ <= 8500u,
-               "drv_reqlaw pilot: request above the stock's P value 8500 (850 mA)");
+/* r03f: THE STOCK P SET on the target (user 2026-11-13: "Build stock P
+ * set"; D1 "as long as we are staying within operating ranges"). The
+ * requests are the stock's own P-state values from the driving dump
+ * 0xFFF94EE8 (0.1 mA): A 500, D/B/E/C 8500, WK 500, Sys 500, park release
+ * 0, ch 8/9 0 — compile-time constants, still no runtime source, setter or
+ * RAM read. Bounds: every entry equals the stock's P value (the table is
+ * asserted against it entry by entry), park release is 0. r03d/r03e were
+ * the single-channel pilots (E at 500, then 8500). */
+/* per channel: ch0 A, ch1 D, ch2 B, ch3 E, ch4 C, ch5 WK, ch6 Sys,
+ * ch7 park release, ch8/9 masked */
+#  define DRV_RQ_P0 500u
+#  define DRV_RQ_P1 8500u
+#  define DRV_RQ_P2 8500u
+#  define DRV_RQ_P3 8500u
+#  define DRV_RQ_P4 8500u
+#  define DRV_RQ_P5 500u
+#  define DRV_RQ_P6 500u
+#  define DRV_RQ_P7 0u
+_Static_assert(DRV_RQ_P0 == 0x01F4u && DRV_RQ_P1 == 0x2134u && DRV_RQ_P2 == 0x2134u &&
+               DRV_RQ_P3 == 0x2134u && DRV_RQ_P4 == 0x2134u && DRV_RQ_P5 == 0x01F4u &&
+               DRV_RQ_P6 == 0x01F4u,
+               "drv_reqlaw P set: every request must equal the stock's P value (dump 0xFFF94EE8)");
+_Static_assert(DRV_RQ_P7 == 0u, "drv_reqlaw P set: park release stays 0");
+#  define DRV_RQ_PSET_TABLE { DRV_RQ_P0, DRV_RQ_P1, DRV_RQ_P2, DRV_RQ_P3, DRV_RQ_P4, \
+                              DRV_RQ_P5, DRV_RQ_P6, DRV_RQ_P7, 0u, 0u }
+#  define DRV_RQ_PSET 1
 #else
 #  ifndef DRV_RQ_REQUEST_SOURCE
 #    define DRV_RQ_REQUEST_SOURCE 1
