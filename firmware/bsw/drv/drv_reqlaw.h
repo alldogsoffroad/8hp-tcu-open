@@ -39,6 +39,24 @@
      _Static_assert(0, "drv_reqlaw: no solenoid request source on SH builds (safety frame)")
 #  define drv_rq_corr_inject(ch, corr) \
      _Static_assert(0, "drv_reqlaw: no solenoid request source on SH builds (safety frame)")
+/* r03d: THE D1 PILOT (user decision 2026-11-13: "as long as we stay within
+ * operating ranges"): exactly ONE channel gets ONE constant request on the
+ * target; every other channel stays a compile-time 0 and there is still
+ * no runtime source, setter or RAM read. Channel 3 = solenoid E (chip 1
+ * SSLA2, ch 1; dump request 0x2134 = 850 mA); 500 (0.1 mA) = 50 mA, the
+ * stock's own lowest request (A/WK/Sys in P) and the min-current law's
+ * threshold (< 500 is zeroed). Bounds: only C/D/E (ch 4/1/3, no spring-off
+ * pressure risk) and never above the stock's own P value 8500. */
+#  ifndef DRV_RQ_PILOT_CH
+#    define DRV_RQ_PILOT_CH   3u
+#  endif
+#  ifndef DRV_RQ_PILOT_REQ
+#    define DRV_RQ_PILOT_REQ  500u
+#  endif
+_Static_assert(DRV_RQ_PILOT_CH == 1u || DRV_RQ_PILOT_CH == 3u || DRV_RQ_PILOT_CH == 4u,
+               "drv_reqlaw pilot: only solenoid D (1), E (3) or C (4)");
+_Static_assert(DRV_RQ_PILOT_REQ <= 8500u,
+               "drv_reqlaw pilot: request above the stock's P value 8500 (850 mA)");
 #else
 #  ifndef DRV_RQ_REQUEST_SOURCE
 #    define DRV_RQ_REQUEST_SOURCE 1

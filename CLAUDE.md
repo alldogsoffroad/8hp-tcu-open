@@ -767,3 +767,19 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
 - **Current:** inrush 438 mA, then ~190–195 mA flat — **no step** with Timer E running, the 12 writer-less pins high and the group-B chip pulses on (prediction [I ~80 %] ✓). D3 holds.
 - Everything else as r03b: 'c', 0x907D6 0x20, J2 9020, mode 1, C7; the request law at zero (`s_rq_ilock_n` 8 again — the '3' full-on refusals); bus A 5 888 cyclics, 0 slips; re-entries 0; job errors 0.
 - **Stage 0b done.** Every output stage the stock brings up before its first solenoid current now runs under open firmware, with group A at 0 % and every bus-A channel disabled. **What remains is D1:** the user's choice of first channel and setpoint. Then a build that lifts the SH request guard for exactly that channel and value (everything else stays compile-time 0), with the ammeter, and a stated prediction of the step (the decode's [D] estimate: ~+0.3 A at 8500 on one 5.5–7 Ω coil; 500 → ~50 mA).
+
+**D1 (user decision, 2026-11-13): "as long as we are staying within operating ranges we should be safe."** Chosen: **solenoid E (channel 3, chip 1 = SSLA2, second channel) at 500 (0.1 mA) = 50 mA** — one of the decode's no-spring-off-pressure channels and the stock's own lowest request (A/WK/Sys in P). The stock P value for E is 8500 (850 mA).
+
+**r03d = r03c + THE D1 PILOT (2026-11-13; built, NOT flashed, `build/r03d_IFla.bin`, app CRC `082CD636`, blocks 0x40000 + 0x50000, app end 0x51068; NOT committed at time of writing):**
+- `drv_reqlaw.h`: on SH a compile-time pilot `DRV_RQ_PILOT_CH 3` / `DRV_RQ_PILOT_REQ 500`. `rq_request(ch)` returns 500 for ch 3 and 0 for every other channel; there is still no runtime source, setter or RAM read. `_Static_assert`s bound the pilot to D/E/C (ch 1/3/4) and ≤ 8500. The disassembly shows the constant 500 only on channel 3's path in `drv_rq_law`. All of the stock law's gates apply: 'U', rail ≥ 7400 mV, min current 500, clamp.
+- **Host test (test_reqlaw, 40/40 green):** before 'U' the content is unchanged (8815). At 'U' it is chip 1 mode **0x8818** (B letter 0 → 0, E '!' → 2<<2), E's setpoint in the F0 row = **F053 / F054** ((500 + 0/4/1)/6), every other chip at the zero-request 'U' content. 499 → the min-current law → mode 0, letter '2' → 0x8814, F000. RAM identical to r03b/r03c; witness `/tmp/witness_r03d.py` = r03c's. Install `/tmp/install_r03d.py`.
+- **PREDICTION (rule 1):**
+  - [high] the bus-A staging after 'U' (~+0.62 s): `8810 8818 8810 8810 8815 | A000×5 | E800×5 | A600×5 | F000 F053/F054 F000 F000 F000 | reads`; config row 3 `8810 8818 8810 8810 8815`; config readback on chip 1 = A298 (0x18 | 0x80) [I]; RQLAW letters 00 00 00 21 ('!') …, cur[3] = 0x01F4.
+  - [high] everything else as r03c (supervisor, buses clean, Timer E).
+  - **Current [D]:** the chips regulate coil current by chopping, so the supply draw rises by about I²R/V ≈ 0.05² × 6 / 13.3 ≈ 1 mA plus any driver quiescent change — **likely invisible** in the ±10 mA noise. A visible step needs a higher setpoint (850 mA → ≈ +0.33 A [D]).
+  - The chip-1 read rows (0x60/0xC0/0x66/0xD8 replies) may change for E's slot [I: their meaning is not decoded].
+  - **Stop conditions:**
+    - a current step above ~100 mA → something other than a 50 mA coil is driven: power off;
+    - any channel other than E nonzero in the staging/letters;
+    - restarts or bus errors.
+  - **This is the first solenoid current commanded under open firmware.**

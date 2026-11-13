@@ -404,6 +404,36 @@ int main(void)
               drv_job_tx(DRV_CYC)[12] == (uint16_t)(0xE800u | (uint16_t)((8500u + CELL_RQ_ROUND) / 6u)));
     }
 
+    /* ── r03d: THE D1 PILOT as the target builds it — only ch 3 (E) at 500
+     * (50 mA): chip 1 mode 0x18 (B letter 0 -> 0, E '!' -> 2 << 2), E's
+     * setpoint (500 + round) / 6 = 0x53 in the F0 row; every other chip
+     * as the zero-request 'U' content; before 'U' nothing changes */
+    {
+        static const uint16_t PIL[10] = { 0, 0, 0, 500, 0, 0, 0, 0, 0, 0 };
+        reset();
+        CELL_OUT_MV[0] = 0x3420u;               /* the bench's rail node, 13 344 mV */
+        set_req(PIL);
+        CELL_SEQ2_STATE[0] = 0x11u;
+        drv_cyclic_build(0, 8u);
+        CHECK(zero_content(PRE, 0u));           /* before 'U': the gate holds it at 0 */
+        CELL_SEQ2_STATE[0] = (uint8_t)'U';
+        for (int k = 0; k < 3; k++) {           /* every rounding phase 0/4/1 */
+            const uint16_t *cy = drv_job_tx(DRV_CYC);
+            drv_cyclic_build(0, 8u);
+            CHECK(cy[0] == 0x8810u && cy[1] == 0x8818u && cy[2] == 0x8810u &&
+                  cy[3] == 0x8810u && cy[4] == 0x8815u);
+            for (unsigned c = 0u; c < 5u; c++) {
+                CHECK(cy[10u + c] == 0xE800u);
+                CHECK(cy[20u + c] == (c == 1u ? (uint16_t)(0xF000u | (uint16_t)((500u + CELL_RQ_ROUND) / 6u))
+                                              : 0xF000u));
+            }
+            CHECK(cy[21] == 0xF053u || cy[21] == 0xF054u);
+            CHECK(CELL_RQ_LETTER[3] == (uint8_t)'!' && CELL_RQ_CUR[3] == 500u);
+        }
+        drv_rq_request_set(3u, 499u);            /* below the min-current law: zeroed */
+        drv_cyclic_build(0, 8u);
+        CHECK(drv_job_tx(DRV_CYC)[1] == 0x8814u && drv_job_tx(DRV_CYC)[21] == 0xF000u);   /* mode 0 -> E letter 2 */
+    }
     printf("test_reqlaw: %s (%d failures)\n", fails ? "FAIL" : "ok", fails);
     return fails ? 1 : 0;
 }
