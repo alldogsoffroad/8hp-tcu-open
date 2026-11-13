@@ -551,3 +551,36 @@ A human/AI pair produced this project (see CONTRIBUTORS.md). Early commits were 
 - **The supervisor path is unchanged (prediction [high] ✓):** ladder 0xAA / 0x00FF; the 0x9020 window 15 launches (+532.239 → +577.497 ms); descent identical (6 tokens, 'E' at +598 ms, 0x93B93 = 0x23); FSM 'E', J2 9000, C7 / gate 1, REQ/GRANT 01/01; mode 0, pending 0, `s_held` 0 (H5); boots = 1.
 - **Bus B under the doubled bus-A traffic (prediction [I ~60 %] ✓, within the r02u range):** at 42–49 s uptime, W1 errors 6 → 8 and W2 1 → 3, against r02u's first boot at W1 2 / W2 6. Walk polled fallback ~20/s. No new error class.
 - **Next: L3b** — release H4 + H5, plus the rail-off full-on tests (D4: ladder phase 0x10 / 0x94114 and the '3' diagnosis / 0x94115 → bus-A mode 4 on ch 0–7, and TOE30/31/32 duty 1000 — the TOE side needs Timer E group A first, or is stated as a deviation). That makes 0x9020 permanent at 'U', with bus A still all-off — the rail closed with no solenoid current. D1 (which solenoids, setpoints) is still open before any current is commanded.
+
+**r02w = L3b: THE PERMANENT LETTER, MODE 1, AND BUS A UNDER THE ZERO-REQUEST LETTER LAW (2026-11-13; built, NOT flashed, `build/r02w_IFla.bin`, app CRC `AA351E4E`, one block vs r02v; NOT committed at time of writing)** — host 29/29:
+- **Supervisor:** H4 (and H5 with it) released on SH (`sup_ladder.h`). After the ladder's 0xAA and FSM 'E': sequencer 'L' → channel 0 class 0x33 → seq2 '3' (the output-off diagnosis) → 'U' → letter 'c', 0x907D6 = 0x20, **J2/F carry 0x9020 permanently**. Module 7 follows one pass later, then the mode-1 switch (`test_ladder_l3b`: 'U' F117, switch at the end of F119, first mode-1 pass F120). Mode-1 bus B: J2 every 5 ms; J3 J4 F J6 J1 J5 F2 every 10 ms.
+- **Bus A — the zero-request letter law [O 0x83DB0 decompile read this session; I where noted]:** all application requests are 0 (not ported).
+  - In seq2 ∈ {0x11, 0x16, '3'}: mode 4 (FULL ON, letter 'C', mode byte 0x1F, setpoints 0x7FF [I: 0x9090A taken as 0]) when 0x94115 & 1 ('3' diagnosis), or 0x94114 & 1 (ladder phase 0x10) with seq2 0x11/0x16 — **D4, the stock's rail-off full-on tests**. Otherwise mode 0 → '2' → 0x8815.
+  - In any other seq2 state ('U' included): mode 1 → letter 0 → **0x8810** on chips 0–3; chip 4 (empty) stays '2' / 0x8815.
+  - The config job's 0x88 row follows.
+- **Two safety measures of ours (deviations), found while porting:**
+  1. **Same-tick refresh:** our cyclic runs at 10 ms, so a full-on frame staged just before 'U' could have held the chips full-on for up to ~10 ms with the rail closed. `drv_letter_refresh()` (weak hook) now runs right after seq2 in the 5 ms supervisor tick. It sends a new cyclic the moment the law's mode bytes change (retrying next tick if bus A is busy), before the J2 stage composes that tick's word. The stock gets this from its own same-tick ordering. Witness `s_drv_refresh_n`.
+  2. **Interlock:** full-on is staged only while the staged J2 word is 0x9000 and both request cells are 0. Host-tested: the phase-0x10 and '3' states → 881F / EFFF / F7FF; with J2 0x9020 or a request up → 8815; 'U' → 8810.
+- TOE30/31/32 duty 1000 during the tests is NOT ported (needs Timer E group A) — a stated deviation.
+- **Descent recorder trimmed to 20 entries** (stack guard). **Addresses moved (nm):**
+  - `.noinit`: `s_trc_cur` 0xFFF9E740, `s_trc` 0xE74C, `s_isr_prev` 0xEB4C, `s_isr_n` 0xEB5C, `s_rst` 0xEB74 (boots 0xEB78), `s_wovf_count` 0xEB90, `s_w9020` 0xEB94, `s_open_n` 0xEBD4, `s_open` 0xEBD8;
+  - `.bss`: `s_fsm_req_held` 0xFFF959BE, `s_drv_refresh_n` 0xFFF959C0, bus-A `stage_drv_cyc` 0xFFF95AB4 / `stage_drv_cfg` 0xFFF95B0E / `rx_drv_cyc` 0xFFF959D8 / `rx_drv_cfg` 0xFFF95A32;
+  - unchanged: `s_now_ms` 0xFFF95654, `s_dsc` 0xFFF958B4, `s_held` 0xFFF84C00, `s_sw_frt` 0xFFF84C04.
+
+  Witness `/tmp/witness_r02w.py` (remapped + an L3B line: letters 0x90944, 0x907D6, status 0x939B8, seq2 0x94FD0, refresh count, switch stamp, modules). Install `/tmp/install_r02w.py`.
+- **PREDICTION (rule 1), r02w:**
+  - [I ~60 %] **the permanent letter:**
+    - sequencer 0x9500C 'L' (0x4C), seq2[0] 'U' (0x55), status 0x939B8[0] = 4, letters 0x90944 = 63 00 00 ('c'), 0x907D6 = 0x20, J2 TX **9020** on every read;
+    - `s_w9020[1]` launches climbing without end, first at +532 ms;
+    - module 7 = 0x0F, modules 1/2 = 0x0F, **mode 0x93B33 = 01, state 0x93B32 = 03**, `s_held` 0;
+    - 'U' at ≈ +0.60–0.63 s (host: 'E' + ~20 ms).
+  - [I ~60 %] FSM 'E', 0x14 C7 / gate 1, no restarts.
+  - **Bus A:** cyclic 8810 ×4 + 8815, setpoints 0, after 'U'; `s_drv_refresh_n` ≥ 3 (0x10 test on/off, '3' test on/off, 'U').
+  - **Current [I]:** the supervisor rail closes permanently with every solenoid channel in mode 1 (disabled) at setpoint 0. Expect at most a small sustained step of the rail's quiescent draw (tens of mA), **not** amps. A step ≥ 0.3 A means a load is driven — **power off at once**.
+  - Rail-off full-on tests: no current step (rail open).
+  - **Announce before power-on; ammeter on.**
+  - **Refutations:**
+    - letters 0 and J2 9000 with sequencer stuck at 'L' or '3' → the '3' diagnosis did not pass (read 0x939C2, 0x93118/0x9311A, 0x947B4);
+    - seq2 cycling 'U' ↔ '4' → the engaged-output monitor 0x85E82 (output not within 1500 mV of supply — read mux 8 vs supply);
+    - mode stays 0 with module 7 = 0x0F → the switch chain;
+    - restarts → the mode-1 schedule on our CPU-fed bus (read the trace ring).

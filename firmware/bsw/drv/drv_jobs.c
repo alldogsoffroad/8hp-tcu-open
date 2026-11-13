@@ -6,6 +6,8 @@
  * the same table and queue through the same one-in-flight path.
  */
 #include "bsw/drv/drv_jobs.h"
+#include "bsw/sup/sup_cells.h"
+#include <stdbool.h>
 #include "bsw/sup/sup_jobs.h"
 #include "platform.h"
 #include <string.h>
@@ -85,31 +87,122 @@ static const struct {
 /* per-job in-flight flags (drv_handlers.c clears them: ISR-context release) */
 volatile uint8_t s_drv_in_flight[4];
 
-/* THE CYCLIC (stock 0x924B0, template 0x40D0C) — r02v stage 0a.
+/* THE CYCLIC (stock 0x924B0, template 0x40D0C).
  * COMMAND-MAJOR: the engine sends frame i to SSLA[SEL_A5[i mod 5]], so the
  * 45 frames are 9 commands x 5 chips: 88|mode x5, A0|dith0 x5, E8|sp0 x5,
  * A6|dith1 x5, F0|sp1 x5, then the reads 60, C0, 66, D8 x5 (driving dump
  * 0xFFF88518: 881A 881A 881A 8812 8815 | A000x5 | E853 ED89 ED8A E853 E800
- * | A600x5 | F589 F589 F053 F000 F000 | ...). Until the letter law
- * 0x83DB0 / 0x89540 / 0x901A0 is ported, every channel carries the stock's
- * pre-engagement content — letter '2', mode 0x15, setpoints and dither 0,
- * written EXPLICITLY (E800 / F000) — whatever the callers ask: no path
- * can put a bus-A channel in current control. (Up to r02u the layout was
- * chip-major: chips 0/3 got mode 0x1A, chip 2 0x12, and the setpoint rows
- * went out as 0x0000 reads — solenoid_chain_decode.md §F.1.) */
+ * | A600x5 | F589 F589 F053 F000 F000 | ...).
+ *
+ * r02w: THE ZERO-REQUEST LETTER LAW (0x83DB0 → 0x89540 → 0x901A0), every
+ * request 0 (the application's demands are not ported; callers ignored):
+ *   ch 0..7 (chip ch/2; cal 0x19154C = 0x00FF), chip 4 (ch 8/9) → '2'.
+ *   seq2[0] in {0x11, 0x16, '3'}: mode 4 (FULL ON) when 0x94115 & 1, or
+ *     0x94114 & 1 with seq2[0] in {0x11, 0x16} (masks 0x191550 / 0x19154E =
+ *     0x3FF) — the stock's rail-off full-on tests (ladder phase 0x10, the
+ *     '3' diagnosis) — else mode 0;
+ *   any other seq2 state ('U' included): I = 0, no channel fault → mode 1.
+ *   0x89540: mode 1 → letter 0, 4 → 'C', other → '2'.
+ *   0x901A0 +7: 0x10 | code(ch0) | code(ch1) << 2, '2' → 1, 'C' → 3,
+ *     '!' → 2, 0 → 0; setpoint 'C' → (0x2FFA + 0x9090A) / 6 = 0x7FF [I:
+ *     0x9090A taken as 0], else 0.
+ * So: pre-'U' 8815 (stage 0a), the tests 881F with E/F 7FF, after 'U'
+ * 8810 on chips 0-3 (8815 on the empty chip 4). Deviation: our cyclic runs
+ * at 10 ms (stock 5 ms), so a 5 ms test window may be missed. No channel
+ * fault model (0x84040 / 0x93A42 taken as 0). */
+static uint8_t drv_letter_code(uint8_t ch)
+{
+    const uint8_t s = CELL_SEQ2_STATE[0];
+
+    if (ch >= 8u) {
+        return 1u;                                   /* '2' */
+    }
+    if (s == 0x11u || s == 0x16u || s == (uint8_t)'3') {
+        const bool full = ((CELL_DIAG_94115 & 1u) != 0u) ||
+                          ((CELL_LAD_94114 & 1u) != 0u && (s == 0x11u || s == 0x16u));
+        /* SAFETY INTERLOCK (ours, not stock): full-on only while no rail
+         * request is up and the staged 0x90 word is 0x9000 — the stock
+         * gets this from same-tick ordering; our cyclic is not on that tick */
+        const bool rail_quiet = CELL_J2_STAGED == 0x9000u &&
+                                CELL_LAD_REQ[0] == 0u && CELL_LAD_REQ[1] == 0u;
+        return (full && rail_quiet) ? 3u : 1u;       /* 'C' : '2' */
+    }
+    return 0u;                                       /* mode 1 → letter 0 */
+}
+
 void drv_cyclic_build(const uint16_t *setpoints, uint8_t n_ch)
 {
-    static const uint16_t CMD[9] = {
-        0x8815u, 0xA000u, 0xE800u, 0xA600u, 0xF000u,
-        0x6000u, 0xC000u, 0x6600u, 0xD800u,
-    };
     (void)setpoints;
     (void)n_ch;
-    for (uint8_t r = 0u; r < 9u; r++) {
-        for (uint8_t chip = 0u; chip < 5u; chip++) {
-            stage_drv_cyc[r * 5u + chip] = CMD[r];
+    for (uint8_t chip = 0u; chip < 5u; chip++) {
+        const uint8_t c0 = drv_letter_code((uint8_t)(chip * 2u));
+        const uint8_t c1 = drv_letter_code((uint8_t)(chip * 2u + 1u));
+        const uint16_t sp0 = (c0 == 3u) ? 0x7FFu : 0u;
+        const uint16_t sp1 = (c1 == 3u) ? 0x7FFu : 0u;
+        stage_drv_cyc[0u + chip]  = (uint16_t)(0x8800u | 0x10u | c0 | (uint16_t)(c1 << 2));
+        stage_drv_cyc[5u + chip]  = 0xA000u;
+        stage_drv_cyc[10u + chip] = (uint16_t)(0xE800u | sp0);
+        stage_drv_cyc[15u + chip] = 0xA600u;
+        stage_drv_cyc[20u + chip] = (uint16_t)(0xF000u | sp1);
+        stage_drv_cyc[25u + chip] = 0x6000u;
+        stage_drv_cyc[30u + chip] = 0xC000u;
+        stage_drv_cyc[35u + chip] = 0x6600u;
+        stage_drv_cyc[40u + chip] = 0xD800u;
+    }
+    /* the config job's 0x88 row carries the same mode bytes (0x92344) */
+    for (uint8_t chip = 0u; chip < 5u; chip++) {
+        stage_drv_cfg[15u + chip] = stage_drv_cyc[chip];
+    }
+}
+
+/* r02w: the same-tick refresh. Called from the 5 ms supervisor tick right
+ * after seq2 (sup_batch.c, weak hook): when the letter law's mode bytes
+ * differ from the last cyclic sent, build and send it NOW (or on the next
+ * tick if bus A is busy), so the chips follow seq2 within one tick as the
+ * stock's 0x83DB0 → 0x901A0 → 0x924B0 do — not up to 10 ms later. */
+static uint16_t s_drv_sent_modes[5];
+static uint8_t s_drv_refresh_pending;
+volatile uint32_t s_drv_refresh_n;      /* witness: event-driven cyclics sent */
+
+static bool drv_cyclic_send(void)
+{
+    if (!drv_job_check_free(DRV_CYC) || !drv_job_check_free(DRV_CFG)) {
+        return false;
+    }
+    drv_cyclic_build(0, 8u);
+    if (!drv_job_queue(DRV_CYC)) {
+        return false;
+    }
+    for (uint8_t c = 0u; c < 5u; c++) {
+        s_drv_sent_modes[c] = stage_drv_cyc[c];
+    }
+    return true;
+}
+
+void drv_letter_refresh(void)
+{
+    bool differ = false;
+    for (uint8_t c = 0u; c < 5u; c++) {
+        const uint16_t m = (uint16_t)(0x8810u | drv_letter_code((uint8_t)(c * 2u)) |
+                                      (uint16_t)(drv_letter_code((uint8_t)(c * 2u + 1u)) << 2));
+        if (m != s_drv_sent_modes[c]) {
+            differ = true;
         }
     }
+    if (differ || s_drv_refresh_pending != 0u) {
+        if (drv_cyclic_send()) {
+            s_drv_refresh_pending = 0u;
+            s_drv_refresh_n++;
+        } else {
+            s_drv_refresh_pending = 1u;
+        }
+    }
+}
+
+/* the 10 ms periodic send (sol_tick_10ms) */
+void drv_cyclic_periodic(void)
+{
+    (void)drv_cyclic_send();
 }
 
 bool drv_job_check_free(uint8_t id)

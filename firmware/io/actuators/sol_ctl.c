@@ -45,8 +45,7 @@ void sol_tick_10ms(void)
         s_cyclic_sp[ch] = s_chan[ch].mode == SOL_MODE_CURRENT
                           ? s_chan[ch].setpoint : 0u;
     }
-    drv_cyclic_build(s_cyclic_sp, SOL_CHANNELS);
-    if (drv_job_check_free(DRV_CYC)) {
-        drv_job_queue(DRV_CYC);
-    }
+    /* r02w: the cyclic content comes only from the zero-request letter law
+     * (drv_jobs.c); s_cyclic_sp is not sent */
+    drv_cyclic_periodic();
 }

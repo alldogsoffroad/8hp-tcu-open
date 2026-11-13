@@ -27,6 +27,10 @@
 #include "bsw/sup/sup_mode.h"
 #include "platform.h"
 
+/* r02w: bus A's same-tick refresh (drv_jobs.c); weak so the supervisor
+ * tests link without the bus-A driver */
+extern void drv_letter_refresh(void) __attribute__((weak));
+
 static uint32_t s_stamp;            /* the batch timing journal (FRT us) */
 /* 0x67DF0 on one task object: countdown 0 → activate and reload, else
  * decrement. The cells are the stock's (sup_cells.h CELL_OS_CD5 / CD10). */
@@ -265,6 +269,9 @@ void sup_batch_5ms(void)
          * reaches the J2 word the same tick (letters_law_decode.md §2.4) */
         sup_ladder_tick_seq(true);      /* 20: 0x7CC76 → 0x8570E */
         sup_ladder_tick_seq2();         /* 22: 0x7CC56 */
+        if (drv_letter_refresh) {
+            drv_letter_refresh();       /* r02w: bus A follows seq2 this tick */
+        }
         sup_ladder_tick_cut();          /* 24: 0x7CC32 */
         sup_j2_stage();                 /* 25: 0x8EDF6 → 0x91804 */
         sup_f_stage();                  /* 26: 0x8EE30 → 0x91810 */
@@ -279,6 +286,9 @@ void sup_batch_5ms(void)
         sup_mode_request();             /* 6: 0x6F0B4 */
         sup_ladder_tick_seq(false);     /* 9: 0x7CC66 → 0x85160 */
         sup_ladder_tick_seq2();         /* 10: 0x7CC56 */
+        if (drv_letter_refresh) {
+            drv_letter_refresh();       /* r02w */
+        }
         sup_j2_stage();                 /* 11: 0x8EDF6 → 0x91804 */
         sup_job_engine_pump();          /* J2 goes out ahead of the 10 ms jobs */
         sup_mode_apply();               /* 0x67A34: mode != 0 → 0x66E06 */

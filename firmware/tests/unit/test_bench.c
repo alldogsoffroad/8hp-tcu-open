@@ -174,6 +174,39 @@ int main(void)
                   cf[15u + i] == 0x8815u && cf[20u + i] == 0x2800u && cf[35u + i] == 0x3600u);
         }
     }
+    /* r02w: the zero-request letter law (0x83DB0 / 0x89540 / 0x901A0) */
+    {
+        const uint16_t *cy = drv_job_tx(DRV_CYC);
+        const uint8_t s0 = CELL_SEQ2_STATE[0], t14 = CELL_LAD_94114, t15 = CELL_DIAG_94115;
+        CELL_SEQ2_STATE[0] = 0x11u; CELL_LAD_94114 = 1u; CELL_DIAG_94115 = 0u;   /* phase 0x10 */
+        drv_cyclic_build(0, 8u);
+        for (unsigned c = 0u; c < 4u; c++) {
+            CHECK(cy[c] == 0x881Fu && cy[10u + c] == 0xEFFFu && cy[20u + c] == 0xF7FFu);
+        }
+        CHECK(cy[4] == 0x8815u && cy[14] == 0xE800u && cy[24] == 0xF000u);
+        {   /* the interlock: no full-on while the rail word or a request is up */
+            const uint16_t j2 = CELL_J2_STAGED;
+            CELL_J2_STAGED = 0x9020u; drv_cyclic_build(0, 8u);
+            CHECK(cy[0] == 0x8815u && cy[10] == 0xE800u);
+            CELL_J2_STAGED = 0x9000u; CELL_LAD_REQ[0] = 1u; drv_cyclic_build(0, 8u);
+            CHECK(cy[0] == 0x8815u);
+            CELL_LAD_REQ[0] = 0u; CELL_J2_STAGED = j2;
+        }
+        CELL_SEQ2_STATE[0] = 0x22u; drv_cyclic_build(0, 8u);                    /* not a test state */
+        CHECK(cy[0] == 0x8810u && cy[4] == 0x8815u);
+        CELL_SEQ2_STATE[0] = (uint8_t)'3'; CELL_LAD_94114 = 1u; drv_cyclic_build(0, 8u);
+        CHECK(cy[0] == 0x8815u);                                                /* 94114 needs 0x11/0x16 */
+        CELL_DIAG_94115 = 1u; drv_cyclic_build(0, 8u);
+        CHECK(cy[0] == 0x881Fu && cy[13] == 0xEFFFu);                           /* the '3' diagnosis */
+        CELL_SEQ2_STATE[0] = (uint8_t)'U'; CELL_LAD_94114 = 0u; CELL_DIAG_94115 = 0u;
+        drv_cyclic_build(0, 8u);
+        for (unsigned c = 0u; c < 4u; c++) {
+            CHECK(cy[c] == 0x8810u && cy[10u + c] == 0xE800u && cy[20u + c] == 0xF000u);
+        }
+        CHECK(cy[4] == 0x8815u && drv_job_tx(DRV_CFG)[15] == 0x8810u);
+        CELL_SEQ2_STATE[0] = s0; CELL_LAD_94114 = t14; CELL_DIAG_94115 = t15;
+        drv_cyclic_build(0, 8u);
+    }
     /* second test while active: refused (one channel at a time) */
     CHECK(!start(3u, 400u, 1u) && last_nrc() == 0x22u);
 

@@ -78,8 +78,17 @@
  * context-0x1E tokens at walk level 0 in the 0x06 era — a wire state the
  * stock never holds (it leaves 0x23 for 'E' the pass level 0 is reached).
  * See ~/tcu_sweep/l3_port.md. */
+/* r02w (2026-11-13): the TARGET default is L3b — H4 RELEASED (and H5 with
+ * it, sup_mode.h): sequencer '.' → 'L' → seq2 '3' → 'U' → letter 'c', the
+ * 0x90 word 0x9020 for good, then the mode-1 switch. Bus A stays at zero
+ * requests (drv_jobs.c: the zero-request letter law), so the rail closes
+ * with no solenoid current. The host default stays held. */
 #ifndef SUP_L3_HOLD_SEQ_L
+#if defined(__sh__)
+#define SUP_L3_HOLD_SEQ_L          0  /* L3b: the permanent letter */
+#else
 #define SUP_L3_HOLD_SEQ_L          1
+#endif
 #endif
 
 /* mode-0 init (stock 0x85678, row-9 init list entry 0x7CBDC): sequencer 0,

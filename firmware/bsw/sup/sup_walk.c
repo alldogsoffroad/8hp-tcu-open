@@ -577,8 +577,8 @@ static void walk_task(void)
  * attention, the arm's kind (0x8D020's 0x9417E or the 'E' context), result
  * (bits 7:6: 1 armed / 2 busy / 0 none) | polled-fallback walk deliveries
  * since the previous entry (bits 5:0, saturating), W2 error count. Fits
- * the stack guard (12 bytes x 24). Read once after boot. */
-#define DSC_N 24u
+ * the stack guard (12 bytes x 20, r02w). Read once after boot. */
+#define DSC_N 20u
 typedef struct {
     uint32_t t_us;
     uint8_t fsm, budget, rep, exp;
