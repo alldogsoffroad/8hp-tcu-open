@@ -846,3 +846,5 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
   - the '3' full-on interlock question;
   - the 10 ms/5 ms F-stage cadence;
   - the walk polled-fallback rate.
+
+**README status (2026-11-13, user decision "follow the rule"):** row 3 rescored by README's own rule (M4–M6 15 % each): M0–M3 complete = 55 % + M4 partial 5 % → **60 %**; overall (95 + 95 + 60 + 0)/4 ≈ **62 %**. This corrects both the 2026-11-10 78 % (ahead of the evidence) and the 85 % written at the r03f result (6fd5e86), which ignored the rule.
