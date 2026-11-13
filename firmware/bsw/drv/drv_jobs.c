@@ -164,8 +164,28 @@ static uint16_t s_drv_sent_modes[5];
 static uint8_t s_drv_refresh_pending;
 volatile uint32_t s_drv_refresh_n;      /* witness: event-driven cyclics sent */
 
+/* r02x: THE BUS-A REAPER. r02w's live read: bus A sat FEEDING the config
+ * job at frame 38/40 from +0.623 s on, its RX interrupt count frozen —
+ * a lost interrupt with no timeout, so bus A was dead from then on (r02v
+ * showed the same stuck in-flight flag). The bus-B engine reaps from its
+ * check-free; bus A had nothing. A burst older than 5 ms is error-completed
+ * (frames = 0) through its handler, which releases the job. Under SR.I = 15
+ * so no RX body can run beneath it. Root cause of the lost interrupt: open. */
+volatile uint32_t s_drv_reap_n;         /* witness */
+
+static void drv_reap(void)
+{
+    const uint32_t lk = plat_sr_i();
+    plat_sr_set(15u);
+    if (plat_rspi_reap(0u, 5000u)) {
+        s_drv_reap_n++;
+    }
+    plat_sr_set(lk);
+}
+
 static bool drv_cyclic_send(void)
 {
+    drv_reap();
     if (!drv_job_check_free(DRV_CYC) || !drv_job_check_free(DRV_CFG)) {
         return false;
     }
