@@ -228,6 +228,9 @@ void plat_adcmux_init(void) {}
 void plat_adcmux_start(void) {}
 void plat_adcmux_finish_5ms(void) {}
 void plat_adcmux_status_5ms(void) {}
+bool plat_adcmux_ready(void) { return false; }   /* no AN0 chain on the host sim */
+void plat_tioc_cut(void) {}
+void plat_tioc_restore(void) {}
 void plat_dei5_isr(void) {}
 void plat_dei4_isr(void) {}
 uint32_t plat_boot_index(void)

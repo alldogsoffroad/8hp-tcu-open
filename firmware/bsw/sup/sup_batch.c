@@ -2,9 +2,9 @@
  *
  * Stock call order (artifact2 §2.3):
  *   timing → 0x91C86 (compose 0x8E) → 0x91DAA (= 0x93126 C9 summarize +
- *   0x92B82 queue J6 + 0x92D38 arm J1) → 0x91E12 (J2/F staging, the
- *   0x91804/0x91810 law; the letters/selftest chain runs in the same pass,
- *   the stock's mode-sequencer 0x85160 slot) → 0x92A84 (queue J5) →
+ *   0x92B82 queue J6 + 0x92D38 arm J1) → 0x91E12 (= jmp 0x92A84, queue
+ *   J5; L1 corrected: the ladder is NOT in the batch — it is its own 5 ms
+ *   list entry, run before the J2 stage, see sup_ladder.h) →
  *   0x90ACC (echo-derived condense) → 0x921A0 (bus-A kick, queues the
  *   0x40A98 ID job) → 0x9305A/0x93198 (J3/J4 cyclic starters). J7 is
  *   never queued — the stock has no J7 queuer (see sup_batch_5ms).
@@ -22,6 +22,7 @@
 #include "bsw/sup/sup_cells.h"
 #include "bsw/sup/sup_ctrl.h"
 #include "bsw/sup/sup_letters.h"
+#include "bsw/sup/sup_ladder.h"
 #include "bsw/sup/sup_walk.h"
 #include "platform.h"
 
@@ -112,6 +113,9 @@ void sup_batch_init(void)
                                          * flag SET at init (C9 bit 4 stays clear; live
                                          * stock 0xFFF9094D = 01, first500_reads 2026-11-11) */
     CELL_SSLB2_RAW = 0x8000u;           /* the sentinel */
+    /* L1: the mode-0 init list's sequencer init 0x85678 (row-9 entry
+     * 0x7CBDC) — seq2 0x11, pin-cut mode 0x11, phase 1 / sub 0, retries 3 */
+    sup_ladder_init();
     /* the first bus-B job: J5 ID staged and queued */
     queue_id();
 }
@@ -140,10 +144,11 @@ void sup_batch_5ms(void)
      * 0x43430 row 6, entries 3/75/76) while the J2 stage 0x8EDF6 — which
      * QUEUES J2 via 0x92E80 — stays at 5 ms. The switch (0x6F0B4 ->
      * 0x66E06) waits on startup module 2 (0xFFF93B81) <- module 1 <-
-     * modules 7 and 11; module 11 (0xFFF93B85) is set by the mode
-     * sequencer 0x85160 when the selftest sub-state reads 0x40 (ladder
-     * complete) or its retry countdown 0xFFF9414D expires [length not
-     * decoded]. On a gate-closed chip we therefore stay at 5 ms. */
+     * modules 7 and 11; module 11 (0xFFF93B85) = 0x0F is written by the
+     * mode sequencer 0x85160 at ladder end (sub 0xAA), on the supply abort
+     * (0x40) and when its retry COUNT 0xFFF9414D (3) is exhausted
+     * (ladder_blockers_decode.md; L1 ports 0x85160 — sup_ladder.c). Under
+     * the L1 hold module 11 stays 1, so we stay at 5 ms. */
 
     /* THE POOL ORDER, 1:1 for real (first500ms_diff §1 row 3; the transcript
      * tool caught the old order staging J6/J1 first with J3/J4 at the tail —
@@ -151,7 +156,8 @@ void sup_batch_5ms(void)
      *   1. reply proc 0x91ACA — queues J3 (0x9305A), then J4 (0x93198)
      *   2. stage J2 0x91804 (→0x91758+0x92E80), stage F 0x91810
      *   3. compose 0x91C86 → queue J6 0x92B82 + arm J1 0x92D38
-     *   4. 0x91E12 letters chain
+     *   4. (L1: the ladder / seq2 / pin cut run between 1 and 2, as the
+     *      stock's own list entries 0x7CC76 / 0x7CC56 / 0x7CC32)
      *   5. queue J5 0x92A84
      *   6. 0x90ACC condense, 7. kick 0x921A0
      * J7 IS NEVER QUEUED — the stock never sends it (2026-11-11 decode,
@@ -171,6 +177,10 @@ void sup_batch_5ms(void)
     s_stamp = plat_frt_us();
     plat_alive(0x05u);                  /* S11 breadcrumb: the 5 ms batch */
 
+    /* L1: the 5 ms list's head — the countdown service 0x7C7E4 (entry 1,
+     * the list's FIRST worker) and the 0x14 re-derive 0x9181C (entry 3) */
+    sup_ladder_tick_head();
+
     /* 1. the reply proc 0x91ACA: condense the previous pass, then the
      *    starters — J3 FIRST, then J4 (S4, baseline review: 0x91C12 calls
      *    0x9305A via pool 0x91CE8, then 0x91C16 calls 0x93198 via 0x91CEC;
@@ -178,6 +188,12 @@ void sup_batch_5ms(void)
     sup_reply_condense();
     queue_pos();
     queue_sslb2();
+
+    /* L1: entries 7..19 of the stock list, in order — publishers 0x8332C,
+     * the ladder 0x8570E, seq2 0x85828, the pin cut 0x85788 — BEFORE the
+     * J2 stage 0x8EDF6, so a request reaches the J2 word the same tick
+     * (letters_law_decode.md §2.4) */
+    sup_ladder_tick();
 
     /* 2. stage J2 + F (the enables pair; the letters chain folds in below
      *    per the 0x91E12 law — the stock runs it after the J1 arm) */
@@ -191,9 +207,9 @@ void sup_batch_5ms(void)
     queue_stat();
     queue_ctrl();
 
-    /* 4. the letters chain (0x91E12: the selftest runs in the batch pass —
-     *    the stock's mode-sequencer slot, AFTER the J1 arm) */
-    sup_selftest_step();
+    /* 4. (L1: the old "letters chain" slot is gone — 0x91E12 is `jmp
+     *    0x92A84`, the J5 queuer; the ladder/seq2 run above, before the J2
+     *    stage, as their own list entries) */
 
     /* 5. queue JOB_ID (0x92A84) */
     queue_id();

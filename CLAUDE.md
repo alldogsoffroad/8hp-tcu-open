@@ -320,3 +320,35 @@ A human/AI pair produced this project (see CONTRIBUTORS.md). Early commits were 
 - **The discriminator:** the walk polled fallback is **still elevated** — 461 → 697 over 10.7 s (~22/s, about 12 % of walk events; r02o ~0.1/s). So the hold path itself raises it (lean ✓). It does not disturb the conversation. **r02p's residual disturbance (level 5, gate flips, J1/W2 errors) came with the CMEG2-only hold**, not with the poll fallback [O by elimination; mechanism I — e.g. a compare match pending while CMEG2 was off firing a ch0 step right at release]. Poll-fallback cause: open, low priority. A polled walk stamps late per the r02f law, but here it shows no effect on level or errors.
 - Unexplained, minor: the witness reads ADMATCR1 as 0000/0000 on every read, although the ring evidently fills (readings correct). Probably the meas read width or timing; not chased.
 - **What this settles:** the stock-configured AN0 mux chain runs under our CPU-fed bus B if no PG12–15 edge lands inside a burst and G1/G2 stop together. That is not stock behaviour (the stock's DMA-fed bus B overlaps the stepping freely). Why the CPU-fed bus is edge-sensitive is not decoded [I]. **Next: L1** (the ladder, sequencer and seq2, held before phase 0x40 and phase 8's request; recipe in the LADDER BLOCKERS block) on top of r02q. FE13 sub 16 stays un-armed.
+
+**r02r = L1, THE STOCK SELF-TEST LADDER HELD BEFORE PHASE 0x40 (2026-11-13; built, NOT flashed, `build/r02r_IFla.bin`, app CRC `A97681BF`, one block vs r02q; NOT committed at time of writing)** — subagent port (`~/tcu_sweep/l1_port.md`), validated this session (build, host 24/24, the holds read in the source, the dispatcher loop checked against 0x8B7A8):
+- **Ported:** new `bsw/sup/sup_ladder.{c,h}`:
+  - countdown 0x7C7E4, 0x14 re-derive 0x9181C, supply plausibility 0x8D8DE, publisher 0x89114;
+  - init 0x85678 and the sequencer 0x8570E/0x85160;
+  - the dispatcher 0x8B7A8 with every phase (1/2/4/8/0x10/0x20/0x40/0x80/0x100/0x200), channel checks 0x8C250/0x8C2A4, classifier 0x8C6D4, writers 0x85E64/0x85E00/0x85600;
+  - seq2 0x85828, pin-cut driver 0x85788 and its verdict 0x8C34C;
+  - the chip-ID check 0x91A9C (returns 1 on the bench's 0x907D0 = 0x14).
+
+  `plat_tioc_cut/restore` (0x91E6C/0x91E4E byte-for-byte) and `plat_adcmux_ready()` are app-only. Walk targets 0x8D136/0x8D108/0x8D1BA are exported from sup_walk; the r02j `s_target3` stand-in and the inverted `sup_selftest_step` are gone. 5 ms order = the stock list at 0x44CCC: countdown + 0x9181C → reply proc → publishers → ladder → seq2 → pin cut → J2/F stage → compose/J6/J1 → J5. New cells pinned at stock addresses (linker sections `.sup_l1a`–`g`, `.sup_cnt`); .noinit unchanged; the loader hex is unchanged.
+- **The holds (compile-time, `sup_ladder.h`; the build refuses to compile any of them released on SH):**
+  - **H1:** phase 8 does not write its request.
+  - **H2:** the dispatcher returns at the TOP of its 'U' loop once the phase word reads 0x40.
+  - **H3:** the sequencer's 0x87766 calls are recorded in `s_fsm_req_held` (0xFFF958BE), not made, so the FSM stays 8.
+  - FE13 sub 16 now always returns NRC 0x22.
+  - Host `test_ladder` asserts J2/F on the wire = 0x9000 on every frame of every scenario (nominal, output on, no bit-1 drop, budget, supply dip, supply out, mux-11 substitute, not ready). Its negative test `test_ladder_l2` releases H1 and sees exactly one 0x9020 frame.
+- **CORRECTION to the L1 recipe [O, 0x8B7A8 decompile re-read this session]:** "stop calling 0x8B7A8 at phase 0x40" would NOT have held. The dispatcher loops while the sub-state is 'U', and a 0x55 advances the phase (<<1) inside the same call. So phase 0x20's pass falls straight into phase 0x40's `0x85E64(ch, 1)` (0x8BEFA, the first rail-on). The hold has to sit inside the loop, and it does. Also from the port [O bytes 0x859E6–0x85A00]: seq2 state 0x22 DOES set the 0x94118 bit (letters_law_decode §3 has it reversed).
+- **Stand-ins:** 0x6F594 = 1, 0x94FCA = {1, 0}, 0x7BBB4 = 1, 0x84A2B = 0. **Start deviation:** module 11 (0x93B85) is set to 1 once `plat_adcmux_ready()` reports ≥ 20 DEI5 passes after the deferred Timer G start (≈ app 0.52 s). The stock reaches the same condition within its first OS passes; a start before valid inputs would read supply 0 and take the supply-window abort, which never retries. **Not ported:** the '3' diagnosis, DTC/fault reporting, the twin checks, the periodic cut request 0x94152, FSM 0x23/'E'/0x12/0x34.
+- **Wire-visible vs r02q:**
+  - The target stays 5 from boot until phase 0x10 (~app 0.535 s), so level 5↔6 / 0x14 = C5 for the first ~0.5 s (r02i's state), then target 3, level 3↔4, C7.
+  - **One TIOC cut:** PD4/PD8 go to GPIO for one 5 ms tick at ~ladder start + 25 ms.
+  - Bus B is unchanged (J2 stays 0x9000).
+- **Witness** `/tmp/witness_r02r.py` (r02q's + a LADDER line; .bss +8: `s_now_ms` 0xFFF95654, `s_job_err_cnt` 0xFFF9589C, `s_mux_hold_n` 0xFFF95640, `s_walk_cal` 0xFFF955B0, walk poll/isr 0xFFF955BC/C0, `s_vec_count` 0xFFF955C8 — nm checked). Install `/tmp/install_r02r.py` (sigs `/tmp/r02r_sigs.json`, 0x40000 = None).
+- **PREDICTION (rule 1), r02r:**
+  - [high] **J2 TX 9000 on every read**, requests 0xFFF939B6 = 00 00, `s_fsm_req_held` = 00, FSM 08 — the holds.
+  - [I ~70 %] no restarts (bus B as r02q).
+  - [I ~65 %] **the ladder parks at the hold** — phase 0x0040, sub 0x55, pass mask 0x003F, fault/OK 0, retries 3; class 0x93A92[0] = 0x22, status 0x939B8[0] = 1, seq2[0] = 0x11; supply ≈ 13 366 mV with status 08; output node ≈ 2.9 V (noisier than r02q: seq2 resets the mux-8 window every tick, as the stock); pin-cut mode 0x11 and TIOC state 1, PFC back at 00FD FDD5; module 11 = 1, module 7 = 0. Target 3, level 3↔4, 0x14 = C7, gate 1.
+  - **Refutations, each safe (wire stays 9000):**
+    - phase stuck < 0x40 with a 0xFx sub or retries < 3 → a phase failed; the failing phase's sub code names it (0xF2 output class, 0xF4 bit 1 did not drop within 15 ms of the cut, 0xF1 budget, 0xF6 the 200 ms timeout);
+    - phase 0x200 → supply window;
+    - module 11 = 0 → the start gate never opened (check `s_adc_started`).
+  - **Current:** no change expected. The TIOC cut is a 5 ms Timer C pin change, but announce it anyway and watch the ammeter.

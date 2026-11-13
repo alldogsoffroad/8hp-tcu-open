@@ -169,6 +169,109 @@
 #define CELL_COMMIT_RETRIES (*(volatile uint8_t  *)0xFFF93BA0u) /* commit-mismatch retries (.sup_fsm) */
 #define CELL_CERT_EVENTS    (*(volatile uint16_t *)0xFFF94F84u) /* certification event bits (.sup_value) */
 
+/* ── L1: the self-test ladder, mode sequencer, seq2, pin cut, publishers ──
+ * (sup_ladder.c; ladder_blockers_decode.md / letters_law_decode.md; every
+ * address from the stock bytes). u8 unless marked. Pairs: value / diverse
+ * complement (the stock's 0x6BD68 byte / 0x6BD6E word pair writers). The
+ * linker reserves .sup_l1a..g and .sup_cnt (linker.ld); sup_cells_init
+ * clears them. */
+#define CELL_L1_U8(a)       (*(volatile uint8_t  *)(uintptr_t)(a))
+#define CELL_L1_U16(a)      (*(volatile uint16_t *)(uintptr_t)(a))
+/* the sequencer 0x85160 and the ladder 0x8B7A8 */
+#define CELL_SEQ_STATE      CELL_SYS_MODE                       /* 0x9500C: 0 / '.' / 'L' / '=' / 0x1F */
+#define CELL_SEQ_STATE_C    CELL_L1_U8(0xFFF94E84u)
+#define CELL_LAD_SUB        CELL_L1_U8(0xFFF9500Du)             /* sub-state: 0x55 'U' pass, 0x30/31/33/34 wait, >= 0xF0 fail, 0xAA done, 0x40 supply abort */
+#define CELL_LAD_SUB_C      CELL_L1_U8(0xFFF94E85u)
+#define CELL_LAD_PHASE      CELL_L1_U16(0xFFF94FE2u)            /* phase word 1/2/4/../0x100/0x200 */
+#define CELL_LAD_PHASE_C    CELL_L1_U16(0xFFF94E5Au)
+#define CELL_LAD_PASS       CELL_L1_U16(0xFFF93A8Cu)            /* pass mask (stock done = 0x00FF) */
+#define CELL_LAD_FAULT      CELL_L1_U16(0xFFF93A84u)            /* fault bits (phase / mask+1 / 0x200) */
+#define CELL_LAD_OKFLAGS    CELL_L1_U16(0xFFF93A86u)            /* 0xFF finisher | 0x200 'L' */
+#define CELL_LAD_SAVED_PH   CELL_L1_U16(0xFFF93A88u)            /* phase saved by the supply window */
+#define CELL_LAD_MISMATCH   ((volatile uint8_t *)0xFFF93A8Au)   /* [2] class seen on a mismatch */
+#define CELL_EN_PREV        ((volatile uint8_t *)0xFFF93A8Eu)   /* [2] 0x8C7A8 previous enable */
+#define CELL_EN_MIRROR      ((volatile uint8_t *)0xFFF93A90u)   /* [2] 0x8C7A8 enable */
+#define CELL_OUT_CLASS      ((volatile uint8_t *)0xFFF93A92u)   /* [2] 0x8C6D4 voltage class */
+#define CELL_LAD_FAILCLS    ((volatile uint8_t *)0xFFF939B4u)   /* [2] 0x8C2A4 failed class */
+#define CELL_LAD_REQ        ((volatile uint8_t *)0xFFF939B6u)   /* [2] THE REQUEST (0x85E64 only) */
+#define CELL_SEQ2_STATUS    ((volatile uint8_t *)0xFFF939B8u)   /* [2] 0 / 1 class 0x22 / 2 on / 3-4 'U' */
+#define CELL_SEQ2_DIAG      ((volatile uint8_t *)0xFFF939BEu)   /* [2] '3' diagnosis state */
+#define CELL_SEQ2_939C0     ((volatile uint8_t *)0xFFF939C0u)   /* [2] */
+#define CELL_LAD_94114      CELL_L1_U8(0xFFF94114u)
+#define CELL_SEQ2_SUPLOW    CELL_L1_U8(0xFFF94116u)             /* per-ch supply-low bits */
+#define CELL_SEQ2_RESOLVED  CELL_L1_U8(0xFFF94118u)             /* per-ch bits → module 7 */
+#define CELL_LAD_RETRIES    CELL_L1_U8(0xFFF9414Du)             /* 3 (cal 0x1919F5) */
+#define CELL_LAD_SAVED_SUB  CELL_L1_U8(0xFFF9414Eu)
+#define CELL_LAD_SAVED_820  CELL_L1_U8(0xFFF9414Fu)
+#define CELL_LAD_SAVED_821  CELL_L1_U8(0xFFF94150u)
+#define CELL_CUT_FLAGS      CELL_L1_U8(0xFFF94151u)             /* 0x85788 / 0x8C34C flags */
+#define CELL_CUT_PERIODIC   CELL_L1_U8(0xFFF94152u)             /* post-ladder cut request */
+#define CELL_CUT_MODE       CELL_L1_U8(0xFFF94153u)             /* 0x11 ladder / 0x33 post / 0x22 fail */
+#define CELL_CUT_REQ        CELL_L1_U8(0xFFF94154u)             /* 0xAA arm → cut → 0x55 → restore → 0 */
+#define CELL_LAD_95005      CELL_L1_U8(0xFFF95005u)
+#define CELL_LAD_95005_C    CELL_L1_U8(0xFFF94E7Du)
+#define CELL_LAD_9500B      CELL_L1_U8(0xFFF9500Bu)
+#define CELL_MOD11          CELL_L1_U8(0xFFF93B85u)             /* startup module 11: 0 → 1 (start) → 0x0F */
+#define CELL_MOD7           CELL_L1_U8(0xFFF93B86u)             /* startup module 7 (seq2) */
+#define CELL_TIOC_ON        CELL_L1_U8(0xFFF90967u)             /* 0x91E4E 1 / 0x91E6C 0 */
+/* channel groups (0x8556E) and the surviving mask */
+#define CELL_GRP(g)         CELL_L1_U16(0xFFF94F6Cu + 2u * (g)) /* g 0..2; g 3 = 0x94F72 alive */
+#define CELL_GRP_C(g)       CELL_L1_U16(0xFFF94DE4u + 2u * (g))
+/* seq2 0x85828 */
+#define CELL_SEQ2_STATE     ((volatile uint8_t *)0xFFF94FD0u)   /* [2] 0x11/0x16/0x22/0x33/'U'/'4'/'8'/'?'/'D' */
+#define CELL_SEQ2_STATE_C   ((volatile uint8_t *)0xFFF94E48u)
+#define CELL_OUT_DEMAND     ((volatile uint8_t *)0xFFF94FCAu)   /* [2] application output demand */
+#define CELL_OUT_DEMAND_C   ((volatile uint8_t *)0xFFF94E42u)
+#define CELL_SEQ2_94FCC     ((volatile uint8_t *)0xFFF94FCCu)   /* [2] demand && no 0x7BBB4 fault */
+#define CELL_SEQ2_94FCE     ((volatile uint8_t *)0xFFF94FCEu)   /* [2] the enable byte */
+/* the publishers 0x89114 / 0x8D8DE */
+#define CELL_OUT_MV         ((volatile uint16_t *)0xFFF94ED0u)  /* [2] output node mV (mux 8 / mux 10) */
+#define CELL_OUT_MV_C       ((volatile uint16_t *)0xFFF94D48u)
+#define CELL_OUT_ST         ((volatile uint8_t *)0xFFF94F94u)   /* [2] 1 / 7 / 8 */
+#define CELL_OUT_ST_C       ((volatile uint8_t *)0xFFF94E0Cu)
+#define CELL_OUT_BYTE       ((volatile uint8_t *)0xFFF93940u)   /* [2] mV x 0.01, cap 255 */
+#define CELL_SUPPLY         CELL_L1_U16(0xFFF94F96u)            /* the ladder's supply (mV) */
+#define CELL_SUPPLY_C       CELL_L1_U16(0xFFF94E0Eu)
+#define CELL_SUPPLY_RAW     CELL_L1_U16(0xFFF94F86u)            /* 0x8D8DE output */
+#define CELL_SUPPLY_RAW_C   CELL_L1_U16(0xFFF94DFEu)
+#define CELL_SUPPLY_ST      CELL_L1_U8(0xFFF94FECu)             /* 8 ok / 7 / 6 */
+#define CELL_SUPPLY_ST_C    CELL_L1_U8(0xFFF94E64u)
+#define CELL_SUPPLY_ST2     CELL_L1_U8(0xFFF94FEDu)
+#define CELL_SUPPLY_ST2_C   CELL_L1_U8(0xFFF94E65u)
+#define CELL_SUP_FLAGS      CELL_L1_U16(0xFFF93AACu)            /* 0x8D8DE fault mask */
+#define CELL_SUP_DIFF       CELL_L1_U16(0xFFF93AAEu)
+#define CELL_SUP_M13        CELL_L1_U16(0xFFF93AB0u)
+#define CELL_SUP_MIN13      CELL_L1_U16(0xFFF93936u)
+#define CELL_SUP_ENV        CELL_L1_U16(0xFFF93938u)
+#define CELL_SUP_940FA      CELL_L1_U8(0xFFF940FAu)
+#define CELL_SUP_9415B      CELL_L1_U8(0xFFF9415Bu)
+#define CELL_DIAG_93120     ((volatile uint16_t *)0xFFF93120u)  /* [2] cleared by 0x863D8 */
+/* the 5 ms countdown service 0x7C7E4 (table 0x45D30): words [0x94734,
+ * 0x94786), bytes [0x94788, 0x94835) */
+#define CNT_W_LO            0xFFF94734u
+#define CNT_W_HI            0xFFF94786u
+#define CNT_B_LO            0xFFF94788u
+#define CNT_B_HI            0xFFF94835u
+#define CELL_CNT_SUP_DIFF   CELL_L1_U16(0xFFF94772u)            /* 0x8D8DE (cal 0x1916F4 = 5) */
+#define CELL_CNT_SUP_LOW    CELL_L1_U16(0xFFF94774u)            /* 0x8D8DE (cal 0x1916F6 = 4) */
+#define CELL_CNT_SUP_RIP    CELL_L1_U16(0xFFF94776u)            /* 0x8D8DE (cal 0x1916FA = 10) */
+#define CELL_CNT_SUP_RIP2   CELL_L1_U16(0xFFF94778u)            /* 0x8D8DE (cal 0x1916F8 = 100) */
+#define CELL_CNT_SUPLOW     ((volatile uint8_t *)0xFFF947ACu)   /* [2] seq2 supply-low hold (20) */
+#define CELL_CNT_SETTLE     ((volatile uint8_t *)0xFFF947B0u)   /* [2] seq2 'U' settle (6) */
+#define CELL_CNT_HOLDOFF    ((volatile uint8_t *)0xFFF947B2u)   /* [2] seq2 'U' hold-off */
+#define CELL_CNT_BIT1       CELL_L1_U8(0xFFF9481Fu)             /* 3 = 15 ms (phases 2 / 0x20) */
+#define CELL_CNT_LADDER     CELL_L1_U8(0xFFF94820u)             /* 0x28 = 200 ms whole ladder */
+#define CELL_CNT_OUTTOL     CELL_L1_U8(0xFFF94821u)             /* 6 = 30 ms output on/off */
+/* the AN0 descriptor status bytes 0x8F50C clears (mux 8 / mux 10 windows) */
+#define CELL_ADC_ST_MUX8    CELL_L1_U8(0xFFF90017u)
+#define CELL_ADC_ST_MUX10   CELL_L1_U8(0xFFF9001Fu)
+/* the AN0 publications the ladder consumes (plat_adcmux.c finisher) */
+#define CELL_MUX_MV         ((volatile uint16_t *)0xFFF90188u)  /* [2] mux 8 / mux 10 */
+#define CELL_MUX11_MV       CELL_L1_U16(0xFFF907E2u)
+#define CELL_MUX13_MV       CELL_L1_U16(0xFFF907E4u)
+#define CELL_MUX13_ENV      CELL_L1_U16(0xFFF907F6u)
+#define CELL_MUX13_MIN      CELL_L1_U16(0xFFF907FCu)
+
 /* Clear every reserved cell range (the ranges the linker pins; NOT the
  * boot-record gates at 0xFFF800E8/0xFFF800EC, which survive resets by
  * design). Called first in the init bank, before any module init writes

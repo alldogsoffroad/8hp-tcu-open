@@ -40,9 +40,12 @@
  *   D2 Fault-manager reporting (0x6865C fault 0x221/0x226 on diverse-pair
  *      mismatches, the 0x94F84/0x94DFC lamp bits, 0x9384C trace mask) is not
  *      ported; pair mismatches are counted in s_pair_faults.
- *   D3 The 8 → 0x12 exit (0x87766 via the mode sequencer 0x85160) is not
- *      decoded, so the outer FSM holds state 8 — the stock's own state
- *      through the gate window. States 0x12/0x23/0x45/0x34 are not reached.
+ *   D3 The FSM's exits from 8 are 0x87766 calls made ONLY by the mode
+ *      sequencer 0x85160 (sup_ladder.c): 0x23 after the ladder's 0xAA, and
+ *      0x12/0x23 on retry exhaustion (ladder_blockers_decode.md §3.2). L1
+ *      HOLDS both (SUP_L1_HOLD_FAIL_FSM, and the 0xAA path is beyond the
+ *      phase-0x40 hold), so the outer FSM stays 8 and states 0x12/0x23/
+ *      0x45/0x34 (and the 0x8CEDC 'E' rule) are not ported yet — L3 work.
  *   D4 The token is sup_token_compute(selector) (the bench-proven E-era fold
  *      of the 0x7EE8A sweep's table); the full integrity sweep is not ported.
  */
@@ -254,11 +257,8 @@ static void duty_prog(void)
 
 /* ── init (stock 0x6C12C, plus the machine cells the stock RAM-clears) ──── */
 
-static bool s_target3;                  /* r02j: the ladder's target-3 step taken */
-
 void sup_walk_init(void)
 {
-    s_target3 = false;
     CELL_PERIOD = WALK_PERIOD_INIT;
     CELL_VALUE = WALK_VAL_INIT;
     CELL_VALUE_COMPL = 0xC0u;
@@ -558,7 +558,7 @@ static void walk_task(void)
 
 /* ── the level target (stock 0x8D136 / 0x8D108) ─────────────────────────── */
 
-static void level_target_set(uint8_t t)
+void sup_walk_target_set(uint8_t t)                      /* 0x8D136 */
 {
     uint8_t d = CELL_LVL_REPORTED;
 
@@ -585,7 +585,17 @@ static void level_target_set(uint8_t t)
     CELL_S8_FLAG = 0u;
 }
 
-static bool level_target_reached(uint8_t t)
+/* 0x8D1BA: the budget, with its side effect — at budget 1 it raises the
+ * 0x93B96 flag the 0x8D020 law consumes (budget < 2 && flag → budget 0) */
+uint8_t sup_walk_budget(void)
+{
+    if (CELL_S8_BUDGET == 1u) {
+        CELL_S8_FLAG = 1u;
+    }
+    return CELL_S8_BUDGET;
+}
+
+bool sup_walk_target_reached(uint8_t t)                 /* 0x8D108 */
 {
     if (CELL_LVL_REPORTED != t) {
         if (t == 5u) {
@@ -617,7 +627,7 @@ static void state8_law(void)
             CELL_S8_FLAG = 0u;
             CELL_S8_BUDGET = 0u;
         }
-    } else if (!level_target_reached(t)) {
+    } else if (!sup_walk_target_reached(t)) {
         CELL_S8_BUDGET--;
     } else {
         CELL_S8_BUDGET = 0u;
@@ -677,7 +687,7 @@ void sup_monitor_poll(void)
     case SUP_FSM_BOOT:
         if (CELL_BOOT_FLAG != 0u) {
             CELL_BOOT_FLAG = 0u;
-            level_target_set(5u);                         /* 0x8D136(5) */
+            sup_walk_target_set(5u);                         /* 0x8D136(5) */
             if (CELL_PERIOD != WALK_ERA_06) {
                 (void)sup_walk_stage(WALK_ERA_06, 2u);    /* 0x6C48C(0x4B0, 0xFB4F, 2) */
             }
@@ -690,21 +700,12 @@ void sup_monitor_poll(void)
         state8_law();
         break;
     case SUP_FSM_SUPERVISE:
-        /* r02j — THE LADDER'S LEVEL SCHEDULE, first step (gate_bit1_decode.md,
-         * validated against the bytes 2026-11-12). The stock self-test
-         * ladder 0x8B7A8 sets the walk target: phase 1 0x8B974 target 5 and
-         * waits for reported >= 5; phase 2 0x8BB34 passes on 0x14 bit 1 == 0;
-         * phase 0x10 0x8BD40 ends with 0x8D136(3) (mov #3,r4 @ 0x8BDB8);
-         * phase 0x20 0x8BDD6 then REQUIRES bit 1 == 1 once 0x8D108(3) holds
-         * (reported <= 4) and arms the TIOC pin-cut test. The driving dump
-         * ends at target 0 / level 0 with 0x14 = C7. Ours held target 5
-         * forever (no ladder) — so bit 1 could not be 1. The ladder's other
-         * phases and the pin-cut test are not ported; the letters chain is
-         * held (sup_letters.c case 2), so no enable can follow. */
-        if (!s_target3 && level_target_reached(5u) && CELL_SSLB0_BIT2 == 0u) {
-            level_target_set(3u);                         /* 0x8BD40 → 0x8D136(3) */
-            s_target3 = true;
-        }
+        /* L1 (2026-11-13): the r02j target-3 stand-in is GONE. The level
+         * target now comes only from the stock's own writers: FSM state 0
+         * above (5), the ladder (sup_ladder.c) phase 1 0x8B974 (5) and phase
+         * 0x10 0x8BD40 (3) — phases 0x80 (5 then 0) and FSM 0x12/0x23 are
+         * beyond the L1 hold. State 8 itself is 0x8D020 only (0x87526 →
+         * 0x87688). */
         state8_law();                                     /* 0x876E0 → 0x8D020 */
         break;
     default:

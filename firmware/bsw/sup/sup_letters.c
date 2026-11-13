@@ -1,36 +1,18 @@
-/* sup_letters.c — the letters and 0x90 word chain (design §7.8, spec 23).
+/* sup_letters.c — the 0x90 word chain: the letter cells, the composer and
+ * the J2/F staging (design §7.8, spec 23).
  *
- * Stock machinery mirrored (addresses in comments):
- *   - selftest ladder   0x8B7A8 selftest_seq_dispatch, phases 1/2/4/8 here;
- *                       the command codes 0x11/0x16 are the seq2 command
- *                       STATES (cells 0xFFF94FD0[ch], set by 0x85E00 via
- *                       seq_group_code_send 0x85600) — DECODE (r01u, 2026-11-11):
- *                       they are internal RAM bookkeeping and NEVER reach a tx
- *                       word; no stock builder consumes them on the wire. The
- *                       wire-visible half of the earn path is only the already
- *                       cyclic J6 STAT request {18,0C,1E,06,14} whose 0x14-class
- *                       reply frame (rx[4], template 0x40D78 frame 5) carries
- *                       the gate bit.
- *   - request cells     0xFFF939B6[ch] via 0x85E64 (set by the phase handlers
- *                       0x8B974/0x8BC54-class; CLEARED to 0 for every channel
- *                       at every ladder init — phase 1's PTR_0008BA44(ch,0)
- *                       loop = 0x85E64(ch,0)); phase 2 fail restarts the ladder
- *                       so the requests stay 0 while the gate is closed.
- *   - the seq2 FSM      0x85828 (periodic task): enable = (state 0x11/0x16)
- *                       AND (request != 0), re-evaluated EVERY pass through
- *                       mon2_chan_enable 0x8C7A8 — the letters follow the
- *                       request cell, so a ladder restart revokes them (the
- *                       earned letter persists only while the request does).
- *   - the phase-2 gate  0x8BB34: 0x14 bit 1 (0xFFF90959) must be SET, else
- *                       error latch (0xFFF93A8C) + ladder restart. Spec 23
- *                       candidate #1: the chip reports bit 1 when the engaged
- *                       context is lawful (stock: from power-on engaged-ready,
- *                       opening_200ms §1 0x14=0xC7; writer of the mode byte
- *                       0xFFF90951 = the vehicle mode-3 latch 0x7DC76/0x6BC76,
- *                       spec 03 §6 — out of bench scope). If it never does,
- *                       letters stay 0 — correct and diagnosable via the cells.
- *   - channel enable    0x8C7A8 mon2_chan_enable: 0xFFF93A90[ch] = enable,
- *                       letters[ch] 0xFFF90944[ch] = 'c' (99) or 0
+ * L1 (2026-11-13): the old "reduced ladder" that lived here — phases
+ * 1/2/4/8 per channel, an INVERTED phase-2 gate test, the request cell
+ * driving the enable every pass, and the FE13 sub-16 bench arm that wrote
+ * the request directly — is GONE. The stock's ladder, mode sequencer and
+ * seq2 FSM are ported 1:1 in sup_ladder.c (0x85160 / 0x8B7A8 / 0x85828),
+ * where the request cells 0xFFF939B6[ch] have exactly one writer (0x85E64,
+ * guarded by the seq2 state) and the enable follows the request ONLY in
+ * seq2 states 0x11/0x16. What stays here is the stock's letter cell writer
+ * and the composer:
+ *   - channel enable    0x8C7A8 mon2_chan_enable: 0xFFF93A90[ch] = enable;
+ *                       on a change vs 0xFFF93A8E[ch] the 0x8F50C status
+ *                       reset; letters[ch] 0xFFF90944[ch] = 'c' (99) or 0
  *   - enables byte      0x91758 switch_status_build (the 0x1918EF/E8/EB
  *                       flash-const law: base 0, letter slots {0,1,2} →
  *                       bits 5/6/7, calib 0)
@@ -38,142 +20,41 @@
  *                       0x9000 | (byte & ~(0x14-reply & 0xE0)) — outputs
  *                       whose fault bits are set lose their letter bits
  *                       before the word is sent (NR-8)
- *
- * TAMPER LAW (r01u bench, 2026-11-11): forcing letters[0]='c' with the gate
- * closed puts the 0x9020 certification pair on the wire in a state the stock
- * can never produce (0x91758 folds only EARNED letter bits), and the chip
- * answers with a latched anti-tamper reset loop (~1.15 s period, outlives
- * RAM, holds until power-off). The bench arm is therefore interlocked on the
- * gate bit — the stock's own guard is structural (an unearned letter bit
- * cannot be staged); the interlock restores that invariant at the arm.
- *
- * Cells that sit outside the pinned map (0xFFF93A90/8C, 0xFFF939B6) are
- * module-internal statics — they are not bench-read protocol cells and
- * pinning them could collide with auto-placed RAM (design §9 rule). The
- * bench reads them by ELF symbol (nm), the s_job_err_cnt pattern.
+ * Only slot 0 can ever carry a letter on this calibration (0x1919C8 = 1:
+ * seq2 runs channel 0 only; channel 1 is held at 0x22 / enable 0).
  */
 #include "bsw/sup/sup_letters.h"
 #include "bsw/sup/sup_jobs.h"
 #include "bsw/sup/sup_cells.h"
 
-#define LETTERS_CH 3u
-#define PHASE_DONE 0x10u       /* ladder complete: no restart (the stock stops
-                                * at the terminal phases; only a mode re-entry
-                                * re-ladders, which the reduction omits) */
-
-/* the self-test ladder */
-static uint8_t s_phase[LETTERS_CH];      /* 0 boot, 1/2/4/8 ladder, 0x10 done */
-static uint8_t s_req[LETTERS_CH];        /* the request cells (stock 0xFFF939B6[ch]:
-                                          * the seq2 FSM's per-pass enable input) */
-static uint8_t s_err_latch;              /* the 0x8BB34 error latch (internal) */
-static bool    s_mon_en[LETTERS_CH];     /* the 0xFFF93A90[ch] enables */
+#define LETTERS_SLOTS 3u        /* the composer's slot table 0x1918E8..EA */
+#define MON2_CH       2u        /* 0x8C7A8's channel range (2 slots) */
 
 /* letter slots → enable bits (flash table 0x1918E8 = {0,1,2} → bits 5/6/7) */
-static const uint8_t S_LETTER_BIT[LETTERS_CH] = { 0x20u, 0x40u, 0x80u };
+static const uint8_t S_LETTER_BIT[LETTERS_SLOTS] = { 0x20u, 0x40u, 0x80u };
 
+/* stock 0x8C7A8 (bytes/decompile 0x8C7A8..0x8C7E6): 0x93A90[ch] = en; if
+ * it differs from 0x93A8E[ch], 0x8F50C(ch) and 0x93A8E[ch] = en; then
+ * 0x90944[ch] = en ? 99 : 0. 0x8F50C(ch) zeroes the AN0 descriptor status
+ * byte (+7) of 0x90010 (ch 0, mux 8) or 0x90018 (ch 1, mux 10) — the
+ * output node's smoothing window restarts on every enable change. */
 void mon2_chan_enable(uint8_t ch, bool enable)
 {
-    if (ch >= LETTERS_CH) {
+    const uint8_t en = enable ? 1u : 0u;
+
+    if (ch >= MON2_CH) {
         return;
     }
-    s_mon_en[ch] = enable;
-    CELL_LETTERS[ch] = enable ? (uint8_t)'c' : 0u;
-}
-
-void sup_letters_bench_arm(bool on)
-{
-    /* TAMPER INTERLOCK (r01u): the arm is refused while the phase-2 gate is
-     * closed (CELL_SSLB0_BIT2 == 0). Forcing the letter then stages 0x9020 —
-     * a certification write the chip reads as unlawful and answers with the
-     * latched anti-tamper reset loop (bench 2026-11-11 ~13:00, ≥31 s of
-     * ~1.15 s resets per arm). Accepted arms set the slot-0 REQUEST cell (the
-     * stock's only letters lever, 0x85E64/0x85828 law) — the per-pass seq2
-     * law below performs the enable, and a later gate close revokes it
-     * exactly like a ladder restart would. Disarm withdraws the request. */
-    if (on && CELL_SSLB0_BIT2 == 0u) {
-        return;
-    }
-    s_req[0] = on ? 0x01u : 0u;
-    mon2_chan_enable(0u, on);
-}
-
-void sup_letters_reladder(void)
-{
-    uint8_t ch;
-
-    /* the stock re-runs the ladder from the mode sequencer's mode re-entry
-     * (0x85160 → PTR_000853F4 = 0x8B7A8); the reduction has no mode
-     * sequencer, so this is the documented seam: the next pass starts a
-     * fresh ladder whose phase-1 init clears the request cells (the
-     * 0x85E64(ch,0) law) — earned letters are withdrawn and only re-earned
-     * through the gate. Bench FE13 stop uses it to return the chain to the
-     * honest state. */
-    for (ch = 0u; ch < LETTERS_CH; ch++) {
-        s_phase[ch] = 0u;
-    }
-}
-
-void sup_selftest_step(void)
-{
-    uint8_t ch;
-
-    for (ch = 0u; ch < LETTERS_CH; ch++) {
-        switch (s_phase[ch]) {
-        case 0u:
-            /* boot → first ladder run (seq_init_11 0x85678 law) */
-            s_phase[ch] = 1u;
-            break;
-        case 1u:
-            /* ladder init: clear the request cell for EVERY channel (stock
-             * phase 1, 0x8B974's PTR_0008BA44(ch,0) loop = 0x85E64(ch,0)) —
-             * a restart revokes the letters through the per-pass law */
-            s_req[ch] = 0u;
-            /* phase 1: issue the 0x11 command state (0x85600 law) */
-            s_phase[ch] = 2u;
-            break;
-        case 2u:
-            /* r02j HOLD (gate_bit1_decode.md, validated 2026-11-12): the old
-             * test here was INVERTED. Stock phase 2 0x8BB34 PASSES on 0x14
-             * bit 1 == 0 (0x93A8C |= phase bit, sub-state 0x55) and fails
-             * with 0xF4 on bit 1 == 1; the finisher 0x8C0F2 needs 0x93A8C ==
-             * 0xFF (driving dump: 0x93A8C = 00FF, 0x9500D = AA). Bit 1 = 1 is
-             * EXPECTED only at walk level <= 4 (phase 0x20 0x8BDD6, after
-             * 0x8BD40 sets target 3). The old code set the request — and so
-             * staged 0x9020, a solenoid-rail command — the moment bit 1 rose.
-             * Until the stock ladder (0x8B7A8, all phases, the 0x85788 pin-
-             * cut test) is ported, NO request is ever set here: the 0x90
-             * word stays 0x9000. The gate state is only recorded. */
-            if (CELL_SSLB0_BIT2 != 0u) {
-                s_err_latch |= (uint8_t)(0x10u << ch);  /* diagnostic: bit 1 seen */
-            }
-            break;
-        case 4u:
-            /* phase 4: issue the 0x11 code again (request holds) */
-            s_phase[ch] = 8u;
-            break;
-        case 8u:
-            /* phase 8: issue the 0x16 code, ladder complete — the enable is
-             * NOT taken here: the per-pass seq2 law (0x85828 → 0x8C7A8)
-             * owns every enable from the request cell, exactly like the
-             * stock's periodic FSM */
-            s_phase[ch] = PHASE_DONE;
-            break;
-        case PHASE_DONE:
-            /* complete: hold (the stock's terminal phases; letters persist
-             * while the request does) */
-            break;
-        default:
-            s_phase[ch] = 0u;
-            break;
+    CELL_EN_MIRROR[ch] = en;
+    if (CELL_EN_PREV[ch] != en) {
+        if (ch == 1u) {                                   /* 0x8F50C */
+            CELL_ADC_ST_MUX10 = 0u;
+        } else {
+            CELL_ADC_ST_MUX8 = 0u;
         }
+        CELL_EN_PREV[ch] = en;
     }
-
-    /* the seq2 FSM law (0x85828 tail, PTR_00085C94 → 0x8C7A8): the enable
-     * follows the request cell every pass — earned through the gate,
-     * revoked by any ladder restart */
-    for (ch = 0u; ch < LETTERS_CH; ch++) {
-        mon2_chan_enable(ch, s_req[ch] != 0u);
-    }
+    CELL_LETTERS[ch] = en != 0u ? (uint8_t)'c' : 0u;
 }
 
 uint8_t sup_switch_status_build(void)
@@ -184,7 +65,7 @@ uint8_t sup_switch_status_build(void)
     /* base cell masked by the flash-const law (0x1918EF = 0x00 → base 0) */
     en = (uint8_t)(CELL_90_BASE & 0x1Du);
     /* letter bits: slots 0/1/2 → bits 5/6/7 */
-    for (ch = 0u; ch < LETTERS_CH; ch++) {
+    for (ch = 0u; ch < LETTERS_SLOTS; ch++) {
         if (CELL_LETTERS[ch] == (uint8_t)'c') {
             en |= S_LETTER_BIT[ch];
         }

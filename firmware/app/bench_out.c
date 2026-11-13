@@ -3,7 +3,6 @@
 #include "bsw/sup/sup_jobs.h"
 #include "bsw/sup/sup_cells.h"
 #include "bsw/sup/sup_ctrl.h"
-#include "bsw/sup/sup_letters.h"        /* sup_letters_bench_arm (FE13 sub 16) */
 #include "bsw/sup/sup_walk.h"           /* SUP_WALK_* states (the one-shot guard) */
 #include "bsw/drv/drv_jobs.h"
 #include "io/actuators/sol_ctl.h"
@@ -582,26 +581,20 @@ static int sup_lab_start(const uint8_t *in, uint16_t n)
         s_sup_mode = 3u;
         return 0;
     }
-    if (in[0] == 16u) {                                    /* letters bench arm, TAMPER-
-                                                            * INTERLOCKED (r01u bench
-                                                            * 2026-11-11: an arm while the
-                                                            * phase-2 gate is closed stages
-                                                            * 0x9020 unearned and the chip
-                                                            * answers with the latched
-                                                            * anti-tamper reset loop): [1] =
-                                                            * set the slot-0 request cell
-                                                            * (0x85E64 law) — refused while
-                                                            * 0x14 bit 1 (CELL_SSLB0_BIT2) is
-                                                            * clear; [0] = disarm. Readout
-                                                            * mode 2: the cyclic view's
-                                                            * JOB_EN replies carry the 0x24
-                                                            * certification echo */
-        if (n != 2u || in[1] > 1u) {
-            return -NRC_IMLOIF;
-        }
-        sup_letters_bench_arm(in[1] != 0u);
-        s_sup_mode = 2u;
-        return 0;
+    if (in[0] == 16u) {                                    /* letters bench arm: REMOVED
+                                                            * (L1, 2026-11-13). It wrote
+                                                            * the slot-0 request cell
+                                                            * directly — the only request
+                                                            * writer outside the stock
+                                                            * ladder, with no stock
+                                                            * analogue; with the gate open
+                                                            * it would stage 0x9020 at
+                                                            * level 3-4 with no ladder
+                                                            * around it. The request cells
+                                                            * now have one writer, the
+                                                            * ported 0x85E64 (sup_ladder.c).
+                                                            * Always refused. */
+        return -NRC_CNC;
     }
     if (in[0] == 17u) {                                    /* dialect bench arm (the
                                                             * r01m 0xAA00 follow-up):
@@ -938,11 +931,8 @@ int bench_routine(uint8_t type, uint16_t rid, const uint8_t *in, uint16_t n, uin
         }
         if (type == 2u) {
             sup_enable_request(false);          /* stop: the request cell disarmed */
-            sup_letters_bench_arm(false);       /* stop: the letters arm disarmed */
-            sup_letters_reladder();             /* stop: re-ladder (the stock's mode
-                                                 * re-entry law) — earned letters are
-                                                 * withdrawn and re-earned only
-                                                 * through the gate */
+            /* (L1: no letters arm / re-ladder any more — the stock ladder
+             * owns the request cells; a stop does not restart it) */
             sup_ctrl_bench_dialect(false);      /* stop: the dialect arm disarmed */
             s_sup_mode = 0u;
             return 0;

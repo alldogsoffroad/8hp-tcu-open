@@ -46,6 +46,9 @@ typedef struct {
     unsigned walktmr_starts;    /* plat_walktmr_start() calls */
     uint32_t walk_fire_us;       /* r02f: when the armed one-shot underflows */
     bool rspi_err_next;         /* S2: complete the next burst with frames=0 */
+    bool adc_ready;             /* L1: plat_adcmux_ready() */
+    bool tioc_cut;              /* L1: PD4/PD8 on GPIO (0x91E6C) until restored */
+    unsigned tioc_cuts;         /* L1: plat_tioc_cut() calls */
 } stub_plat_t;
 
 extern stub_plat_t stub;

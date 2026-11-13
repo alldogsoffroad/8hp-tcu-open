@@ -109,6 +109,20 @@ SECTIONS
         __sup_latch_start = .; *(.sup_latch) . += 0x04; __sup_latch_end = .;
     } > RAM
 
+    /* L1 (2026-11-13): the self-test ladder / sequencer / seq2 / pin-cut /
+     * publisher cells at the stock addresses (sup_cells.h, sup_ladder.c),
+     * and the 5 ms countdown service's whole range (0x7C7E4, table 0x45D30:
+     * words [0x94734, 0x94786), bytes [0x94788, 0x94835)) — it decrements
+     * every nonzero cell there, so nothing else may live in it. */
+    .sup_l1a 0xFFF93118 (NOLOAD) : { . += 0x0C; } > RAM   /* 0x93118..0x93123 diag   */
+    .sup_l1b 0xFFF93936 (NOLOAD) : { . += 0x0C; } > RAM   /* 0x93936..0x93941        */
+    .sup_l1c 0xFFF939B4 (NOLOAD) : { . += 0x10; } > RAM   /* 0x939B4..0x939C3        */
+    .sup_l1d 0xFFF93A84 (NOLOAD) : { . += 0x10; } > RAM   /* 0x93A84..0x93A93        */
+    .sup_l1e 0xFFF93AAC (NOLOAD) : { . += 0x06; } > RAM   /* 0x93AAC..0x93AB1        */
+    .sup_l1f 0xFFF940F8 (NOLOAD) : { . += 0x64; } > RAM   /* 0x940F8..0x9415B        */
+    .sup_cnt 0xFFF94734 (NOLOAD) : { . += 0x101; } > RAM  /* 0x94734..0x94834        */
+    .sup_l1g 0xFFF94D48 (NOLOAD) : { . += 0x114; } > RAM  /* 0x94D48..0x94E5B pairs  */
+
     .sup_value 0xFFF94E5C (NOLOAD) : {     /* value cells .. 0x95010         */
         __sup_value_start = .; *(.sup_value) . += 0x1B8; __sup_value_end = .;
     } > RAM

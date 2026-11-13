@@ -1420,10 +1420,58 @@ void plat_app_init(void)
 
 /* r02l: start the AN0 mux / ADC chain (Timer G) — the 0x91F3E TGE bit,
  * deferred. Everything else of the chain was configured in plat_app_init. */
+#if !defined(TCU_LOADER)   /* L1 additions: application only (the loader object stays as r02q) */
+static volatile uint8_t  s_adc_started;     /* L1: the chain's clock is running */
+static volatile uint32_t s_adc_start_ms;    /* L1: 0xFFF90628 at the start */
+#define ADC_MS_CNT (*(volatile uint32_t *)0xFFF90628u)   /* +1 per DEI5 (plat_adcmux.c) */
+#endif
+
 void plat_adcmux_start(void)
 {
+#if !defined(TCU_LOADER)
+    s_adc_start_ms = ADC_MS_CNT;
+    s_adc_started = 1u;
+#endif
     ATUENR |= 0x0080u;
 }
+
+#if !defined(TCU_LOADER)
+
+/* L1 (2026-11-13): the ladder's inputs are valid once the deferred chain
+ * has completed >= 20 DEI5 passes (1 ms each) since the start — two full
+ * 10-sample windows of mux 11, so the supply 0x907E2 the ladder's supply
+ * window reads holds no pre-start sample. The stock's chain runs from its
+ * init batch, before the ladder's own start (module 11), so it never needs
+ * this gate. Never true in the RAM application (its DEI5 body is empty). */
+bool plat_adcmux_ready(void)
+{
+    return s_adc_started != 0u && (uint32_t)(ADC_MS_CNT - s_adc_start_ms) >= 20u;
+}
+
+/* L1: the stock's TIOC10/TIOC20 pin cut and restore, byte for byte
+ * (0x91E4E..0x91E84: r1 = 0xFFFFC800; mov.b @(14,r1) / @(13,r1), and #0xFC,
+ * [bset #0], mov.b back; the delay-slot store to 0xFFF90967). The two PFC
+ * bytes are PD8's and PD4's fields (bench r02i: C80C..F = 00FD FDD5, field
+ * 01 = TIOC function). Used by the ladder's phase-0x20 one-tick cut
+ * (0x85788 with 0x94154 = 0xAA / 0x55). */
+void plat_tioc_cut(void)                    /* 0x91E6C */
+{
+    volatile uint8_t *const pfc = (volatile uint8_t *)0xFFFFC800u;
+
+    pfc[14] = (uint8_t)(pfc[14] & 0xFCu);
+    pfc[13] = (uint8_t)(pfc[13] & 0xFCu);
+    *(volatile uint8_t *)0xFFF90967u = 0u;
+}
+
+void plat_tioc_restore(void)                /* 0x91E4E */
+{
+    volatile uint8_t *const pfc = (volatile uint8_t *)0xFFFFC800u;
+
+    pfc[14] = (uint8_t)((pfc[14] & 0xFCu) | 0x01u);
+    pfc[13] = (uint8_t)((pfc[13] & 0xFCu) | 0x01u);
+    *(volatile uint8_t *)0xFFF90967u = 1u;
+}
+#endif /* !TCU_LOADER */
 
 /* ---- Rebuild additions (design §5) --------------------------------------------- */
 

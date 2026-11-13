@@ -16,6 +16,7 @@ set(CORE_SOURCES
     bsw/sup/sup_batch.c
     bsw/sup/sup_ctrl.c
     bsw/sup/sup_letters.c
+    bsw/sup/sup_ladder.c
     bsw/sup/sup_token.c
     bsw/drv/drv_jobs.c
     bsw/drv/drv_handlers.c
@@ -191,7 +192,7 @@ else()
     add_test(NAME sol COMMAND test_sol)
     add_executable(test_bench tests/unit/test_bench.c app/bench_out.c io/actuators/sol_ctl.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
-        bsw/sup/sup_letters.c bsw/sup/sup_walk.c bsw/sup/sup_token.c bsw/drv/drv_jobs.c bsw/drv/drv_handlers.c
+        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_walk.c bsw/sup/sup_token.c bsw/drv/drv_jobs.c bsw/drv/drv_handlers.c
         bsw/diag/uds.c bsw/diag/isotp.c bsw/diag/boot_record.c
         io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
         tests/unit/stub_plat.c)
@@ -203,23 +204,39 @@ else()
         bsw/drv/drv_jobs.c
     bsw/drv/drv_handlers.c
     bsw/com/crc8.c io/actuators/sol_ctl.c bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c
-        bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c bsw/sup/sup_letters.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
+        bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
         tests/unit/stub_plat.c)
     target_compile_definitions(test_park PRIVATE PARK_TEST_HOOKS TCU_M4B_OUTPUTS)
     add_test(NAME park COMMAND test_park)
     add_executable(test_dump tests/unit/test_dump.c app/bench_dump.c tests/unit/stub_plat.c)
     add_executable(transcript tests/unit/transcript.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
-        bsw/sup/sup_letters.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
+        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
         tests/unit/stub_plat.c)
     add_test(NAME transcript COMMAND transcript)
     add_test(NAME transcript_28us COMMAND transcript 7168)
     add_test(NAME dump COMMAND test_dump)
     add_executable(test_rebuild tests/unit/test_rebuild.c bsw/sched/sched.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_walk.c bsw/sup/sup_batch.c
-        bsw/sup/sup_ctrl.c bsw/sup/sup_letters.c bsw/sup/sup_token.c
+        bsw/sup/sup_ctrl.c bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_token.c
         tests/unit/stub_plat.c)
     add_test(NAME rebuild COMMAND test_rebuild)
+    # L1: the stock self-test ladder, held (sup_ladder.c) — driven with the
+    # r02q bench inputs and a chip model of 0x14 bit 1 (level <= 4 AND the
+    # TIOC clock present); asserts J2 TX 0x9000 through every path
+    add_executable(test_ladder tests/unit/test_ladder.c
+        bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
+        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
+        tests/unit/stub_plat.c)
+    add_test(NAME ladder COMMAND test_ladder)
+    # the negative test: phase 8's request hold released (L2) — the J2
+    # invariant must see exactly the stock's one 0x9020 frame
+    add_executable(test_ladder_l2 tests/unit/test_ladder.c
+        bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
+        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
+        tests/unit/stub_plat.c)
+    target_compile_definitions(test_ladder_l2 PRIVATE SUP_L1_HOLD_PHASE8_REQUEST=0)
+    add_test(NAME ladder_l2 COMMAND test_ladder_l2)
     # project flasher on the simulated flash controller (spec 16 section 7)
     set(FL_HOST_SOURCES flasher/fl_core.c flasher/fl_fcu.c tests/unit/fl_sim.c)
     add_executable(test_flasher tests/unit/test_flasher.c ${FL_HOST_SOURCES} app/flash_entry.c

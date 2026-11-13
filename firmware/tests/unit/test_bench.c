@@ -6,6 +6,7 @@
 #include "bsw/sup/sup_batch.h"
 #include "bsw/sup/sup_walk.h"
 #include "bsw/sup/sup_letters.h"
+#include "bsw/sup/sup_ladder.h"
 #include "bsw/sup/sup_cells.h"
 #include "bsw/com/crc8.h"
 #include "io/actuators/sol_ctl.h"
@@ -341,63 +342,37 @@ int main(void)
         uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x09, 0x00 }, 6u);
         CHECK(CELL_REQUEST == 0u);
 
-        /* ---- sub 16 (0x10): the letters bench arm, TAMPER-INTERLOCKED ----
-         * r01u bench (2026-11-11): an arm while the phase-2 gate is closed
-         * (CELL_SSLB0_BIT2 == 0) stages the 0x9020 certification pair
-         * unearned — a state the stock can never produce (0x91758 folds
-         * only earned letter bits) — and the chip answers with the latched
-         * anti-tamper reset loop. The arm is therefore refused with the
-         * gate closed, and the EARN path is the ladder itself: with the
-         * gate open (hermetic: write the chip's bit 1) the ladder walks
-         * phases 1-2-4-8, sets the request cell, and the per-pass seq2 law
-         * (0x85828 → 0x8C7A8) earns the letter with NO arm. Hermetic
-         * precondition: earlier scripted replies may have carried 0x14
-         * bit 1 (the sup_garbage window above), so re-ladder (the stock's
-         * mode re-entry law) and force the gate closed first. */
+        /* ---- sub 16 (0x10): the letters bench arm is REMOVED (L1) ----
+         * It wrote the slot-0 request cell directly — the only request
+         * writer outside the stock ladder. The ported ladder (sup_ladder.c)
+         * owns the request cells through 0x85E64 alone; sub 16 is refused
+         * whatever the gate, and nothing it was ever able to stage reaches
+         * the wire. The stop path no longer re-ladders. */
         CELL_WALK_STATE = 0x07u;
-        sup_letters_reladder();
-        CELL_SSLB0_BIT2 = 0u;
         for (uint8_t i = 0u; i < 3u; i++) {
             CELL_LETTERS[i] = 0u;
         }
-        run_10ms(1u);
-        CHECK(CELL_J2_STAGED == 0x9000u);       /* no letter bits without the gate */
-        /* THE INTERLOCK: the arm is REFUSED while 0x14 bit 1 is clear */
-        uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x10, 0x01 }, 6u);
-        CHECK(memcmp(&last_rsp()[1], "\x71\x01\xFE\x13", 4) == 0);
-        CHECK(CELL_LETTERS[0] == 0u);           /* the tamper trigger cannot fire */
-        run_10ms(1u);
-        CHECK(CELL_J2_STAGED == 0x9000u);       /* nothing staged unearned */
-        /* r02j: NO EARN PATH while the ladder is held. The old earn path
-         * (gate open → request → letters → 0x9020) was the INVERTED gate test
-         * (stock 0x8BB34 passes on bit 1 == 0; gate_bit1_decode.md): with
-         * bit 1 = 1 the held ladder records it and sets nothing. */
-        CELL_SSLB0_BIT2 = 1u;
-        run_10ms(3u);
-        CHECK(CELL_LETTERS[0] == 0u);           /* nothing earned */
-        CHECK(CELL_EN_90 == 0x00u);
-        CHECK(CELL_J2_STAGED == 0x9000u);       /* no rail command on the wire */
         CELL_SSLB0_BIT2 = 0u;
         run_10ms(1u);
         CHECK(CELL_J2_STAGED == 0x9000u);
-        /* disarm withdraws slot 0's request: the per-pass law revokes it
-         * (channels 1/2 keep their ladder-earned letters — slot 0 is the
-         * arm's scope) */
-        uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x10, 0x00 }, 6u);
-        CHECK(CELL_LETTERS[0] == 0u);
-        /* arm WITH the gate open is accepted (the request-cell lever) */
-        CELL_SSLB0_BIT2 = 1u;
         uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x10, 0x01 }, 6u);
-        CHECK(CELL_LETTERS[0] == (uint8_t)'c');
-        /* the FE13 stop: disarm + RE-LADDER (the stock's mode re-entry law) —
-         * the next pass's phase-1 init clears EVERY request and, the gate
-         * being closed, nothing is re-earned: every letter bit leaves the
-         * staged word */
+        CHECK(last_nrc() == 0x22u);             /* refused, gate closed */
+        CHECK(CELL_LETTERS[0] == 0u);
+        CELL_SSLB0_BIT2 = 1u;
+        CELL_REG_14 = 0xC7u;
+        uds_req((const uint8_t[]){ 0x31, 0x01, 0xFE, 0x13, 0x10, 0x01 }, 6u);
+        CHECK(last_nrc() == 0x22u);             /* refused, gate OPEN too */
+        run_10ms(3u);
+        CHECK(CELL_LETTERS[0] == 0u);           /* nothing earned, nothing armed */
+        CHECK(CELL_LAD_REQ[0] == 0u && CELL_LAD_REQ[1] == 0u);
+        CHECK(CELL_EN_90 == 0x00u);
+        CHECK(CELL_J2_STAGED == 0x9000u);       /* no rail command on the wire */
         uds_req((const uint8_t[]){ 0x31, 0x02, 0xFE, 0x13 }, 4u);
         run_10ms(2u);
         CHECK(CELL_LETTERS[0] == 0u && CELL_LETTERS[1] == 0u && CELL_LETTERS[2] == 0u);
         CHECK(CELL_J2_STAGED == 0x9000u);
         CELL_SSLB0_BIT2 = 0u;
+        CELL_REG_14 = 0u;
         CELL_WALK_STATE = 0u;
     }
 

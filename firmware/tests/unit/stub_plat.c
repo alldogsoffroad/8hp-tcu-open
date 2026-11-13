@@ -640,6 +640,19 @@ void plat_adcmux_init(void) {}
 void plat_adcmux_start(void) {}
 void plat_adcmux_finish_5ms(void) {}
 void plat_adcmux_status_5ms(void) {}
+/* L1: the ladder's start gate and the TIOC pin cut (the test drives them) */
+bool plat_adcmux_ready(void) { return stub.adc_ready; }
+void plat_tioc_cut(void)
+{
+    stub.tioc_cut = true;
+    stub.tioc_cuts++;
+    *(volatile uint8_t *)0xFFF90967u = 0u;
+}
+void plat_tioc_restore(void)
+{
+    stub.tioc_cut = false;
+    *(volatile uint8_t *)0xFFF90967u = 1u;
+}
 void plat_dei5_isr(void) {}
 void plat_dei4_isr(void) {}
 uint32_t plat_boot_index(void)

@@ -79,6 +79,20 @@ uint8_t sup_walk_stage(uint16_t period, uint8_t tries);   /* stock 0x6C48C */
 bool sup_walk_resend(void);                  /* stock 0x6C720: true = busy */
 uint32_t sup_walk_shot_at(void);            /* TCNTA µs of the armed shot, 0 = none */
 
+/* the level target (stock 0x8D136): 0, 5 or 3 (any other value = 3, as
+ * the stock's else branch); sets the 0x9417D budget 3 + |delta| + 2 and
+ * clears the 0x93B96 flag. Called by FSM state 0 and the ladder. */
+void sup_walk_target_set(uint8_t t);
+/* target reached (stock 0x8D108): 5 → reported >= 5, 3 → reported <= 4,
+ * otherwise reported == t */
+bool sup_walk_target_reached(uint8_t t);
+/* the budget 0x9417D (stock 0x8D1BA; at 1 it sets the 0x93B96 flag) */
+uint8_t sup_walk_budget(void);
+
+/* the stock's hardware-condition gate 0x68BE0 (weak default in sup_walk.c:
+ * condition clear); read by the one-shot enable and the sequencer 'L'/'=' */
+bool plat_hwcond(void);
+
 /* the W2 level builder (stock 0x91190): stages 0x8400|value into the level
  * job's first word and queues JOB_LEVEL. One-in-flight check-free. */
 void sup_level_job(void);

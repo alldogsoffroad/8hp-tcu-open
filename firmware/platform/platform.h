@@ -135,6 +135,15 @@ void plat_adcmux_mux_hold(void);          /* r02p: CMEG2 off during a bus-B burs
 void plat_adcmux_mux_release(void);       /* r02p: CMEG2 back on at burst end */             /* r02l: Timer G enable (TGE), deferred */
 void plat_adcmux_finish_5ms(void);        /* 0x8F62C */
 void plat_adcmux_status_5ms(void);        /* 0x8F5A0 (status ramp part) */
+/* L1 (2026-11-13): true once the deferred chain has run >= 20 DEI5 (1 ms)
+ * passes since plat_adcmux_start — the mux-11 10-sample window is then
+ * wholly post-start. The ladder's start-gate stand-in (sup_ladder.c). */
+bool plat_adcmux_ready(void);
+/* L1: the stock's TIOC pin cut 0x91E6C (PD4/PD8 TIOC10/20 -> GPIO, byte
+ * PFC writes 0xFFFFC80E/0xFFFFC80D &= 0xFC, 0xFFF90967 = 0) and its
+ * restore 0x91E4E (field back to 01, 0xFFF90967 = 1) */
+void plat_tioc_cut(void);                 /* 0x91E6C */
+void plat_tioc_restore(void);             /* 0x91E4E */
 void plat_dei5_isr(void);                 /* 0x95FC4 -> 0x8F058, vector 128 */
 void plat_dei4_isr(void);                 /* 0x95FEA, vector 124 */
 uint32_t plat_boot_index(void);
