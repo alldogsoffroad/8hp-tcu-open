@@ -16,7 +16,7 @@ set(CORE_SOURCES
     bsw/sup/sup_batch.c
     bsw/sup/sup_ctrl.c
     bsw/sup/sup_letters.c
-    bsw/sup/sup_ladder.c
+    bsw/sup/sup_ladder.c bsw/sup/sup_mode.c
     bsw/sup/sup_token.c
     bsw/drv/drv_jobs.c
     bsw/drv/drv_handlers.c
@@ -192,7 +192,7 @@ else()
     add_test(NAME sol COMMAND test_sol)
     add_executable(test_bench tests/unit/test_bench.c app/bench_out.c io/actuators/sol_ctl.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
-        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_walk.c bsw/sup/sup_token.c bsw/drv/drv_jobs.c bsw/drv/drv_handlers.c
+        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c bsw/sup/sup_token.c bsw/drv/drv_jobs.c bsw/drv/drv_handlers.c
         bsw/diag/uds.c bsw/diag/isotp.c bsw/diag/boot_record.c
         io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
         tests/unit/stub_plat.c)
@@ -204,21 +204,32 @@ else()
         bsw/drv/drv_jobs.c
     bsw/drv/drv_handlers.c
     bsw/com/crc8.c io/actuators/sol_ctl.c bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c
-        bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
+        bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
         tests/unit/stub_plat.c)
     target_compile_definitions(test_park PRIVATE PARK_TEST_HOOKS TCU_M4B_OUTPUTS)
     add_test(NAME park COMMAND test_park)
     add_executable(test_dump tests/unit/test_dump.c app/bench_dump.c tests/unit/stub_plat.c)
     add_executable(transcript tests/unit/transcript.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
-        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
+        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
         tests/unit/stub_plat.c)
     add_test(NAME transcript COMMAND transcript)
     add_test(NAME transcript_28us COMMAND transcript 7168)
+    # mode 1 (2026-11-13, ~/tcu_sweep/mode1_port.md): the same transcript
+    # with startup modules 7 and 11 forced done at P50 and H5 released —
+    # the stock's mode-0 → mode-1 switch, then the mode-1 schedule judged
+    # pass by pass (J2 every 5 ms; J3 J4 F J6 J1 J5 F2 on the 10 ms pass)
+    add_executable(transcript_mode1 tests/unit/transcript.c
+        bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
+        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
+        tests/unit/stub_plat.c)
+    target_compile_definitions(transcript_mode1 PRIVATE SUP_MODE_HOLD=0 TRANSCRIPT_MODE1=1)
+    add_test(NAME transcript_mode1 COMMAND transcript_mode1)
+    add_test(NAME transcript_mode1_28us COMMAND transcript_mode1 7168)
     add_test(NAME dump COMMAND test_dump)
     add_executable(test_rebuild tests/unit/test_rebuild.c bsw/sched/sched.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_walk.c bsw/sup/sup_batch.c
-        bsw/sup/sup_ctrl.c bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_token.c
+        bsw/sup/sup_ctrl.c bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_token.c
         tests/unit/stub_plat.c)
     add_test(NAME rebuild COMMAND test_rebuild)
     # L1: the stock self-test ladder, held (sup_ladder.c) — driven with the
@@ -226,14 +237,14 @@ else()
     # TIOC clock present); asserts J2 TX 0x9000 through every path
     add_executable(test_ladder tests/unit/test_ladder.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
-        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
+        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
         tests/unit/stub_plat.c)
     add_test(NAME ladder COMMAND test_ladder)
     # the negative test: phase 8's request hold released (L2) — the J2
     # invariant must see exactly the stock's one 0x9020 frame
     add_executable(test_ladder_l2 tests/unit/test_ladder.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
-        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
+        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
         tests/unit/stub_plat.c)
     target_compile_definitions(test_ladder_l2 PRIVATE SUP_L1_HOLD_PHASE8_REQUEST=0)
     add_test(NAME ladder_l2 COMMAND test_ladder_l2)
@@ -243,7 +254,7 @@ else()
     # the wire return to 0x9000 for good (the FSM stays 8)
     add_executable(test_ladder_l3a tests/unit/test_ladder.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
-        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
+        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
         tests/unit/stub_plat.c)
     target_compile_definitions(test_ladder_l3a PRIVATE SUP_L1_HOLD_PHASE8_REQUEST=0
         SUP_L1_HOLD_PHASE40=0 SUP_L1_HOLD_FAIL_FSM=1)
@@ -253,7 +264,7 @@ else()
     # stock driving dump's end state
     add_executable(test_ladder_l3b tests/unit/test_ladder.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
-        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
+        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
         tests/unit/stub_plat.c)
     target_compile_definitions(test_ladder_l3b PRIVATE SUP_L1_HOLD_PHASE8_REQUEST=0
         SUP_L1_HOLD_PHASE40=0 SUP_L1_HOLD_FAIL_FSM=0 SUP_L3_HOLD_SEQ_L=0)
@@ -262,7 +273,7 @@ else()
     # stock's post-ladder walk 0x23 → 'E' without the permanent letter
     add_executable(test_ladder_l3a_e tests/unit/test_ladder.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
-        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
+        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
         tests/unit/stub_plat.c)
     target_compile_definitions(test_ladder_l3a_e PRIVATE SUP_L1_HOLD_PHASE8_REQUEST=0
         SUP_L1_HOLD_PHASE40=0 SUP_L1_HOLD_FAIL_FSM=0 SUP_L3_HOLD_SEQ_L=1)

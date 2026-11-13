@@ -110,9 +110,24 @@ void sup_flt_requeue(void)
     enables_queue(JOB_FLT);
 }
 
-void sup_enables_stage(void)
+/* the J2 stage 0x91804 (in 0x8EDF6: 5 ms in every mode) and the F stage
+ * 0x91810 (in 0x8EE30: 5 ms in mode 0, 10 ms in mode 1) each run the
+ * status build 0x91758 first (bytes 0x91806 / 0x91812: bsr 0x91758) */
+void sup_j2_stage(void)
 {
     (void)sup_switch_status_build();    /* 0x91758 → 0x907D6 */
-    enables_queue(JOB_EN);              /* 0x91804 → 0x92E80 */
-    enables_queue(JOB_FLT);             /* 0x91810 → 0x92F7C */
+    enables_queue(JOB_EN);              /* 0x92E80 */
+}
+
+void sup_f_stage(void)
+{
+    (void)sup_switch_status_build();    /* 0x91758 → 0x907D6 */
+    enables_queue(JOB_FLT);             /* 0x92F7C */
+}
+
+void sup_enables_stage(void)
+{
+    sup_j2_stage();                     /* 0x91804 */
+    sup_f_stage();                      /* 0x91810 (same tick: the second
+                                         * build rewrites the same byte) */
 }

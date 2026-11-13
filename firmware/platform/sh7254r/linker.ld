@@ -125,6 +125,17 @@ SECTIONS
     /* L3 (2026-11-13): the '3' diagnosis 0x85FC4 cells outside the L1 ranges */
     .sup_l3a 0xFFF94958 (NOLOAD) : { . += 0x08; } > RAM   /* 0x94958..0x9495F        */
     .sup_l3b 0xFFF84A24 (NOLOAD) : { . += 0x08; } > RAM   /* 0x84A24..0x84A2B        */
+    /* mode 1 (2026-11-13, ~/tcu_sweep/mode1_port.md): the OS mode cells
+     * 0x93B32/33/34 (boot state, mode, pending) and 0x848CF / 0x848E6 (the
+     * boot-side mode copy and the state-0 gate) */
+    .sup_os  0xFFF93B30 (NOLOAD) : { . += 0x10; } > RAM   /* 0x93B30..0x93B3F        */
+    .sup_os2 0xFFF848C0 (NOLOAD) : { . += 0x28; } > RAM   /* 0x848C0..0x848E7        */
+    .sup_os3 0xFFF9353C (NOLOAD) : { . += 0x24; } > RAM   /* 0x9353C..0x9355F task cd */
+    /* our own mode-1 witnesses (not stock cells): placed in the free low
+     * RAM below the pinned ranges, so they do not cost the stack guard */
+    .sup_wit 0xFFF84C00 (NOLOAD) : {
+        __sup_wit_start = .; *(.sup_wit) . = ALIGN(4); __sup_wit_end = .;
+    } > RAM
 
     .sup_value 0xFFF94E5C (NOLOAD) : {     /* value cells .. 0x95010         */
         __sup_value_start = .; *(.sup_value) . += 0x1B8; __sup_value_end = .;

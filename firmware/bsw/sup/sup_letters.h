@@ -29,6 +29,11 @@ uint8_t sup_switch_status_build(void);
  * letter-change (stock 0x91804/0x91810/0x92E80 law). */
 void sup_enables_stage(void);
 
+/* the two halves (stock 0x91804 / 0x91810, each 0x91758 first): the J2
+ * stage stays at 5 ms in mode 1, the F stage moves to 10 ms */
+void sup_j2_stage(void);
+void sup_f_stage(void);
+
 /* the F queuer alone (stock 0x92F7C): the J6 handler's fault re-fire */
 void sup_flt_requeue(void);
 

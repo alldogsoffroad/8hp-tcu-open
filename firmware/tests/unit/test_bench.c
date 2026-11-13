@@ -10,6 +10,7 @@
 #include "bsw/sup/sup_cells.h"
 #include "bsw/com/crc8.h"
 #include "io/actuators/sol_ctl.h"
+#include "bsw/drv/drv_jobs.h"
 #include "io/vehicle/vehicle.h"
 #include "tests/unit/stub_plat.h"
 
@@ -125,6 +126,7 @@ int main(void)
     uds_init(&app);
     sup_jobs_init();
     sup_batch_init();           /* serial_rx_init: request 0, outputs disabled, J5 queued */
+    drv_jobs_init();
     sol_init();
     bench_init();
     stub.sup_reply_fn = sup_mirror;
@@ -156,6 +158,21 @@ int main(void)
     CHECK(sol_channel(2u)->setpoint == 4000u / 6u);
     for (uint8_t c = 0u; c <= BENCH_MAX_CHANNEL; c++) {
         CHECK(c == 2u || sol_channel(c)->mode == SOL_MODE_OFF);
+    }
+    /* r02v stage 0a: whatever sol_set asked, the bus-A words stay the stock's
+     * pre-engagement content — command-major, mode 0x15, setpoints 0 */
+    {
+        static const uint16_t CMD[9] = { 0x8815u, 0xA000u, 0xE800u, 0xA600u, 0xF000u,
+                                         0x6000u, 0xC000u, 0x6600u, 0xD800u };
+        const uint16_t *cy = drv_job_tx(DRV_CYC);
+        const uint16_t *cf = drv_job_tx(DRV_CFG);
+        for (unsigned i = 0u; i < 45u; i++) {
+            CHECK(cy[i] == CMD[i / 5u]);
+        }
+        for (unsigned i = 0u; i < 5u; i++) {
+            CHECK(cf[i] == 0x8E9Fu && cf[5u + i] == 0x9021u && cf[10u + i] == 0x9655u &&
+                  cf[15u + i] == 0x8815u && cf[20u + i] == 0x2800u && cf[35u + i] == 0x3600u);
+        }
     }
     /* second test while active: refused (one channel at a time) */
     CHECK(!start(3u, 400u, 1u) && last_nrc() == 0x22u);

@@ -54,8 +54,8 @@
  * sequencer waits in '.' forever (it needs FSM 'E') and the permanent
  * letter path ('L' → seq2 '3' → 'U') never starts. L3b = 0: the FSM goes
  * 0x23 → 'E', the sequencer '.' → 'L', seq2 0x33 → '3' diagnosis → 'U',
- * letter 'c', 0x9020 for good. On SH, L3b also needs SUP_L3B_ON_TARGET
- * (sup_ladder.c names what it acknowledges). */
+ * letter 'c', 0x9020 for good — and, H5 released with H4 (sup_mode.h),
+ * the mode-1 switch two or three passes later (sup_mode.c). */
 /* r02t (2026-11-13): the TARGET default is L3a-E — H3 RELEASED, H4 held.
  * Validated against 0x873F0 (state 0x23 → 0x45 once 0x8D108(0) holds and
  * 0x6C48C(0x1838, 0xE7C7, 2) == 0): with H3 held the FSM would sit in 8 at
@@ -95,6 +95,16 @@ void sup_ladder_tick_head(void);
  * 0x89114), ladder 0x8570E → 0x85160 → 0x8B7A8, seq2 0x85828, pin cut
  * 0x85788. Runs before the J2/F stage. */
 void sup_ladder_tick(void);
+
+/* the same body as separate 5 ms list entries, for the per-mode placement
+ * (sup_batch.c): publishers 0x7CB74; the sequencer — gated = mode 0's
+ * 0x7CC76 → 0x8570E (only while module 11 != 0, with the S5 start), else
+ * modes 1..3's 0x7CC66 → 0x85160 direct; seq2 0x7CC56; pin cut 0x7CC32
+ * (10 ms in mode 1) */
+void sup_ladder_tick_publish(void);
+void sup_ladder_tick_seq(bool gated);
+void sup_ladder_tick_seq2(void);
+void sup_ladder_tick_cut(void);
 
 /* bench witness: the last 0x87766 target the sequencer requested (0 =
  * none) — recorded whether H3 holds the call (L3a) or makes it (L3b) */

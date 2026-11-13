@@ -28,6 +28,7 @@
 #include "bsw/sup/sup_batch.h"
 #include "bsw/sup/sup_walk.h"
 #include "bsw/sup/sup_ladder.h"
+#include "bsw/sup/sup_mode.h"
 #include "stub_plat.h"
 
 extern struct { uint8_t bus; uint8_t job; uint16_t word; uint32_t t_us; } stub_log[32768];
@@ -182,8 +183,99 @@ typedef struct {
     uint8_t sub, req0, seq, seq2, diag, cls, lvl, tgt, st939b8, fsm, en;
     bool w9020;                 /* a J2/F word 0x9020 went out this frame */
     uint16_t j2, mv;
+    /* mode 1 (sup_mode.c): the OS mode at the end of the frame, the
+     * frame's cyclic bus-B jobs in wire order (walk jobs excluded), and
+     * its J2 words: how many, how many not 0x9020 */
+    uint8_t mode, njobs, jobs[16], j2n, j2not9020;
+    uint8_t pend, mod1, mod2, mod7, ost;    /* 0x93B34, modules 1/2/7, boot state */
 } frame_t;
 static frame_t s_fr[1200];
+
+/* the frame's cyclic bus-B jobs in wire order: each burst is NFR frames of
+ * one job (one job in flight at a time); the walk's W1/W2 are excluded
+ * (they ride the asynchronous one-shot, as in transcript.c) */
+static void frame_jobs(frame_t *f)
+{
+    static const uint8_t NFR[JOB_COUNT] = { [JOB_CTRL]=4u, [JOB_EN]=2u,
+        [JOB_POS]=2u, [JOB_SSLB2]=1u, [JOB_ID]=4u, [JOB_STAT]=5u,
+        [JOB_NIB]=1u, [JOB_DUTY]=7u, [JOB_LEVEL]=4u, [JOB_FLT]=2u };
+    unsigned j = 0u;
+
+    f->njobs = 0u;
+    f->j2n = 0u;
+    f->j2not9020 = 0u;
+    while (j < stub_log_n) {
+        const uint8_t id = stub_log[j].job;
+        unsigned got = 0u;
+        if (stub_log[j].bus != 1u || id >= JOB_COUNT) {
+            j++;
+            continue;
+        }
+        if (id == JOB_EN) {
+            f->j2n++;
+            if (stub_log[j].word != 0x9020u) {
+                f->j2not9020++;
+            }
+        }
+        if (id != JOB_DUTY && id != JOB_LEVEL && f->njobs < sizeof f->jobs) {
+            f->jobs[f->njobs++] = id;
+        }
+        while (j < stub_log_n && got < NFR[id]) {
+            if (stub_log[j].bus == 1u && stub_log[j].job == id) {
+                got++;
+            }
+            j++;
+        }
+    }
+}
+
+/* the per-pass cyclic order: mode 0 — the batch 0x8EE82's pool order +
+ * the J6 handler's F re-fire; mode 1 — on a 10 ms pass the 5 ms task's J2
+ * first, then the 10 ms task's reply proc / F stage / batch; on the other
+ * pass the J2 stage alone */
+static const uint8_t ORDER_M0[] = { JOB_POS, JOB_SSLB2, JOB_EN, JOB_FLT, JOB_STAT,
+                                    JOB_CTRL, JOB_ID, JOB_FLT };
+static const uint8_t ORDER_M1_10[] = { JOB_EN, JOB_POS, JOB_SSLB2, JOB_FLT, JOB_STAT,
+                                       JOB_CTRL, JOB_ID, JOB_FLT };
+static const uint8_t ORDER_M1_5[] = { JOB_EN };
+
+static bool order_is(const frame_t *f, const uint8_t *exp, unsigned n)
+{
+    if (f->njobs != n) {
+        return false;
+    }
+    for (unsigned i = 0u; i < n; i++) {
+        if (f->jobs[i] != exp[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void print_jobs(unsigned p, const frame_t *f)
+{
+    static const char *JN[] = {"J1","J2","J3","J4","J5","J6","J7","W1","W2","F"};
+    printf("  F%u mode %u:", p, f->mode);
+    for (unsigned i = 0u; i < f->njobs; i++) {
+        printf(" %s", JN[f->jobs[i] % 10u]);
+    }
+    printf("\n");
+}
+
+/* every frame in [from, to] carries the mode-0 order */
+static unsigned check_mode0_order(unsigned from, unsigned to)
+{
+    unsigned bad = 0u;
+    for (unsigned p = from; p <= to; p++) {
+        if (!order_is(&s_fr[p], ORDER_M0, sizeof ORDER_M0)) {
+            if (bad++ < 3u) {
+                print_jobs(p, &s_fr[p]);
+            }
+        }
+    }
+    return bad;
+}
+
 
 static void reset_all(void)
 {
@@ -244,6 +336,7 @@ static void run(run_t *r, unsigned frames, void (*hook)(unsigned frame))
                 sup_walk_isr();
                 drain();
             }
+            sup_mode_background();      /* main.c: every superloop pass */
             stub.frt_us += 10u;
         }
         /* the per-frame invariants */
@@ -277,6 +370,13 @@ static void run(run_t *r, unsigned frames, void (*hook)(unsigned frame))
                 f->w9020 = w9020;
                 f->j2 = CELL_J2_STAGED;
                 f->mv = CELL_OUT_MV[0];
+                f->mode = sup_mode();
+                f->pend = CELL_OS_MODE_PEND;
+                f->mod1 = CELL_MOD1;
+                f->mod2 = CELL_MOD2;
+                f->mod7 = CELL_MOD7;
+                f->ost = CELL_OS_STATE;
+                frame_jobs(f);
             }
             if (r->bad_wire != before) {
                 r->bad_wire_frames++;
@@ -421,6 +521,9 @@ static void scen_output_on(void)
     CHECK(CELL_CLEAR_LATCH == 1u);
     CHECK(sup_ladder_fsm_req_held() == 0x23u);
     CHECK(stub.tioc_cuts == 0u);
+    /* the stock would now leave mode 0 (module 7 from seq2 0x22); H5 held
+     * with H4 records the request and keeps mode 0 (sup_mode.h) */
+    CHECK(CELL_OS_MODE_PEND == 1u && sup_mode() == 0u && sup_mode_held() == 1u);
 }
 
 /* the chip keeps bit 1 through the cut: phase 0x20 '3' → 0xF4 after the
@@ -571,13 +674,18 @@ static unsigned windows(unsigned frames, win_t *w, unsigned max)
 
 static void timeline(unsigned from, unsigned to)
 {
-    printf("  frame  t(ms) phase sub req wire seq seq2 diag cls   mV  lvl tgt fsm 939B8 en\n");
+    printf("  frame  t(ms) phase sub req wire seq seq2 diag cls   mV  lvl tgt fsm 939B8 en mode jobs\n");
     for (unsigned p = from; p <= to; p++) {
         const frame_t *f = &s_fr[p];
-        printf("  F%-4u %5d  %04X  %02X  %u  %s  %02X  %02X   %02X  %02X %5u  %u   %u  %02X   %u   %u\n",
+        static const char *JN[] = {"J1","J2","J3","J4","J5","J6","J7","W1","W2","F"};
+        printf("  F%-4u %5d  %04X  %02X  %u  %s  %02X  %02X   %02X  %02X %5u  %u   %u  %02X   %u   %u   %u  ",
                p, ((int)p - 100) * 5, f->phase, f->sub, f->req0, f->w9020 ? "9020" : "9000",
                f->seq, f->seq2, f->diag, f->cls, f->mv, f->lvl, f->tgt, f->fsm, f->st939b8,
-               f->en);
+               f->en, f->mode);
+        for (unsigned i = 0u; i < f->njobs; i++) {
+            printf(" %s", JN[f->jobs[i] % 10u]);
+        }
+        printf("\n");
     }
 }
 
@@ -589,6 +697,27 @@ static unsigned first_frame(unsigned frames, bool (*pred)(const frame_t *))
         }
     }
     return 0u;
+}
+
+/* the nominal L3a / L3a-E end state of the mode machinery: module 7 0,
+ * module 1 started (1), module 2 0, boot state 0, nothing pending or held,
+ * mode 0 on every frame and the mode-0 order on frames 2..400 */
+static bool mode0_held_nominal(void)
+{
+    unsigned m1 = 0u, bad;
+
+    for (unsigned p = 1u; p <= 400u; p++) {
+        if (s_fr[p].mode != 0u) {
+            m1++;
+        }
+    }
+    bad = check_mode0_order(2u, 400u);
+    printf("MODE (H4 held): mod7 %02X mod11 %02X mod1 %02X mod2 %02X state %u mode %u pend %u "
+           "held %u, mode-1 frames %u, off-order frames %u\n", CELL_MOD7, CELL_MOD11, CELL_MOD1,
+           CELL_MOD2, CELL_OS_STATE, CELL_OS_MODE, CELL_OS_MODE_PEND, sup_mode_held(), m1, bad);
+    return CELL_MOD7 == 0u && CELL_MOD11 == 0x0Fu && CELL_MOD1 == 1u && CELL_MOD2 == 0u &&
+           CELL_OS_STATE == 0u && CELL_OS_MODE == 0u && CELL_OS_MODE_BOOT == 0u &&
+           CELL_OS_MODE_PEND == 0u && sup_mode_held() == 0u && m1 == 0u && bad == 0u;
 }
 
 static bool is_aa(const frame_t *f) { return f->sub == 0xAAu; }
@@ -672,6 +801,9 @@ static void l3a_nominal(void)
     CHECK(CELL_MOD11 == 0x0Fu && CELL_MOD7 == 0u && CELL_CUT_MODE == 0x33u);
     CHECK(CELL_TARGET == 0u && CELL_LVL_REPORTED <= 1u);
     CHECK(CELL_CLEAR_LATCH == 0u);
+    /* mode 1 (sup_mode.c): module 7 stays 0, so the OS stays in mode 0 and
+     * every pass keeps the mode-0 schedule — the port changes nothing here */
+    CHECK(mode0_held_nominal());
     (void)aa;
     /* one more tick of plant lag: the window grows by one frame, the rest
      * is unchanged */
@@ -716,9 +848,100 @@ static void l3ae_nominal(void)
     CHECK(CELL_FSM_RETURN == SUP_FSM_DUTY && CELL_PERIOD == 0x1838u && CELL_TARGET == 0u);
     CHECK(CELL_LETTERS[0] == 0u && CELL_J2_STAGED == 0x9000u && CELL_LAD_REQ[0] == 0u);
     CHECK(CELL_REG_14 == 0xC7u && CELL_SSLB0_BIT2 == 1u);   /* '.' would advance … H4 */
+    /* mode 1 (sup_mode.c): with H4 held seq2 stays 0x11, module 7 stays 0,
+     * the OS stays in mode 0 — r02t / r02u's schedule on every pass */
+    CHECK(mode0_held_nominal());
     (void)ctx;
 }
 #else
+/* L3b, past 'U': the mode-0 → mode-1 switch (sup_mode.c) and the mode-1
+ * schedule (sup_batch.c). The stock law, from the bytes: seq2's 'U' writes
+ * module 7 = 0x0F in pass U; the background (every superloop pass) takes
+ * module 1 to 0x0F (modules 7 and 11 done), then state 0 → 1, the row-1
+ * list's 0x7DB70 (module 2 = 0x0F) → state 2; pass U+1's 0x6F0B4 sees
+ * module 2 and writes pending 1; 0x66E06 applies it at the end of the
+ * first 10 ms task from U+1 on (0x67A42) — U+1 if that pass is a 10 ms
+ * pass, else U+2. The 10 ms task runs with the 5 ms task on odd passes
+ * (both countdowns start at 0). The driving dump's stamps agree: state 1
+ * at 170.633 ms, the mode-1 init list at 180.576 ms (0x80C64[4..6]). */
+static void l3b_mode1(unsigned u)
+{
+    unsigned sw = 0u, exp_sw, bad0, bad1 = 0u, j2bad = 0u, j2none = 0u, n10 = 0u, n5 = 0u;
+    unsigned pend = 0u, m2 = 0u, m7 = 0u;
+
+    for (unsigned p = u; p <= 400u; p++) {
+        if (s_fr[p].mode == 1u) { sw = p; break; }
+    }
+    for (unsigned p = 1u; p <= 400u; p++) {
+        if (pend == 0u && s_fr[p].pend != 0u) { pend = p; }
+        if (m2 == 0u && s_fr[p].mod2 == 0x0Fu) { m2 = p; }
+        if (m7 == 0u && s_fr[p].mod7 == 0x0Fu) { m7 = p; }
+    }
+    /* the apply: the end of the first 10 ms pass (odd) from the pending
+     * pass on */
+    exp_sw = (pend % 2u == 1u) ? pend : pend + 1u;
+    bad0 = check_mode0_order(2u, sw);
+    for (unsigned p = sw + 1u; p <= 400u && sw != 0u; p++) {
+        const bool ten = (p % 2u) == 1u;
+        const bool ok = ten ? order_is(&s_fr[p], ORDER_M1_10, sizeof ORDER_M1_10)
+                            : order_is(&s_fr[p], ORDER_M1_5, sizeof ORDER_M1_5);
+        if (ten) { n10++; } else { n5++; }
+        if (!ok && bad1++ < 3u) {
+            print_jobs(p, &s_fr[p]);
+        }
+        if (s_fr[p].mode != 1u) {
+            bad1++;
+        }
+    }
+    for (unsigned p = u; p <= 400u; p++) {
+        j2bad += s_fr[p].j2not9020;
+        if (s_fr[p].j2n != 1u) {
+            j2none++;
+        }
+    }
+    printf("MODE 1: 'U' F%u, module 7 0x0F F%u, modules 1/2 0x0F F%u (state %u at its end), "
+           "pending F%u, switch at the end of F%u ('U' +%u passes, %u ms), "
+           "first mode-1 pass F%u; state %u mode %u/%u pend %u mod1 %02X mod2 %02X all %u up %u "
+           "cd5/10 %u/%u runs5/10 %u/%u\n",
+           u, m7, m2, m2 != 0u ? s_fr[m2].ost : 0u, pend, sw, sw - u, (sw - u) * 5u, sw + 1u,
+           CELL_OS_STATE, CELL_OS_MODE,
+           CELL_OS_MODE_BOOT, CELL_OS_MODE_PEND, CELL_MOD1, CELL_MOD2, CELL_MOD_ALL,
+           CELL_MOD1_UP, CELL_OS_CD5, CELL_OS_CD10, CELL_OS_RUNS5, CELL_OS_RUNS10);
+    printf("MODE 1 schedule: F%u..F400 %u 10 ms passes (J2 J3 J4 F J6 J1 J5 F), %u 5 ms "
+           "passes (J2); off-order %u (mode 0 before: %u); J2 words not 9020 after 'U' %u, "
+           "frames without exactly one J2 %u\n", sw + 1u, n10, n5, bad1, bad0, j2bad, j2none);
+    print_jobs(sw, &s_fr[sw]);
+    print_jobs(sw + 1u, &s_fr[sw + 1u]);
+    print_jobs(sw + 2u, &s_fr[sw + 2u]);
+    /* seq2 resolves the channel (0x94118, → module 7) on its first pass IN
+     * 'U' (the 0x33 → 'U' pass does not resolve: 0x85C02 is reached from
+     * the '4'..'D' and 'U' branches), so module 7 lands one pass after the
+     * letter */
+    CHECK(m7 == u + 1u);
+    CHECK(m2 == m7 && s_fr[m7].ost == 2u);       /* the background, inside the same pass */
+    CHECK(s_fr[m7 - 1u].mod1 == 1u && s_fr[m7].mod1 == 0x0Fu);
+    CHECK(pend == m7 + 1u);                      /* 0x6F0B4, the next pass */
+    CHECK(s_fr[pend - 1u].pend == 0u);
+    CHECK(sw != 0u && sw == exp_sw);
+    CHECK(sw == u + 2u);                         /* here: pending on a 10 ms pass (F119) */
+    CHECK(bad0 == 0u && bad1 == 0u);
+    CHECK(n10 >= 100u && n5 >= 100u);
+    CHECK(j2bad == 0u && j2none == 0u);          /* 0x9020 on EVERY J2 frame from 'U' */
+    /* the cells (the driving dump: state 3, mode 1, 0x93B34 1, modules
+     * 1/2 0x0F, 0x93B8B 1, 0x93B8A 0; 5 ms / 10 ms countdowns in phase) */
+    CHECK(CELL_OS_STATE == 3u && CELL_OS_MODE == 1u && CELL_OS_MODE_BOOT == 1u);
+    CHECK(CELL_OS_MODE_PEND == 1u && CELL_OS_REQ_SUP == 0xFFu && CELL_OS_REQ_RES == 1u);
+    CHECK(CELL_MOD1 == 0x0Fu && CELL_MOD2 == 0x0Fu && CELL_MOD1_UP == 1u && CELL_MOD_ALL == 0u);
+    CHECK(CELL_OS_INIT_GATE == 0u && sup_mode_held() == 0u);
+    CHECK(CELL_OS_CD5 == (uint16_t)(CELL_OS_CD10 % 2u));
+    CHECK(CELL_OS_RUNS5 == 400u && CELL_OS_RUNS10 == 200u);
+    /* no starvation / overrun in the engine: no discards, every job's
+     * check-free passed on its own cadence (the order check above) */
+    for (uint8_t id = 0u; id < JOB_COUNT; id++) {
+        CHECK(sup_job_err_get(id) == 0u);
+    }
+}
+
 /* L3b: through 'E' / 'L' / '3' to 'U' — the stock driving dump's state */
 static void l3b_nominal(void)
 {
@@ -779,6 +1002,7 @@ static void l3b_nominal(void)
     CHECK(CELL_DIAG_94958[0] == 0u && CELL_CNT_HOLDOFF[0] == 0u);
     CHECK(CELL_CUT_MODE == 0x33u && CELL_REG_14 == 0xC7u && CELL_SSLB0_BIT2 == 1u);
     CHECK(CELL_CLEAR_LATCH == 0u && sup_ladder_fsm_req_held() == 0x23u);
+    l3b_mode1(u);
 }
 
 /* L3b: the engaged output drops out of band → 0x85ED4's 0x86628 check
@@ -860,6 +1084,18 @@ static void l3_never_on(void)
 #else
     CHECK(CELL_OUTER_FSM == SUP_FSM_PROCEED);   /* 0x87766(0x23) made → 'E' */
     CHECK(CELL_SEQ_STATE == 0x1Fu);             /* … but no 'L' from 0x1F */
+#endif
+    /* mode 1 on the failure path: exhaustion puts seq2 in 0x22, which
+     * resolves the channel → module 7 = 0x0F; module 11 is 0x0F → the
+     * stock goes to mode 1 here too. H5 (held with H4) records it only. */
+    printf("L3 never-on mode: mod7 %02X mod11 %02X mod2 %02X state %u mode %u pend %u held %u\n",
+           CELL_MOD7, CELL_MOD11, CELL_MOD2, CELL_OS_STATE, sup_mode(), CELL_OS_MODE_PEND,
+           sup_mode_held());
+    CHECK(CELL_MOD7 == 0x0Fu && CELL_MOD2 == 0x0Fu && CELL_OS_MODE_PEND == 1u);
+#if SUP_MODE_HOLD
+    CHECK(sup_mode() == 0u && sup_mode_held() == 1u && CELL_OS_STATE == 2u);
+#else
+    CHECK(sup_mode() == 1u && sup_mode_held() == 0u && CELL_OS_STATE == 3u);
 #endif
 }
 

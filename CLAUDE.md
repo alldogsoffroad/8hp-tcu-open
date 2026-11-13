@@ -484,3 +484,58 @@ A human/AI pair produced this project (see CONTRIBUTORS.md). Early commits were 
 - **Overrun rate:** 0 of 5 on r02u, against 1 of 1 on r02t. The builds differ only by the recorder, a few register reads per monitor pass, so it may shift timing. Either the overrun is rare, or the recorder masks it [I]. Not decidable from these boots. It does not block L3b: the stock's own route reaches 'E' with budget to spare, and a 0x34 detour also ends in 'E'.
 - **'E', first ~120 ms:** level 0↔1↔2 on every boot. The jump to level 4 with attention 0x19 (+718 ms) was seen on 1 of 5 boots. Error counts at ~20 s: W1 2/2/0/0, W2 1/1/0/2 (first boot 2/6). So the 'E' walk is mostly quiet, with occasional chip complaints.
 - **Next:** L3b's prerequisite, the post-engagement mode-1 switch (the acknowledged `SUP_L3B_ON_TARGET` gap), and a desk decode of the stock's 'E' expectations (what the chip's attention 0x19 at level 4 means for the 'E' rule, and whether 0x34 can trigger under 'L'/'U').
+
+**THE MODE-1 SWITCH, PORTED (2026-11-13; subagent, `~/tcu_sweep/mode1_port.md`; validated this session: sh2a builds, host 29/29, the default image's mode cells inert)** [O decode from the bytes]:
+- **Task objects:** the 5 ms task is two objects (0x41378 mode 0, 0x4134C modes 1–4) sharing countdown 0x9355A; the 10 ms task is 0x413A4/0x413D0 sharing 0x9353C, so the phase survives the switch. The 10 ms task fires with the first 5 ms pass and every second one after. `0x66E06` applies a pending mode at the END of the 10 ms task in mode 0 (the 10 ms tail hook 0x67A42).
+- **Condition chain:**
+  1. 'U' (pass U).
+  2. Seq2 resolves at U+1: module 7 = 0x0F.
+  3. The background module manager 0x7DAA4 sets module 1 = 0x0F, then boot state 0 → 1, and the boot-state-1 list's last entry 0x7DB70 sets module 2 = 0x0F, then state 2.
+  4. `0x6F0B4` sets pending 0x93B34 = 1.
+  5. The switch lands at the end of the first 10 ms task: 0x848CF = 0x93B33 = 1, state 3.
+
+  'U' → switch takes 2–3 passes (dump stamps: state 1 at 170.6 ms, mode-1 init at 180.6 ms). The mode-1 init list touches nothing on bus B, the walk or the ladder.
+- **What moves in mode 1:** reply proc 0x8EE52, the pin cut, the F stage and the batch (J3/J4 condense; J6/J1/J5; the bus-A ID kick) go to 10 ms. The countdown, 0x9181C, the publishers, 0x6F0B4, seq2 and the J2 stage stay at 5 ms, and the sequencer becomes 0x85160 direct. The 2.5 ms monitor is unchanged. **Mode-1 bus B:** J2 every 5 ms; J3 J4 F J6 J1 J5 F2 every 10 ms.
+- **CORRECTIONS to THE STOCK'S TASK RATES block:**
+  - module 2's 0x0F comes only from 0x7DB70 in the boot-state-1 list;
+  - module 7 is set one pass AFTER 'U', **and on every ladder failure path** (seq2 0x22 retry exhaustion, 0x16 supply abort) — "0x9414D" is a retry count, and a failed certification also goes to mode 1;
+  - 0x66E06 applies at the end of the 10 ms task, not every pass;
+  - the pin cut and 0x7CBA8/0x7CC1E/0x7CB6E/0x7AB48/0x7AB9C also go to 10 ms;
+  - list positions there are 0-based;
+  - mode 0 has no 20/30/50/100 ms tasks.
+- **New hold H5 `SUP_MODE_HOLD`** (defaults to H4): a failure path could reach mode 1 even with H4 held, so H5 keeps the default image in mode 0. It records the refused mode in `s_held` (0xFFF84C00). `SUP_L3B_ON_TARGET` is removed (the gap is ported); L3b with H5 held is refused. Host: `test_ladder_l3b` 'U' F117 → module 7 F118 → pending F119 → switch → first mode-1 pass F120, with every J2 after 'U' = 0x9020 and no discards. New `transcript_mode1` / `_28us` judge 349 mode-1 passes. Cells: 0x93B32/33/34 state/mode/pending, 0x848CF, 0x93B7E/81 modules 1/2, 0x9353C/0x9355A countdowns, `s_sw_frt` 0xFFF84C04.
+
+**SOLENOID OUTPUT CHAIN — STOCK DECODE (2026-11-13; read-only subagent, `~/tcu_sweep/solenoid_chain_decode.md`; the bus-A layout claim verified in our code this session)** [O unless marked]:
+- **CORRECTION to "Do NOT port 0x97198 (Timer E) blindly — 100 % duty on the solenoid pins":** the 8 lead-frame solenoids are driven by the **4 SPI driver chips on bus A**, not by Timer E. Timer E drives:
+  - group A: 1 kHz on/off outputs (TOE31 = park hold, TOE30/32 unknown);
+  - group B: 50 µs pulses at 1 kHz, one per driver chip (TOE42/43/50/51/21, likely a sync to the chips' 0x8E = 0x9F setting [I]);
+  - TOE52: internal 10 kHz;
+  - 11 pins with no writer: TOE00–03, 10–13, 23, 40, 41, 53. They sit at DTR = CYLR = 0xFFFF, so they go high ~33 ms after TEE every boot; function unknown.
+
+  0x97198 itself sets only TCRE/PSCRE/TIERE/SSTRE/TSTRE/IPR (no CYLR/DTR/TOCRE). The real hazard is ORDER: the stock clears TEE (0x96F68(700)) before 0x97198, zeroes the used channels' duty with TEE off (0x9136E group A, 0x919A0 TOE52, 0x90010 → 0x8FF66 group B), and turns TEE on only in the mode-0 init list (0x91F3E). Ours has no TEE-off window. The "stock inverts TOE31" comment in `plat_toe_out_init` is wrong (0x97214 sets TONE only for polarity 0; group A is polarity 1).
+- **Solenoid current is gated on the supervisor (0x83DB0, 5 ms):** the request passes only when seq2[0] = 'U' (bytes 0x83E22) and the rail node 0x94ED0 ≥ 7400 mV; requests < 500 (0.1 mA) are zeroed. The chain is 0x89540 (letters '!'/'C'/'2') → 0x901A0 (per-chip records 0xFFF91108 + 0x1C·c, setpoint = (I + 0x9090A)/6, every F-stage pass) → cyclic 0x924B0 + config 0x92344. **Current regulation is inside the chips; no MCU current loop.** There is no separate chip enable: mode letters, the switched rail and the 0x83DB0 gates are the enables. Before 'U' the stock sends mode 0x15, setpoints 0 and the config job every pass.
+- **Rail-off full-on tests [O code, I purpose]:** ladder phase 0x10 (0x94114) and the '3' diagnosis (0x94115) command mode 4 (full on) on solenoid ch 0–7 and duty 1000 on TOE30/31/32 while the rail is OFF. Our ladder port does not do this yet.
+- **The 1.77 A [O dump]:** requests (0.1 mA) A 500, D/B/E/C 8500 each, WK 500, Sys 500, park release 0; all Timer E outputs 0; dither 0. That fits 1.77 A at ~5.5–7 Ω coils [D] (spec 12's "~25 Ω" conflicts).
+- **OUR bus A UP TO r02u [O code, verified]:** `drv_cyclic_build` was chip-major, but the engine sends frame i to SSLA[i mod 5]. So chips 0 and 3 got mode **0x1A (current control)**, chip 2 got 0x12, and the setpoint rows went out as 0x0000 reads. **Five channels (A, D, C, Sys, park release) sat in current control at the chips' unknown power-on setpoint**, live whenever the rail was on (the ≤ 30 ms ladder windows of r02t/r02u showed no ammeter step). The config job was never sent.
+- **User decisions (2026-11-13):**
+  - D5: stage 0a as its own flash before L3b.
+  - D2: the bench has the **real mechatronic**.
+  - D3: reproduce the stock's constant-high level on the 11 TOE pins when Timer E is ported.
+  - D4: port the rail-off full-on tests with L3b.
+  - D1 (which solenoids, setpoints, order) is still open.
+
+**r02v = STAGE 0a: BUS A TO THE STOCK'S PRE-ENGAGEMENT CONTENT (2026-11-13; built, NOT flashed, `build/r02v_IFla.bin`, app CRC `936345CE`, one block vs r02u; NOT committed at time of writing)** — includes the mode-1 port, inert (H4/H5 held):
+- `drv_cyclic_build` is now command-major and constant: `8815×5 | A000×5 | E800×5 | A600×5 | F000×5 | 6000×5 | C000×5 | 6600×5 | D800×5` — mode 0x15 (letters '2'), setpoints and dither written explicitly as 0. It ignores the callers (sol_set / FE10), so no path can put a bus-A channel in current control until the letter law is ported.
+- The config job's mode row is 8815×5 (was the engaged 1A 1A 1A 12 15). The config job (8E9F, 9021, 9655, 8815 + reads 28/30/2E/36) is now sent after every cyclic, chained from the cyclic's completion as the stock's 0x901A0 does both every pass.
+- **Rate deviation:** our bus-A cyclic stays at 10 ms (stock 5 ms in mode 0).
+- Host 29/29; test_bench asserts all 45 cyclic and 40 config words even with an FE10 test active. Witness `/tmp/witness_r02v.py` (r02u's + a BUS-A dump: staged/received cyclic and config words, in-flight flags, mode cells). Addresses as r02u; bus-A buffers: `stage_drv_cyc` 0xFFF95AD0, `stage_drv_cfg` 0xFFF95B2A, `rx_drv_cyc` 0xFFF959F4, `rx_drv_cfg` 0xFFF95A4E. Install `/tmp/install_r02v.py`.
+- **PREDICTION (rule 1):**
+  - [high] the supervisor path as r02u — ladder 0xAA / 0x00FF, FSM 'E', J2 9000, no restarts, mode 0 (0x93B33 = 00, held 00);
+  - [high] the staged cyclic/config words as above on every read;
+  - [I ~70 %] the replies come back with valid headers (cyclic 0xA000 class, config 0xA2 class) and the C0/D8 readbacks read setpoint 0;
+  - [I ~75 %] no current change, including the ≤ 30 ms phase-0x40 rail-on: modes now explicitly off;
+  - [I ~60 %] bus B is undisturbed by bus A's doubled traffic (config now every 10 ms): per-job error counts as r02u, walk polled fallback within its usual 14–28/s.
+  - **Ammeter on; announce.** **Refutations:**
+    - a current STEP at the rail-on → the chips' off state does not hold under the rail: stop;
+    - bus-A replies all 0000/FFFF → the command-major layout or the selects are wrong;
+    - new W1/W2/J errors or level excursions → bus-A load is disturbing bus B (move the config to alternate passes).

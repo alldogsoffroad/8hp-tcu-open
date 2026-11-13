@@ -51,6 +51,12 @@ void drv_resp_cyc(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
         if ((rx[i * 9u] & 0xF800u) != 0xA800u) break;
     }
     s_drv_in_flight_clear(job_id - DRV_ID);
+    /* r02v stage 0a: the stock's 0x901A0 sends the config job (0x92344)
+     * every pass after the cyclic (0x924B0); bus A runs one job at a time,
+     * so it is chained from the cyclic's completion */
+    if (drv_job_check_free(DRV_CFG)) {
+        (void)drv_job_queue(DRV_CFG);
+    }
 }
 
 void s_drv_in_flight_clear(uint8_t idx)

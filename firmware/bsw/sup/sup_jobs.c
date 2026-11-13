@@ -527,6 +527,10 @@ void sup_cells_init(void)
         { 0xFFF94D48u, 0x114u },  /* .sup_l1g L1 complements                   */
         { 0xFFF94958u, 0x08u },   /* .sup_l3a L3 '3' diagnosis masks           */
         { 0xFFF84A24u, 0x08u },   /* .sup_l3b L3 '3' diagnosis step bits       */
+        { 0xFFF93B30u, 0x10u },   /* .sup_os  mode / boot state / pending      */
+        { 0xFFF848C0u, 0x28u },   /* .sup_os2 boot-side mode copy, state gate  */
+        { 0xFFF9353Cu, 0x24u },   /* .sup_os3 the 10 ms / 5 ms task countdowns */
+        { 0xFFF84C00u, 0x08u },   /* .sup_wit mode-1 witnesses (ours)          */
     };
     for (unsigned i = 0u; i < sizeof rng / sizeof rng[0]; i++) {
         memset((void *)(uintptr_t)rng[i].addr, 0, rng[i].len);

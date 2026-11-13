@@ -60,11 +60,11 @@
  *       which H3 withholds): no permanent letter, J2 0x9000 for good.
  *   L3a-E  H3 released, H4 held (sup_ladder.h): the FSM runs the stock's
  *       0x23 → 'E' walk after 0xAA, the sequencer stays '.', J2 0x9000.
- *   L3b H3 and H4 released (host test; SH only with SUP_L3B_ON_TARGET): FSM
+ *   L3b H3 and H4 released (and H5, the mode-1 apply, with H4): FSM
  *       0x23 → level 0 + era 0x1838 → 'E' (the 0x8CEDC rule); sequencer
  *       '.' → 'L' (FSM 'E' and 0x14 bit 1); seq2 ch0 0x33 → the '3'
  *       diagnosis (output OFF, class 0x22, ~20 ms) → 'U': letter 'c',
- *       0x9020 for good.
+ *       0x9020 for good; then module 7 → mode 1 (sup_mode.c).
  *
  * STAND-INS (named deviations, each [I] or bench-forced):
  *   S1 0x6F594 (fault memory ready) = 1. Its readers are 0x85740's DTC
@@ -104,13 +104,17 @@
  *   (0x7C884, 0x7CB6E, 0x7AB48, 0x7CBA8, 0x7CC1E, 0x86A80 …); the profiling
  *   hooks 0x72AE0; the post-ladder periodic cut request 0x94152 (writer not
  *   located; 0x94153 = 0x33 only after 0xAA; without it the post-ladder
- *   cut driver only runs its verdict); the post-engagement mode switch
- *   (module 7 → modules 1/2 → mode 1, the 10 ms batch split).
+ *   cut driver only runs its verdict).
+ * THE MODE SWITCH (2026-11-13, sup_mode.c / sup_batch.c, mode1_port.md):
+ *   module 7 → modules 1/2 → 0x6F0B4 → 0x66E06 → mode 1 is ported; in mode
+ *   1 the sequencer runs as 0x7CC66 → 0x85160 (no module-11 gate) and the
+ *   pin cut at 10 ms (sup_ladder_tick_seq / _cut).
  */
 #include "bsw/sup/sup_ladder.h"
 #include "bsw/sup/sup_cells.h"
 #include "bsw/sup/sup_walk.h"
 #include "bsw/sup/sup_letters.h"
+#include "bsw/sup/sup_mode.h"
 #include "platform.h"
 
 /* ── THE STAGE GUARDS (L3, 2026-11-13) ─────────────────────────────────────
@@ -120,12 +124,12 @@
  * still refuse:
  *   - a stage out of order: H2 released only after H1 (phase 0x40 without
  *     phase 8's shut-off frame is not a stock sequence), H3 only after H2;
- *   - L3b on SH without SUP_L3B_ON_TARGET: past seq2 'U' the stock is in
- *     mode 1 (module 7 = 0x0F → module 1 → module 2 → 0x66E06) and moves the
- *     batch / reply proc / F stage to 10 ms — NOT PORTED, so an L3b image
- *     keeps the 5 ms batch after engagement (a wire difference, the J2 word
- *     itself unaffected: the J2 stage stays at 5 ms in the stock too).
- *     Defining SUP_L3B_ON_TARGET acknowledges it. */
+ *   - L3b with the mode-1 apply held (H5, sup_mode.h): past seq2 'U' the
+ *     stock is in mode 1 (module 7 = 0x0F → module 1 → module 2 → 0x6F0B4
+ *     → 0x66E06) with the batch / reply proc / F stage / pin cut at 10 ms
+ *     — ported (sup_mode.c, sup_batch.c), so an L3b image must run it.
+ *     The old SUP_L3B_ON_TARGET acknowledgement (the switch was not
+ *     ported) is gone with the gap it acknowledged. */
 #if !SUP_L1_HOLD_PHASE40 && SUP_L1_HOLD_PHASE8_REQUEST
 #error "H2 released with H1 held: phase 0x40 without phase 8's shut-off frame is not a stock sequence"
 #endif
@@ -135,8 +139,8 @@
 #if !SUP_L3_HOLD_SEQ_L && SUP_L1_HOLD_FAIL_FSM
 #error "H4 released with H3 held: the sequencer can reach 'L' only from FSM 'E' — release H3 first"
 #endif
-#if defined(__sh__) && !SUP_L1_HOLD_FAIL_FSM && !SUP_L3_HOLD_SEQ_L && !defined(SUP_L3B_ON_TARGET)
-#error "L3b on the target: the post-engagement mode-1 10 ms batch split is not ported — define SUP_L3B_ON_TARGET to acknowledge"
+#if !SUP_L3_HOLD_SEQ_L && SUP_MODE_HOLD
+#error "L3b with H5 held: past 'U' the stock runs mode 1 (the 10 ms batch split) — release H5 with H4"
 #endif
 
 /* ── calibration (flash, via the 0x66xxx pointer tables at index 0x90AB8 =
@@ -1645,33 +1649,62 @@ void sup_ladder_init(void)                                   /* 0x85678 */
     s_fsm_req_held = 0u;
 }
 
-void sup_ladder_tick(void)
+/* the 5 ms list entries, one function each, so the batch can place them
+ * per mode (sup_batch.c; ~/tcu_sweep/mode1_port.md) */
+void sup_ladder_tick_publish(void)
 {
-    uint32_t lk;
-
     /* 0x7CB74 → 0x8332C: lock; 0x88AE0 (→ 0x8D8DE); 0x89518; 0x89114 */
-    lk = lock();
+    const uint32_t lk = lock();
     supply_plaus();
     publish_out();
     unlock(lk);
+}
 
-    /* S5: module 11's start, reached when the AN0 inputs are valid */
-    if (CELL_MOD11 == 0u && plat_adcmux_ready()) {
-        CELL_MOD11 = 1u;
-    }
-    /* 0x7CC76 → 0x8570E: the sequencer only while module 11 != 0 */
-    lk = lock();
-    if (CELL_MOD11 != 0u) {
+void sup_ladder_tick_seq(bool gated)
+{
+    uint32_t lk;
+
+    if (gated) {
+        /* mode 0: S5, module 11's start, reached when the AN0 inputs are
+         * valid; then 0x7CC76 → 0x8570E: the sequencer only while module
+         * 11 != 0 */
+        if (CELL_MOD11 == 0u && plat_adcmux_ready()) {
+            CELL_MOD11 = 1u;
+        }
+        lk = lock();
+        if (CELL_MOD11 != 0u) {
+            sequencer();
+        }
+        unlock(lk);
+    } else {
+        /* modes 1..3: 0x7CC66 → 0x85160 directly (no module-11 gate) */
+        lk = lock();
         sequencer();
+        unlock(lk);
     }
-    unlock(lk);
+}
+
+void sup_ladder_tick_seq2(void)
+{
     /* 0x7CC56 → 0x85828 */
-    lk = lock();
+    const uint32_t lk = lock();
     seq2();
     unlock(lk);
+}
+
+void sup_ladder_tick_cut(void)
+{
     /* 0x7CC32 → 0x85788 (then 0x86A80, 0x86AF8, 0x849D4, 0x86B0C, 0x8646C:
-     * not ported) */
-    lk = lock();
+     * not ported). 5 ms in mode 0 (entry 24), 10 ms in mode 1 (entry 75). */
+    const uint32_t lk = lock();
     pin_cut();
     unlock(lk);
+}
+
+void sup_ladder_tick(void)
+{
+    sup_ladder_tick_publish();
+    sup_ladder_tick_seq(true);
+    sup_ladder_tick_seq2();
+    sup_ladder_tick_cut();
 }

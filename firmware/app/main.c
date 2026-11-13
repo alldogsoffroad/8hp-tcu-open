@@ -13,6 +13,7 @@
 #include "bsw/sup/sup_jobs.h"
 #include "bsw/sup/sup_walk.h"
 #include "bsw/sup/sup_batch.h"
+#include "bsw/sup/sup_mode.h"
 #include "bsw/sup/sup_ctrl.h"
 #include "bsw/sup/sup_letters.h"
 #include "bsw/drv/drv_jobs.h"
@@ -180,7 +181,10 @@ static void task_1ms(void)
     plat_wdt_kick();
 }
 
-/* ── 5 ms: the supervisor batch (design §7.5, stock 0x8EE82) ─────────── */
+/* ── 5 ms: the supervisor batch (design §7.5, stock 0x8EE82) — and, in
+ *    OS mode 1, the stock's 10 ms supervisor entries on every second pass
+ *    (the reply proc, pin cut, F stage and batch move there; the J2 stage
+ *    stays at 5 ms): sup_batch.c, ~/tcu_sweep/mode1_port.md ──────────── */
 static void task_sup_batch(void)
 {
     plat_trace((uint8_t)'B', 0u, 0u, 0u, (const uint16_t *)0, 0u);   /* r02n */
@@ -358,5 +362,9 @@ int main(void)
          * task-side kick; a hung SUPERLOOP still resets) */
         plat_wdt_kick();
         sched_drain();
+        /* the stock's background task 0x6A104 (activated by every main-loop
+         * pass, 0x67A68 → 0x9A674): the boot-state machine and the startup
+         * modules 1/2 that lead to the mode-1 switch (sup_mode.c) */
+        sup_mode_background();
     }
 }

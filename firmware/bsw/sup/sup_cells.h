@@ -300,6 +300,35 @@
 #define CELL_DIAG_84A27     CELL_L1_U8(0xFFF84A27u)
 #define CELL_DIAG_84A28     CELL_L1_U8(0xFFF84A28u)
 
+/* ── the OS operating mode (sup_mode.c; ~/tcu_sweep/mode1_port.md) ────────
+ * The stock's mode cells, its boot-state machine and the startup-module
+ * cells that lead to the mode-0 → mode-1 switch after engagement. Linker:
+ * .sup_os (0x93B30..0x93B3F), .sup_os2 (0x848C0..0x848E7); the request
+ * scratch and the module cells sit inside .sup_fsm (0x93B40..0x93BA7). */
+#define CELL_OS_MODE_BOOT   CELL_L1_U8(0xFFF848CFu)             /* 0x66E06's copy: state 2 → 3 when != 0 */
+#define CELL_OS_INIT_GATE   CELL_L1_U8(0xFFF848E6u)             /* != 0 holds state 0; 0x6F144 clears */
+#define CELL_OS_STATE       CELL_L1_U8(0xFFF93B32u)             /* boot state 0 / 1 / 2 / 3 */
+#define CELL_OS_MODE        CELL_L1_U8(0xFFF93B33u)             /* THE MODE (lists of table 0x43430) */
+#define CELL_OS_MODE_PEND   CELL_L1_U8(0xFFF93B34u)             /* 0x6F0B4's pending request */
+#define CELL_OS_REQ_CUR     CELL_L1_U8(0xFFF93B5Bu)             /* 0x6F0B4: the mode read */
+#define CELL_OS_REQ_RES     CELL_L1_U8(0xFFF93B5Cu)             /* 0x784B4: the result */
+#define CELL_OS_REQ_SUP     CELL_L1_U8(0xFFF93B5Du)             /* 0x6F0FC: 0 / 1 / 3 / 5 / 0xFF */
+#define CELL_OS_REQ_APP     CELL_L1_U8(0xFFF93B5Eu)             /* model request (0x68EFE; no writer here) */
+#define CELL_MOD1           CELL_L1_U8(0xFFF93B7Eu)             /* startup module 1: ← modules 7 + 11 */
+#define CELL_MOD2           CELL_L1_U8(0xFFF93B81u)             /* startup module 2: 0x0F → mode 1 */
+#define CELL_MOD_ALL        CELL_L1_U8(0xFFF93B8Au)             /* 0x7DB70: modules 1..12 all 0x0F */
+#define CELL_MOD1_UP        CELL_L1_U8(0xFFF93B8Bu)             /* 0x7DAA4: module 1 == 0x0F */
+#define CELL_OS_SHUTDOWN    CELL_L1_U8(0xFFF93B8Fu)             /* 0x6BC60: 1 → mode 5 (0x729C8; no writer here) */
+/* the OS task objects' countdown cells (0x67DF0 / 0x67E3C; linker .sup_os3
+ * 0x9353C..0x9355F): u16 countdown in 2.5 ms CMT ticks, u16 run counter,
+ * u16 overrun counter. The 10 ms task (objects 0x413A4 / 0x413D0, reload 3)
+ * and the 5 ms task (objects 0x41378 / 0x4134C, reload 1) each share one
+ * cell across the modes, so the switch keeps the phase. */
+#define CELL_OS_CD10        CELL_L1_U16(0xFFF9353Cu)
+#define CELL_OS_RUNS10      CELL_L1_U16(0xFFF9353Eu)
+#define CELL_OS_CD5         CELL_L1_U16(0xFFF9355Au)
+#define CELL_OS_RUNS5       CELL_L1_U16(0xFFF9355Cu)
+
 /* Clear every reserved cell range (the ranges the linker pins; NOT the
  * boot-record gates at 0xFFF800E8/0xFFF800EC, which survive resets by
  * design). Called first in the init bank, before any module init writes

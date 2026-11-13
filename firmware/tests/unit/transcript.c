@@ -46,7 +46,20 @@
 #include "bsw/sup/sup_cells.h"
 #include "bsw/sup/sup_batch.h"
 #include "bsw/sup/sup_walk.h"
+#include "bsw/sup/sup_mode.h"
 #include "stub_plat.h"
+
+/* TRANSCRIPT_MODE1 (the transcript_mode1 build, H5 released): at P50 the
+ * startup modules 7 and 11 are forced done — the stand-in for seq2's 'U'
+ * and the sequencer's 0xAA, which this chip model never produces — and the
+ * real chain runs: the background (module 1 → state 1 → module 2), the
+ * 0x6F0B4 request, the 0x66E06 apply at the end of a 10 ms pass. From the
+ * first mode-1 pass the order verdict expects the mode-1 schedule: on a
+ * 10 ms pass (odd P) J2, J3, J4, F, J6, J1, J5, F2; otherwise J2 alone. */
+#ifndef TRANSCRIPT_MODE1
+#define TRANSCRIPT_MODE1 0
+#endif
+#define MODE1_FORCE_P 50u
 
 extern struct { uint8_t bus; uint8_t job; uint16_t word; uint32_t t_us; } stub_log[32768];
 extern unsigned stub_log_n;
@@ -115,6 +128,7 @@ int main(int argc, char **argv)
                                "DUTY","LEVEL","FLT"};
     enum { FRAMES = 400 };              /* 2 s; P01-P100 printed */
     unsigned pass_mark[FRAMES + 2];
+    uint8_t pass_mode[FRAMES + 2];      /* the OS mode at each pass's batch */
     uint32_t lcg = 0x2026111Bu;         /* seeded scheduler jitter */
     int fail = 0;
     unsigned walk_fires = 0u;
@@ -151,6 +165,11 @@ int main(int argc, char **argv)
         lcg = lcg * 1664525u + 1013904223u; jb = ((lcg >> 16) % 91u) * 10u;
         if (p <= 100u) { j0 = j1 = jb = 0u; }   /* P01-P100: main.c's exact phases */
         pass_mark[p] = stub_log_n;
+        if (TRANSCRIPT_MODE1 && p == MODE1_FORCE_P) {
+            CELL_MOD7 = 0x0Fu;
+            CELL_MOD11 = 0x0Fu;
+        }
+        pass_mode[p] = sup_mode();
         for (unsigned step = 0u; step < 500u; step++) {   /* 5 ms in 10 µs */
             unsigned us = step * 10u;
             if (us == j0 || us == 3000u + j1) {
@@ -168,6 +187,7 @@ int main(int argc, char **argv)
                 sup_walk_isr();                 /* may re-arm (closed loop) */
                 drain();
             }
+            sup_mode_background();          /* main.c: every superloop pass */
             stub.frt_us += 10u;
         }
     }
@@ -204,23 +224,43 @@ int main(int argc, char **argv)
      *    priority ring from the asynchronous one-shot) ─────────────────── */
     {
         /* S4: J3 (POS) before J4 (SSLB2) — stock 0x91C12/0x91C16 */
-        static const uint8_t EXP[] = { JOB_POS, JOB_SSLB2, JOB_EN, JOB_FLT,
-                                       JOB_STAT, JOB_CTRL, JOB_ID, JOB_FLT };
+        static const uint8_t EXP0[] = { JOB_POS, JOB_SSLB2, JOB_EN, JOB_FLT,
+                                        JOB_STAT, JOB_CTRL, JOB_ID, JOB_FLT };
+        /* mode 1: the 5 ms task's J2 stage queues first, then the 10 ms
+         * task's reply proc (J3, J4), F stage, batch (J6, J1, J5) and the
+         * J6 handler's F re-fire */
+        static const uint8_t EXP1_10[] = { JOB_EN, JOB_POS, JOB_SSLB2, JOB_FLT,
+                                           JOB_STAT, JOB_CTRL, JOB_ID, JOB_FLT };
+        static const uint8_t EXP1_5[] = { JOB_EN };
+        unsigned n_m1 = 0u, first_m1 = 0u;
+        for (unsigned p = 1u; p <= FRAMES; p++) {
+            if (pass_mode[p] == 1u) {
+                if (first_m1 == 0u) { first_m1 = p; }
+                n_m1++;
+            }
+        }
         static const uint8_t NFR[JOB_COUNT] = { [JOB_CTRL]=4u, [JOB_EN]=2u,
             [JOB_POS]=2u, [JOB_SSLB2]=1u, [JOB_ID]=4u, [JOB_STAT]=5u,
             [JOB_NIB]=1u, [JOB_DUTY]=7u, [JOB_LEVEL]=4u, [JOB_FLT]=2u };
         for (unsigned p = 1u; p <= FRAMES && !fail; p++) {
             unsigned end = pass_mark[p + 1u];
             unsigned k = 0u, j = pass_mark[p];
+            const uint8_t *EXP = EXP0;
+            unsigned nexp = sizeof EXP0;
+            if (pass_mode[p] == 1u) {
+                const bool ten = (p % 2u) == 1u;    /* the 10 ms countdown law */
+                EXP = ten ? EXP1_10 : EXP1_5;
+                nexp = ten ? sizeof EXP1_10 : sizeof EXP1_5;
+            }
             while (j < end) {
                 uint8_t id = stub_log[j].job;
                 if (stub_log[j].bus != 1u || id == JOB_LEVEL || id == JOB_DUTY) {
                     j++;
                     continue;
                 }
-                if (id >= JOB_COUNT || k >= sizeof EXP || id != EXP[k]) {
-                    printf("FAIL: P%02u job slot %u: got %s, expected %s\n", p, k,
-                           JN[id % 10u], k < sizeof EXP ? JN[EXP[k]] : "(end)");
+                if (id >= JOB_COUNT || k >= nexp || id != EXP[k]) {
+                    printf("FAIL: P%02u (mode %u) job slot %u: got %s, expected %s\n", p,
+                           pass_mode[p], k, JN[id % 10u], k < nexp ? JN[EXP[k]] : "(end)");
                     fail = 1;
                     break;
                 }
@@ -231,11 +271,34 @@ int main(int argc, char **argv)
                 }
                 k++;
             }
-            if (!fail && k != sizeof EXP) {
-                printf("FAIL: P%02u carried %u cyclic jobs, expected %u\n", p, k,
-                       (unsigned)sizeof EXP);
+            if (!fail && k != nexp) {
+                printf("FAIL: P%02u (mode %u) carried %u cyclic jobs, expected %u\n", p,
+                       pass_mode[p], k, nexp);
                 fail = 1;
             }
+        }
+        if (TRANSCRIPT_MODE1) {
+            /* the switch: forced at P50 (module 1 and module 2 in that pass's
+             * background), 0x6F0B4 at P51, applied at the end of the first
+             * 10 ms pass from P51 on (P51, odd), first mode-1 pass P52 */
+            printf("MODE 1: forced P%u, first mode-1 pass P%u (switch at the end of P%u), "
+                   "%u mode-1 passes judged; state %u mode %u mod1 %02X mod2 %02X\n",
+                   MODE1_FORCE_P, first_m1, first_m1 - 1u, n_m1, CELL_OS_STATE, sup_mode(),
+                   CELL_MOD1, CELL_MOD2);
+            if (first_m1 != MODE1_FORCE_P + 2u || n_m1 != FRAMES - MODE1_FORCE_P - 1u) {
+                printf("FAIL: mode-1 switch at P%u (expected the end of P%u)\n",
+                       first_m1 - 1u, MODE1_FORCE_P + 1u);
+                fail = 1;
+            }
+            for (uint8_t id = 0u; id < JOB_COUNT; id++) {
+                if (sup_job_err_get(id) != 0u) {
+                    printf("FAIL: job %s discarded %u time(s)\n", JN[id], sup_job_err_get(id));
+                    fail = 1;
+                }
+            }
+        } else if (n_m1 != 0u) {
+            printf("FAIL: %u mode-1 passes in the mode-0 transcript\n", n_m1);
+            fail = 1;
         }
     }
 
@@ -357,6 +420,8 @@ int main(int argc, char **argv)
         }
     }
 
-    printf(fail ? "TRANSCRIPT: DRIFT\n" : "TRANSCRIPT: stock order + walk timing law hold, 400 frames\n");
+    printf(fail ? "TRANSCRIPT: DRIFT\n" : TRANSCRIPT_MODE1 ?
+           "TRANSCRIPT: mode 0 -> mode 1 at the stock tick, both schedules + walk timing law hold, 400 frames\n" :
+           "TRANSCRIPT: stock order + walk timing law hold, 400 frames\n");
     return fail;
 }

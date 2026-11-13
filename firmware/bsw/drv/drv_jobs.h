@@ -18,5 +18,6 @@ void drv_id_kick(void);
 
 /* reply buffer of a finished bus-A job (bench FE12 results; NULL outside) */
 const uint16_t *drv_job_rx(uint8_t id);
+const uint16_t *drv_job_tx(uint8_t id);   /* r02v: the staged words (tests/witness) */
 
 #endif

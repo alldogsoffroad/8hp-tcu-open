@@ -10,17 +10,20 @@
  * queued. Call once from the init order, before the first pass. */
 void sup_batch_init(void);
 
-/* the 5 ms batch — the stock's 5 ms list order (flash 0x44CCC..), 1:1:
- *   0. sup_ladder_tick_head(): countdown 0x7C7E4 + 0x14 re-derive 0x9181C
- *   1. reply proc: sup_reply_condense(), queue JOB_POS then JOB_SSLB2
- *   2. sup_ladder_tick(): publishers 0x8332C, ladder 0x8570E, seq2 0x85828,
- *      pin cut 0x85788 (L1, held short of any request)
- *   3. sup_enables_stage()                         (J2/F staging)
- *   4. sup_ctrl_compose() + sup_c9_compose(), summarize, queue JOB_STAT,
- *      queue JOB_CTRL
- *   5. queue JOB_ID, drv_id_kick()                 (bus-A ID job)
- *   then: builder-law request-cell force + sup_job_engine_pump()
- */
+/* the 5 ms batch — the stock's 5 ms task (and, on every second pass, its
+ * 10 ms task, which shares the CMT tick and runs right after it), per OS
+ * mode (sup_mode.c; ~/tcu_sweep/mode1_port.md):
+ *   mode 0, every pass (5 ms list 0x42CD8, flash 0x44CCC..):
+ *     countdown 0x7C7E4 + 0x9181C · reply proc (condense, J3, J4) ·
+ *     publishers · mode request 0x6F0B4 · ladder 0x8570E · seq2 · pin cut ·
+ *     J2 stage · F stage · batch (compose, summarize, J6, J1, J5, bus-A
+ *     kick) · pump; on a 10 ms pass then 0x66E06 (the mode apply)
+ *   mode 1, every pass (0x42F80): countdown + 0x9181C · publishers ·
+ *     0x6F0B4 · sequencer 0x85160 · seq2 · J2 stage · pump · 0x66E06;
+ *     on a 10 ms pass then (0x42F44): reply proc · pin cut · F stage ·
+ *     batch · pump
+ * The 10 ms pass is the first pass and every second one after (the stock's
+ * 5 ms / 10 ms countdowns 0x9355A / 0x9353C both start at 0). */
 void sup_batch_5ms(void);
 
 #endif /* TCU_SUP_BATCH_H */
