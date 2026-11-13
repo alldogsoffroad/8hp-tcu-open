@@ -594,3 +594,28 @@ A human/AI pair produced this project (see CONTRIBUTORS.md). Early commits were 
 - **Fix (tool):** `build_image.py` now never overwrites application bytes. It keeps reference bytes only from max(`--gap-keep-above`, app end rounded to 0x100) and prints a loud line naming the block the install must now write. Rebuilt r02w (same app, same ELF): **app CRC `FE3535E0`**, image blocks 0x40000 **and 0x50000** differ from r02v. Every header/vector/.text byte matches the ELF except the header CRC (0x40044) and the stock-ident pointer (0x40075). `s_tasks` now reads 0x0004DAA4…
 - **Install:** `/tmp/r02w_sigs.json` sets 0x40000 AND 0x50000 to None (force-write). Block 0x50000 otherwise holds stock bytes, unused by our app, and is rewritten as such.
 - **Lesson:** a growing app must be checked against the image layout on every build: block list vs previous, app end address. **The r02w prediction stands as written** — the L3b code never ran.
+
+**r02w (FIXED IMAGE) BENCH RESULT (2026-11-13 14:57 install, blocks 0x40000 sig `0f52c025399ea6be` + 0x50000 sig `1100bc6f6c74e7ac`, all 21 verifies OK; power-on ≈ 14:58:22 under the ammeter; witness 14:59:04–14:59:11 `/tmp/witness_r02w2.log`) — THE ENGAGED RAIL UNDER OPEN FIRMWARE: letter 'c', 0x9020 PERMANENT, MODE 1, THE RAIL NODE AT SUPPLY** [O]:
+- **The certification path completed (prediction [I ~60 %] ✓):**
+  - letters 0x90944 = **63 00 00 ('c')**, 0x907D6 = **0x20**, status 0x939B8[0] = **4**, seq2 **'U' 0x55** / 0x22, diag 0x939BE[0] = **0xFF**, sequencer 0x9500C **'L' (0x4C)**, ladder 0xAA with OK flags **0x02FF**, class 0x93A92[0] = **0x66**;
+  - **the rail node 0x94ED0[0] = 13 335 mV against supply 13 359 mV — THE RAIL IS CLOSED**;
+  - J2 TX **9020** on every read, `s_w9020` 15 928 launches from +532.272 ms to +40.40 s and counting;
+  - FSM 'E' (from 0x23), target 0, level 0↔1/2, 0x14 = **C7**, gate 1, REQ/GRANT 01/01;
+  - modules 1/2 = 0x0F, **boot state 3, mode 1** (switch stamp TCNTA 0x000A4719 = +0.672 s);
+  - USE J2 ≈ 2 × J1 — the mode-1 schedule (J2 at 5 ms, the rest at 10 ms);
+  - boots = 1, error counts W2 1–2, nothing else.
+
+  **This matches the stock driving dump cell for cell** (sequencer 'L', 0xAA, flags 0x02FF, 'c' 0 0, 0x20, 'E' from 0x23, class 0x66, status 4, diag 0xFF, modules 0x0F, state 3 / mode 1).
+- **Current:** inrush 364 mA, then ~183–190 mA flat — no step at 'U'. Rail closed with every solenoid channel off: the rail's own draw is within the ±10 mA noise.
+- **BUS A DIED AT +0.623 s [O live read of `s_chan[0]`]:** state FEEDING, job 0x12 (config), frame 38 of 40, RX interrupt count frozen at 5767, `launch_us` 0x0009821D, one retry earlier. There is no bus-A timeout, so the channel never recovered. Every later cyclic was blocked; drv_refresh_n = 1 (the boot send only). **The chips kept the last mode written, 0x15 (off): 'U' 0x8810 never went out, and the full-on tests were never sent** (0x94114/0x94115 are likely set and cleared within one tick — not seen by the refresh) [I]. r02v showed the same stuck in-flight flag. Root cause of the lost RX interrupt: open.
+- **Next = r02x:** a bus-A reaper.
+
+**r02x = r02w + THE BUS-A REAPER (2026-11-13; built, NOT flashed, `build/r02x_IFla.bin`, app CRC `B98C38AA`, blocks 0x40000 + 0x50000 vs r02w; NOT committed at time of writing):**
+- `drv_cyclic_send` (5 ms refresh and 10 ms periodic) first calls `plat_rspi_reap(0, 5000 µs)` under SR.I = 15. A bus-A burst older than 5 ms is error-completed (frames 0) through its handler, which releases the job, and the next cyclic follows. Witness `s_drv_reap_n` 0xFFF959C0.
+- App end 0x50320, so **block 0x50000 must be written again** (sigs: both None).
+- Addresses: .noinit +4 vs r02w (`s_rst` 0xFFF9EB78, `s_w9020` 0xEB98, `s_open` 0xEBDC, `s_trc` 0xE750); `s_drv_refresh_n` 0xFFF959C4; bus-A buffers +4; bus-A channel `s_chan[0]` 0xFFF955D0 (state @+4, idx/frames @+8/9, job @+28, isr @+32, errs @+44, retries @+48). Witness `/tmp/witness_r02x.py` adds a BUS-A chan line. Install `/tmp/install_r02x.py`. Host 29/29.
+- **PREDICTION (rule 1):**
+  - [high] as r02w — 'c', 0x9020 permanent, mode 1, rail node ≈ supply, C7, no restarts, current flat.
+  - [I ~75 %] bus A alive on every read: channel IDLE or briefly ARMED/FEEDING with a moving `launch_us`; vecA climbing; in-flight flags clearing; **staged and sent cyclic 0x8810 ×4 + 0x8815 after 'U'**; refresh count ≥ 2.
+  - `s_drv_reap_n` small: 0 if the stall was rare, else counting the stalls. A fast climb names a systematic RX-interrupt loss on bus A, the next thing to decode.
+  - Current: no change at 0x8810 (channels disabled) [I high].
