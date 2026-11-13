@@ -648,3 +648,13 @@ A human/AI pair produced this project (see CONTRIBUTORS.md). Early commits were 
   - Everything else as r02x: 'c', 0x9020, mode 1, rail at supply, chips at 0x10, current flat.
   - **If refuted** (`reent` = 0, min gap ≥ 11 µs, errors unchanged), the reap snapshot names the next lead: SPSR 0x01/0x21 → another two-deep source; SPRF = 1 → interrupt masking; 0x20 → the RSPI stopped.
   - **If confirmed:** next r02z adds the dummy read (predict `reent` ≈ 0); later, a separate flash lifts the r02q bus-B hold, to test whether the r02k–n bus-B corruption was the same mechanism.
+
+**r02y BENCH RESULT (2026-11-13 15:40 install, blocks 0x40000 `668e82275deba661` + 0x50000 `0bbbbfc3762afd04`, all 21 verifies OK; power-on ≈ 15:42 under the ammeter; witness 15:43:54–58 at uptime ~115 s `/tmp/witness_r02y.log`) — THE RE-ENTRY MECHANISM CONFIRMED: WITH THE GUARD, BUS A IS CLEAN** [O]:
+- **Bus A:** **retries 0, error completions 0, reaps 0**, in-flight clear. **11 352 cyclic replies checked, 0 slips**: every rx dump has zeros exactly at i ≡ 4 mod 5 (the empty SSLA5), A200/A000 everywhere else. Config readbacks A290/A221/A29F/A255 on all four chips. vecA 966 816 = isr count (no lost entries).
+- **The guard fired:** bus A **re-entries refused 1 020** in ~115 s (~9/s), bus B **48**. OVRF at entry 0, OVRF in the feed 0. Minimum gap between FEEDING entries **4 µs (A) / 5 µs (B)** — far below one frame time (~11 µs), i.e. re-entries; maximum 71 / 62 µs.
+- **Prediction:** "errors → ≈ 0" ✓. "reent ≥ 44/s" ✗ — 9/s. Each unguarded re-entry used to cascade into several retries; that the count is lower than the old retry rate fits [I].
+- **Bus B too:** per-job error counts **all 0** (W2 had 1–6 on every build since r02t), walk poll/isr ~9 %. Supervisor exactly as r02x: 'c', 0x907D6 0x20, 'U', J2 9020 (45 113 launches), mode 1, rail node 13 336 mV, C7. Current ~193 mA flat (inrush 450 mA), no step.
+- **What this settles:** the bus-A errors of r02v–r02x and the stall of r02w were RSPI interrupt re-entries after a flag clear with no read-back (manual §8.10.1), not latency or DMA masking. **Next:**
+  1. **r02z:** add the dummy read after the clear (stock-correct; predict reent ≈ 0, errors still 0).
+  2. A separate flash lifting the r02q bus-B mux hold, to test whether the r02k–n bus-B corruption was this same mechanism [I ~55 %].
+  3. Then the request law (0x83DB0 gates, 0x89540 letters, 0x901A0 setpoints) and Timer E stage 0b, ahead of the D1 solenoid decision.
