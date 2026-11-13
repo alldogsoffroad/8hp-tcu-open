@@ -7,6 +7,7 @@
 #include "bsw/drv/drv_jobs.h"
 #include "bsw/sup/sup_jobs.h"
 #include "platform.h"
+#include <stdbool.h>
 
 #define A2_OK(rx) (((rx) & 0xFF00u) == 0xA200u)
 
@@ -43,9 +44,28 @@ void drv_resp_cfg(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
     s_drv_in_flight_clear(job_id - DRV_ID);
 }
 
+/* r02y witness: cyclic replies that slipped — a 0000 at a populated select
+ * (i mod 5 != 4) or a nonzero word at the empty SSLA5 (i mod 5 == 4) */
+volatile uint32_t s_drv_slip_n;
+volatile uint32_t s_drv_cyc_ok_n;
+
 void drv_resp_cyc(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
 {
-    (void)bus; (void)n;
+    (void)bus;
+    if (n != 0u) {
+        bool slip = false;
+        for (uint8_t i = 0u; i < 45u; i++) {
+            const bool empty = (i % 5u) == 4u;
+            if (empty ? (rx[i] != 0u) : (rx[i] == 0u)) {
+                slip = true;
+            }
+        }
+        if (slip) {
+            s_drv_slip_n++;
+        } else {
+            s_drv_cyc_ok_n++;
+        }
+    }
     /* 5-bit cyclic header check (0xF800 mask) */
     for (uint8_t i = 0u; i < 5u; i++) {
         if ((rx[i * 9u] & 0xF800u) != 0xA800u) break;

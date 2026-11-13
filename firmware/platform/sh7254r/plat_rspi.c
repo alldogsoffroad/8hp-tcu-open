@@ -253,6 +253,14 @@ uint32_t plat_rspi_isr_count(uint8_t bus)
  * bench which path carried the traffic. */
 
 volatile uint32_t s_vec_count[2];   /* TRUE vector deliveries (diagnostic) */
+/* r02y witness (busA_errors_decode.md): per bus — [0] re-entries refused by
+ * the SPRF/OVRF guard, [1] OVRF at entry, [2] OVRF seen inside the feed,
+ * [3] min us between FEEDING entries, [4] max us between them */
+volatile uint32_t s_rspi_w[2][5];
+static uint32_t s_rspi_last_entry[2];
+/* r02y: the last reap's snapshot taken BEFORE burst_end clears anything:
+ * SPSR, idx, frames, job, age us (per bus) */
+volatile uint32_t s_rspi_reap_snap[2][5];
 
 static void plat_rspi_isr_body(uint8_t bus)
 {
@@ -269,6 +277,36 @@ static void plat_rspi_isr_body(uint8_t bus)
 
     if (c->state != CH_FEEDING) {
         return;                                 /* spurious */
+    }
+    {   /* r02y: entry-gap witness (stamped before the guard) */
+        const uint32_t now = plat_frt_us();
+        const uint32_t gap = now - s_rspi_last_entry[bus];
+        s_rspi_last_entry[bus] = now;
+        if (c->idx > 1u) {                      /* a gap inside one burst */
+            if (s_rspi_w[bus][3] == 0u || gap < s_rspi_w[bus][3]) {
+                s_rspi_w[bus][3] = gap;
+            }
+            if (gap > s_rspi_w[bus][4]) {
+                s_rspi_w[bus][4] = gap;
+            }
+        }
+    }
+    /* r02y THE RE-ENTRY GUARD: the feed clears SPSR and returns with no
+     * dummy read of the flag, so the RX request can be accepted again after
+     * the clear (manual 8.10.1: "Perform dummy read the interrupt source
+     * flag after clearing it to ensure that the interrupt request that
+     * should have been cleared is not received again erroneously"). On such
+     * a re-entry neither SPRF nor OVRF is set: harvesting would store a
+     * stale word and feed a second frame while one is still shifting (two
+     * in flight → OVRF, stalls, slips). Refuse it, and count it. The dummy
+     * read itself is deliberately NOT added yet (one variable: this flash
+     * measures how often it happens). */
+    if ((*spsr(bus) & (0x80u | SPSR_ERRS)) == 0u) {
+        s_rspi_w[bus][0]++;
+        return;
+    }
+    if ((*spsr(bus) & SPSR_ERRS) != 0u) {
+        s_rspi_w[bus][1]++;
     }
     c->in_body = true;
 
@@ -294,7 +332,9 @@ static void plat_rspi_isr_body(uint8_t bus)
         if (sptef_wait(sr)) {
             (void)*sr;
             *dr = c->tx[c->idx];
-            (void)*sr;
+            if ((*sr & SPSR_ERRS) != 0u) {
+                s_rspi_w[bus][2]++;             /* r02y: OVRF inside the feed */
+            }
             *sr = 0u;
             c->idx++;
         } else {
@@ -396,6 +436,11 @@ bool plat_rspi_reap(uint8_t bus, uint32_t max_us)
         (plat_frt_us() - c->launch_us) < max_us) {
         return false;
     }
+    s_rspi_reap_snap[bus][0] = *spsr(bus);      /* r02y: before anything clears it */
+    s_rspi_reap_snap[bus][1] = c->idx;
+    s_rspi_reap_snap[bus][2] = c->frames;
+    s_rspi_reap_snap[bus][3] = c->job_id;
+    s_rspi_reap_snap[bus][4] = plat_frt_us() - c->launch_us;
     c->retried = true;                          /* no retry for a dead channel */
     burst_end(c, true);
     return true;
