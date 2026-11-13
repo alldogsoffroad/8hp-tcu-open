@@ -829,3 +829,20 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
     - total above ~2.3 A → power off;
     - park release (ch 7) nonzero anywhere;
     - restarts, bus errors, or a supervisor fall-back ('U' → '4' — the 0x85E82 engaged-output monitor drops the letter if the rail node strays > 1500 mV from supply under load).
+
+**r03f BENCH RESULT (2026-11-13 17:35 install, blocks 0x40000 `7fe3584063e0b9ac` + 0x50000 `6bb5a026f7e3df3a`, all 21 verifies OK; power-on ≈ 17:36:40 under the ammeter; witness 17:37:43–45 at uptime ~59 s `/tmp/witness_r03f.log`) — THE STOCK IDLE (P) SOLENOID STATE UNDER OPEN FIRMWARE: 1.775 A, THE STOCK'S OWN 1.773 A** [O]:
+- **Current:** before 'U' 183.4 mA; from ~0.6 s after power-on a **steady mean of 1 774.6 mA** (n = 77 912), the chopping ripple peaking at 2.52 A. Prediction 1.70–1.80 A ✓. **The stock's own measurement on this bench is 1.773 A.**
+- **The law, exactly the stock's:**
+  - modes 0x94FD8 = **03 ×7, 01, 00 00**; letters **'!' ×7, 00, '2' '2'**; currents **01F4 2134 2134 2134 2134 01F4 01F4 0000**; records +7 **1A 1A 1A 12 15**;
+  - cyclic **`881A 881A 881A 8812 8815 | A000×5 | E853 ED88 ED89 E854 E800 | A600×5 | F589 F588 F053 F000 F000 | reads`** — the driving dump's words, the setpoints differing only by the rounding phase and the unported adaptive correction;
+  - config readbacks **A29A A29A A29A A292**;
+  - the chips read back their setpoints (A053 A588 A588 A053 / A588 A588 A054 A000).
+- **Under load:** supply (mux 11) 12 973 mV, rail node 12 940 mV (within 1500 mV of supply — the engaged-output monitor holds 'U'), min13 12 620 mV.
+- **Everything steady:** 'c', 0x907D6 0x20, seq2 'U' / status 4, J2 9020, mode 1, C7 / gate 1, FSM 'E', boots = 1; bus A 5 778 cyclics, 0 slips; re-entries 0; job errors 0.
+- **README status updated:** row 3 78 % → 85 %, overall ~67 % → ~69 % (the old 78 % basis text claimed an end-to-end chain that was not yet true; replaced).
+- **Where the project stands:** the original goal ("raise the solenoid outputs to the engaged rail under open-firmware control") is met — the rail is engaged and the stock's idle solenoid currents are driven. **Remaining for M5/M6:**
+  - the application's request source (the shift/pressure strategy behind 0x7B6D8 → 0xFFF94EE8, the adaptive correction 0x837E0);
+  - fault reporting (0x226/0x238, the diagnostics stood in);
+  - the '3' full-on interlock question;
+  - the 10 ms/5 ms F-stage cadence;
+  - the walk polled-fallback rate.

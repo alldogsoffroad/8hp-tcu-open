@@ -56,17 +56,17 @@ write operation it performed is reproduced (and documented) by the open flasher.
 |---|---|---|
 | Stock-firmware reverse engineering (specs 01–26) | **95 %** | every subsystem's structure is mapped; **the full 10,982-function decompile is cataloged (spec 19, 10,898/10,898 classified)**; the top-down synthesis complete (specs 20–26: walk reconciliation, power-on chronology, the 14-job supervisor protocol, rail latch conditions, task/ISR inventory, chip identification); the supervisor's protocol/word semantics bench-measured; the stock runs on the bench for live probing; RTOS question closed at runtime (no ITRON, no AUTOSAR); the supervisor's full driving-time conversation reconstructed, the `0x22` echo/grant law decoded, the boot-mailbox handshake ruled off the drive path; open: CAN signal fine meanings, chip part numbers |
 | Code-flash independence — read / write / recover (specs 16–18, [8hp-teensy-flasher](https://github.com/alldogsoffroad/8hp-teensy-flasher)) | **95 %** | Teensy-only write and restore proven on the bench; remaining: an end-to-end shakedown of the released tool suite as packaged |
-| Open firmware, bench-proven (milestones M0–M6, [§8](docs/firmware/00-architecture.md)) | **78 %** | **the full top-down rebuild (P0–P7, 2026-11-09/10): the whole firmware rewritten from the validated specs — 20/20 host tests, boots, walks, converses on the bench.** The commissioning walk runs the complete FSM ladder to steady supervision; the bus-B conversation flows at full stock cadence; **the chip answers the 84-class walk words with real replies (rx_level live)**; the certification chain fires end-to-end on the bench arm (letters → the stock's exact `0x9020` engaged pair on the wire); both buses' RSPI interrupts deliver; every timer/interrupt register law decoded from the stock (the U-compare walk tick, the byte idioms, IPR nibble map, SPSCR=selects−1). Remaining to the rail: the level-nibble harvest store (one decoded function — FB_0C frozen), then the one-shot → `0x8E91` → the 0x24 latch verdict; then M5 limp mode, M6 shifting |
+| Open firmware, bench-proven (milestones M0–M6, [§8](docs/firmware/00-architecture.md)) | **85 %** | **The engaged rail and the stock idle solenoid currents under open firmware (2026-11-13, r02w–r03f):** the stock supervisor self-test ladder runs to completion (sub 0xAA, pass mask 0x00FF), the permanent letter 'c' and the `0x9020` engaged word stay on the wire, the OS switches to mode 1 — the stock driving dump reproduced cell for cell; both RSPI buses clean (the §8.10.1 interrupt re-entry fixed); the stock AN0 acquisition, Timer C/E bring-up and the solenoid request law ported 1:1; the stock P-state request set (A/WK/Sys 50 mA, D/B/E/C 850 mA) drives **1.775 A — the stock's own 1.773 A** on the bench. Remaining: the application's request source (shift/pressure strategy, adaptive correction 0x837E0), fault reporting, then M5 limp mode, M6 shifting |
 | Vehicle integration (M7: Nissan profile, on-car validation) | **0 %** | not started |
 
-**Overall: ~67 %** — the straight average of the four areas. Gen 2 (8HP50/75/95)
+**Overall: ~69 %** — the straight average of the four areas. Gen 2 (8HP50/75/95)
 coverage is deferred and deliberately excluded from the figure.
 
 How the numbers move: closing a spec's open items (e.g. a signal-meaning table)
 moves row 1; tooling polish moves row 2; each completed milestone moves row 3
 (M4–M6 are 15 % each); row 4 begins with the first Nissan-side work. Static
 analysis alone is well advanced — bench and vehicle validation are what the
-percentages now track. *Last updated: 2026-11-10.*
+percentages now track. *Last updated: 2026-11-13.*
 
 Static analysis of the stock firmware is well advanced (hardware I/O, CAN, measurement protocol,
 shift strategy, lockup, shift execution, line pressure, solenoid outputs, park/range, fault
