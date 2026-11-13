@@ -722,3 +722,12 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
   - **Refutations:**
     - any nonzero current or setpoint word → stop;
     - bus-A errors or bus-B re-entries returning → the added compose time disturbs timing.
+
+**r03b BENCH RESULT (2026-11-13 16:33 install, blocks 0x40000 `dcdc04b8740878f5` + 0x50000 `01d55eb0b6d89a01`, all 21 verifies OK; power-on ≈ 16:33:43 under the ammeter; witness 16:34:46–50 at uptime ~63 s `/tmp/witness_r03b.log`) — PREDICTION CONFIRMED: THE STOCK REQUEST LAW RUNS AT ZERO REQUESTS, WIRE AS r03a, NO CURRENT** [O]:
+- **The law's cells exactly as predicted:** modes 0x94FD8 = **01 ×8, 00 00**; letters 0x90812 = **00 ×8, 32 32** ('2' on the masked ch 8/9); currents 0x90230 all 0; records +7 = **0x10 ×4, 0x15**; staged cyclic `8810 ×4 + 8815`, E800/F000. `s_rq_f238_n` 0, `s_rq_cguard_n` 0.
+- **`s_rq_ilock_n` = 8 [O, not predicted]:** our law-side full-on interlock (ours, not stock) refused a stock full-on test 8 times — a request cell or the staged 0x9020 was up while 0x94114/0x94115 asked for full-on. The phase-0x10 test runs with J2 9000 and requests 0, so these are almost certainly the **'3' diagnosis' full-on (0x94115)**, which the stock runs in seq2 '3' after 'L', when [I] the request cell is already 1 (enable still off). **So the stock's '3' rail-off full-on test is not performed on our bench** — a deviation our interlock makes on purpose. Decode before relaxing it: what the request/enable/rail state is during '3' in the stock (rail off = no current even at full-on).
+- Bus A: 0 errors / 0 reaps / 6 173 cyclics, 0 slips; re-entries 0; per-job errors 0. Supervisor as r03a ('c', 0x9020, mode 1, rail node 13 338 mV, C7). Current ~190 mA flat (inrush 390 mA).
+- **Next toward D1:**
+  1. **Timer E stage 0b** (TEE off → 0x97198 → 0x9136E group-A duty 0 / 0x919A0 TOE52 / 0x90010 group-B → TEE on at the mode-0 init position; the 11 unwritten pins high per D3; `plat_toe_out_init` merged/removed) — no current expected (group A duty 0; group B are 50 µs chip pulses);
+  2. the '3' full-on decode above;
+  3. **D1, the user's decision:** first channel and setpoint, with the host-validated law ready to take a nonzero request once the SH guard is lifted for exactly that channel.
