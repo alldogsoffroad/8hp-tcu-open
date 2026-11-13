@@ -352,3 +352,19 @@ A human/AI pair produced this project (see CONTRIBUTORS.md). Early commits were 
     - phase 0x200 → supply window;
     - module 11 = 0 → the start gate never opened (check `s_adc_started`).
   - **Current:** no change expected. The TIOC cut is a 5 ms Timer C pin change, but announce it anyway and watch the ammeter.
+
+**r02r BENCH RESULT (2026-11-13 11:03 install, block 0x40000 sig `05d87fa90adad431`, all 21 verifies OK; power-on 11:19:45 under the ammeter `/tmp/amps.log` "=== r02r boot"; witness 11:20:26–11:20:37 `/tmp/witness_r02r.log`) — PREDICTION CONFIRMED: THE STOCK LADDER RAN TO THE HOLD, ALL SIX CHECKS PASSED** [O]:
+- **The ladder parked exactly at the hold** on every one of 6 reads (uptime 41–52 s):
+  - phase 0x0040, sub 0x55, **pass mask 0x003F** (phases 1/2/4/8/0x10/0x20 passed, including 0x20's TIOC cut and bit-1 drop), fault and OK flags 0, mismatch 00/33;
+  - retries 3 (no failed attempt), `s_fsm_req_held` 00, countdowns 0;
+  - class 0x93A92 = 22/33, status 0x939B8[0] = 1, diag 0x939BE[0] = 1, seq2 11/22;
+  - pin-cut mode 0x11, TIOC state 1, PFC back at 00FD FDD5 (TIOC restored), module 11 = 1, module 7 = 0.
+
+  Prediction [I ~65 %] confirmed, value for value (the host model's predicted state).
+- **The inputs:** output node 0x94ED0[0] = 2938–2940 mV (class 0x22, off with bias), supply 0x94F96 = 13 355 mV with status 08. Not noticeably noisier than r02q at this read rate.
+- **The holds held:** J2 TX 9000 on every read, requests 0xFFF939B6 = 00 00, FSM 08. **Current:** the ammeter shows the power-on inrush (458 mA peak) then a flat ~183 mA (the board's normal idle). Mean per second 180–193 mA through the ladder window and after: no step at the TIOC cut, no rail.
+- **The conversation is as clean as r02q:** boots = 1 (no restarts), 0x14 = C7 and gate 1 on every read, level 3↔4 at target 3 with the selector rotating, A8 77/00/00, AA 07/00/00, every per-job error count 0, REQ/GRANT 01/01. Boot-1 opening as before (J4 `FF03`, W2 commit `AACA`, sel-0 token at +5.57 ms). Walk polled fallback ~14/s (the r02q hold path, harmless as before). AN0 readings as r02q.
+- Observed, not predicted: the sequencer cell 0x9500C reads 00 at the hold. [I] that is its state while the ladder runs; it moves to '.' only on the ladder's 0xAA completion, which L1 never reaches.
+- **What this settles [O]:** the supervisor chip passes the stock self-test ladder under open firmware through phase 0x20, with the stock's timing (inside the 200 ms timeout, no retries), on the stock's own expectations (output off with bias, bit 1 = 0 at level ≥ 5, bit 1 = 1 at level ≤ 4 and dropping on the TIOC cut). **What remains before the rail:**
+  - **L2:** release H1 — phase 8's single 0x9020 frame at level ≥ 5 with the output required to STAY off, so no current change is expected. It is the first 0x9020 since r01u: announce it, ammeter on.
+  - **L3:** release H2/H3 — phase 0x40 (the first rail-on, a brief current rise), 0x80 (off), 0xAA, then seq2 'U' and the permanent letter. Needs FSM 0x23/'E'/0x12/0x34 + 0x8CEDC and the '3' diagnosis ported first (P3/P4 decoded, not ported).
