@@ -288,3 +288,20 @@ A human/AI pair produced this project (see CONTRIBUTORS.md). Early commits were 
   - [check] the mux readings are distinct again (mux 8 ≈ 2.9 V, supply ≈ 13.36 V, mux 10 ≈ 24.9 V — slightly diluted [I]); `s_mux_hold_n` climbs at the bus-B burst rate (~2 000/s).
   - (A) [I ~50 %] clean as r02o — boots = 1, C7 and gate 1 on every read, no AB replies, J4 FF03 → an edge during a burst is the mechanism, and r02p is usable for L1.
   - (B) restarts/corruption as r02n → the stepping disturbs the chip regardless of bursts; next, scope PG12–15 against SSLB/RSPCKB.
+
+**r02p BENCH RESULT (2026-11-12 17:18 install, block 0x40000 sig `05685731e38c30bc`, all 21 verifies OK; power-cycle; witness 17:19–17:20 `/tmp/witness_r02p.log`) — MIXED: NO RESTARTS, BUT THE ACQUISITION IS SCRAMBLED AND THE CONVERSATION IS STILL DISTURBED** [O]:
+- **No restarts:** boots = 1 from power-on, now_ms 19 705 → 56 663 (57 s). r02n's boots lived 0.5–20 s with one at ~20.8 s, so 57 s is strong but not conclusive.
+- **The hold works:** `s_mux_hold_n` 38 630 at ~19.7 s (≈ 2 000/s = the bus-B burst rate); PGDR's high byte varies between reads (B0/A0/D0).
+- **The opening is clean:** boot 1's record — J4 `FF03`, W2 `AA00 AA06 AAC8 AAF0`, the sel-0 token, no AB-class word in any record entry.
+- **The conversation is not r02o-clean:**
+  - 0x14 reads C5 on 3 of 7 reads and D0 once (C7 on the rest); gate 0x90959 is 0 on 2 reads;
+  - the reported level reaches 5 (rep/exp 05/04, 05/06) at target 3, where r02o held 3↔4. Bit 1 = 0 at level 5 is the EXPECTED reading [O gate decode], so the gate flips here follow the level.
+  - J1 errors (A8 ERR 02, AA ERR 02 on one read each); W2 error completions 5 → 8 over 11 s;
+  - W1 − W2 USE drifts from 32 to 54;
+  - **walk polled-fallback count 364 → 1 010 over 37 s (~17/s)**, where r02o had ~0.1/s. The walk ISR is late often enough that the superloop poll takes the walk, and a polled walk stamps late [CLAUDE r02f law] → level excursions [I].
+- **The acquisition is scrambled [O]:** mux 8 reads 8.3–11.7 V, supply 9.3–13.4 V, min13 93 mV — varying wildly between reads. Holding ch0 pauses the address sequence, while ch1 keeps storing every AN0 conversion into the ring. So the ring slot ↔ mux input mapping slips at every hold. My prediction "a few % diluted" was wrong. **r02p is not usable for L1 as built.**
+- **Reading [I]:** removing edges during bursts removed the deaths (or pushed them past 57 s). The residual disturbance has a different face (walk ISR lateness, level excursions), so the hold itself, or the slipped sequence, may cause part of it.
+- **Next options:**
+  1. a longer r02p soak (minutes) to settle the restart verdict;
+  2. a correct acquisition with the same no-edge-in-burst property — hold BOTH ch0 and ch1 (or stop Timer G1/G2 together), so the slot mapping holds — before any L1;
+  3. explain the walk polled-fallback rise (hold/release under SR.I = 15 inside the walk ISR's launch path is the first suspect).
