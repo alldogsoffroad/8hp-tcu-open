@@ -807,3 +807,14 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
     - total above ~0.9 A, or a step above ~0.7 A → power off;
     - any channel other than E nonzero;
     - restarts or bus errors.
+
+**r03e BENCH RESULT (2026-11-13 17:26 install, blocks 0x40000 `d207f3d54679224a` + 0x50000 `0d39a58892bc8b51`, all 21 verifies OK; power-on ≈ 17:26:50 under the ammeter; witness 17:27:48–50 at uptime ~60 s `/tmp/witness_r03e.log`) — PREDICTION CONFIRMED: SOLENOID E AT 850 mA UNDER OPEN FIRMWARE, A CLEAR +0.38 A SUPPLY STEP** [O]:
+- **Current:**
+  - before 'U': **196.3 mA**;
+  - from ~0.8 s after power-on: **575.9 mA mean** (n = 80 294), peaks to 921 mA (the chopping ripple);
+  - **step +0.380 A**, at the top of the predicted 0.25–0.40 A / total 0.50–0.57 A;
+  - **coil resistance ≈ ΔI·V / I² = 0.380 × 13.27 / 0.85² ≈ 7.0 Ω [D]** — the decode's 5.5–7 Ω is right and spec 12's "~25 Ω" is wrong for this coil (25 Ω could not reach 850 mA at 13.3 V).
+- **The supply sags under load:** supply (mux 11) 13 266 mV (unloaded 13 360), rail node (mux 8) 13 233 mV, min13 13 082 mV.
+- **The law and the wire, as predicted:** modes 01 01 01 **03** …; letter **'!'** on ch 3; **cur[3] = 0x2134 (8500)**; records +7 0x10 **0x18** 0x10 0x10 0x15; cyclic `8810 8818 8810 8810 8815 | … | F000 **F589** F000 F000 F000`; config readback chip 1 **A298**; read row **A588** in chip 1's slot (the setpoint register, at the 0x588 rounding phase).
+- **Everything else steady:** 'c', J2 9020, mode 1, C7, boots = 1; bus A 5 893 cyclics, 0 slips; re-entries 0; job errors 0.
+- **Next:** the stock P set — A 500, D/B/E/C 8500, WK 500, Sys 500, park release 0 — total ≈ 1.77 A per the stock measurement on this bench. This needs the pilot widened from one channel to the stock's own per-channel table (still compile-time constants on SH, each bounded by the stock P value, park release fixed 0), with a per-step ammeter prediction (four 850 mA coils ≈ 4 × 0.38 A + three 50 mA ≈ +1.55 A → ≈ 1.75 A total [D]).
