@@ -426,3 +426,21 @@ A human/AI pair produced this project (see CONTRIBUTORS.md). Early commits were 
     - FSM 0x34 → level ≥ 5 in 'E';
     - boots > 1 → a reset (read `s_w9020[0]` and the trace ring).
   - Current as above; announce before power-on, ammeter on.
+
+**r02t BENCH RESULT (2026-11-13 12:45 install, block 0x40000 sig `a907339c33f04974`, all 21 verifies OK; power-on ≈ 12:46:51 under the ammeter `/tmp/amps.log` "=== r02t boot"; witness 12:47:32–12:47:43 `/tmp/witness_r02t.log`) — THE STOCK SELF-TEST LADDER COMPLETED UNDER OPEN FIRMWARE: sub 0xAA, PASS MASK 0x00FF, FSM 'E' AT LEVEL 0** [O]:
+- **The ladder completed** (prediction [I ~60 %] ✓) on all 6 reads:
+  - phase word 0x0100, sub **0xAA**, pass mask **0x00FF**, OK flags 0x00FF, fault 0, retries 3 — **phase 0x40 passed, so the output came ON (class 0x33/0x66 within 30 ms)**, then 0x80 and 0x100 saw it off again;
+  - sequencer 0x2E '.' (H4 held ✓), `s_fsm_req_held` 0x23, module 11 = 0x0F, module 7 = 0, class 22 at rest, status[0] 1, seq2 11/22, output node 2937 mV, supply 13 349 mV;
+  - pin-cut mode 0x94153 = **0x33** (was 0x11), flags 0x94151 = 0x20 — the ladder's completion re-arms the periodic cut test [I; not in the prediction].
+- **The 0x9020 window [O `s_w9020`]:** 15 launches / 15 completions, from **+532.199 ms** (phase 8, as r02s) to **+577.495 ms**. 15 = 5 ticks × J2/F/F2: the phase-8 tick, then 4 ticks in phases 0x40/0x80 — exactly the host model's F106–F109. First reply `AA00 AA00`. J2 TX 9000 on every read since; letters 0 (prediction [high] ✓).
+- **Current [O]:** power-on inrush 443 mA peak, then flat ~180–185 mA. Around +0.55 s after power-on: mean 176 mA, max 202 mA — **no visible step**. Consistent with the rail closing for ~20 ms with no load driven; the logger's 0.2 s bins cannot resolve 20 ms of tens of mA.
+- **FSM 'E' at level 0** (prediction [I ~55 %] ✓):
+  - FSM 0x95010 = **0x45** with complement 0xBA, 'E' sub-state 0x95011 = 0x1E, era 0x93848 = **0x1838**, target **0**;
+  - reported/expected level **0/1, 1/0, 0/2** (0↔1, once 2), attention 0x00, last context 0x93B97 = 07 (once 0x19), walk flags 0x40;
+  - 0x14 = **C7** and gate 1 on every read — the stock driving state's value.
+- **DEVIATION from the stock and from the host model [O]:** previous state 0x93B93 = **0x34**, 0x93B99 = 1. The stock driving dump has 0x93B93 = **0x23** (letters_law_decode §… / line 398), and the host model went 0x23 → 'E' directly. Ours went 0x23 → 0x34 → 'E': in state 0x23 the walk budget (0x8D1BA() == 1) ran out before level 0 and the 0x1838 era were reached, and 0x8799C then brought it to 'E' at level 0 (its "previous 0x23" branch: 0x93B93 = 0x34, 0x93B99 = 1, stage 0x1838). Same end state, different route. Cause [I]: the level descent from ~5 to 0 under 0x8D020 was slower than the stock's budget allows (walk polled fallback ~22/s, or the chip's response at levels 5 → 0). The 0x34 path also sets the lamp bits 0x94F84 |= 0x800, which are not ported (D-L3-2).
+- **Everything else clean:** boots = 1 (no restarts, prediction [I ~65 %] ✓), A8 77/00/00, AA 07/00/00, REQ/GRANT 01/01. Error counts 0 except **W2 = 5, static across all reads** (errors during the descent, not ongoing).
+- **What remains before the rail (L3b = release H4):**
+  1. Decode the 0x23 budget overrun (0x8D136(0) sets the budget; how many passes the stock's descent takes; our descent's tick-by-tick in the trace ring) — rule 2. Not a safety issue, but L3b's 'E' → 'L' runs on top of it.
+  2. The post-engagement mode-1 switch (module 7 → module 1 → module 2 → mode 1: batch/reply-proc/F to 10 ms, J2 staying at 5 ms; THE STOCK'S TASK RATES block) — the acknowledged L3b gap (`SUP_L3B_ON_TARGET`).
+  3. Then L3b: sequencer 'L' → seq2 '3' (4 ticks, output OFF) → 'U' → letter 'c', **0x9020 permanent**. Host model: 'U' 85 ms after ladder start. Current: the rail's quiescent draw only — no solenoid is driven.
