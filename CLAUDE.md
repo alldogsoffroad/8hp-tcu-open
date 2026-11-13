@@ -758,3 +758,12 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
   - **Stop conditions:**
     - any group-A DTR ≠ 0000, or PL3/PL5–PL8 reading 1 → stop;
     - a current step at boot → one of the newly-high pins drives a load: power off and report which (D3 revisited).
+
+**r03c BENCH RESULT (2026-11-13 16:59 install, blocks 0x40000 `b3257309b9021956` + 0x50000 `73b98a52b03b8fd8`, all 21 verifies OK; power-on ≈ 17:00 under the ammeter; witness 17:00:57–59 at uptime ~60 s `/tmp/witness_r03c.log`) — PREDICTION CONFIRMED REGISTER FOR REGISTER: TIMER E UP IN THE STOCK'S CONFIGURATION, NO CURRENT** [O]:
+- **TSTRE 0x3F; RLDCRE 00/00/06/0F/0C/07; TSRE 0F 0F 2F 0F 0F 2F; PSC/SST 01/0F in every subblock** — exactly the predicted table.
+  - CYLR: E0/E1 FFFF×4, E2 FFFF 07D0 07D0 FFFF, E3 07D0×4, E4 FFFF FFFF 07D0 07D0, E5 07D0 07D0 00C8 FFFF.
+  - **DTR: group A E30–E33 = 0000×4, E22 = 0000**; group B 0x0064; the writer-less channels FFFF.
+- **Pins:** PEPR 0x3FFF (bits 6–13 = 1 ✓); PDPR 0x317F (bits 3/5/6 = 1 ✓, 7/9/10/11 = 0 ✓); **PLPR 0x0013 (bit 4 = 1 ✓; PL3, PL5–PL8 = 0 ✓; PL2 = 0)**; ATUENR 0x03FF.
+- **Current:** inrush 438 mA, then ~190–195 mA flat — **no step** with Timer E running, the 12 writer-less pins high and the group-B chip pulses on (prediction [I ~80 %] ✓). D3 holds.
+- Everything else as r03b: 'c', 0x907D6 0x20, J2 9020, mode 1, C7; the request law at zero (`s_rq_ilock_n` 8 again — the '3' full-on refusals); bus A 5 888 cyclics, 0 slips; re-entries 0; job errors 0.
+- **Stage 0b done.** Every output stage the stock brings up before its first solenoid current now runs under open firmware, with group A at 0 % and every bus-A channel disabled. **What remains is D1:** the user's choice of first channel and setpoint. Then a build that lifts the SH request guard for exactly that channel and value (everything else stays compile-time 0), with the ammeter, and a stated prediction of the step (the decode's [D] estimate: ~+0.3 A at 8500 on one 5.5–7 Ω coil; 500 → ~50 mA).
