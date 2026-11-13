@@ -465,3 +465,16 @@ A human/AI pair produced this project (see CONTRIBUTORS.md). Early commits were 
   - [high] behaviour as r02t: ladder 0xAA / 0x00FF, FSM 'E', J2 9000, no restarts, no current step.
   - [I ~70 %] the overrun recurs (0x93B93 = 0x34) — same build path, same chip. The recorder then shows the entry into 0x23 with budget = 5 + L and the arm-by-arm level. The overrun is the arms after which `rep` does not fall.
   - **Readings:** if those arms carry poll+ > 0 → candidate 1 (late polled walks). If `w2err` climbs at them → candidate 2. If neither, and the level rises between arms at a rate ≥ the arm rate → the chip's own rise outpaces our descent cadence. Then the next step compares our arm cadence in 0x23 with the stock's: 2.5 ms monitor, 0x06 era 3.6 ms cycle.
+
+**r02u BENCH RESULT (2026-11-13 13:11 install, block 0x40000 sig `8c7f4640f776b1d6`, all 21 verifies OK; power-on ≈ 13:19:01 under the ammeter; witness 13:19:45–13:19:51 `/tmp/witness_r02u.log`) — THE OVERRUN DID NOT RECUR: THIS BOOT TOOK THE STOCK'S ROUTE 0x23 → 'E' (0x93B93 = 0x23)** [O]:
+- **Prediction refuted:** "the overrun recurs [I ~70 %]". Previous state 0x93B93 = **0x23**, the stock driving dump's value. Everything else as r02t: ladder 0xAA / pass 0x00FF / retries 3, 0x9020 window identical (15 launches, +532.198 → +577.495 ms), FSM 'E', era 0x1838, J2 9000, C7 / gate 1, boots = 1, no current step (inrush 357 mA, then ~185 mA; 187 mA mean / 213 max at +0.55 s).
+- **The descent, arm by arm [O recorder]:**
+  - 0x23 entered at ≈ +583 ms with budget 10 (= 3 + L + 2 at L ≈ 5).
+  - Six context-7 tokens, all armed, none busy, **one level each**: rep 6 → 5 → 4 → 3 → 2 → 1 → 0, at +583.1, 585.1, 588.1, 590.1, 593.1, 595.1 ms (~2.5 ms each, one per idle monitor pass). Budget 10 → 5, no polled walk, no W2 error.
+  - 'E' at **+598.1 ms**, 15 ms after 0x23 entry, with 5 units of budget left.
+  - **So the law and its cadence fit the budget.** r02t's overrun was intermittent: on one boot, ≥ L + 4 arms did not reach level 0, and it cannot be reconstructed.
+- **The 'E' state, first 120 ms [O]:** level 0↔1 (twice 0↔2) under contexts 0/7/0x19, one arm per ~5–10 ms, a polled walk now and then (poll+ 1–2). **At +718.1 ms the chip reported level 4 / expected 5 with attention 0x19**, and the rule resent (0x2A). The later witness reads show level 2/1, attention 0. **Errors appear in 'E', not in the descent:** W1 = 2, W2 = 6 by the witness (w2err 0 in every recorder entry to +718 ms).
+- **What this leaves [I]:**
+  1. The overrun is a rare event, cause unknown. A cheap rate estimate needs no flash: power-cycle r02u a few times and read the recorder each boot.
+  2. **The 'E' walk is not quiet:** level excursions up to 4 with attention 0x19, and W1/W2 error completions. The stock's 'E' level is undecoded (the dump is a torn read). L3b's permanent letter runs on top of 'E': sequencer 'L' needs FSM 'E' and 0x14 bit 1 = 1, and level ≥ 5 → 0x34. So the 'E' rule's behaviour on our chip is the next thing to understand, before L3b.
+- `s_wovf_count` (moved to 0xFFF9EBAC) reads 0x48: .noinit RAM at a new address, not a WDT count since this boot (flat).
