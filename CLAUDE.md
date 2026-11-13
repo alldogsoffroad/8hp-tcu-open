@@ -699,3 +699,26 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
   1. the request law (0x83DB0 gates incl. the 'U' and ≥ 7400 mV rail checks, 0x89540 letters, 0x901A0 setpoints = (I + 0x9090A)/6, the 0x85ED4 engaged-output monitor already ported) with all requests 0 — a no-current flash;
   2. Timer E stage 0b (TEE off → 0x97198 → duty zeroing → TEE on, the 11 pins high per D3);
   3. D1: the user's choice of first channel and setpoint.
+
+**THE STOCK SOLENOID REQUEST LAW, PORTED (2026-11-13; subagent, `~/tcu_sweep/request_law_port.md`; validated this session: sh2a + host 35/35, the SH request guard read in the source, FPU context saved in every ISR wrapper)** [O decode from the bytes]:
+- **What is ported:**
+  - `drv_reqlaw.c`: **0x83DB0** → `drv_rq_law()` — chip enable 0x8FD94 / cal 0x1918C1 = 0x1F, channel mask 0x00FF, the 'U' gate, clamp 0x2FFA, fault class (stand-in no-fault), the full-on tests (0x94115 / 0x94114 with masks), the rail-undervoltage law (flag 0x93978, release 7900 mV), the min-current law, outputs 0x94ED4 / F58 / FD8 / FA0 / 0x9397A / C;
+  - **0x89540** → `rq_letters()`;
+  - **0x901A0 / 0x90118** → `drv_rq_compose()` — the per-chip records 0xFFF91108 + 0x1C·c, setpoint (I + 0x9090A) × 0x3E2AAAAB truncated, dither, config bytes; the high-current rule and the 0x238 head check (counted);
+  - **0x924B0 / 0x92344** → `drv_stage_from_records()`. r02w's `drv_letter_code` is removed.
+- **CORRECTIONS:**
+  - 0x9090A is not a current correction: it is a rounding offset cycling 0 → 4 → 1 → 4 … each 0x901A0 pass (bytes 0x902A8, initial cal 0x1918BB = 0). The current correction is **0x837E0 → 0x9337C** (adaptive; dump 0 4 4 2 6 2 2).
+  - The rail-undervoltage law zeroes only requests ≤ 4000 (400 mA) below 7400 mV (the "→ full on" branch needs cal 0x190510 bit 1, never set).
+- **Dump reproduction [O host]:** with the dump's inputs, every law cell matches (modes, active flags, letters, currents, records +7 = 1A 1A 1A 12 15), all 40 config words, and **44 of 45 cyclic words**. Word 12 is ED89 vs the dump's ED8A; a channel-4 correction of 7 (cell holds 6) reproduces all 45, so the dump's staging was composed one correction step before its records [I].
+- **Safety frame:** on SH the request is a compile-time 0 (0xFFF94EE8 never read). `CELL_RQ_REQ` is pointer-to-const, the setter/injector are `_Static_assert(0)`, `-DDRV_RQ_REQUEST_SOURCE=1` is an `#error` — five ctest checks compile with sh-elf-gcc and must fail. The same-tick refresh now runs the law. The full-on interlock applies twice (law and compose; mutation-tested). FE10 still cannot drive anything.
+- **Stand-ins / not ported:** fault inputs no-fault; correction 0x837E0 = 0; dither 0; the diagnostics (0x8422E, 0x89F5C, 0x897AC, 0x8A788, 0x84644, 0x84392, 0x8493A); the 0x226/0x238 reports; the reduced-frequency / group-B tail; config bytes constant; the chip-ID harvest 0x921E0 (0x9091B stays 0 — **read `rx_drv_id` on the bench before porting it: ID 0xBD with a second byte < 0x10 would set mode bit 5**). Cadence kept at 10 ms + the same-tick refresh (stock F stage: 5 ms mode 0, 10 ms mode 1) — a stated deviation.
+
+**r03b = r03a + THE REQUEST LAW AT ZERO REQUESTS (2026-11-13; built, NOT flashed, `build/r03b_IFla.bin`, app CRC `844D650E`, blocks 0x40000 + 0x50000, app end 0x50BF0 incl. a `.data` load image; NOT committed at time of writing):**
+- **Wire at zero requests: identical to r03a.** The host compares all 45 cyclic + 40 config words with a verbatim copy of r03a's law over 32 768 input combinations, with no difference. Only timing changes: a few µs before the J2 stage per 5 ms tick, ~10–20 µs before each bus-A launch.
+- New NOLOAD sections `.drv_rq1` 0xFFF90230, `.drv_rq2` 0x90320, `.drv_rec` 0x91108, `.drv_rq3` 0x9337C, `.drv_rq4` 0x93978, `.drv_rq5` 0x93A12; witnesses `.drv_wit` 0xFFF84C40 (`s_rq_f238_n` 0x84C60, `s_rq_cguard_n` 0x84C64, `s_rq_ilock_n` 0x84C68). Moved: `s_rst` 0xFFF9EB68, `s_w9020` 0xEB88, `s_open` 0xEBCC, `s_trc` 0xE740, bus-A buffers (stage cyc 0xFFF95AA0). Witness `/tmp/witness_r03b.py` (remapped + an RQLAW line: modes 0x94FD8, letters 0x90812, currents 0x90230, records +7, the three counters). Install `/tmp/install_r03b.py`. `__noinit_end` 0xFFF9EFCC.
+- **PREDICTION (rule 1):**
+  - [high] **no current change**; everything as r03a — 'c', 0x9020, mode 1, bus A clean, chips at 0x10;
+  - [high] the law's cells at 'U' with zero requests: modes 0x94FD8 = 01 ×8 + 00 00 (ch 8/9 masked), letters 0x90812 = 00 ×8 + 32 32, currents 0, records +7 = 10 10 10 10 15; staged cyclic `8810 ×4 + 8815`, setpoints E800/F000; `s_rq_cguard_n` = 0, `s_rq_f238_n` = 0.
+  - **Refutations:**
+    - any nonzero current or setpoint word → stop;
+    - bus-A errors or bus-B re-entries returning → the added compose time disturbs timing.

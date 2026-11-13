@@ -11,6 +11,7 @@
 #include "bsw/com/crc8.h"
 #include "io/actuators/sol_ctl.h"
 #include "bsw/drv/drv_jobs.h"
+#include "bsw/drv/drv_cells.h"
 #include "io/vehicle/vehicle.h"
 #include "tests/unit/stub_plat.h"
 
@@ -168,6 +169,11 @@ int main(void)
         const uint16_t *cf = drv_job_tx(DRV_CFG);
         for (unsigned i = 0u; i < 45u; i++) {
             CHECK(cy[i] == CMD[i / 5u]);
+        }
+        /* r03b: FE10 is not a request source of the request law — the
+         * law's input 0xFFF94EE8 and its outputs stay 0 */
+        for (unsigned ch = 0u; ch < DRV_RQ_NCH; ch++) {
+            CHECK(CELL_RQ_REQ[ch] == 0u && CELL_RQ_CUR[ch] == 0u && CELL_RQ_I[ch] == 0u);
         }
         for (unsigned i = 0u; i < 5u; i++) {
             CHECK(cf[i] == 0x8E9Fu && cf[5u + i] == 0x9021u && cf[10u + i] == 0x9655u &&

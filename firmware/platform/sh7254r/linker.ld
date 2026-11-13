@@ -136,6 +136,25 @@ SECTIONS
     .sup_wit 0xFFF84C00 (NOLOAD) : {
         __sup_wit_start = .; *(.sup_wit) . = ALIGN(4); __sup_wit_end = .;
     } > RAM
+    ASSERT(__sup_wit_end <= 0xFFF84C40, ".sup_wit runs into .drv_wit")
+    /* r03b, the request law (drv_reqlaw.c; ~/tcu_sweep/request_law_port.md):
+     * the stock cells outside .sup_value / .sup_cells, cleared by
+     * drv_rq_init — 0x90230 currents + 0x90244 currents-as-sent, 0x90320
+     * dither, the per-chip driver records 0x91108 + 0x1C·c, 0x9337C
+     * corrections, 0x93978/7A/7C undervoltage / fault / full-on masks,
+     * 0x93A12 last correction */
+    .drv_rq1 0xFFF90230 (NOLOAD) : { . += 0x28; } > RAM   /* 0x90230..0x90257        */
+    .drv_rq2 0xFFF90320 (NOLOAD) : { . += 0x14; } > RAM   /* 0x90320..0x90333        */
+    .drv_rec 0xFFF91108 (NOLOAD) : { . += 0x8C; } > RAM   /* 0x91108..0x91193        */
+    .drv_rq3 0xFFF9337C (NOLOAD) : { . += 0x14; } > RAM   /* 0x9337C..0x9338F        */
+    .drv_rq4 0xFFF93978 (NOLOAD) : { . += 0x06; } > RAM   /* 0x93978..0x9397D        */
+    .drv_rq5 0xFFF93A12 (NOLOAD) : { . += 0x02; } > RAM   /* 0x93A12..0x93A13        */
+    /* our request-law witnesses and the refresh snapshot (not stock cells;
+     * free low RAM like .sup_wit, so they do not cost the stack guard) */
+    .drv_wit 0xFFF84C40 (NOLOAD) : {
+        __drv_wit_start = .; *(.drv_wit) . = ALIGN(4); __drv_wit_end = .;
+    } > RAM
+    ASSERT(__drv_wit_end <= 0xFFF84D00, ".drv_wit overflow")
 
     .sup_value 0xFFF94E5C (NOLOAD) : {     /* value cells .. 0x95010         */
         __sup_value_start = .; *(.sup_value) . += 0x1B8; __sup_value_end = .;

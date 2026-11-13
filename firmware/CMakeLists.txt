@@ -18,7 +18,7 @@ set(CORE_SOURCES
     bsw/sup/sup_letters.c
     bsw/sup/sup_ladder.c bsw/sup/sup_mode.c
     bsw/sup/sup_token.c
-    bsw/drv/drv_jobs.c
+    bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c
     bsw/drv/drv_handlers.c
     bsw/com/crc8.c
     bsw/com/com.c
@@ -179,7 +179,7 @@ else()
     add_executable(test_meas tests/unit/test_meas.c bsw/meas/meas.c tests/unit/stub_plat.c)
     add_test(NAME meas COMMAND test_meas)
     add_executable(test_com_tx tests/unit/test_com_tx.c bsw/com/com_tx.c bsw/com/sigpack.c
-        bsw/drv/drv_jobs.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c
     bsw/drv/drv_handlers.c
     bsw/com/crc8.c io/vehicle/fca_tx.c tests/unit/stub_plat.c)
     add_test(NAME com_tx COMMAND test_com_tx)
@@ -192,7 +192,7 @@ else()
     add_test(NAME sol COMMAND test_sol)
     add_executable(test_bench tests/unit/test_bench.c app/bench_out.c io/actuators/sol_ctl.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
-        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c bsw/sup/sup_token.c bsw/drv/drv_jobs.c bsw/drv/drv_handlers.c
+        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c bsw/sup/sup_token.c bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_handlers.c
         bsw/diag/uds.c bsw/diag/isotp.c bsw/diag/boot_record.c
         io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
         tests/unit/stub_plat.c)
@@ -201,13 +201,50 @@ else()
     add_executable(test_park tests/unit/test_park.c app/range.c app/park_ctl.c app/park.c
         app/bench_out.c bsw/diag/uds.c bsw/diag/isotp.c bsw/diag/boot_record.c
         safety/park_mon.c io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c
-        bsw/drv/drv_jobs.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c
     bsw/drv/drv_handlers.c
     bsw/com/crc8.c io/actuators/sol_ctl.c bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c
         bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
         tests/unit/stub_plat.c)
     target_compile_definitions(test_park PRIVATE PARK_TEST_HOOKS TCU_M4B_OUTPUTS)
     add_test(NAME park COMMAND test_park)
+    # r03b: the stock's solenoid request law (drv_reqlaw.c) — the driving
+    # dump reproduced, the zero-request content per seq2 state, the full-on
+    # tests and our interlock, the undervoltage / minimum-current laws, the
+    # 'U' gate, the same-tick refresh. Nonzero requests exist ONLY here.
+    add_executable(test_reqlaw tests/unit/test_reqlaw.c bsw/drv/drv_jobs.c
+        bsw/drv/drv_reqlaw.c bsw/drv/drv_handlers.c tests/unit/stub_plat.c)
+    add_test(NAME reqlaw COMMAND test_reqlaw)
+    # ... and the SH-only compile checks of the safety frame: with __sh__
+    # (the cross compiler when present, else the host one with -D__sh__)
+    # the control compiles, and every request source fails to compile
+    find_program(SH_ELF_GCC sh-elf-gcc PATHS $ENV{HOME}/opt/sh-elf/bin NO_DEFAULT_PATH)
+    if(SH_ELF_GCC)
+        set(RQ_SH_CC ${SH_ELF_GCC} -m2a -mb -std=c11 -ffreestanding)
+    else()
+        set(RQ_SH_CC ${CMAKE_C_COMPILER} -std=c11 -D__sh__=1)
+    endif()
+    set(RQ_SH_ARGS -fsyntax-only -Werror -I${CMAKE_SOURCE_DIR} -I${CMAKE_SOURCE_DIR}/include)
+    add_test(NAME rq_sh_guard_control
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard.c)
+    add_test(NAME rq_sh_guard_setter
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_SETTER ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard.c)
+    add_test(NAME rq_sh_guard_cell
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_CELL ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard.c)
+    add_test(NAME rq_sh_guard_inject
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_INJECT ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard.c)
+    add_test(NAME rq_sh_guard_source
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard_source.c)
+    # a refusal passes only when the compiler fails WITH the frame's reason
+    # (not on some unrelated error): the regex is the diagnostic, and the
+    # exit code must be nonzero (WILL_FAIL with FAIL_REGULAR_EXPRESSION
+    # would accept any failure)
+    set_tests_properties(rq_sh_guard_setter rq_sh_guard_inject PROPERTIES
+        PASS_REGULAR_EXPRESSION "no solenoid request source on SH builds")
+    set_tests_properties(rq_sh_guard_source PROPERTIES
+        PASS_REGULAR_EXPRESSION "solenoid request source is refused on SH builds")
+    set_tests_properties(rq_sh_guard_cell PROPERTIES
+        PASS_REGULAR_EXPRESSION "read-only")
     add_executable(test_dump tests/unit/test_dump.c app/bench_dump.c tests/unit/stub_plat.c)
     add_executable(transcript tests/unit/transcript.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c

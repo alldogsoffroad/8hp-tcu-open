@@ -6,6 +6,8 @@
  * the same table and queue through the same one-in-flight path.
  */
 #include "bsw/drv/drv_jobs.h"
+#include "bsw/drv/drv_cells.h"
+#include "bsw/drv/drv_reqlaw.h"
 #include "bsw/sup/sup_cells.h"
 #include <stdbool.h>
 #include "bsw/sup/sup_jobs.h"
@@ -87,80 +89,72 @@ static const struct {
 /* per-job in-flight flags (drv_handlers.c clears them: ISR-context release) */
 volatile uint8_t s_drv_in_flight[4];
 
-/* THE CYCLIC (stock 0x924B0, template 0x40D0C).
+/* THE CYCLIC (stock 0x924B0, template 0x40D0C) and THE CONFIG JOB (stock
+ * 0x92344, template 0x40AD8), staged from the per-chip driver records
+ * 0xFFF91108 + 0x1C·c that 0x901A0 composes (drv_reqlaw.c).
  * COMMAND-MAJOR: the engine sends frame i to SSLA[SEL_A5[i mod 5]], so the
- * 45 frames are 9 commands x 5 chips: 88|mode x5, A0|dith0 x5, E8|sp0 x5,
- * A6|dith1 x5, F0|sp1 x5, then the reads 60, C0, 66, D8 x5 (driving dump
- * 0xFFF88518: 881A 881A 881A 8812 8815 | A000x5 | E853 ED89 ED8A E853 E800
- * | A600x5 | F589 F589 F053 F000 F000 | ...).
+ * 45 frames are 9 commands x 5 chips: 88|rec+7 x5, A0|rec+0x10 x5,
+ * E8|rec+0xC x5, A6|rec+0x18 x5, F0|rec+0x14 x5, then the reads 60, C0,
+ * 66, D8 x5 (driving dump 0xFFF88518: 881A 881A 881A 8812 8815 | A000x5 |
+ * E853 ED89 ED8A E853 E800 | A600x5 | F589 F589 F053 F000 F000 | ...);
+ * the config rows 8E|rec+9, 90|rec+0xA, 96|rec+0xB, 88|rec+7 x5, reads
+ * 28, 30, 2E, 36 x5.
  *
- * r02w: THE ZERO-REQUEST LETTER LAW (0x83DB0 → 0x89540 → 0x901A0), every
- * request 0 (the application's demands are not ported; callers ignored):
- *   ch 0..7 (chip ch/2; cal 0x19154C = 0x00FF), chip 4 (ch 8/9) → '2'.
- *   seq2[0] in {0x11, 0x16, '3'}: mode 4 (FULL ON) when 0x94115 & 1, or
- *     0x94114 & 1 with seq2[0] in {0x11, 0x16} (masks 0x191550 / 0x19154E =
- *     0x3FF) — the stock's rail-off full-on tests (ladder phase 0x10, the
- *     '3' diagnosis) — else mode 0;
- *   any other seq2 state ('U' included): I = 0, no channel fault → mode 1.
- *   0x89540: mode 1 → letter 0, 4 → 'C', other → '2'.
- *   0x901A0 +7: 0x10 | code(ch0) | code(ch1) << 2, '2' → 1, 'C' → 3,
- *     '!' → 2, 0 → 0; setpoint 'C' → (0x2FFA + 0x9090A) / 6 = 0x7FF [I:
- *     0x9090A taken as 0], else 0.
- * So: pre-'U' 8815 (stage 0a), the tests 881F with E/F 7FF, after 'U'
- * 8810 on chips 0-3 (8815 on the empty chip 4). Deviation: our cyclic runs
- * at 10 ms (stock 5 ms), so a 5 ms test window may be missed. No channel
- * fault model (0x84040 / 0x93A42 taken as 0). */
-static uint8_t drv_letter_code(uint8_t ch)
+ * r03b: THE REQUEST LAW (0x83DB0 → 0x89540 → 0x901A0 → 0x924B0/0x92344),
+ * ported 1:1 in drv_reqlaw.c, replaces r02w's zero-request letter shortcut
+ * (drv_letter_code). On SH every request is a compile-time 0 (the safety
+ * frame, drv_reqlaw.h), so the staged content is the stock's at zero
+ * requests: pre-'U' (seq2 0x11/0x16/'3') 8815, after 'U' 8810 on chips
+ * 0-3 (chip 4: 8815), the rail-off full-on tests 881F / EFFF / F7FF under
+ * our interlock (full-on only while the staged J2 word is 0x9000 and both
+ * request cells are 0). The callers' setpoints (sol_set / FE10) are
+ * ignored, as before. Deviation: our cyclic + config run at 10 ms plus the
+ * same-tick refresh (stock F stage: 5 ms in mode 0, 10 ms in mode 1). */
+static void drv_stage_from_records(void)
 {
-    const uint8_t s = CELL_SEQ2_STATE[0];
-
-    if (ch >= 8u) {
-        return 1u;                                   /* '2' */
-    }
-    if (s == 0x11u || s == 0x16u || s == (uint8_t)'3') {
-        const bool full = ((CELL_DIAG_94115 & 1u) != 0u) ||
-                          ((CELL_LAD_94114 & 1u) != 0u && (s == 0x11u || s == 0x16u));
-        /* SAFETY INTERLOCK (ours, not stock): full-on only while no rail
-         * request is up and the staged 0x90 word is 0x9000 — the stock
-         * gets this from same-tick ordering; our cyclic is not on that tick */
-        const bool rail_quiet = CELL_J2_STAGED == 0x9000u &&
-                                CELL_LAD_REQ[0] == 0u && CELL_LAD_REQ[1] == 0u;
-        return (full && rail_quiet) ? 3u : 1u;       /* 'C' : '2' */
-    }
-    return 0u;                                       /* mode 1 → letter 0 */
-}
-
-void drv_cyclic_build(const uint16_t *setpoints, uint8_t n_ch)
-{
-    (void)setpoints;
-    (void)n_ch;
     for (uint8_t chip = 0u; chip < 5u; chip++) {
-        const uint8_t c0 = drv_letter_code((uint8_t)(chip * 2u));
-        const uint8_t c1 = drv_letter_code((uint8_t)(chip * 2u + 1u));
-        const uint16_t sp0 = (c0 == 3u) ? 0x7FFu : 0u;
-        const uint16_t sp1 = (c1 == 3u) ? 0x7FFu : 0u;
-        stage_drv_cyc[0u + chip]  = (uint16_t)(0x8800u | 0x10u | c0 | (uint16_t)(c1 << 2));
-        stage_drv_cyc[5u + chip]  = 0xA000u;
-        stage_drv_cyc[10u + chip] = (uint16_t)(0xE800u | sp0);
-        stage_drv_cyc[15u + chip] = 0xA600u;
-        stage_drv_cyc[20u + chip] = (uint16_t)(0xF000u | sp1);
+        stage_drv_cyc[0u + chip]  = (uint16_t)(0x8800u | CELL_REC_U8(chip, REC_MODE));
+        stage_drv_cyc[5u + chip]  = (uint16_t)(0xA000u | CELL_REC_U8(chip, REC_DITH0));
+        stage_drv_cyc[10u + chip] = (uint16_t)(0xE800u | CELL_REC_U16(chip, REC_SP0));
+        stage_drv_cyc[15u + chip] = (uint16_t)(0xA600u | CELL_REC_U8(chip, REC_DITH1));
+        stage_drv_cyc[20u + chip] = (uint16_t)(0xF000u | CELL_REC_U16(chip, REC_SP1));
         stage_drv_cyc[25u + chip] = 0x6000u;
         stage_drv_cyc[30u + chip] = 0xC000u;
         stage_drv_cyc[35u + chip] = 0x6600u;
         stage_drv_cyc[40u + chip] = 0xD800u;
-    }
-    /* the config job's 0x88 row carries the same mode bytes (0x92344) */
-    for (uint8_t chip = 0u; chip < 5u; chip++) {
-        stage_drv_cfg[15u + chip] = stage_drv_cyc[chip];
+        /* 0x92344: the config rows from the same record */
+        stage_drv_cfg[0u + chip]  = (uint16_t)(0x8E00u | CELL_REC_U8(chip, REC_CFG8E));
+        stage_drv_cfg[5u + chip]  = (uint16_t)(0x9000u | CELL_REC_U8(chip, REC_CFG90));
+        stage_drv_cfg[10u + chip] = (uint16_t)(0x9600u | CELL_REC_U8(chip, REC_CFG96));
+        stage_drv_cfg[15u + chip] = (uint16_t)(0x8800u | CELL_REC_U8(chip, REC_MODE));
     }
 }
 
+/* the law (0x83DB0, idempotent on its inputs) and the composition
+ * (0x901A0), then the staging; the setpoint arguments are ignored */
+void drv_cyclic_build(const uint16_t *setpoints, uint8_t n_ch)
+{
+    (void)setpoints;
+    (void)n_ch;
+    drv_rq_law();
+    drv_rq_compose();
+    drv_stage_from_records();
+}
+
 /* r02w: the same-tick refresh. Called from the 5 ms supervisor tick right
- * after seq2 (sup_batch.c, weak hook): when the letter law's mode bytes
- * differ from the last cyclic sent, build and send it NOW (or on the next
- * tick if bus A is busy), so the chips follow seq2 within one tick as the
- * stock's 0x83DB0 → 0x901A0 → 0x924B0 do — not up to 10 ms later. */
-static uint16_t s_drv_sent_modes[5];
+ * after seq2 (sup_batch.c, weak hook) — the stock's 0x83DB0 slot (5 ms
+ * entry 0x7CC1E, right after seq2 0x7CC56). r03b: it runs the request law
+ * and, when the letters or currents differ from the last cyclic sent,
+ * sends a new cyclic NOW (or on the next tick if bus A is busy), so the
+ * chips follow seq2 within one tick as the stock's 0x83DB0 → 0x901A0 →
+ * 0x924B0 do. Snapshot in .drv_wit (not .bss: the stack guard). */
+#if defined(__sh__)
+#define DRV_WIT __attribute__((section(".drv_wit")))
+#else
+#define DRV_WIT
+#endif
+static uint8_t s_drv_sent_let[DRV_RQ_NCH] DRV_WIT;
+static uint16_t s_drv_sent_cur[DRV_RQ_NCH] DRV_WIT;
 static uint8_t s_drv_refresh_pending;
 volatile uint32_t s_drv_refresh_n;      /* witness: event-driven cyclics sent */
 
@@ -193,8 +187,9 @@ static bool drv_cyclic_send(void)
     if (!drv_job_queue(DRV_CYC)) {
         return false;
     }
-    for (uint8_t c = 0u; c < 5u; c++) {
-        s_drv_sent_modes[c] = stage_drv_cyc[c];
+    for (uint8_t ch = 0u; ch < DRV_RQ_NCH; ch++) {
+        s_drv_sent_let[ch] = CELL_RQ_LETTER[ch];
+        s_drv_sent_cur[ch] = CELL_RQ_CUR[ch];
     }
     return true;
 }
@@ -202,10 +197,10 @@ static bool drv_cyclic_send(void)
 void drv_letter_refresh(void)
 {
     bool differ = false;
-    for (uint8_t c = 0u; c < 5u; c++) {
-        const uint16_t m = (uint16_t)(0x8810u | drv_letter_code((uint8_t)(c * 2u)) |
-                                      (uint16_t)(drv_letter_code((uint8_t)(c * 2u + 1u)) << 2));
-        if (m != s_drv_sent_modes[c]) {
+    drv_rq_law();                       /* 0x83DB0 (+ 0x89540) this tick */
+    for (uint8_t ch = 0u; ch < DRV_RQ_NCH; ch++) {
+        if (CELL_RQ_LETTER[ch] != s_drv_sent_let[ch] ||
+            CELL_RQ_CUR[ch] != s_drv_sent_cur[ch]) {
             differ = true;
         }
     }
@@ -273,4 +268,7 @@ void drv_jobs_init(void)
     memset(s_drv_in_flight, 0, sizeof s_drv_in_flight);
     memset(stage_drv_cyc, 0, sizeof stage_drv_cyc);
     memcpy(stage_drv_cfg, TMPL_DRV_CFG, sizeof TMPL_DRV_CFG);   /* r02v: sent every pass */
+    memset(s_drv_sent_let, 0, sizeof s_drv_sent_let);          /* NOLOAD on SH */
+    memset(s_drv_sent_cur, 0, sizeof s_drv_sent_cur);
+    drv_rq_init();                      /* 0x90010's part: letters '2', 0x9090A, cfg bytes */
 }
