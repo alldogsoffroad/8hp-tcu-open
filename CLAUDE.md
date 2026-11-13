@@ -671,3 +671,12 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
   - [high] errors, reaps and slips stay 0, per-job errors 0;
   - supervisor as r02y, current flat.
   - **Refutation:** re-entries still ~9/s → the read-back is not the whole mechanism; the other suspect is the 36-instruction path from the clear to `rte` (the ADMATE0 write at entry is another flag clear without a read-back).
+
+**r02z BENCH RESULT (2026-11-13 15:50 install, blocks 0x40000 `4620d8aa2d4397a9` + 0x50000 `fc8122d4b8c329eb`, all 21 verifies OK; power-on ≈ 15:53:45 under the ammeter; witness 15:54:52–56 at uptime ~66 s `/tmp/witness_r02z.log`) — PREDICTION CONFIRMED: THE DUMMY READ ENDS THE RE-ENTRIES** [O]:
+- **Re-entries 0 on both buses** (r02y: ~9/s A, ~0.4/s B); **minimum entry gap 14 µs on both** (r02y: 4/5 µs) — one frame or more, as predicted; max 71/59 µs. OVRF 0.
+- Bus A: retries 0, errors 0, reaps 0, **6 504 cyclics, 0 slips**. Per-job errors all 0.
+- Supervisor as r02y ('c', J2 9020, mode 1, rail node 13 336 mV, C7); current ~185 mA flat (inrush 433 mA).
+- **Settled [O]:** the RSPI interrupt re-entry after a flag clear with no read-back (manual §8.10.1) caused every bus-A error/stall of r02v–r02x. The read-back removes it at the source; the entry guard stays as a belt-and-braces check (and its counter as a witness).
+- **Next:**
+  1. A flash lifting the r02q bus-B mux hold (`plat_adcmux_mux_hold/release` → no-ops, G1/G2 run free). It tests whether the r02k–n bus-B corruption/deaths were this same re-entry mechanism [I ~55 %]. If clean, the stock's free-running mux stepping is restored and the slot-mapping question of r02p disappears.
+  2. Then the request law and Timer E stage 0b, toward the D1 decision.
