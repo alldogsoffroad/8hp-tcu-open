@@ -584,3 +584,13 @@ A human/AI pair produced this project (see CONTRIBUTORS.md). Early commits were 
     - seq2 cycling 'U' ↔ '4' → the engaged-output monitor 0x85E82 (output not within 1500 mV of supply — read mux 8 vs supply);
     - mode stays 0 with module 7 = 0x0F → the switch chain;
     - restarts → the mode-1 schedule on our CPU-fed bus (read the trace ring).
+
+**r02w BENCH RESULT (2026-11-13 14:24 install, block 0x40000 sig `18c7498e127e4a1b`; boots 14:25 and 14:39 under the ammeter, CAN log `/tmp/rawcan_r02w.log`) — CRASH LOOP: AN IMAGE-BUILD DEFECT, NOT THE L3b CODE** [O]:
+- **Symptoms:**
+  - no measurement reply, no heartbeat; CAN carries only 0x7F5 exception frames `DEAD 001F EDFA 0000` (faulting PC 0x001FEDFA, SR bits 15:0 = 00xx), repeating every ~113 ms — a crash → WDT reset → crash loop;
+  - current a flat ~168 mA from the first 0.2 s (r02v: ~183 mA) — the app crashed at once on every boot;
+  - no current step, no load driven.
+- **Cause [O]:** r02w's `.text` grew to **0x50284** (66 332 bytes of text from 0x40870), past the 64 KB block at 0x40000. `tools/build_image.py --gap-keep-above 0x50000` UNCONDITIONALLY replaced every byte from 0x50000 with the stock reference, and only block 0x40000 was installed. So our const tail at 0x500E4–0x50284 ran from stock bytes. That tail held `s_tp_cfg`, **`s_tasks` (the scheduler's task table, 0x500FC)**, `s_ipr_map`, `s_uds_app`, `s_sensors_cfg` and `__clz_tab`. The scheduler took a stock calibration-pointer word (0x001FEDFA at 0x50100, a pointer table into cal) as a task function and executed calibration data. r02v and earlier fit below 0x50000 (r02v ran).
+- **Fix (tool):** `build_image.py` now never overwrites application bytes. It keeps reference bytes only from max(`--gap-keep-above`, app end rounded to 0x100) and prints a loud line naming the block the install must now write. Rebuilt r02w (same app, same ELF): **app CRC `FE3535E0`**, image blocks 0x40000 **and 0x50000** differ from r02v. Every header/vector/.text byte matches the ELF except the header CRC (0x40044) and the stock-ident pointer (0x40075). `s_tasks` now reads 0x0004DAA4…
+- **Install:** `/tmp/r02w_sigs.json` sets 0x40000 AND 0x50000 to None (force-write). Block 0x50000 otherwise holds stock bytes, unused by our app, and is rewritten as such.
+- **Lesson:** a growing app must be checked against the image layout on every build: block list vs previous, app end address. **The r02w prediction stands as written** — the L3b code never ran.

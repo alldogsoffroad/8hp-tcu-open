@@ -136,11 +136,25 @@ def main():
     if a.gap_keep_above is not None:
         if not APP_START <= a.gap_keep_above < MARKER1:
             fail(f"--gap-keep-above {a.gap_keep_above:#x} outside the application block")
-        img[a.gap_keep_above:APP_END] = ref[a.gap_keep_above:APP_END]
+        # NEVER overwrite application bytes (2026-11-13: r02w's .text ran to
+        # 0x50284 and the old unconditional copy replaced its const tail —
+        # the scheduler's task table s_tasks included — with stock bytes;
+        # the app jumped to a stock calibration pointer and hung)
+        # the code/data extent: the last non-0xFF byte below the tail record
+        # (read_ihex pads to the highest record, which can be the tail)
+        body = app[:TAIL_START - APP_START].rstrip(b"\xff")
+        app_end = APP_START + len(body)
+        keep_from = max(a.gap_keep_above, (app_end + 0xFF) & ~0xFF)
+        if keep_from > a.gap_keep_above:
+            blk = a.gap_keep_above & ~0xFFFF
+            print(f"*** gap-keep: the application ends at {app_end:#x}, past {a.gap_keep_above:#x}: "
+                  f"reference bytes kept only from {keep_from:#x}; block {blk:#x} now differs from "
+                  f"the flash and MUST be written by the install (sig table entry = None) ***")
+        img[keep_from:APP_END] = ref[keep_from:APP_END]
         # the validity markers are content, not gap: keep them as composed above
         img[MARKER1:MARKER1 + MARKER_LEN] = b"\x00" * MARKER_LEN
         img[MARKER2:MARKER2 + MARKER_LEN] = b"\xff" * MARKER_LEN
-        print(f"gap-keep: reference bytes kept from {a.gap_keep_above:#x} to {APP_END:#x}")
+        print(f"gap-keep: reference bytes kept from {keep_from:#x} to {APP_END:#x}")
 
     if u32(img, APP_START) != 0x876543C1:
         fail("application header magic missing (is --app the block starting at 0x40000?)")
