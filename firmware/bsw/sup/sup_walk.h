@@ -40,15 +40,20 @@ enum {
     SUP_SUB_ATTENTION    = 0x2A,   /* echo mismatch → bump-and-resend      */
 };
 
-/* outer FSM states (cell 0xFFF95010) */
+/* outer FSM states (cell 0xFFF95010, complement 0xFFF94E88; 0x873F0) */
 enum {
-    SUP_FSM_BOOT     = 0x00,   /* stage the 0x06 era                       */
-    SUP_FSM_SUPERVISE= 0x08,   /* mode_transition_supervise (target >= 5)  */
-    SUP_FSM_REARM    = 0x12,   /* re-arm target 5                          */
-    SUP_FSM_DUTY     = 0x23,   /* the DUTY era (token, drag to 0)          */
-    SUP_FSM_PROCEED  = 0x45,   /* proceed gate: level >= 5                 */
-    SUP_FSM_ADVANCE  = 0x34,   /* fault_state_advance / steady supervision */
+    SUP_FSM_BOOT     = 0x00,   /* stage the 0x06 era, target 5, → 8          */
+    SUP_FSM_SUPERVISE= 0x08,   /* the 0x8D020 law (target from the ladder)  */
+    SUP_FSM_REARM    = 0x12,   /* entry: target 5; 0x8D020 (budget failure) */
+    SUP_FSM_DUTY     = 0x23,   /* entry: target 0; level 0 + era 0x1838 → 'E' */
+    SUP_FSM_PROCEED  = 0x45,   /* 'E': the 0x8CEDC rule; level >= 5 → 0x34  */
+    SUP_FSM_ADVANCE  = 0x34,   /* 0x8799C recovery back to 'E' at level 0   */
 };
+
+/* the FSM request (stock 0x87766): called only by the mode sequencer
+ * 0x85160 (sup_ladder.c) — 0x23 after the ladder's 0xAA, 0x12/0x23 on
+ * retry exhaustion. No-op while the FSM is 0 or already t. */
+void sup_monitor_request(uint8_t t);
 
 /* init (stock 0x6C12C): value pair 0x3F/0xC0, period 0x3138, expected =
  * reported = 7, era counter 1, time base = now, boot flag = 1, walk

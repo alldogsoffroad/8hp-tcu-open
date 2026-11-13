@@ -148,7 +148,11 @@ void sup_batch_5ms(void)
      * mode sequencer 0x85160 at ladder end (sub 0xAA), on the supply abort
      * (0x40) and when its retry COUNT 0xFFF9414D (3) is exhausted
      * (ladder_blockers_decode.md; L1 ports 0x85160 — sup_ladder.c). Under
-     * the L1 hold module 11 stays 1, so we stay at 5 ms. */
+     * the L1 hold module 11 stays 1. From L3 the ladder completes and module
+     * 11 reads 0x0F, but module 7 (seq2, once ch0 resolves past '3') stays
+     * 0 on L3a / L3a-E, so the stock would not switch either; on L3b
+     * (letter 'c') it would — that switch is the part NOT PORTED, and the
+     * reason sup_ladder.c refuses L3b on SH without SUP_L3B_ON_TARGET. */
 
     /* THE POOL ORDER, 1:1 for real (first500ms_diff §1 row 3; the transcript
      * tool caught the old order staging J6/J1 first with J3/J4 at the tail —

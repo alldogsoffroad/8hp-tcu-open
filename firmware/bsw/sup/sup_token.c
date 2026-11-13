@@ -9,7 +9,7 @@
  * Context law (0x6BF9C + 0x8CEDC): while the achieved level is 0 the duty
  * arms cycle contexts 0 → 7 → 0x19 and context 0x19 sends ~token; level != 0
  * → steady context 0x1E (plain token). Contexts live in the diverse pair
- * 0xFFF94FE7 / 0xFFF94E5F.
+ * 0xFFF94FE7 / 0xFFF94E5F. The rule itself is sup_walk.c e_rule() (L3).
  */
 #include "bsw/sup/sup_token.h"
 #include "bsw/sup/sup_cells.h"
@@ -24,12 +24,6 @@ static const uint32_t S_TOKEN_TABLE[16] = {
 };
 #define S_TOKEN_CONST 0xB32F8A6Au   /* the stock's fold constant */
 
-/* duty contexts */
-#define TOKEN_CTX_STEADY  0x1Eu     /* plain token (level != 0) */
-#define TOKEN_CTX_0       0x00u
-#define TOKEN_CTX_7       0x07u
-#define TOKEN_CTX_INV     0x19u     /* sends ~token */
-
 uint32_t sup_token_compute(uint8_t sel)
 {
     return ~(S_TOKEN_TABLE[sel & 0x0Fu] ^ 0xAAAAu ^ S_TOKEN_CONST);
@@ -40,32 +34,6 @@ void sup_token_stage(uint8_t sel)
     CELL_TOKEN_STAGED = sup_token_compute(sel);
 }
 
-uint8_t sup_token_context(void)
-{
-    uint8_t ctx = CELL_DUTY_CTX;
-
-    if (CELL_LVL_REPORTED != 0u) {
-        ctx = TOKEN_CTX_STEADY;                 /* level != 0: plain token */
-    } else {
-        /* dragging: cycle 0 → 7 → 0x19 → 0 ... (one step per call; the walk's
-         * era stepper calls this at the era cadence, so a full cycle spans
-         * three era dwells) */
-        switch (ctx) {
-        case TOKEN_CTX_STEADY:
-        case TOKEN_CTX_INV:
-        default:
-            ctx = TOKEN_CTX_0;
-            break;
-        case TOKEN_CTX_0:
-            ctx = TOKEN_CTX_7;
-            break;
-        case TOKEN_CTX_7:
-            ctx = TOKEN_CTX_INV;
-            break;
-        }
-    }
-    /* keep the diverse pair coherent */
-    CELL_DUTY_CTX      = ctx;
-    CELL_DUTY_CTX_COMPL = (uint8_t)~ctx;
-    return ctx;
-}
+/* (sup_token_context() removed in L3: it was never called, and its cycling
+ * — one step per call, no 0x1E interleave, no attention resend — was not
+ * 0x8CEDC. The stock's 'E' rule is ported in sup_walk.c e_rule().) */

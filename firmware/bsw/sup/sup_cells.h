@@ -272,6 +272,34 @@
 #define CELL_MUX13_ENV      CELL_L1_U16(0xFFF907F6u)
 #define CELL_MUX13_MIN      CELL_L1_U16(0xFFF907FCu)
 
+/* ── L3: the monitor FSM's post-8 states and the '3' switch-on diagnosis ──
+ * (sup_walk.c 0x873F0 / 0x87766 / 0x8799C / 0x8CEDC; sup_ladder.c 0x85FC4 /
+ * 0x86838 / 0x865E0 / 0x86586). Linker: .sup_value, .sup_fsm, .sup_l1a,
+ * .sup_l1c (extended to 0x939C7), .sup_l1f, .sup_cnt, and the new .sup_l3a
+ * (0x94958..0x9495F) / .sup_l3b (0x84A24..0x84A2B). */
+#define CELL_OUTER_FSM_C    CELL_L1_U8(0xFFF94E88u)             /* ~0x95010 (0x87766 / 0x873F0 pair) */
+#define CELL_BOOT_FLAG_C    CELL_L1_U8(0xFFF94E86u)             /* ~0x9500E (entry flag) */
+#define CELL_E_STATE        CELL_L1_U8(0xFFF95011u)             /* 0x8CEDC state 0x1E / 0 / 7 / 0x19 / 0x2A */
+#define CELL_E_STATE_C      CELL_L1_U8(0xFFF94E89u)
+#define CELL_E_LAST         CELL_L1_U8(0xFFF93B97u)             /* 0x8CEDC: last context armed */
+#define CELL_FSM_93B99      CELL_L1_U8(0xFFF93B99u)             /* 1 on entry to 'E' from 0x23 */
+/* the '3' diagnosis (0x85FC4): per channel a u16 pair at 0x93118 + 4ch —
+ * the tested fault bits (0x6C | 0x80 | 0x100) and the bits SEEN failing */
+#define CELL_DIAG_TEST(ch)  CELL_L1_U16(0xFFF93118u + 4u * (ch))
+#define CELL_DIAG_SEEN(ch)  CELL_L1_U16(0xFFF9311Au + 4u * (ch))
+#define CELL_DIAG_9495C     ((volatile uint16_t *)0xFFF9495Cu)  /* [2] tested mask (state 8) */
+#define CELL_DIAG_94958     ((volatile uint16_t *)0xFFF94958u)  /* [2] failed bits (state 8) */
+#define CELL_DIAG_SUB       ((volatile uint8_t *)0xFFF939C2u)   /* [2] 0x86838 sub-FSM 0..4 */
+#define CELL_DIAG_CLS       ((volatile uint8_t *)0xFFF939C4u)   /* [2] 0x86586 status 0/2/0x82 */
+#define CELL_CNT_DIAG       ((volatile uint8_t *)0xFFF947B4u)   /* [2] 0x86838 wait/timeout (5 ms) */
+#define CELL_DIAG_94115     CELL_L1_U8(0xFFF94115u)             /* per-ch bits (class-0x11 step) */
+#define CELL_DIAG_9411B     CELL_L1_U8(0xFFF9411Bu)             /* step 0 / 1 / 2 */
+#define CELL_DIAG_9411C     CELL_L1_U8(0xFFF9411Cu)             /* channel under test */
+#define CELL_DIAG_84A25     CELL_L1_U8(0xFFF84A25u)             /* per-ch bits (cal 0x1915A4 != 0) */
+#define CELL_DIAG_84A26     CELL_L1_U8(0xFFF84A26u)
+#define CELL_DIAG_84A27     CELL_L1_U8(0xFFF84A27u)
+#define CELL_DIAG_84A28     CELL_L1_U8(0xFFF84A28u)
+
 /* Clear every reserved cell range (the ranges the linker pins; NOT the
  * boot-record gates at 0xFFF800E8/0xFFF800EC, which survive resets by
  * design). Called first in the init bank, before any module init writes

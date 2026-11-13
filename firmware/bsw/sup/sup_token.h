@@ -26,10 +26,4 @@ uint32_t sup_token_compute(uint8_t sel);
  * runs in the monitor pass, the duty builder only reads the cell) */
 void sup_token_stage(uint8_t sel);
 
-/* duty-context step: level == 0 cycles 0 → 7 → 0x19 (one step per call);
- * level != 0 snaps to the steady context 0x1E. Writes the context pair
- * cells (0xFFF94FE7 / 0xFFF94E5F) and returns the new context. Called from
- * the walk's duty programmer (task context) at the era cadence. */
-uint8_t sup_token_context(void);
-
 #endif /* TCU_SUP_TOKEN_H */

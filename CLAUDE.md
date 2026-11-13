@@ -390,3 +390,39 @@ A human/AI pair produced this project (see CONTRIBUTORS.md). Early commits were 
 - **Current:** inrush 448 mA peak at power-on, then a flat ~185 mA idle. In the 0.2 s bins around +0.5 s after power-on: mean 187 mA, max 209 mA — no step.
 - **The conversation is as clean as r02r:** C7 and gate 1 on every read, level 3↔4 at target 3, A8 77/00/00, AA 07/00/00, every per-job error count 0, REQ/GRANT 01/01, J2 TX back to 9000, FSM 08. Walk polled fallback ~28/s (r02r ~14/s; harmless, as before).
 - **What remains before the rail — L3:** release H2/H3. Phase 0x40 asks for the output ON and must see class 0x33 within 30 ms (the first rail-on — a current rise), then 0x80 (target 5, output off, request 0, target 0) and 0x100 (off) → pass mask 0xFF, sub 0xAA. Then the sequencer's 0x87766(0x23) → FSM 0x23 → level 0 → 'E', and seq2 'U' → letter 'c' → 0x9020 for good: **the engaged rail**. Ports needed first (decoded P3/P4, not ported): FSM states 0x23/'E'/0x12/0x34 + 0x87766 + 0x8799C + the 0x8CEDC 'E' walk rule (with the caller's `~tok` inversion), and the '3' diagnosis 0x85FC4/0x86838/0x865E0 (0x6F594 stand-in = 1). The '3' → 'U' path also needs supply not low, 0x7BBB4 clear, and the demand 0x94FCA[0] ≠ 0 (stand-in 1).
+
+**r02t = L3a-E: THE LADDER RUNS TO 0xAA, THE FSM GOES 0x23 → 'E', THE SEQUENCER IS HELD AT '.' (2026-11-13; built, NOT flashed, `build/r02t_IFla.bin`, app CRC `B74BB814`, one block vs r02s; NOT committed at time of writing)** — subagent port (`~/tcu_sweep/l3_port.md`), validated this session (sh2a builds, host 27/27 incl. the new `ladder_l3a`, `ladder_l3b`, `ladder_l3a_e`; staging and guards read in the source; 0x873F0's 0x23 → 0x45 branch read in the decompile):
+- **Ported:**
+  - sup_walk: 0x87766 (`sup_monitor_request`), monitor FSM states 0x12/0x23/'E'(0x45)/0x34 and the "other" recovery in 0x873F0 (FSM now a value/complement pair 0x95010/0x94E88), 0x8799C, the 0x8CEDC 'E' walk rule (contexts 0 → 7 → 0x19 at level 0, ~tok for 0x19, 0x2A resend on attention 7, 0x1E above level 0).
+  - sup_ladder: the '3' diagnosis 0x85FC4/0x86838/0x865E0/0x86586 (0x6F594 stand-in = 1), and **the engaged-output monitor 0x85ED4 → 0x86628 → 0x85E82**. That writer of 0x947B2 was missing from the decodes: it is not DTC-only from 'U' on — on a fault it drops the letter for 360 ms.
+  - Phases 0x40/0x80/0x100 and the sequencer '.'/'L' branches re-checked against the bytes.
+  - New linker reservations `.sup_l3a` 0xFFF94958, `.sup_l3b` 0xFFF84A24. .bss/.noinit unchanged from r02s; the loader is unchanged.
+- **Staging (`sup_ladder.h`):** H1 phase-8 request, H2 phase-0x40 park, H3 the 0x87766 calls, **H4 new — the sequencer's '.' → 'L' step**. Target default for r02t = **L3a-E: H1, H2, H3 released, H4 held.**
+  - **L3a-E rather than the specified L3a [O 0x873F0]:** with H3 held, the FSM would sit in 8 at phase 0x80's target 0, and the 0x8D020 law would arm context-0x1E tokens at level 0 forever. The stock never holds that state: state 0x23 goes to 'E' on the pass where 0x8D108(0) holds and 0x6C48C(0x1838, 0xE7C7, 2) == 0. L3a-E runs the stock's own post-ladder walk; only the permanent letter is held.
+  - L3b (H4 released too) compiles on SH only with `-DSUP_L3B_ON_TARGET`, which acknowledges that the post-engagement mode-1 batch split is not ported. FE13 sub 16 is still refused.
+- **Host timeline (5 ms ticks, F100 = ladder start ≈ app 0.52 s; plant: rail on 1 tick after 0x9020 at level ≤ 4):**
+  - F101: the phase-8 frame (as r02s).
+  - F106: phase 0x40 request.
+  - F107: rail on → phase 0x80, target 5.
+  - F110: phase 0x80 passes (request 0, target 0) → 0x100 → 0xAA, 50 ms after start.
+  - F113: FSM 0x23 → 'E', era 0x1838.
+
+  0x9020 rides F106–F109 (4 ticks, 20 ms), one more tick per tick of rail lag, then 9000 for good. Never-on case: 0xF2 after 30 ms, 3 retries, at most 8 windows of ≤ 7 ticks, then 9000 for good with the strip latch set.
+- **Wire-visible vs r02s:**
+  - the 0x9020 window in phases 0x40/0x80 — **the first rail-on (current-moving)**;
+  - target 5 → 0 and level → 0 under the 'E' rule in the 0x1838 era, with the 'E' contexts 0/7/0x19 on the walk — new to our wire. The chip's response to them is undecoded; the driving dump's walk cells are a torn live read.
+- **Current [I]:** no solenoid is driven (bus-A setpoints 0, Timer E untouched). The stock's 1.773 A = rail closed + driver currents (~855 mA each) + keep-warm setpoints [corpus]. Expect at most a brief step of the rail's own draw (tens of mA) during the ~20 ms window — maybe visible only as a 0.2 s-bin max. **A step toward amps means something drives a load: power off.**
+- Witness `/tmp/witness_r02t.py` (r02s's + an L3 line: FSM/entry/'E' 0x95010..12, complement 0x94E88, prev..0x93B99, era 0x93848, 0x947B0..B5, '3' sub-FSM 0x939C2, OK flags 0x93A86, `s_w9020[1]` counts). Install `/tmp/install_r02t.py` (sigs `/tmp/r02t_sigs.json`, 0x40000 = None).
+- **PREDICTION (rule 1), r02t:**
+  - [high] J2 TX 9000 on every read, letters 0 (0x90944 = 00, 0x907D6 = 00), sequencer 0x9500C = 0x2E '.', seq2[0] = 0x11.
+  - [I ~60 %] **the ladder completes:** phase word 0x0100, sub **0xAA**, pass mask **0x00FF**, OK flags 0x00FF, retries 3, module 11 = 0x0F, module 7 = 0, class 22 at rest, `s_fsm_req_held` = 0x23. `s_w9020[1]`: first at ≈ +0.532 s, last ≈ +0.55–0.60 s, about 3 + 3 × (4–6) launches.
+  - [I ~55 %] **FSM 'E' (0x45), previous 0x23, era 0x1838, target 0, level 0↔1**, with 0x14 C7 / gate 1. The level band is the model's guess.
+  - [I ~65 %] no restarts.
+  - **Refutations:**
+    - sub 0xF2 at phase 0x40 with failed class 0x939B4[0] = 22 → the rail never came on (the chip refused, or the output does not reach supply within 30 ms);
+    - 0xF2 at phase 0x80 with class 66 → it did not drop at level ≥ 5;
+    - 0xF6 → the 200 ms timeout;
+    - FSM stuck at 0x23 → level 0 or the 0x1838 era not reached;
+    - FSM 0x34 → level ≥ 5 in 'E';
+    - boots > 1 → a reset (read `s_w9020[0]` and the trace ring).
+  - Current as above; announce before power-on, ammeter on.

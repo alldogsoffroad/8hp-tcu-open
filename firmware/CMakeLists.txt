@@ -237,6 +237,36 @@ else()
         tests/unit/stub_plat.c)
     target_compile_definitions(test_ladder_l2 PRIVATE SUP_L1_HOLD_PHASE8_REQUEST=0)
     add_test(NAME ladder_l2 COMMAND test_ladder_l2)
+    # L3a (the target default): H1 + H2 released, H3 held — the ladder runs
+    # phases 0x40 / 0x80 / 0x100 to 0xAA against a plant model of the
+    # switched output; the 0x9020 window must sit in phases 0x40..0x80 and
+    # the wire return to 0x9000 for good (the FSM stays 8)
+    add_executable(test_ladder_l3a tests/unit/test_ladder.c
+        bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
+        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
+        tests/unit/stub_plat.c)
+    target_compile_definitions(test_ladder_l3a PRIVATE SUP_L1_HOLD_PHASE8_REQUEST=0
+        SUP_L1_HOLD_PHASE40=0 SUP_L1_HOLD_FAIL_FSM=1)
+    add_test(NAME ladder_l3a COMMAND test_ladder_l3a)
+    # L3b (not the target default): H3 released too — FSM 0x23 → 'E',
+    # sequencer 'L', seq2 '3' → 'U', letter 'c', 0x9020 for good; asserts the
+    # stock driving dump's end state
+    add_executable(test_ladder_l3b tests/unit/test_ladder.c
+        bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
+        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
+        tests/unit/stub_plat.c)
+    target_compile_definitions(test_ladder_l3b PRIVATE SUP_L1_HOLD_PHASE8_REQUEST=0
+        SUP_L1_HOLD_PHASE40=0 SUP_L1_HOLD_FAIL_FSM=0 SUP_L3_HOLD_SEQ_L=0)
+    add_test(NAME ladder_l3b COMMAND test_ladder_l3b)
+    # L3a-E (the recommended alternative to L3a): H3 released, H4 held — the
+    # stock's post-ladder walk 0x23 → 'E' without the permanent letter
+    add_executable(test_ladder_l3a_e tests/unit/test_ladder.c
+        bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
+        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
+        tests/unit/stub_plat.c)
+    target_compile_definitions(test_ladder_l3a_e PRIVATE SUP_L1_HOLD_PHASE8_REQUEST=0
+        SUP_L1_HOLD_PHASE40=0 SUP_L1_HOLD_FAIL_FSM=0 SUP_L3_HOLD_SEQ_L=1)
+    add_test(NAME ladder_l3a_e COMMAND test_ladder_l3a_e)
     # project flasher on the simulated flash controller (spec 16 section 7)
     set(FL_HOST_SOURCES flasher/fl_core.c flasher/fl_fcu.c tests/unit/fl_sim.c)
     add_executable(test_flasher tests/unit/test_flasher.c ${FL_HOST_SOURCES} app/flash_entry.c

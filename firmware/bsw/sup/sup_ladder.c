@@ -1,6 +1,6 @@
-/* sup_ladder.c — L1 (2026-11-13): the stock supervisor-chip self-test
- * ladder, ported 1:1 from the September image's bytes and HELD short of
- * any rail command.
+/* sup_ladder.c — L1..L3 (2026-11-13): the stock supervisor-chip self-test
+ * ladder, its sequencer, seq2 and the '3' switch-on diagnosis, ported 1:1
+ * from the September image's bytes, staged by compile-time holds.
  *
  * Decodes: ~/tcu_sweep/ladder_blockers_decode.md (P1-P4, §5 the L1 recipe),
  * letters_law_decode.md (the ladder / request / seq2 law), gate_bit1_decode.md
@@ -22,6 +22,9 @@
  *   0x8C250 / 0x8C2A4 channel checks, 0x85DAC → 0x8C6D4 voltage class
  *   0x85E64 request writer, 0x85600 / 0x85E00 group state writers
  *   0x85828 seq2 (0x8C7A8 = mon2_chan_enable in sup_letters.c)
+ *   0x85FC4 '3' diagnosis (+0x86838 class wait, 0x865E0 latch, 0x86586
+ *     status; 0x6F594 = S1); 0x85ED4 DTC diagnosis (+0x86628 output check,
+ *     0x85E82 'U' hold-off)
  *   0x85788 pin-cut driver (0x91E6C / 0x91E4E = plat_tioc_cut/restore,
  *     0x8C34C verdict)
  *
@@ -40,18 +43,35 @@
  *      no retry), so the cells hold the at-hold state for the witness.
  *   H3 SUP_L1_HOLD_FAIL_FSM — the sequencer's 0x87766 calls (0x23 after
  *      0xAA; 0x12/0x23 on retry exhaustion) are recorded in s_fsm_req_held
- *      and not made: the walk FSM stays 8 (its 0x23/'E'/0x34 states and the
- *      0x8CEDC 'E' rule are not ported). Every other cell write of the fail
- *      path runs (0x92094(1) strip latch, module 11 = 0x0F, groups → 0x22).
+ *      and not made: the walk FSM stays 8. Every other cell write of the
+ *      fail path runs (0x92094(1) strip latch, module 11 = 0x0F, groups →
+ *      0x22).
  * Because 0x85E64 is the request cells' only writer and only H1/H2's calls
- * ever pass 1, every request cell stays 0, seq2 (state 0x11) follows it
- * with enable 0, every letter stays 0 and the J2 word stays 0x9000 in
- * every reachable state (tests/unit/test_ladder.c drives them all).
+ * ever pass 1, with H1 and H2 held every request cell stays 0, seq2 (state
+ * 0x11) follows it with enable 0, every letter stays 0 and the J2 word
+ * stays 0x9000 in every reachable state (tests/unit/test_ladder.c).
+ *
+ * THE STAGES (2026-11-13, ~/tcu_sweep/l3_port.md):
+ *   L1  H1 H2 H3 held (r02r).  L2  H1 released (r02s).
+ *   L3a H1 H2 released, H3 held — THE TARGET DEFAULT: phases 0x40 (request
+ *       1, output ON within 30 ms), 0x80 (target 5, output must DROP with
+ *       the request still 1; request 0, target 0), 0x100 (class 0x22, mask
+ *       0xFF → 0xAA). The sequencer then waits in '.' (it needs FSM 'E',
+ *       which H3 withholds): no permanent letter, J2 0x9000 for good.
+ *   L3a-E  H3 released, H4 held (sup_ladder.h): the FSM runs the stock's
+ *       0x23 → 'E' walk after 0xAA, the sequencer stays '.', J2 0x9000.
+ *   L3b H3 and H4 released (host test; SH only with SUP_L3B_ON_TARGET): FSM
+ *       0x23 → level 0 + era 0x1838 → 'E' (the 0x8CEDC rule); sequencer
+ *       '.' → 'L' (FSM 'E' and 0x14 bit 1); seq2 ch0 0x33 → the '3'
+ *       diagnosis (output OFF, class 0x22, ~20 ms) → 'U': letter 'c',
+ *       0x9020 for good.
  *
  * STAND-INS (named deviations, each [I] or bench-forced):
  *   S1 0x6F594 (fault memory ready) = 1. Its readers are 0x85740's DTC
- *      report and the '3' diagnosis — neither is ported, so it has no
- *      effect in L1.
+ *      report (not ported) and the '3' diagnosis state 8 (L3): equivalent
+ *      to the stock's own calibration bypass 0x19199B != 0 (the stock
+ *      reaches it through its NVM manager, 0x8E57D = 0xA5, writer not
+ *      located). With it, state 8 lasts one tick.
  *   S2 0x94FCA[0] (the application's output demand, model block 0x132340)
  *      = 1, 0x94FCA[1] = 0 (dump: 01 00). Read by seq2 only outside 0x11.
  *   S3 0x7BBB4 (output driver fault) = 1 ("no fault": seq2 treats 0 and 1
@@ -74,16 +94,18 @@
  *      later. Everything before it (init at boot, seq2 / pin cut / publishers
  *      every tick) runs from boot, as in the stock.
  *
- * NOT PORTED (unreachable under the holds, or reporting only):
- *   the '3' switch-on diagnosis 0x85FC4 / 0x86838 / 0x865E0 (seq2 reaches
- *   '3' only from sequencer 'L', which needs FSM 'E' — H3); the per-channel
- *   DTC diagnosis 0x85ED4 and the diverse twins 0x8C3BC / 0x8C670; the DTC
+ * NOT PORTED (off the stages' paths, or reporting only):
+ *   the diverse twins 0x8C3BC / 0x8C670; the 0x7BB4E / 0x87120 reports of
+ *   the '3' and DTC diagnoses; the 5 ms entry 0x8646C (the 0x9411A /
+ *   0x94119 tested/failed markers, read by 0x86628 into the 0x80 bit); the DTC
  *   reports 0x85740 → 0x7ADD4, 0x88AE0's 0x8D566, 0x8C34C's 0x7AEAC, the
  *   pair-check faults of 0x6BDCA/0x6BDFE (0x221) and the 0x226 loop checks;
  *   0x7ADBC(0x3FF) in 0x85678; the other members of the same list entries
  *   (0x7C884, 0x7CB6E, 0x7AB48, 0x7CBA8, 0x7CC1E, 0x86A80 …); the profiling
  *   hooks 0x72AE0; the post-ladder periodic cut request 0x94152 (writer not
- *   located; 0x94153 = 0x33 only after 0xAA).
+ *   located; 0x94153 = 0x33 only after 0xAA; without it the post-ladder
+ *   cut driver only runs its verdict); the post-engagement mode switch
+ *   (module 7 → modules 1/2 → mode 1, the 10 ms batch split).
  */
 #include "bsw/sup/sup_ladder.h"
 #include "bsw/sup/sup_cells.h"
@@ -91,8 +113,30 @@
 #include "bsw/sup/sup_letters.h"
 #include "platform.h"
 
-#if !SUP_L1_HOLD_PHASE40 || !SUP_L1_HOLD_FAIL_FSM
-#error "L1 holds released: FSM 0x23/'E'/0x34 (0x873F0/0x87766/0x8CEDC) and the '3' diagnosis 0x85FC4 are not ported"
+/* ── THE STAGE GUARDS (L3, 2026-11-13) ─────────────────────────────────────
+ * Every piece on the path a stage can reach is now ported (FSM 0x23 / 'E' /
+ * 0x12 / 0x34 + 0x87766 / 0x8799C / 0x8CEDC in sup_walk.c; the '3'
+ * diagnosis 0x85FC4 / 0x86838 / 0x865E0 / 0x86586 here). What the guards
+ * still refuse:
+ *   - a stage out of order: H2 released only after H1 (phase 0x40 without
+ *     phase 8's shut-off frame is not a stock sequence), H3 only after H2;
+ *   - L3b on SH without SUP_L3B_ON_TARGET: past seq2 'U' the stock is in
+ *     mode 1 (module 7 = 0x0F → module 1 → module 2 → 0x66E06) and moves the
+ *     batch / reply proc / F stage to 10 ms — NOT PORTED, so an L3b image
+ *     keeps the 5 ms batch after engagement (a wire difference, the J2 word
+ *     itself unaffected: the J2 stage stays at 5 ms in the stock too).
+ *     Defining SUP_L3B_ON_TARGET acknowledges it. */
+#if !SUP_L1_HOLD_PHASE40 && SUP_L1_HOLD_PHASE8_REQUEST
+#error "H2 released with H1 held: phase 0x40 without phase 8's shut-off frame is not a stock sequence"
+#endif
+#if !SUP_L1_HOLD_FAIL_FSM && SUP_L1_HOLD_PHASE40
+#error "H3 released with H2 held: release the stages in order (L2 → L3a → L3b)"
+#endif
+#if !SUP_L3_HOLD_SEQ_L && SUP_L1_HOLD_FAIL_FSM
+#error "H4 released with H3 held: the sequencer can reach 'L' only from FSM 'E' — release H3 first"
+#endif
+#if defined(__sh__) && !SUP_L1_HOLD_FAIL_FSM && !SUP_L3_HOLD_SEQ_L && !defined(SUP_L3B_ON_TARGET)
+#error "L3b on the target: the post-engagement mode-1 10 ms batch split is not ported — define SUP_L3B_ON_TARGET to acknowledge"
 #endif
 
 /* ── calibration (flash, via the 0x66xxx pointer tables at index 0x90AB8 =
@@ -181,11 +225,12 @@ static uint8_t chbit(uint8_t ch)
     return (uint8_t)(1u << ch);
 }
 
-/* the 0x87766 call site, HELD (H3) */
+/* the 0x87766 call site: HELD under H3 (recorded only), MADE on L3b */
 static void fsm_request(uint8_t t)
 {
-#if SUP_L1_HOLD_FAIL_FSM
     s_fsm_req_held = t;
+#if !SUP_L1_HOLD_FAIL_FSM
+    sup_monitor_request(t);                                  /* 0x87766 */
 #endif
 }
 
@@ -658,8 +703,8 @@ static void ph_20(void)                                      /* 0x8BDD6 */
     sub_set(0xF0u);
 }
 
-/* Phases 0x40 and 0x80 are ported for completeness; under H2 the dispatcher
- * never reaches them (0x80 is reachable only from 0x40). */
+/* Phases 0x40 and 0x80 (bytes 0x8BEC0..0x8BFB6 / 0x8BFB8..0x8C0F0, re-read
+ * for L3): under H2 the dispatcher never reaches them; L3a releases H2. */
 static void ph_40(void)                                      /* 0x8BEC0 */
 {
     const uint8_t sub = CELL_LAD_SUB;
@@ -934,6 +979,9 @@ static void sequencer(void)
         if (CELL_OUTER_FSM != (uint8_t)'E' || CELL_SSLB0_BIT2 == 0u) {
             return;
         }
+#if SUP_L3_HOLD_SEQ_L
+        return;                                              /* H4: no 'L' */
+#endif
         seq_set((uint8_t)'L');
         pair8(&CELL_LAD_95005, &CELL_LAD_95005_C, 0u);
         if (CAL_SKIP != 0xC3u) {
@@ -976,6 +1024,373 @@ static void sequencer(void)
     (void)STANDIN_FAULTMEM_READY;
 }
 
+/* ── the '3' switch-on diagnosis (L3; 0x85FC4 / 0x86838 / 0x865E0 /
+ *    0x86586, every branch from the bytes 0x85FC4..0x863D6) ───────────── */
+
+/* calibration (0x66xxx tables at index 0x90AB8 = 0), [ch * 3 + step] */
+static const uint8_t CAL_D_WAIT[6] = { 2u, 2u, 2u, 2u, 2u, 2u };      /* 0x1919CA */
+static const uint8_t CAL_D_TMO[6]  = { 10u, 2u, 10u, 10u, 2u, 10u };  /* 0x1919D3 */
+static const uint8_t CAL_D_EN[2]   = { 2u, 1u };       /* 0x1915A4 (≠ 0 → 0x84A25 bit) */
+static const uint8_t CAL_D_STEP11[2] = { 2u, 2u };     /* 0x1915B8 bit 0: the class-0x11 step */
+#define CAL_D_STEP3     0x00u      /* 0x1919C9: the 0x84A25/26 step-3 interlock */
+static const uint16_t CAL_D_MASK[2] = { 0xFFFFu, 0xFFFFu };  /* 0x190564 */
+static const uint16_t CAL_D_REP[2]  = { 0xFFFFu, 0x0000u };  /* 0x190560 (0x86586) */
+#define CAL_D_LATCH     0x01E0u    /* 0x1915BA (0x865E0) */
+
+/* 0x6F594 "fault memory ready" (S1): the stock returns 1/2 once its NVM
+ * manager is up (0x8E57D = 0xA5 / 0x55 / 0xAA; dump A5) or when cal
+ * 0x19199B != 0. We have no stock fault memory: the stand-in is the stock's
+ * own calibration bypass (0x19199B != 0 → 1). Its 0x94038/39 copies are
+ * not ported. */
+static uint8_t faultmem_ready(void)
+{
+    return STANDIN_FAULTMEM_READY;
+}
+
+/* 0x86838: a settle-then-watch for class `want` on the 5 ms countdown
+ * 0x947B4[ch] — sub-FSM 0x939C2[ch]: 0 → load `wait`; 1 → wait for the
+ * countdown, then load `tmo`; 2 → class == want → 0xFF (sub 3), the
+ * countdown expired → the class seen (sub 4), else 0xF0; a finished
+ * sub-FSM (>= 3) restarts at 0 on the next call. Returns 0xF0 while busy. */
+static uint8_t cls_wait(uint8_t ch, uint8_t want, uint8_t wait, uint8_t tmo)
+{
+    uint8_t cnt = CELL_CNT_DIAG[ch];
+    uint8_t st = CELL_DIAG_SUB[ch];
+    uint8_t cls;
+    uint8_t r = 0u;
+
+    (void)classify(ch);                                      /* 0x8C6D4 */
+    cls = CELL_OUT_CLASS[ch];
+    if (st >= 3u) {
+        st = 0u;
+    }
+    if (st == 0u) {
+        st = 1u;
+        r = 0xF0u;
+        cnt = wait;
+    }
+    if (st == 1u) {
+        if (cnt == 0u) {
+            st = 2u;
+            cnt = tmo;
+        }
+        r = 0xF0u;
+    }
+    if (st == 2u) {
+        if (want == cls) {
+            cnt = 0u;
+            st = 3u;
+            r = 0xFFu;
+        } else if (cnt == 0u) {
+            st = 4u;
+            r = cls;
+        } else {
+            r = 0xF0u;
+        }
+    }
+    CELL_CNT_DIAG[ch] = cnt;
+    CELL_DIAG_SUB[ch] = st;
+    return r;
+}
+
+/* 0x865E0: the permanent-fault latch 0x93120[ch] (bits 0x1E0 seen in both
+ * words) folds into both words of the pair */
+static void diag_latch(uint8_t ch)
+{
+    const uint16_t v = (uint16_t)((CELL_DIAG_93120[ch] |
+                                   (uint16_t)(CELL_DIAG_TEST(ch) & CELL_DIAG_SEEN(ch) &
+                                              (CAL_D_LATCH & 0x1E0u))) & 0x1E0u);
+
+    CELL_DIAG_93120[ch] = v;
+    CELL_DIAG_TEST(ch) = (uint16_t)(CELL_DIAG_TEST(ch) | v);
+    CELL_DIAG_SEEN(ch) = (uint16_t)(CELL_DIAG_SEEN(ch) | CELL_DIAG_93120[ch]);
+}
+
+/* 0x86586: the per-channel status 0x939C4[ch] (0 / 2 / 0x82); its 0x87120
+ * report is not ported */
+static void diag_status(uint8_t ch, uint16_t tested, uint16_t failed)
+{
+    const uint16_t p = (uint16_t)(tested & failed);
+    uint8_t v = 0u;
+
+    if (p != 0u && (CAL_D_REP[ch] & p) != 0u) {
+        v = (CAL_D_REP[ch] & p & 0x1E0u) != 0u ? 0x82u : 0x02u;
+    }
+    CELL_DIAG_CLS[ch] = v;
+}
+
+/* 0x85E82: the 'U' hold-off — 0x947B2[ch] = cal 0x1915AE[ch] (0x48 = 72
+ * ticks = 360 ms); seq2 leaves 'U' for '4' (enable 0) while it runs */
+static const uint8_t CAL_D_HOLD[2] = { 0x48u, 0x48u };          /* 0x1915AE */
+static const uint8_t CAL_D_DTC8[2] = { 0u, 0u };                /* 0x1915BC */
+static const uint16_t CAL_D_SUPMIN[2] = { 6500u, 6500u };       /* 0x190574 */
+static const uint16_t CAL_D_SUPMAX[2] = { 40000u, 40000u };     /* 0x190570 */
+static const uint16_t CAL_D_ONBAND[2] = { 1500u, 1500u };       /* 0x190568 */
+static const uint16_t CAL_D_ONMIN[2]  = { 4000u, 4000u };       /* 0x19056C */
+
+/* 0x86628 (bytes 0x86628..0x86836): the per-state output plausibility,
+ * into the local pair p[0] (tested) / p[1] (failed). In 'U': fault when
+ * 0x14 bit 5 (0x90947[ch]) is set, or — supply status 0x94FED >= 8 and no
+ * 0x940FA ripple flag — the output is more than 1500 mV from the supply,
+ * else below 4000 mV; a fault marks 0x40 and loads the hold-off (0x85E82). */
+static void dtc_check(uint8_t ch, uint8_t st, uint16_t p[2])
+{
+    const uint16_t v = CELL_OUT_MV[ch];
+    const uint16_t sup = CELL_SUPPLY;
+    const uint8_t sst = CELL_SUPPLY_ST2;                     /* 0x94FED */
+    const uint8_t cls = CELL_OUT_CLASS[ch];
+    const uint8_t bit = chbit(ch);
+    uint16_t r1 = 0u;
+
+    p[0] = 0u;
+    p[1] = 0u;
+    if (st == (uint8_t)'U') {
+        bool fault = false;
+
+        p[0] = (uint16_t)(p[0] | (CAL_D_HOLD[ch] == 0u ? 0x08u : 0x40u));
+        if (CELL_OUT_FAULTS[ch] != 0u) {
+            fault = true;
+        } else if (sst >= 8u && CELL_SUP_940FA == 0u) {
+            const uint16_t d = (uint16_t)(sup >= v ? sup - v : v - sup);
+            fault = d > CAL_D_ONBAND[ch];
+        } else {
+            fault = CAL_D_ONMIN[ch] > v;
+        }
+        if (fault) {
+            p[1] = CAL_D_HOLD[ch] != 0u ? 0x40u : 0x08u;
+            CELL_CNT_HOLDOFF[ch] = CAL_D_HOLD[ch];           /* 0x85E82 */
+        } else {
+            p[0] = (uint16_t)(p[0] | ((p[0] & 0x08u) != 0u ? 0x40u : 0x08u));
+        }
+    } else if (st == 0x22u) {
+        const uint8_t f = CELL_LAD_FAILCLS[ch];              /* 0x939B4 */
+
+        p[0] = (uint16_t)(p[0] | 0x0Eu);
+        if (f == 0x11u) {
+            r1 = 8u;
+        } else if (f == 0x33u || f == 0x66u) {
+            r1 = 4u;
+        } else if (f == 0x22u) {
+            r1 = 2u;
+        } else if (cls == 0x11u || cls == 0x44u) {
+            r1 = 8u;
+        } else if (cls == 0x33u || cls == 0x66u || cls == 0x55u) {
+            r1 = 4u;
+        }
+        p[1] = r1;
+    } else if (st == (uint8_t)'4' || st == (uint8_t)'8' || st == (uint8_t)'?' ||
+               st == (uint8_t)'D') {
+        p[0] = (uint16_t)(p[0] | 0x04u);
+        if (CAL_D_DTC8[ch] != 0u || CELL_SEQ2_939C0[ch] != 0u) {
+            p[0] = (uint16_t)(p[0] | 0x08u);
+            CELL_SEQ2_939C0[ch] = 0u;
+        }
+        if ((cls == 0x11u || cls == 0x44u) && (p[0] & 0x08u) != 0u) {
+            r1 = 8u;
+        } else {
+            if ((p[0] & 0x08u) != 0u) {
+                p[0] = (uint16_t)(p[0] | 0x40u);
+            }
+            if (cls == 0x33u || cls == 0x66u || cls == 0x55u) {
+                r1 = 4u;
+            } else {
+                p[0] = (uint16_t)(p[0] | 0x20u);
+            }
+        }
+        p[1] = r1;
+    }
+    /* 0x9411A / 0x94119 ("tested" / "failed" markers of the 5 ms entry
+     * 0x8646C — not ported, so 0 here; the stock dump has 0x9411A = 01,
+     * which is why its 0x9495C[0] reads 0xC8 where ours reads 0x48) */
+    if ((CELL_L1_U8(0xFFF9411Au) & bit) != 0u) {
+        p[0] = (uint16_t)(p[0] | 0x80u);
+    }
+    if ((CELL_L1_U8(0xFFF94119u) & bit) != 0u) {
+        p[1] = (uint16_t)(p[1] | 0x80u);
+    }
+}
+
+/* 0x865E0 on a local pair (as 0x85ED4 calls it) */
+static void diag_latch_p(uint8_t ch, uint16_t p[2])
+{
+    const uint16_t v = (uint16_t)((CELL_DIAG_93120[ch] |
+                                   (uint16_t)(p[0] & p[1] & (CAL_D_LATCH & 0x1E0u))) & 0x1E0u);
+
+    CELL_DIAG_93120[ch] = v;
+    p[0] = (uint16_t)(p[0] | v);
+    p[1] = (uint16_t)(p[1] | CELL_DIAG_93120[ch]);
+}
+
+/* 0x85ED4 (bytes 0x85ED4..0x85FC2): the DTC diagnosis seq2 runs every tick
+ * in every state but '3' (state read at seq2 entry, 0x85DC4). The output
+ * check 0x86628 runs only in 0x22 / '4' '8' '?' 'D' 'U' once the settle
+ * timer 0x947B0 has expired and the supply is in [6500, 40000] mV. Its one
+ * effect on the flow is the 'U' hold-off; the rest is the DTC masks
+ * (0x9495C / 0x94958 / 0x939C4, the 0x93120 latch). The 0x7BB4E report is
+ * not ported. */
+static void dtc_diag(uint8_t ch, uint8_t st)
+{
+    uint16_t p[2] = { 0u, 0u };
+    const uint16_t sup = CELL_SUPPLY;
+
+    if ((st == 0x22u || st >= 0x34u) && CELL_CNT_SETTLE[ch] == 0u &&
+        sup >= CAL_D_SUPMIN[ch] && !(sup > CAL_D_SUPMAX[ch])) {
+        dtc_check(ch, st, p);
+    }
+    p[0] = (uint16_t)(p[0] & CAL_D_MASK[ch]);
+    p[1] = (uint16_t)(p[1] & CAL_D_MASK[ch]);
+    diag_latch_p(ch, p);
+    CELL_DIAG_9495C[ch] = p[0];
+    CELL_DIAG_94958[ch] = (uint16_t)((p[1] & p[0]) | (CELL_DIAG_94958[ch] & (uint16_t)~p[0]));
+    diag_status(ch, p[0], p[1]);                             /* 0x86586 */
+}
+
+/* 0x85FC4: the diagnosis seq2 runs every tick in state 0x33 ('3'), with the
+ * enable OFF. Sub-state 0x939BE[ch] (seq2 leaves it at 1 in 0x11/0x16):
+ *   1  bits 0x6C under test; class 0x22 (OFF with bias) within 10 ms
+ *      settle + 50 ms (0x86838, cal 2 / 10); the class seen on a timeout
+ *      marks 0x20 (0x66 / 0x33 / 0x55) or 0x40. → 8 (cal: no class-0x11
+ *      step, no step-3 interlock on this unit), or → 2 / 3 per calibration
+ *   2  (cal-dead) class 0x11 within 10 + 10 ms, bit 0x80
+ *   3  (cal-dead) waits for the other channels (0x84A25..28)
+ *   4  (cal-dead) class 0x22 again, bit 0x100; 5 waits for the others
+ *   8  waits for 0x6F594 (fault memory ready); masks (cal 0xFFFF), folds
+ *      the 0x93120 latch (0x865E0), publishes 0x9495C (tested) / 0x94958
+ *      (failed bits within the tested mask)
+ *   9  0xFF (pass) when nothing tested failed, else 0xFE
+ * seq2 reads 0xFF in the same tick: 'U' (enable 1) when supply is not low,
+ * 0x7BBB4 reports no fault and the demand 0x94FCA[ch] != 0; 0xFE → '4'.
+ * The 0x7BB4E DTC report at the tail is not ported. A 0x1E0 fault latched
+ * in 0x93120 (by 0x85ED4's 0x865E0, e.g. an engaged-output mismatch) makes
+ * every later diagnosis fail (0xFE), as in the stock. */
+static void diag_3(uint8_t ch)
+{
+    const uint8_t bit = chbit(ch);
+    uint8_t d94115 = CELL_DIAG_94115;
+    uint8_t st = CELL_SEQ2_DIAG[ch];
+    uint16_t tested = 0u;                                    /* uStack_2c */
+    uint8_t r;
+
+    switch (st) {
+    case 0u:
+        break;                                               /* stays 0 */
+    case 1u:
+        CELL_DIAG_SEEN(ch) = 0u;
+        CELL_DIAG_TEST(ch) = 0x6Cu;
+        CELL_DIAG_84A26 = (uint8_t)(CELL_DIAG_84A26 & (uint8_t)~bit);
+        CELL_DIAG_84A25 = (uint8_t)(CELL_DIAG_84A25 & (uint8_t)~bit);
+        CELL_DIAG_84A27 = (uint8_t)(CELL_DIAG_84A27 & (uint8_t)~bit);
+        if (CAL_D_EN[ch] != 0u) {
+            CELL_DIAG_84A25 = (uint8_t)(CELL_DIAG_84A25 | bit);
+        }
+        CELL_DIAG_9411C = ch;
+        CELL_DIAG_9411B = 0u;
+        r = cls_wait(ch, 0x22u, CAL_D_WAIT[ch * 3u], CAL_D_TMO[ch * 3u]);
+        if (r == 0xF0u) {
+            break;                                           /* stays 1 */
+        }
+        if (r == 0xFFu) {
+            if ((CAL_D_STEP11[ch] & 1u) != 0u) {             /* 0x860A8 */
+                d94115 = (uint8_t)(d94115 | bit);
+                st = 2u;
+                break;
+            }
+            if (CAL_D_STEP3 != 0u && (CELL_DIAG_84A25 & bit) != 0u) {
+                CELL_DIAG_84A26 = (uint8_t)(CELL_DIAG_84A26 | bit);   /* 0x861CA */
+                st = 3u;
+                break;
+            }
+        } else {
+            CELL_DIAG_SEEN(ch) = (r == 0x66u || r == 0x33u || r == 0x55u) ? 0x20u : 0x40u;
+            if (CAL_D_STEP3 != 0u && (CELL_DIAG_84A25 & bit) != 0u) {
+                CELL_DIAG_84A25 = (uint8_t)(CELL_DIAG_84A25 & (uint8_t)~bit);
+            }
+        }
+        st = 8u;                                             /* 0x862EA */
+        break;
+    case 2u:
+        CELL_DIAG_TEST(ch) = (uint16_t)(CELL_DIAG_TEST(ch) | 0x80u);
+        CELL_DIAG_9411B = 1u;
+        CELL_DIAG_9411C = ch;
+        r = cls_wait(ch, 0x11u, CAL_D_WAIT[ch * 3u + 1u], CAL_D_TMO[ch * 3u + 1u]);
+        if (r == 0xF0u) {
+            break;                                           /* stays 2 */
+        }
+        if (r == 0xFFu || r == 0x44u) {
+            if (CAL_D_STEP3 != 0u && (CELL_DIAG_84A25 & bit) != 0u) {
+                CELL_DIAG_84A26 = (uint8_t)(CELL_DIAG_84A26 | bit);
+                st = 3u;
+                break;
+            }
+        } else {
+            CELL_DIAG_SEEN(ch) = 0x80u;
+            if (CAL_D_STEP3 != 0u && (CELL_DIAG_84A25 & bit) != 0u) {
+                CELL_DIAG_84A25 = (uint8_t)(CELL_DIAG_84A25 & (uint8_t)~bit);
+            }
+        }
+        d94115 = (uint8_t)(d94115 & (uint8_t)~bit);          /* 0x862E8 */
+        st = 8u;
+        break;
+    case 3u:
+        if (CELL_DIAG_84A28 != 0u ||
+            CELL_DIAG_84A25 != (uint8_t)(CELL_DIAG_84A25 & CELL_DIAG_84A26)) {
+            break;                                           /* stays 3 */
+        }
+        CELL_DIAG_84A28 = 1u;
+        d94115 = (uint8_t)(CELL_DIAG_84A25 & (uint8_t)~bit);
+        st = 4u;
+        break;
+    case 4u:
+        CELL_DIAG_9411C = ch;
+        CELL_DIAG_TEST(ch) = (uint16_t)(CELL_DIAG_TEST(ch) | 0x100u);
+        CELL_DIAG_9411B = 2u;
+        r = cls_wait(ch, 0x22u, CAL_D_WAIT[ch * 3u + 2u], CAL_D_TMO[ch * 3u + 2u]);
+        if (r == 0xF0u) {
+            break;                                           /* stays 4 */
+        }
+        if (r == 0x11u) {
+            CELL_DIAG_SEEN(ch) = 0x100u;
+        }
+        CELL_DIAG_84A27 = (uint8_t)(CELL_DIAG_84A27 | bit);
+        CELL_DIAG_84A28 = 0u;
+        st = 5u;
+        break;
+    case 5u:
+        if (CELL_DIAG_84A25 != (uint8_t)(CELL_DIAG_84A27 & CELL_DIAG_84A25)) {
+            break;                                           /* stays 5 */
+        }
+        d94115 = (uint8_t)(d94115 & (uint8_t)~CELL_DIAG_84A25);
+        st = 8u;
+        break;
+    case 8u:
+        if (faultmem_ready() == 0u) {                        /* 0x6F594 (S1) */
+            break;                                           /* stays 8 */
+        }
+        CELL_DIAG_TEST(ch) = (uint16_t)(CELL_DIAG_TEST(ch) & CAL_D_MASK[ch]);
+        CELL_DIAG_SEEN(ch) = (uint16_t)(CELL_DIAG_SEEN(ch) & CAL_D_MASK[ch]);
+        diag_latch(ch);                                      /* 0x865E0 */
+        tested = CELL_DIAG_TEST(ch);
+        CELL_DIAG_9495C[ch] = tested;
+        CELL_DIAG_94958[ch] = (uint16_t)((CELL_DIAG_SEEN(ch) & tested) |
+                                         (CELL_DIAG_94958[ch] & (uint16_t)~tested));
+        st = 9u;
+        break;
+    case 9u:
+        st = ((CELL_DIAG_9495C[ch] & CELL_DIAG_94958[ch]) != 0u) ? 0xFEu : 0xFFu;
+        break;
+    default:
+        if (st != 0xFEu && st != 0xFFu) {
+            st = 0u;
+        }
+        break;
+    }
+    /* tail (0x8639C): 0x7BB4E report (not ported), 0x86586, then the state */
+    (void)tested;
+    diag_status(ch, CELL_DIAG_9495C[ch], CELL_DIAG_94958[ch]);
+    CELL_SEQ2_DIAG[ch] = st;
+    CELL_DIAG_94115 = d94115;
+}
+
 /* ── seq2 0x85828 (bytes 0x85828..0x85D42) ─────────────────────────────── */
 
 static void seq2(void)
@@ -1003,9 +1418,11 @@ static void seq2(void)
         cls = CELL_OUT_CLASS[ch];
         if (st == 0x33u) {
             if (ch == 0u) { CELL_ADC_ST_MUX8 = 0u; } else { CELL_ADC_ST_MUX10 = 0u; }  /* 0x8F50C */
-            /* 0x85FC4 '3' diagnosis: NOT PORTED (unreachable under H3) */
+            diag_3(ch);                                      /* 0x85FC4 (L3) */
         }
-        /* else 0x85ED4(ch, 0) DTC diagnosis: not ported */
+        else {
+            dtc_diag(ch, st);                                /* 0x85ED4(ch, 0) (L3) */
+        }
         {
             const uint8_t f = STANDIN_DRV_FAULT;             /* 0x7BBB4 (S3) */
             bad = !(f == 1u || f == 0u);

@@ -42,10 +42,16 @@
  *      ported; pair mismatches are counted in s_pair_faults.
  *   D3 The FSM's exits from 8 are 0x87766 calls made ONLY by the mode
  *      sequencer 0x85160 (sup_ladder.c): 0x23 after the ladder's 0xAA, and
- *      0x12/0x23 on retry exhaustion (ladder_blockers_decode.md §3.2). L1
- *      HOLDS both (SUP_L1_HOLD_FAIL_FSM, and the 0xAA path is beyond the
- *      phase-0x40 hold), so the outer FSM stays 8 and states 0x12/0x23/
- *      0x45/0x34 (and the 0x8CEDC 'E' rule) are not ported yet — L3 work.
+ *      0x12/0x23 on retry exhaustion (ladder_blockers_decode.md §3.2).
+ *      L3 (2026-11-13) PORTS them: sup_monitor_request = 0x87766, states
+ *      0x12 / 0x23 / 'E' (0x45) / 0x34 and the "other" recovery of the
+ *      0x873F0 body (bytes 0x874F2..0x876F0), 0x8799C and the 'E' rule
+ *      0x8CEDC (bytes 0x8CEDC..0x8CFEE) — see ~/tcu_sweep/l3_port.md. The
+ *      sequencer still HOLDS the calls under SUP_L1_HOLD_FAIL_FSM (H3, the
+ *      L3a target default), so on L3a the FSM stays 8; L3b releases them.
+ *      Not ported (D2 class): the 0x9384C trace bits, the 0x94F84/0x94DFC
+ *      lamp bits the 0x34 path and the 'other' recovery set, the per-pass
+ *      0x94F84 clear at 0x873F0 entry, and the fault 0x226 report.
  *   D4 The token is sup_token_compute(selector) (the bench-proven E-era fold
  *      of the 0x7EE8A sweep's table); the full integrity sweep is not ported.
  */
@@ -277,9 +283,15 @@ void sup_walk_init(void)
     /* RAM-cleared in the stock; explicit here (several sit outside the
      * ranges sup_cells_init clears on older layouts) */
     CELL_BOOT_FLAG = 1u;                  /* 0x9500E (0x87732 sets it) */
+    CELL_BOOT_FLAG_C = 0xFEu;
     CELL_WALK_STATE = STATE_IDLE;
     CELL_OUTER_FSM = SUP_FSM_BOOT;
+    CELL_OUTER_FSM_C = 0xFFu;
     CELL_FSM_RETURN = 0u;
+    CELL_FSM_93B99 = 0u;
+    CELL_E_STATE = CTX_STEADY;            /* 0x8CFF0 (from 0x87732): 0x95011 = 0x1E, */
+    CELL_E_STATE_C = (uint8_t)~CTX_STEADY;/* 0x94E89 = 0xE1, 0x93B97 = 0x1E          */
+    CELL_E_LAST = CTX_STEADY;
     CELL_STAGE_SUB = 0u;
     CELL_WALK_SUBST = 0u;
     CELL_JOB_MODE = 0u;
@@ -670,11 +682,157 @@ static void one_shot_enable(void)
     }
 }
 
-/* ── the monitor body (stock 0x873F0; 2.5 ms, every mode, no lead-in) ───── */
+/* ── the FSM write helpers (the stock's 0x6BD68 pair stores) ───────────── */
 
+static void fsm_set(uint8_t st)
+{
+    CELL_OUTER_FSM = st;
+    CELL_OUTER_FSM_C = (uint8_t)~st;
+}
+
+static void boot_flag_clear(void)
+{
+    CELL_BOOT_FLAG = 0u;
+    CELL_BOOT_FLAG_C = 0xFFu;
+}
+
+/* ── the FSM request (stock 0x87766; bytes 0x87766..0x877BE) ───────────── */
+
+/* The ONLY caller is the mode sequencer 0x85160 (sup_ladder.c): 0x23 after
+ * the ladder's 0xAA; 0x12 (sub 0xF1) or 0x23 on retry exhaustion. Under the
+ * 0x9A428 lock: s = 0x6BDCA(0x95010); if t != s and s != 0 the state moves
+ * to t (complement ~t), the previous state goes to 0x93B93, and for t in
+ * {0x23, 0x12, 0} the entry flag 0x9500E is raised (0x94E86 = 0xFE). */
+void sup_monitor_request(uint8_t t)
+{
+    uint32_t prev = plat_sr_i();
+    uint8_t s;
+
+    if (prev < 1u) {
+        plat_sr_set(1u);                                  /* 0x9A428 (cal 0x41174 = 0x10) */
+    }
+    s = pair_get(&CELL_OUTER_FSM, &CELL_OUTER_FSM_C);
+    if (t != s && s != 0u) {
+        CELL_OUTER_FSM_C = (uint8_t)~t;
+        CELL_FSM_RETURN = s;
+        CELL_OUTER_FSM = t;
+        if (t == SUP_FSM_DUTY || t == SUP_FSM_REARM || t == SUP_FSM_BOOT) {
+            CELL_BOOT_FLAG = 1u;
+            CELL_BOOT_FLAG_C = 0xFEu;
+        }
+    }
+    plat_sr_set(prev);                                    /* 0x9A3FC */
+}
+
+/* ── the 'E' walk rule (stock 0x8CEDC; bytes 0x8CEDC..0x8CFEE) ──────────── */
+
+/* One armed shot per idle pass. While the reported level is above 0 the
+ * rule is the steady token (context 0x1E); at level 0 it walks the
+ * contexts 0 → 7 → 0x19 → 0 …, returning to 0x1E after every successful
+ * arm (0x93B97 remembers the last context). Context 0x19 arms the INVERTED
+ * token: the caller inverts (0x8CF88 `not r14,r14`) and the W1 builder
+ * sends 0x92414 verbatim. Attention 7 enters at 0x2A: the 84 resend
+ * 0x6C720. A busy arm keeps the state for the next pass. */
+static void e_rule(void)
+{
+    uint32_t tok = sup_token_compute(CELL_SELECTOR);     /* 0x7EE8A (D4) */
+    uint8_t s;
+    uint8_t sc;
+    bool again;
+
+    if (CELL_ATTENTION == 7u) {
+        s = 0x2Au;
+        sc = 0xD5u;
+    } else {
+        s = pair_get(&CELL_E_STATE, &CELL_E_STATE_C);
+        sc = CELL_E_STATE_C;
+    }
+    do {
+        bool busy;
+
+        again = false;
+        switch (s) {
+        case CTX_STEADY:
+            if (CELL_LVL_REPORTED != 0u) {
+                (void)token_arm(tok, CTX_STEADY);        /* state stays 0x1E */
+            } else {
+                const uint8_t last = CELL_E_LAST;
+                s = (last == 0u) ? CTX_ATTN : (last == CTX_ATTN) ? CTX_INV : 0u;
+                sc = (uint8_t)~s;
+                CELL_E_LAST = CTX_STEADY;
+                again = true;
+            }
+            continue;
+        case 0x00u:
+            busy = token_arm(tok, 0x00u);
+            break;
+        case CTX_ATTN:
+            busy = token_arm(tok, CTX_ATTN);
+            break;
+        case CTX_INV:
+            tok = ~tok;                                   /* 0x8CF88: the caller inverts */
+            busy = token_arm(tok, CTX_INV);
+            break;
+        case 0x2Au:
+            busy = sup_walk_resend();                     /* 0x6C720 */
+            break;
+        default:
+            /* 0x94F84 |= 0x40 / 0x94DFC &= ~0x40: lamp bits (D2) */
+            s = 0x2Au;
+            sc = 0xD5u;
+            again = true;
+            continue;
+        }
+        if (!busy) {
+            CELL_E_LAST = s;
+            s = CTX_STEADY;
+            sc = (uint8_t)~CTX_STEADY;
+        }
+    } while (again);
+    CELL_E_STATE = s;
+    CELL_E_STATE_C = sc;
+    if ((uint8_t)(s ^ sc) != 0xFFu) {
+        s_pair_faults++;                                  /* D2: fault 0x226 */
+    }
+}
+
+/* ── the 0x34 state (stock 0x8799C; bytes 0x8799C..0x87A1C) ─────────────── */
+
+static void state34(void)
+{
+    if (CELL_FSM_RETURN == SUP_FSM_DUTY) {
+        if (CELL_LVL_REPORTED == 0u) {
+            CELL_FSM_RETURN = pair_get(&CELL_OUTER_FSM, &CELL_OUTER_FSM_C);  /* = 0x34 */
+            fsm_set(SUP_FSM_PROCEED);                     /* 'E' (0xBA) */
+            CELL_FSM_93B99 = 1u;
+            (void)sup_walk_stage(0x1838u, 2u);            /* 0x6C48C(0x1838, 0xE7C7, 2) */
+        } else {
+            state8_law();                                 /* 0x8D020 */
+        }
+        return;
+    }
+    if (CELL_LVL_REPORTED == 0u) {
+        CELL_FSM_RETURN = pair_get(&CELL_OUTER_FSM, &CELL_OUTER_FSM_C);
+        fsm_set(SUP_FSM_PROCEED);
+    }
+    e_rule();                                             /* 0x8CEDC */
+}
+
+/* the 0x34 path (0x875EE): lamp bits 0x94F84 |= 0x800 / 0x94DFC &= ~0x800
+ * (D2, not ported), state 0x34 (0xCB), 0x93B93 = the state left, 0x8799C */
+static void go_34(uint8_t from)
+{
+    fsm_set(SUP_FSM_ADVANCE);
+    CELL_FSM_RETURN = from;
+    state34();
+}
+
+/* ── the monitor body (stock 0x873F0; 2.5 ms, every mode, no lead-in) ───── */
 
 void sup_monitor_poll(void)
 {
+    uint8_t st;
+
     plat_alive(0x02u);                                    /* S11 breadcrumb */
     /* (no per-pass token stage: the stock writes 0x92414 only in 0x6C802,
      *  at arm time — r02f review) */
@@ -683,33 +841,69 @@ void sup_monitor_poll(void)
     if (CELL_WALK_STATE != STATE_IDLE) {
         return;
     }
-    switch (CELL_OUTER_FSM) {
-    case SUP_FSM_BOOT:
-        if (CELL_BOOT_FLAG != 0u) {
-            CELL_BOOT_FLAG = 0u;
-            sup_walk_target_set(5u);                         /* 0x8D136(5) */
+    st = pair_get(&CELL_OUTER_FSM, &CELL_OUTER_FSM_C);   /* 0x874FE: 0x6BDCA */
+    switch (st) {
+    case SUP_FSM_PROCEED:                                 /* 'E' 0x87502 */
+        if (CELL_LVL_REPORTED >= 5u) {
+            go_34(st);
+        } else {
+            e_rule();                                     /* 0x8CEDC, not 0x8D020 */
+        }
+        break;
+    case SUP_FSM_SUPERVISE:                               /* 8: 0x87526 → 0x87688 */
+        /* The level target comes only from the stock's own writers: FSM
+         * states 0 / 0x12 / 0x23 and the ladder (sup_ladder.c) phases 1
+         * (5), 0x10 (3) and 0x80 (5, then 0). */
+        state8_law();                                     /* 0x8D020 */
+        break;
+    case SUP_FSM_REARM:                                   /* 0x12: 0x87542 */
+        if (pair_get(&CELL_BOOT_FLAG, &CELL_BOOT_FLAG_C) != 0u) {
+            boot_flag_clear();
+            sup_walk_target_set(5u);                      /* 0x8D136(5) */
+        }
+        state8_law();                                     /* no exit of its own */
+        break;
+    case SUP_FSM_DUTY:                                    /* 0x23: 0x87570 */
+        if (pair_get(&CELL_BOOT_FLAG, &CELL_BOOT_FLAG_C) != 0u) {
+            boot_flag_clear();
+            sup_walk_target_set(0u);                      /* 0x8D136(0) */
+        }
+        /* (0x9384C |= 0x800: trace, D2) */
+        if (sup_walk_budget() == 1u) {                    /* 0x8D1BA */
+            go_34(st);
+            break;
+        }
+        if (sup_walk_target_reached(0u) &&                /* 0x8D108(0): level == 0 */
+            sup_walk_stage(0x1838u, 2u) == 0u) {          /* 0x6C48C(0x1838, 0xE7C7, 2) */
+            fsm_set(SUP_FSM_PROCEED);                     /* 'E' (0xBA) */
+            CELL_FSM_93B99 = 1u;
+            CELL_FSM_RETURN = st;                         /* 0x23 */
+            break;                                        /* no 0x8D020 this pass */
+        }
+        state8_law();                                     /* drives the level to 0 */
+        break;
+    case SUP_FSM_ADVANCE:                                 /* 0x34: 0x87536 → 0x87616 */
+        state34();
+        break;
+    case SUP_FSM_BOOT:                                    /* 0: 0x8761E */
+        if (pair_get(&CELL_BOOT_FLAG, &CELL_BOOT_FLAG_C) != 0u) {
+            boot_flag_clear();
+            sup_walk_target_set(5u);                      /* 0x8D136(5) */
             if (CELL_PERIOD != WALK_ERA_06) {
                 (void)sup_walk_stage(WALK_ERA_06, 2u);    /* 0x6C48C(0x4B0, 0xFB4F, 2) */
             }
         }
-        CELL_OUTER_FSM = SUP_FSM_SUPERVISE;
         CELL_FSM_RETURN = SUP_FSM_BOOT;
+        fsm_set(SUP_FSM_SUPERVISE);
+        CELL_FSM_93B99 = 0u;
         if (CELL_WALK_STATE != STATE_IDLE) {
             return;
         }
         state8_law();
         break;
-    case SUP_FSM_SUPERVISE:
-        /* L1 (2026-11-13): the r02j target-3 stand-in is GONE. The level
-         * target now comes only from the stock's own writers: FSM state 0
-         * above (5), the ladder (sup_ladder.c) phase 1 0x8B974 (5) and phase
-         * 0x10 0x8BD40 (3) — phases 0x80 (5 then 0) and FSM 0x12/0x23 are
-         * beyond the L1 hold. State 8 itself is 0x8D020 only (0x87526 →
-         * 0x87688). */
-        state8_law();                                     /* 0x876E0 → 0x8D020 */
-        break;
-    default:
-        /* D3: the post-8 states are not ported (the exit is undecoded) */
+    default:                                              /* 0x87690 */
+        /* lamp bit 0x40 (D2); back to the state left, or 0 */
+        fsm_set(CELL_FSM_RETURN != 0u ? CELL_FSM_RETURN : SUP_FSM_BOOT);
         break;
     }
 }

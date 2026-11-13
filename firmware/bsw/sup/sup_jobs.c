@@ -519,12 +519,14 @@ void sup_cells_init(void)
         { 0xFFF94E5Cu, 0x1B8u },  /* .sup_value value cells .. 0xFFF95010      */
         { 0xFFF93118u, 0x0Cu },   /* .sup_l1a L1 diag latch                    */
         { 0xFFF93936u, 0x0Cu },   /* .sup_l1b L1 supply copies / out bytes     */
-        { 0xFFF939B4u, 0x10u },   /* .sup_l1c L1 request / seq2 status cells   */
+        { 0xFFF939B4u, 0x14u },   /* .sup_l1c L1 request / seq2 status cells   */
         { 0xFFF93A84u, 0x10u },   /* .sup_l1d L1 ladder masks / classes        */
         { 0xFFF93AACu, 0x06u },   /* .sup_l1e L1 supply plausibility           */
         { 0xFFF940F8u, 0x64u },   /* .sup_l1f L1 retries / pin-cut cells       */
         { 0xFFF94734u, 0x101u },  /* .sup_cnt the 0x7C7E4 countdown range      */
         { 0xFFF94D48u, 0x114u },  /* .sup_l1g L1 complements                   */
+        { 0xFFF94958u, 0x08u },   /* .sup_l3a L3 '3' diagnosis masks           */
+        { 0xFFF84A24u, 0x08u },   /* .sup_l3b L3 '3' diagnosis step bits       */
     };
     for (unsigned i = 0u; i < sizeof rng / sizeof rng[0]; i++) {
         memset((void *)(uintptr_t)rng[i].addr, 0, rng[i].len);

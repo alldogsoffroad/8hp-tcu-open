@@ -116,12 +116,15 @@ SECTIONS
      * every nonzero cell there, so nothing else may live in it. */
     .sup_l1a 0xFFF93118 (NOLOAD) : { . += 0x0C; } > RAM   /* 0x93118..0x93123 diag   */
     .sup_l1b 0xFFF93936 (NOLOAD) : { . += 0x0C; } > RAM   /* 0x93936..0x93941        */
-    .sup_l1c 0xFFF939B4 (NOLOAD) : { . += 0x10; } > RAM   /* 0x939B4..0x939C3        */
+    .sup_l1c 0xFFF939B4 (NOLOAD) : { . += 0x14; } > RAM   /* 0x939B4..0x939C7 (L3: +0x939C4) */
     .sup_l1d 0xFFF93A84 (NOLOAD) : { . += 0x10; } > RAM   /* 0x93A84..0x93A93        */
     .sup_l1e 0xFFF93AAC (NOLOAD) : { . += 0x06; } > RAM   /* 0x93AAC..0x93AB1        */
     .sup_l1f 0xFFF940F8 (NOLOAD) : { . += 0x64; } > RAM   /* 0x940F8..0x9415B        */
     .sup_cnt 0xFFF94734 (NOLOAD) : { . += 0x101; } > RAM  /* 0x94734..0x94834        */
     .sup_l1g 0xFFF94D48 (NOLOAD) : { . += 0x114; } > RAM  /* 0x94D48..0x94E5B pairs  */
+    /* L3 (2026-11-13): the '3' diagnosis 0x85FC4 cells outside the L1 ranges */
+    .sup_l3a 0xFFF94958 (NOLOAD) : { . += 0x08; } > RAM   /* 0x94958..0x9495F        */
+    .sup_l3b 0xFFF84A24 (NOLOAD) : { . += 0x08; } > RAM   /* 0x84A24..0x84A2B        */
 
     .sup_value 0xFFF94E5C (NOLOAD) : {     /* value cells .. 0x95010         */
         __sup_value_start = .; *(.sup_value) . += 0x1B8; __sup_value_end = .;
