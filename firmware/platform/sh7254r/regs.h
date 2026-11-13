@@ -176,12 +176,41 @@
 #define ATUENR_TFE  0x0040u
 #define ATUENR_TEE  0x0020u             /* timer E enable                     */
 
+/* ---- Timer E, all six subblocks (manual Table 13.7; the stock's own offsets
+ * in 0x97198 / 0x97214 agree byte for byte) ---------------------------------
+ * Subblock n at 0xFFFFF800 + 0x40n: +0 TCRE, +1 TOCRE, +2 TIERE, +3 RLDCRE,
+ * +4 TSRE, +8 PSCRE, +0xC SSTRE; channel m words at +0x10 CYLRE, +0x18 DTRE,
+ * +0x20 CRLDE, +0x28 DRLDE, +0x30 TCNTE (+2m each). Used by the app's Timer E
+ * stage-0b port (plat_sh7254r.c te_* — the stock's 0x97198 order). */
+#define TE_SB(n)        (0xFFFFF800u + 0x40u * (uint32_t)(n))
+#define TE_TCRE(n)      REG8 (TE_SB(n) + 0x00u)
+#define TE_TOCRE(n)     REG8 (TE_SB(n) + 0x01u)
+#define TE_TIERE(n)     REG8 (TE_SB(n) + 0x02u)
+#define TE_RLDCRE(n)    REG8 (TE_SB(n) + 0x03u)
+#define TE_TSRE(n)      REG8 (TE_SB(n) + 0x04u)
+#define TE_PSCRE(n)     REG8 (TE_SB(n) + 0x08u)
+#define TE_SSTRE(n)     REG8 (TE_SB(n) + 0x0Cu)
+#define TE_CYLRE(n, m)  REG16(TE_SB(n) + 0x10u + 2u * (uint32_t)(m))
+#define TE_DTRE(n, m)   REG16(TE_SB(n) + 0x18u + 2u * (uint32_t)(m))
+#define TE_CRLDE(n, m)  REG16(TE_SB(n) + 0x20u + 2u * (uint32_t)(m))
+#define TE_DRLDE(n, m)  REG16(TE_SB(n) + 0x28u + 2u * (uint32_t)(m))
+#define TE_TCNTE(n, m)  REG16(TE_SB(n) + 0x30u + 2u * (uint32_t)(m))
+#define INTC_IPR14      REG16(0xFFFE0C16u)  /* = INTC_IPR(14) */
+#define INTC_IPR15      REG16(0xFFFE0C18u)  /* = INTC_IPR(15) */
+
 /* ---- Timer E sub-block 3, channel 1 = TOE31 / PL6 (sections 13.22, 22.1.22) ----
- * Used for the park hold output (spec 02 section 3.1, spec 12 section 1.1). */
+ * LOADER ONLY (plat_toe_out_init, kept so the loader object stays byte-
+ * identical). TWO OF THESE ADDRESSES ARE WRONG against manual Table 13.7
+ * (found 2026-11-13, Timer E stage 0b): 0xFFFFF8C2 is TIERE3 (not TOCRE3 —
+ * TOCRE3 is 0xFFFFF8C1), and 0xFFFFF8C6 is a RESERVED byte (RLDCRE3 is
+ * 0xFFFFF8C3). So the loader's "TOCRE3 = 0" writes TIERE3 = 0 (its reset
+ * value — harmless) and its "RLDCRE3 = RLD1" writes 0x02 into a reserved
+ * byte: the reload was never enabled, and plat_toe_out_set's DRLDE31 never
+ * reached DTRE31 on any build that used this path. The app uses TE_* above. */
 #define TSTRE    REG8(0xFFFFF700u)      /* bits 5..0 STRE5..STRE0             */
 #define TCRE3    REG8(0xFFFFF8C0u)      /* bits 2..0 CKSELE3 clock-bus line   */
-#define TOCRE3   REG8(0xFFFFF8C2u)      /* bits 3..0 TONEE3 output inversion  */
-#define RLDCRE3  REG8(0xFFFFF8C6u)      /* bits 3..0 RLDENE3 reload enable    */
+#define TOCRE3   REG8(0xFFFFF8C2u)      /* WRONG: this is TIERE3 (see above)  */
+#define RLDCRE3  REG8(0xFFFFF8C6u)      /* WRONG: reserved byte (see above)   */
 #define PSCRE3   REG8(0xFFFFF8C8u)      /* bits 2..0 PSCE3 prescaler division */
 #define SSTRE3   REG8(0xFFFFF8CCu)      /* bits 3..0 SSTR counter start       */
 #define CYLRE31  REG16(0xFFFFF8D2u)     /* cycle (period-1 ticks)             */

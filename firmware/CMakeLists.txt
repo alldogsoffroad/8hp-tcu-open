@@ -245,6 +245,24 @@ else()
         PASS_REGULAR_EXPRESSION "solenoid request source is refused on SH builds")
     set_tests_properties(rq_sh_guard_cell PROPERTIES
         PASS_REGULAR_EXPRESSION "read-only")
+    # Timer E stage 0b (2026-11-13): the group-A duty setter (TOE31 park
+    # hold) is refused on every SH build except the RAM application with
+    # TCU_M4B_OUTPUTS; TCU_M4B_OUTPUTS on the flashed application is #error
+    set(TOE_SH_SRC ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard_toe.c)
+    add_test(NAME toe_sh_guard_control
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${TOE_SH_SRC})
+    add_test(NAME toe_sh_guard_ram_m4b
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DTCU_RAM_APP -DTCU_M4B_OUTPUTS -DSH_GUARD_TOE_RAM ${TOE_SH_SRC})
+    add_test(NAME toe_sh_guard_setter
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_TOE_SET ${TOE_SH_SRC})
+    add_test(NAME toe_sh_guard_setter_loader
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DTCU_LOADER -DSH_GUARD_TOE_SET ${TOE_SH_SRC})
+    add_test(NAME toe_sh_guard_m4b
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DTCU_M4B_OUTPUTS ${TOE_SH_SRC})
+    set_tests_properties(toe_sh_guard_setter toe_sh_guard_setter_loader PROPERTIES
+        PASS_REGULAR_EXPRESSION "no group-A Timer E duty source")
+    set_tests_properties(toe_sh_guard_m4b PROPERTIES
+        PASS_REGULAR_EXPRESSION "TCU_M4B_OUTPUTS is refused on the flashed SH application")
     add_executable(test_dump tests/unit/test_dump.c app/bench_dump.c tests/unit/stub_plat.c)
     add_executable(transcript tests/unit/transcript.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c

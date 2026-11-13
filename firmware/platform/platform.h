@@ -242,9 +242,32 @@ void plat_drv_irq_arm(bool on);
  * plat_toe_out_init() configures the timer channel with duty 0 and switches the pin to its
  * timer function last, so the pin stays low (output off) throughout; call it once after
  * plat_init(). plat_toe_out_set() sets the energisation in per mille (1000 = fully on,
- * 0 = off); the duty takes effect through the reload buffer at the next cycle match. */
+ * 0 = off); the duty takes effect through the reload buffer at the next cycle match.
+ *
+ * On SH, plat_toe_out_init is the LOADER's only (the applications configure Timer E in the
+ * stock's order inside plat_app_init — Timer E stage 0b, 2026-11-13).
+ *
+ * ── SAFETY FRAME (Timer E stage 0b; the bench has a real mechatronic) ──
+ * plat_toe_out_set is the only runtime writer of a group-A Timer E duty (TOE31 = the park
+ * hold). On SH it exists ONLY in the RAM application built with TCU_M4B_OUTPUTS:
+ *   - on any other SH build a call is a _Static_assert failure;
+ *   - TCU_M4B_OUTPUTS on an SH build that is not the RAM application is an #error.
+ * So the flashed application can never produce a nonzero group-A duty: its group-A
+ * channels are written once, at init, with the constant 0 (plat_sh7254r.c te_9136e). */
 void plat_toe_out_init(void);
+#if defined(__sh__)
+#  if defined(TCU_M4B_OUTPUTS) && !defined(TCU_RAM_APP)
+#    error "TCU_M4B_OUTPUTS is refused on the flashed SH application (safety frame: group-A Timer E duty stays 0)"
+#  endif
+#  if defined(TCU_M4B_OUTPUTS)
 void plat_toe_out_set(uint16_t permil);
+#  else
+#    define plat_toe_out_set(permil) \
+       _Static_assert(0, "plat_toe_out_set: no group-A Timer E duty source on this SH build (safety frame)")
+#  endif
+#else
+void plat_toe_out_set(uint16_t permil);
+#endif
 
 /* ---- Mechatronic counterpart boot mailbox (spec 03 section 6.2) ----
  * The stock reads the input word at 0xFFFC0D00 during start-up, before its scheduler:

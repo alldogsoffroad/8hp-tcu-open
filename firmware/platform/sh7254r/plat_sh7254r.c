@@ -841,23 +841,30 @@ bool plat_drv_xfer(const uint16_t *tx, uint16_t *rx, uint8_t n)
  * PSCR1 = 4 -> 4 MHz, PSCRE3 = 1 -> divide by 2), cycle 2000 ticks = 1 kHz, counter
  * offset 1452 as stock (staggered start). Duty: the output is high from cycle start and
  * falls at the DTR match, so with TONE = 0 (no inversion) the pin-high fraction is
- * DTR/CYLR and DTR = 0 keeps the pin low — the same level as the port-mode safe state,
- * which is why the pin function is switched last.
- * Stock drives this output with inversion (polarity 1) and a battery-compensated duty;
- * the project starts with the non-inverted mapping (energisation permille -> pin-high
- * permille) and the FE11 commissioning step measures the actual magnet current in both
- * states before any change (docs/firmware/01-m4-range-park.md section 8). */
+ * DTR/CYLR and DTR = 0 keeps the pin low.
+ * CORRECTION (2026-11-13, solenoid_chain_decode.md §A, bytes 0x97242-0x97256): the
+ * stock does NOT invert this output. Its channel helper 0x97214 sets TONE only for
+ * polarity 0; group A (table 0x40CB4, TOE31 included) is polarity 1 -> TONE = 0, the
+ * same non-inverted mapping as here. The stock's duty is battery-compensated
+ * (0x8ADF4 -> 0x9203C -> DRLD writer 0x91500, gated on seq2[0] == 'U').
+ *
+ * plat_toe_out_init is the LOADER's (it shares plat_init); its body is kept
+ * byte-identical — including the two wrong register addresses documented at
+ * TOCRE3/RLDCRE3 in regs.h. The applications (flashed and RAM) configure
+ * Timer E in the stock's order in plat_app_init instead (te_stage0b below);
+ * plat_init no longer calls this in an application build, so nothing races. */
 #define TOE31_CYCLE_TICKS 2000u
 #define TOE31_COUNTER_OFFSET 1452u
 
+#if defined(TCU_LOADER)
 void plat_toe_out_init(void)
 {
     /* Everything is configured while PL6 is still a port pin driven low (port_init). */
     ATU_PSCR(1) = 4u;                   /* clock-bus line 1: P/(4+1) = 4 MHz          */
     TCRE3   = 0x01u;                    /* CKSELE3 = 001: counter from line 1         */
     PSCRE3  = 0x01u;                    /* PSCE3 = 1: divide by 2 -> 2 MHz            */
-    TOCRE3  = 0x00u;                    /* TONEE3 = 0: not inverted (see above)       */
-    RLDCRE3 = RLDCRE3_RLD1;             /* reload DTR/CYLR from buffers at cycle match */
+    TOCRE3  = 0x00u;                    /* (really TIERE3 — see regs.h)               */
+    RLDCRE3 = RLDCRE3_RLD1;             /* (really a reserved byte — see regs.h)      */
     CYLRE31 = TOE31_CYCLE_TICKS;
     CRLDE31 = TOE31_CYCLE_TICKS;
     DTRE31  = 0u;                       /* duty 0: pin low = output off               */
@@ -870,7 +877,12 @@ void plat_toe_out_init(void)
      * "low", so the level never changes. */
     PLCR1 = (uint16_t)((PLCR1 & ~PLCR1_PL6MD_TOE31) | PLCR1_PL6MD_TOE31);
 }
+#endif /* TCU_LOADER */
 
+/* The group-A duty setter exists on SH only in the RAM application with the M4b
+ * park outputs (platform.h refuses it — and TCU_M4B_OUTPUTS itself — on the
+ * flashed application: the safety frame of Timer E stage 0b). */
+#if defined(TCU_M4B_OUTPUTS)
 void plat_toe_out_set(uint16_t permil)
 {
     uint32_t d;
@@ -882,8 +894,10 @@ void plat_toe_out_set(uint16_t permil)
     if (d >= TOE31_CYCLE_TICKS) {
         d = TOE31_CYCLE_TICKS - 1u;     /* DTR must stay below CYLR */
     }
-    DRLDE31 = (uint16_t)d;              /* takes effect at the next cycle match */
+    TE_DRLDE(3, 1) = (uint16_t)d;       /* takes effect at the next cycle match
+                                         * (RLDCRE3 bit 1 set by te_chan) */
 }
+#endif
 
 /* ---- Memory read for the measurement protocol ---------------------------------- */
 static bool readable(uint32_t a, uint16_t n)
@@ -1236,6 +1250,159 @@ uint16_t plat_clock_probe(uint8_t *out, uint16_t max)
     return 16u;
 }
 
+/* ---- Timer E stage 0b: the stock's Timer E bring-up, in the stock's order ----
+ * (2026-11-13; ~/tcu_sweep/solenoid_chain_decode.md §A/§E, timerE_0b_port.md).
+ * Every register write below is ported from the flash BYTES of the September
+ * image (sh-elf-objdump -m sh2a -EB), addresses per manual Table 13.7:
+ *
+ *   0x91F68 (slot 8) and the tail of 0x91FA4 (slot 14): 0x96F68(700) —
+ *     ATUENR = shadow 0xFFF9470E & ~0x2BC (TBE TCE TDE TEE TGE TJE). OURS
+ *     CLEARS ONLY TEE (ATUENR bit 5, 0x0020): Timer D carries our 1 ms tick
+ *     and the walk timer, Timer C the TIOC clock the chip certifies on, Timer
+ *     G is deferred by plat_adcmux_start — none of them may stop here.
+ *   0x97198 (in 0x91FA4): per subblock n = 0..5 (0xFFFFF800 + 0x40n):
+ *     TIERE = 0; TSRE = TSRE & 0; PSCRE = 1 (table 0x41054); TCRE = 1
+ *     (table 0x4105A); then IPR14 = (IPR14 & 0xFF00) | 0x88; IPR15 =
+ *     0x8488; SSTRE0..5 = 0x0F; TSTRE = 0x3F. All 24 counters enabled —
+ *     they do not count while TEE is off.
+ *   0x97214(sub, ch, pol, cycle, duty) — the channel helper, write order:
+ *     TIERE &= ~b; TSRE &= ~b; TOCRE = (TOCRE & ~b) | (pol == 0 ? b : 0);
+ *     RLDCRE |= b; CYLR = cycle; DTR = duty; CRLD = cycle; DRLD = duty;
+ *     TCNTE = 0; SSTRE |= b.
+ *   0x919A0 (slot 16): 0x97214(5, 2, cal 0x1918ED = 1, cal 0x1914CC = 200, 0)
+ *     — TOE52, 10 kHz, duty 0 (not routed to a pin).
+ *   0x9136E (slot 16): table 0x40CB4, five entries {sub<<2|ch, pol, cycle,
+ *     TCNT offset}: E30 / E31 / E33 / E32 / E22, pol 1, cycle 2000, duty 0
+ *     (pushed literal), TCNTE = 327 / 1452 / 702 / 1077 / 702 after the
+ *     helper; entries 0 and 1 (TOE30, TOE31): TSRE &= ~b, TIERE |= b.
+ *     NOT PORTED: the TIERE |= b — it enables the TOE30/31 cycle-match
+ *     interrupt (stock ISR 0x6A680 -> the DRLD/CRLD writers 0x912C6 /
+ *     0x91318), which we do not have; TIERE stays 0 (and plat_intc_setup
+ *     zeroes IPR14/15 anyway). Also not ported: the RAM shadows 0xFFF90888 /
+ *     0xFFF90892 (their reader is the unported runtime writer 0x91500).
+ *   0x90010 (slot 16) -> 0x8FF66(0, mask cal 0x1918C3 = 0x1F, f = cal
+ *     0x191490 = 1000): per chip c = 0..4 of table 0x40D96 (byte 2 =
+ *     sub<<2|ch: E42 E43 E50 E51 E21): 0x97214(sub, ch, 1, 2f = 2000, 100),
+ *     then TCNTE = t, t = 2f - 40 - sum(stagger[0..c]) as a 16-bit store,
+ *     stagger = cal 0x190390 {0, 400, 800, 1200, 1600} -> 1960, 1560, 760,
+ *     0xFE48, 0xF808. Then 0x8FC5E(0, 1000): per chip in the same order
+ *     RLDCRE &= ~b; DRLD = 100; CRLD = 2f; RLDCRE |= b (the same values —
+ *     ported for write fidelity; [I] the init RAM state takes this branch:
+ *     0xFFF9083C[0] != 1000 and 0x9F >= 0xFFF90900[0]). Not ported from
+ *     0x90010: the driver-record RAM (0x8FBE4 / 0x8FE98 / 0x8FDB6 — no
+ *     register writes), the Timer F PWM-input set-up on the TIF pairs
+ *     (0xFFFFFA80 + 32·tif, 0x975EC) and the three Timer D compare triggers
+ *     (0xFFFFF58D/F) — Timer D is our tick.
+ *   0x91F3E (mode-0 init list 0x8EF56): ATUENR = shadow | 0x3FF — TEE back
+ *     on. Ours: plat_app_init's ATUENR |= 0x037F (bit 5 set).
+ *
+ * The 12 routed pins no routine writes (TOE00-03 PE6-13, TOE10-13, TOE23
+ * PL4, TOE40 PD5, TOE41 PD6, TOE53 PD3 — "11" in the decode is a miscount)
+ * keep their reset CYLR = DTR = 0xFFFF: the stock relies on the reset values
+ * (no writer [O scan, decode §A]), and so do we. With the counter running
+ * (0x97198's SSTRE/TSTRE) they go HIGH at the first cycle match, 65 535 x
+ * 0.5 us = 32.8 ms after TEE — the stock's every-boot state (user decision
+ * D3 = match the stock).
+ *
+ * SAFETY FRAME: group A (TOE30/31/32/33, TOE22) duty is the compile-time
+ * constant TE_GROUP_A_DUTY = 0; the only runtime group-A duty writer is
+ * plat_toe_out_set, which platform.h refuses on the flashed application. */
+#define TE_GROUP_A_DUTY   0u
+#define TE_GROUP_A_CYCLE  2000u        /* cal 0x1914C2 / table 0x40CB4: 1 kHz at 2 MHz */
+#define TE_GROUP_B_FREQ   1000u        /* cal 0x191490 */
+#define TE_GROUP_B_DUTY   100u         /* 0x8FF66 literal: 50 us */
+_Static_assert(TE_GROUP_A_DUTY == 0u,
+               "Timer E stage 0b: group-A duty must be 0 (safety frame)");
+
+static void te_chan(uint32_t sub, uint32_t ch, uint32_t pol, uint16_t cycle, uint16_t duty)
+{                                                       /* 0x97214 */
+    const uint8_t b = (uint8_t)(1u << ch);
+
+    TE_TIERE(sub) = (uint8_t)(TE_TIERE(sub) & (uint8_t)~b);
+    TE_TSRE(sub)  = (uint8_t)(TE_TSRE(sub)  & (uint8_t)~b);
+    TE_TOCRE(sub) = (uint8_t)((TE_TOCRE(sub) & (uint8_t)~b) | (pol == 0u ? b : 0u));
+    TE_RLDCRE(sub) = (uint8_t)(TE_RLDCRE(sub) | b);
+    TE_CYLRE(sub, ch) = cycle;
+    TE_DTRE(sub, ch)  = duty;
+    TE_CRLDE(sub, ch) = cycle;
+    TE_DRLDE(sub, ch) = duty;
+    TE_TCNTE(sub, ch) = 0u;
+    TE_SSTRE(sub) = (uint8_t)(TE_SSTRE(sub) | b);
+}
+
+static void te_tee_off(void)                            /* 0x96F68(700), TEE only */
+{
+    ATUENR = (uint16_t)(ATUENR & (uint16_t)~ATUENR_TEE);
+}
+
+static void te_97198(void)
+{
+    for (uint32_t n = 0u; n < 6u; n++) {
+        TE_TIERE(n) = 0u;
+        TE_TSRE(n)  = (uint8_t)(TE_TSRE(n) & 0u);
+        TE_PSCRE(n) = 0x01u;                            /* table 0x41054 */
+        TE_TCRE(n)  = 0x01u;                            /* table 0x4105A */
+    }
+    INTC_IPR14 = (uint16_t)((INTC_IPR14 & 0xFF00u) | 0x88u);
+    INTC_IPR15 = 0x8488u;
+    for (uint32_t n = 0u; n < 6u; n++) {
+        TE_SSTRE(n) = 0x0Fu;
+    }
+    TSTRE = 0x3Fu;
+}
+
+static void te_919a0(void)                              /* TOE52 */
+{
+    te_chan(5u, 2u, 1u, 200u, 0u);
+}
+
+static void te_9136e(void)                              /* group A */
+{
+    static const struct { uint8_t sc, pol; uint16_t cycle, ofs; } t[5] = {
+        { 0x0Cu, 1u, TE_GROUP_A_CYCLE, 327u  },          /* E30 PL5 */
+        { 0x0Du, 1u, TE_GROUP_A_CYCLE, 1452u },          /* E31 PL6 park hold */
+        { 0x0Fu, 1u, TE_GROUP_A_CYCLE, 702u  },          /* E33 PL8 */
+        { 0x0Eu, 1u, TE_GROUP_A_CYCLE, 1077u },          /* E32 PL7 */
+        { 0x0Au, 1u, TE_GROUP_A_CYCLE, 702u  },          /* E22 PL3 */
+    };
+
+    for (uint32_t k = 0u; k < 5u; k++) {
+        const uint32_t sub = (uint32_t)t[k].sc >> 2, ch = (uint32_t)t[k].sc & 3u;
+
+        te_chan(sub, ch, t[k].pol, t[k].cycle, TE_GROUP_A_DUTY);
+        TE_TCNTE(sub, ch) = t[k].ofs;
+        if (((1u << k) & 3u) != 0u) {
+            TE_TSRE(sub) = (uint8_t)(TE_TSRE(sub) & (uint8_t)~(1u << ch));
+            /* stock: TIERE(sub) |= 1 << ch — NOT ported (no cycle-match ISR) */
+        }
+    }
+}
+
+static void te_90010(void)                              /* group B: 0x8FF66 + 0x8FC5E */
+{
+    static const uint8_t sc[5] = { 0x12u, 0x13u, 0x14u, 0x15u, 0x09u };  /* 0x40D96 +2 */
+    static const uint16_t stagger[5] = { 0u, 400u, 800u, 1200u, 1600u }; /* 0x190390 */
+    const uint16_t cyc = (uint16_t)(2u * TE_GROUP_B_FREQ);
+    uint16_t t = (uint16_t)(cyc - 40u);
+
+    for (uint32_t c = 0u; c < 5u; c++) {                /* 0x8FF66, mask 0x1F */
+        const uint32_t sub = (uint32_t)sc[c] >> 2, ch = (uint32_t)sc[c] & 3u;
+
+        te_chan(sub, ch, 1u, cyc, TE_GROUP_B_DUTY);
+        t = (uint16_t)(t - stagger[c]);
+        TE_TCNTE(sub, ch) = t;
+    }
+    for (uint32_t c = 0u; c < 5u; c++) {                /* 0x8FC5E(0, 1000) */
+        const uint32_t sub = (uint32_t)sc[c] >> 2, ch = (uint32_t)sc[c] & 3u;
+        const uint8_t b = (uint8_t)(1u << ch);
+
+        TE_RLDCRE(sub) = (uint8_t)(TE_RLDCRE(sub) & (uint8_t)~b);
+        TE_DRLDE(sub, ch) = TE_GROUP_B_DUTY;
+        TE_CRLDE(sub, ch) = cyc;
+        TE_RLDCRE(sub) = (uint8_t)(TE_RLDCRE(sub) | b);
+    }
+}
+
 /* ---- The stock's init-time GPIO drives (S10, baseline review) ---------------
  * port_init equals the stock's safe-state block 0x961F0; these four init-
  * table entries run after it in the stock and were missing here, leaving the
@@ -1268,6 +1435,9 @@ static void stock_gpio_init(void)
 {
     const uint32_t PC = 0xFFFE3900u, PA = 0xFFFE3800u;
 
+    /* 0x91F68 (slot 8): 0x96F68(700) — TEE off before any Timer E register
+     * is touched (Timer E stage 0b; TEE bit only, see te_tee_off) */
+    te_tee_off();
     /* 0x8FB96 */
     BCLR(PC + 2u, 3); BSET(PC + 6u, 3);          /* PC11 = 0, out */
     BSET(PC + 2u, 4); BSET(PC + 6u, 4);          /* PC12 = 1, out */
@@ -1317,8 +1487,15 @@ static void stock_gpio_init(void)
         *(volatile uint16_t *)0xFFFE0C0Cu = 0u;
         B8(0xFFFFF400u) = 0x1Fu;
     }
+    /* 0x97198 — Timer E init (0x91FA4's 6th call; 0x970FC, Timer D, sits
+     * between and is not ported). TEE is off: nothing counts yet. */
+    te_97198();
 #if !defined(TCU_RAM_APP)
     plat_adcmux_timer_g_init();                  /* 0x97744 (in 0x91FA4, after 0x96FC8) */
+#endif
+    /* 0x91FA4's tail: 0x96F68(700) again (TEE bit only) */
+    te_tee_off();
+#if !defined(TCU_RAM_APP)
     plat_adcmux_init();                          /* 0x8F9EC (0x8EF1A's first entry) —
                                                   * Timer G starts with ATUENR |= 0x3FF */
 #endif
@@ -1364,9 +1541,16 @@ static void stock_gpio_init(void)
     BCLR(PA + 3u, 7); BSET(PA + 7u, 7);          /* PA7 = 0, out */
     B8(0xFFF90920u) = 0u;                        /* 0x90CF6(0) */
     BCLR(PA + 3u, 7);
+    /* 0x919A0 (slot 16, after 0x91884 — not ported): TOE52, duty 0 */
+    te_919a0();
     /* 0x91852 */
     B8(0xFFFE3813u) = (uint8_t)(B8(0xFFFE3813u) & 0xF0u);        /* PACR3: PA8 GPIO */
     BCLR(PA + 2u, 0); BSET(PA + 6u, 0);          /* PA8 = 0, out */
+    /* 0x9136E (slot 16, after 0x91E30 / 0x90F7A — no Timer E writes):
+     * group A, cycle 2000, duty 0 */
+    te_9136e();
+    /* 0x90010 (slot 16, after 0x90AEC): group B, 1 kHz / 50 us */
+    te_90010();
     /* 0x67350 */
     B8(0xFFFE3811u) = 0u;                        /* PACR4 low */
     B8(PA + 6u) = (uint8_t)(B8(PA + 6u) | 0xF0u);                 /* PA15..12 out */
@@ -1387,7 +1571,11 @@ void plat_init(void)
     speed_init();
     plat_sup_init();
     plat_drv_init();
-    plat_toe_out_init();    /* park hold PWM, duty 0 (pin stays low) */
+#if defined(TCU_LOADER)
+    plat_toe_out_init();    /* park hold PWM, duty 0 (pin stays low) — loader only;
+                             * the applications run Timer E stage 0b in
+                             * plat_app_init, in the stock's order */
+#endif
     (void)can_init(RCAN_A_BASE);
     (void)can_init(RCAN_C_BASE);
     plat_wdt_service();
@@ -1415,6 +1603,10 @@ void plat_app_init(void)
      * clock) is held back here and set by plat_adcmux_start() 500 ms into
      * the run (main.c task_adc_5ms). r02k, with TGE set here, restart-looped
      * with a death ~7.3 ms in, around the second J1 burst. */
+    /* Timer E stage 0b: TEE (bit 5) comes back on HERE — the 0x91F3E
+     * position — after every used channel's cycle/duty was written with TEE
+     * off (stock_gpio_init). Group A at 0 %, group B 50 us pulses at 1 kHz,
+     * TOE52 0 %; the 12 writer-less routed pins go high 32.8 ms later. */
     ATUENR |= 0x037Fu;
 }
 

@@ -731,3 +731,30 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
   1. **Timer E stage 0b** (TEE off → 0x97198 → 0x9136E group-A duty 0 / 0x919A0 TOE52 / 0x90010 group-B → TEE on at the mode-0 init position; the 11 unwritten pins high per D3; `plat_toe_out_init` merged/removed) — no current expected (group A duty 0; group B are 50 µs chip pulses);
   2. the '3' full-on decode above;
   3. **D1, the user's decision:** first channel and setpoint, with the host-validated law ready to take a nonzero request once the SH guard is lifted for exactly that channel.
+
+**TIMER E STAGE 0b, PORTED (2026-11-13; subagent, `~/tcu_sweep/timerE_0b_port.md` with a write-for-write table against the stock; validated this session: sh2a + host 40/40, loader hex byte-identical to HEAD, group-A constants and the 0x40CB4 table read from the stock bytes)** [O]:
+- **The stock's order, app init only (`stock_gpio_init`):**
+  1. TEE off (ATUENR bit 5 only — the stock's 0x96F68(700) clears 0x2BC; ours keeps Timer C/D/G running);
+  2. `te_97198` byte-faithful after the Timer C block;
+  3. TEE off again after the Timer G init (0x91FA4's tail);
+  4. `te_919a0` (TOE52, cycle 200, duty 0, not routed);
+  5. `te_9136e` — group A TOE30/31/32 (+E22/E33): cycle 2000, **duty 0**, TCNT offsets 327/1452/702/1077/702, TONE 0, TIERE 0 (the cycle-match ISR 0x6A680 not ported);
+  6. `te_90010` / 0x8FF66 — group B TOE42/43/50/51/21: cycle 2000, duty 100 (50 µs), stagger 1960/1560/760/0xFE48/0xF808;
+  7. TEE back on at the existing `ATUENR |= 0x037F` (the 0x91F3E position).
+
+  **12 writer-less pins** (the decode said 11; its own list names 12) keep reset DTR = CYLR = 0xFFFF and go high 32.8 ms after TEE-on, as the stock (D3). `plat_toe_out_init` now runs in the loader only.
+- **Safety:** `TE_GROUP_A_DUTY = 0` under `_Static_assert`. On SH `plat_toe_out_set` exists only with `TCU_M4B_OUTPUTS`, and `TCU_M4B_OUTPUTS` without `TCU_RAM_APP` is an `#error` — five sh-elf-gcc guard checks. A full-disassembly scan shows that only `_plat_app_init` and `_te_chan` touch Timer E addresses in the flashed app.
+- **FINDING [O manual Table 13.7 + stock bytes]:** regs.h had `TOCRE3` 0xFFFFF8C2 (really TIERE3) and `RLDCRE3` 0xFFFFF8C6 (a reserved byte). **The old `plat_toe_out_init` never enabled the reload, so `plat_toe_out_set` never changed TOE31 on any build** — every past park-hold test via FE11/park.c (RAM app) drove nothing. **With the fix, the RAM app's park hold is LIVE** — treat FE11/park.c as live before that build is ever run. The loader keeps the old code (byte-identical) and still writes the reserved byte.
+- Pin routing before timer config (ours) vs after (stock 0x962E2) does not matter: TOE pins hold their initial low level until the counters run, and TEE is off during config.
+- **Not ported:** the TIERE arm on TOE30/31, the RAM shadows, the runtime writers (0x91500, 0x912C6/0x91318, 0x8FC5E, 0x919D6), 0x90010's Timer F PWM-input set-up and Timer D compare triggers, 0x96F68's other enable bits.
+
+**r03c = r03b + TIMER E STAGE 0b (2026-11-13; built, NOT flashed, `build/r03c_IFla.bin`, app CRC `39476796`, blocks 0x40000 + 0x50000, app end 0x50DE8; NOT committed at time of writing):** RAM map identical to r03b. Witness `/tmp/witness_r03c.py` (r03b's + TIMER-E: TSTRE and per-subblock control/TSRE/PSC/SST/CYLR/DTR words, PDPR/PEPR/PLPR, ATUENR). Install `/tmp/install_r03c.py`.
+- **PREDICTION (rule 1):**
+  - [high] everything as r03b (rail engaged, chips disabled, buses clean);
+  - [high] Timer E per the report §7: TSTRE 0x3F; RLDCRE 00/00/06/0F/0C/07; **group-A DTR (E30–E33, E22) = 0000**; group-B DTR 0x0064; CYLR as tabled;
+  - pins: PEPR bits 6–13 = 1 (0x3FC0), PDPR bits 3/5/6 = 1, PLPR bit 4 = 1; **PL3 / PL5–PL8 = 0**; PL2 and PD7/9/10/11 mostly 0 (5 % pulses);
+  - ATUENR 0x03FF with bit 5 set.
+  - **Current [I ~80 %]: no step.** Group A is at 0 % and group B is logic pulses to the chips. Unknown: the 12 newly-high pins, which the stock also drives high every boot.
+  - **Stop conditions:**
+    - any group-A DTR ≠ 0000, or PL3/PL5–PL8 reading 1 → stop;
+    - a current step at boot → one of the newly-high pins drives a load: power off and report which (D3 revisited).
