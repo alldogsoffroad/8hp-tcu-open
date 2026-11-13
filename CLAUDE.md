@@ -305,3 +305,10 @@ A human/AI pair produced this project (see CONTRIBUTORS.md). Early commits were 
   1. a longer r02p soak (minutes) to settle the restart verdict;
   2. a correct acquisition with the same no-edge-in-burst property — hold BOTH ch0 and ch1 (or stop Timer G1/G2 together), so the slot mapping holds — before any L1;
   3. explain the walk polled-fallback rise (hold/release under SR.I = 15 inside the walk ISR's launch path is the first suspect).
+
+**r02q = THE HOLD STOPS G1 AND G2 TOGETHER (2026-11-13; built, NOT flashed, `build/r02q_IFla.bin`, app CRC `7896232B`, one block vs r02p)** — one variable vs r02p: the bus-B burst hold no longer clears CMEG2. It clears STRG1|STRG2 in TSTRG (0xFFFFFE01, `and #0xF9`, checked in the disassembly) and sets them again at burst end. A stopped TCNTG keeps its value and resumes from it [M §13.28.1], and both counters stop and resume in one write, so the G2 step → G1 convert pair keeps its 10 µs offset and the sequence and the AN0 ring stay in step. G4/G5 (the ADC_A/ADC_B scans) are untouched. Still not stock behaviour. Host 22/22. Addresses unchanged from r02p (nm). Witness `/tmp/witness_r02q.py`, install `/tmp/install_r02q.py` (sigs `/tmp/r02q_sigs.json`, 0x40000 = None).
+- **PREDICTION (rule 1):**
+  - [I ~75 %] **the readings are distinct and stable again:** mux 8 ≈ 2.9 V, supply (mux 11) ≈ 13.36 V, mux 10 ≈ 24.9 V, mux 13 ≈ 13.37 V with min13 within ~400 mV. A refutation (still scrambled) would mean the resume is not phase-exact — check TCNTG1/G2 against each other.
+  - [I ~70 %] no restarts (boots = 1; r02p's no-edge-in-burst property is kept); `s_mux_hold_n` ≈ 2 000/s.
+  - **The discriminator for r02p's residual disturbance:** walk polled-fallback rate. Still ~17/s (with level 5 excursions, gate flips and W2 errors) → the hold/release path or the pausing itself causes it, not the slipped sequence. Back near r02o's ~0.1/s → it came with the slipped sequence. I lean "still ~17/s" [I ~60 %]: the hold path has the same shape as r02p's.
+  - If the readings are good and the conversation is r02o-clean, r02q is the acquisition L1 can use.

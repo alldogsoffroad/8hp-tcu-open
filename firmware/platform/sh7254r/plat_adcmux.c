@@ -300,13 +300,17 @@ static void adc_dmac_init(void)
     R16(IPR04) = (uint16_t)((R16(IPR04) & 0x0FFFu) | 0xE000u);   /* DEI4 = E  */
 }
 
-/* ---- r02p DISCRIMINATOR: no PG12-15 edge during a bus-B burst --------
+/* ---- r02q: no PG12-15 edge during a bus-B burst, ring kept aligned -----
  * r02o proved the ch0 stepping corrupts bus B (deaths/AB replies gone with
- * CMEG2 off). Here the stepping runs, but plat_rspi clears CMEG2 at every
- * bus-B burst start (pump) and sets it again at burst end (SSL negated), so
- * the mux address never changes while an SSLB select is asserted. NOT a
- * stock behaviour (the stock's DMA-fed bus B overlaps the stepping freely).
- * Ring samples taken during a burst keep the previous address [I]. */
+ * CMEG2 off). r02p held CMEG2 alone across every bus-B burst: no restarts in
+ * 57 s, but ch1 (G1 -> AN0 -> ring) kept running while ch0 paused, so the
+ * ring slot -> mux input mapping slipped at every hold (readings scrambled).
+ * r02q stops BOTH counters G1 and G2 with one TSTRG write (STRG1|STRG2):
+ * TCNTG retains its value while stopped and resumes from it [M 13.28.1], so
+ * the G2-step / G1-convert pair keeps its 10 us offset and the sequence and
+ * the ring stay in lockstep. G4/G5 (the ADC_A/ADC_B scans) are untouched.
+ * NOT a stock behaviour (the stock's DMA-fed bus B overlaps the stepping). */
+#define TSTRG_MUX  0x06u                  /* STRG1 (G1, AN0) | STRG2 (G2, ch0) */
 static volatile uint8_t s_mux_armed;
 volatile uint32_t s_mux_hold_n;           /* diagnostic: holds performed */
 
@@ -315,7 +319,7 @@ void plat_adcmux_mux_hold(void)
     if (s_mux_armed != 0u) {
         const uint32_t lk = plat_sr_i();
         plat_sr_set(15u);
-        R8(TMRG + 0xA0u) = (uint8_t)(R8(TMRG + 0xA0u) & (uint8_t)~1u);   /* CMEG2 off */
+        R8(TMRG + 1u) = (uint8_t)(R8(TMRG + 1u) & (uint8_t)~TSTRG_MUX);   /* G1+G2 stop */
         s_mux_hold_n++;
         plat_sr_set(lk);
     }
@@ -326,7 +330,7 @@ void plat_adcmux_mux_release(void)
     if (s_mux_armed != 0u) {
         const uint32_t lk = plat_sr_i();
         plat_sr_set(15u);
-        R8(TMRG + 0xA0u) = (uint8_t)(R8(TMRG + 0xA0u) | 1u);            /* CMEG2 on */
+        R8(TMRG + 1u) = (uint8_t)(R8(TMRG + 1u) | TSTRG_MUX);              /* G1+G2 run  */
         plat_sr_set(lk);
     }
 }
@@ -350,7 +354,7 @@ static void adma_init(void)
     R16(ADMA + 0x64u) = 160u;                          /* ADMATCR1           */
     R8(TMRG + 0xA1u) = (uint8_t)(R8(TMRG + 0xA1u) & (uint8_t)~1u);   /* CMFG2 */
     R8(TMRG + 0xA0u) = (uint8_t)(R8(TMRG + 0xA0u) | 1u);            /* CMEG2 */
-    s_mux_armed = 1u;   /* r02p: bus-B bursts may now hold/release it */
+    s_mux_armed = 1u;   /* r02p/q: bus-B bursts may now hold/release it */
     R16(ADC_A + 0x04u) = (uint16_t)(R16(ADC_A + 0x04u) | 1u);   /* ADTRGE0 */
 }
 
