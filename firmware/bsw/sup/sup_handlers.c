@@ -28,6 +28,12 @@ void sup_job_err_bump(uint8_t id)
     }
 }
 
+/* r02u: read access for the descent recorder (sup_walk.c) */
+uint8_t sup_job_err_get(uint8_t id)
+{
+    return (id < JOB_COUNT) ? s_job_err_cnt[id] : 0u;
+}
+
 /* ── THE STOCK BIT MAP (S5/S6/S8, baseline review 2026-11-11) ────────────
  * Ported 1:1 from the stock handlers' decompiles (~/tcu_sweep/decomp/
  * r08_app/0x92D94, 0x92ED4, 0x92FD0, 0x93096, 0x931D4, 0x92AC0, 0x92BBE):

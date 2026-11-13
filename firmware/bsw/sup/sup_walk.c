@@ -568,6 +568,76 @@ static void walk_task(void)
     }
 }
 
+/* ── r02u THE DESCENT RECORDER (diagnostic; no wire effect) ─────────────
+ * Armed by the first 0x8D136(0) (phase 0x80's pass: target 0). From then
+ * on, every monitor pass that reaches the FSM switch AND either arms
+ * (token / resend, armed or busy) or sees the reported level, the expected
+ * level, the attention or the FSM change, writes one entry, until DSC_N:
+ * µs since entry, FSM, budget 0x9417D, reported / expected level,
+ * attention, the arm's kind (0x8D020's 0x9417E or the 'E' context), result
+ * (bits 7:6: 1 armed / 2 busy / 0 none) | polled-fallback walk deliveries
+ * since the previous entry (bits 5:0, saturating), W2 error count. Fits
+ * the stack guard (12 bytes x 24). Read once after boot. */
+#define DSC_N 24u
+typedef struct {
+    uint32_t t_us;
+    uint8_t fsm, budget, rep, exp;
+    uint8_t attn, kind, res_poll, w2err;
+} dsc_rec_t;                             /* 12 bytes */
+dsc_rec_t s_dsc[DSC_N];
+volatile uint8_t s_dsc_n;
+static uint8_t s_dsc_on;
+static uint8_t s_dsc_kind, s_dsc_res;
+static uint8_t s_dsc_prev[4];            /* fsm, rep, exp, attn of the last entry */
+static uint32_t s_dsc_poll0;
+extern volatile uint32_t s_walk_poll_count __attribute__((weak));
+
+static uint32_t dsc_poll(void) { return (&s_walk_poll_count != 0) ? s_walk_poll_count : 0u; }
+
+static void dsc_arm(void)
+{
+    if (s_dsc_on == 0u) {
+        s_dsc_on = 1u;
+        s_dsc_n = 0u;
+        s_dsc_poll0 = dsc_poll();
+        s_dsc_prev[0] = 0xFFu;           /* force the first entry */
+    }
+}
+
+static void dsc_note(uint8_t kind, bool busy)
+{
+    s_dsc_kind = kind;
+    s_dsc_res = busy ? 2u : 1u;
+}
+
+static void dsc_record(void)
+{
+    if (s_dsc_on == 0u || s_dsc_n >= DSC_N) {
+        return;
+    }
+    const uint8_t f = CELL_OUTER_FSM, r = CELL_LVL_REPORTED,
+                  x = CELL_LVL_EXPECTED, a = CELL_ATTENTION;
+    if (s_dsc_res == 0u && f == s_dsc_prev[0] && r == s_dsc_prev[1] &&
+        x == s_dsc_prev[2] && a == s_dsc_prev[3]) {
+        return;
+    }
+    dsc_rec_t *e = &s_dsc[s_dsc_n];
+    const uint32_t p = dsc_poll();
+    const uint32_t dp = p - s_dsc_poll0;
+    e->t_us = plat_frt_us() - plat_boot_tcnta();
+    e->fsm = f;
+    e->budget = CELL_S8_BUDGET;
+    e->rep = r;
+    e->exp = x;
+    e->attn = a;
+    e->kind = s_dsc_kind;
+    e->res_poll = (uint8_t)((uint8_t)(s_dsc_res << 6) | (dp > 63u ? 63u : dp));
+    e->w2err = sup_job_err_get(JOB_LEVEL);
+    s_dsc_poll0 = p;
+    s_dsc_prev[0] = f; s_dsc_prev[1] = r; s_dsc_prev[2] = x; s_dsc_prev[3] = a;
+    s_dsc_n = (uint8_t)(s_dsc_n + 1u);
+}
+
 /* ── the level target (stock 0x8D136 / 0x8D108) ─────────────────────────── */
 
 void sup_walk_target_set(uint8_t t)                      /* 0x8D136 */
@@ -575,6 +645,7 @@ void sup_walk_target_set(uint8_t t)                      /* 0x8D136 */
     uint8_t d = CELL_LVL_REPORTED;
 
     if (t == 0u) {
+        dsc_arm();                                       /* r02u */
         CELL_TARGET = 0u;
         CELL_TARGET_COMPL = 0xFFu;
     } else if (t == 5u) {
@@ -655,6 +726,7 @@ static void state8_law(void)
         CELL_S8_KIND = 0x19u;
         busy = sup_walk_resend();
     }
+    dsc_note(CELL_S8_KIND, busy);                         /* r02u */
     if (busy && CELL_S8_BUDGET > 1u) {
         CELL_S8_BUDGET++;
     }
@@ -783,6 +855,7 @@ static void e_rule(void)
             again = true;
             continue;
         }
+        dsc_note(s, busy);                                /* r02u */
         if (!busy) {
             CELL_E_LAST = s;
             s = CTX_STEADY;
@@ -842,6 +915,8 @@ void sup_monitor_poll(void)
         return;
     }
     st = pair_get(&CELL_OUTER_FSM, &CELL_OUTER_FSM_C);   /* 0x874FE: 0x6BDCA */
+    s_dsc_kind = 0u;                                      /* r02u */
+    s_dsc_res = 0u;
     switch (st) {
     case SUP_FSM_PROCEED:                                 /* 'E' 0x87502 */
         if (CELL_LVL_REPORTED >= 5u) {
@@ -906,6 +981,7 @@ void sup_monitor_poll(void)
         fsm_set(CELL_FSM_RETURN != 0u ? CELL_FSM_RETURN : SUP_FSM_BOOT);
         break;
     }
+    dsc_record();                                         /* r02u */
 }
 
 /* ── the W2 level builder (stock 0x91190) ───────────────────────────────── */

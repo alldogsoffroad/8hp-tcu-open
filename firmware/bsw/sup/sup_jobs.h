@@ -64,6 +64,7 @@ void sup_jobs_init(void);
 bool sup_job_queue(uint8_t id);         /* false if in-flight or queued */
 bool sup_job_check_free(uint8_t id);    /* the stock 0x93B8E */
 void sup_job_release(uint8_t id);       /* clear in-flight (handlers, ISR ctx) */
+uint8_t sup_job_err_get(uint8_t id);   /* r02u: descent recorder */
 void sup_job_err_bump(uint8_t id);      /* count a discard (stale-burst recovery,
                                          * the stock 0x93B8E busy-find law) */
 void sup_job_engine_pump(void);         /* launch head of each queue if bus idle */
