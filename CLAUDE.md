@@ -783,3 +783,15 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
     - any channel other than E nonzero in the staging/letters;
     - restarts or bus errors.
   - **This is the first solenoid current commanded under open firmware.**
+
+**r03d BENCH RESULT (2026-11-13 17:13 install, blocks 0x40000 `bf13662c3531ff4a` + 0x50000 `cbb5d6853ba1de7c`, all 21 verifies OK; power-on ≈ 17:14 under the ammeter; witness 17:15:04–07 at uptime ~65 s `/tmp/witness_r03d.log`) — THE FIRST SOLENOID CURRENT COMMANDED UNDER OPEN FIRMWARE: SOLENOID E AT 50 mA, ACCEPTED BY ITS DRIVER CHIP** [O]:
+- **The law, as predicted:** modes 0x94FD8 = 01 01 01 **03** 01 01 01 01 00 00 (E in current control); letters 0x90812 = 00 00 00 **21 ('!')** 00 00 00 00 32 32; currents 0x90230[3] = **0x01F4**; records +7 = 0x10 **0x18** 0x10 0x10 0x15.
+- **On the wire, as predicted:** cyclic `8810 8818 8810 8810 8815 | A000×5 | E800×5 | A600×5 | F000 F054 F000 F000 F000 | reads`; config row 3 `8810 8818 8810 8810 8815`.
+- **The chip took it:** config readback on chip 1 = **A298** (0x18 | 0x80; the others A290), and the cyclic's last read row returns **A054 in chip 1's slot** (all other slots A000) — the chip reads back E's setpoint 0x054 [I strong: a setpoint-register readback].
+- **Current:** steady supply mean **195.4 mA** (n = 14 092) vs r03c 190.8 / r03b 192.2 → **+3 to +5 mA**, consistent with the [D] estimate (chopper: ≈ I²R/V ≈ 1 mA, plus driver activity). Not resolvable as a clean step in the 0.2 s bins (the apparent +12 mA right after 'U' is within the bin noise).
+- Everything else unchanged: 'c', J2 9020, mode 1, C7, rail node 13 336 mV; bus A 6 391 cyclics, 0 slips; re-entries 0; job errors 0; no restarts.
+- **The project goal reached its first step:** the engaged rail AND a solenoid in current control at a commanded setpoint, under open firmware.
+- **Next options:**
+  1. raise E to its stock P value 8500 (850 mA) for a measurable supply step (+≈ 0.33 A [D]) — still inside the stock's own operating set;
+  2. decode the chips' read registers (0x60/0xC0/0x66/0xD8 → a measured-current readback?) to confirm actual coil current without the ammeter;
+  3. then the stock P set (A 50, D/B/E/C 850, WK 50, Sys 50 mA → 1.77 A total).
