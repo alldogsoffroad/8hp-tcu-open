@@ -539,3 +539,15 @@ A human/AI pair produced this project (see CONTRIBUTORS.md). Early commits were 
     - a current STEP at the rail-on → the chips' off state does not hold under the rail: stop;
     - bus-A replies all 0000/FFFF → the command-major layout or the selects are wrong;
     - new W1/W2/J errors or level excursions → bus-A load is disturbing bus B (move the config to alternate passes).
+
+**r02v BENCH RESULT (2026-11-13 14:09 install, block 0x40000 sig `477ff87d15bbf90a`, all 21 verifies OK; power-on ≈ 14:13:34 under the ammeter; witness 14:14:16–14:14:22 `/tmp/witness_r02v.log`) — STAGE 0a CONFIRMED: THE DRIVER CHIPS ACCEPT THE STOCK'S OFF CONTENT; NO CURRENT; SUPERVISOR PATH UNCHANGED** [O]:
+- **Bus A on the wire:** staged cyclic `8815×5 | A000×5 | E800×5 | A600×5 | F000×5 | 6000/C000/6600/D800 ×5` and config `8E9F/9021/9655/8815 ×5 + reads 28/30/2E/36 ×5` on every read (prediction [high] ✓).
+- **The chips answer (prediction [I ~70 %] ✓):**
+  - **Four chips respond, select slot 4 (SSLA5) returns 0000 — no chip there, as the stock's empty fifth select.** Replies carry the A2 class (A200) on writes and A000 on the cyclic setpoint/dither rows.
+  - **The config readbacks echo exactly what we wrote, on all four chips:** A295 (0x15 | 0x80 — the mode byte, bit 7 as a status flag [I]), A221 (0x90 ← 0x21), A29F (0x8E ← 0x9F), A255 (0x96 ← 0x55). Each reply arrives one command row after its request (full-duplex pipelining) [I].
+  - Cyclic setpoint/readback rows read data 0. One `AA00` (chip slot 3, first config row), cause not decoded [I: a status/reset flag].
+  - The rx rows' zero slot shifts from index ≡ 4 to ≡ 0 (mod 5) mid-buffer: a torn live read of a buffer being refilled [I].
+- **Current:** inrush 436 mA, then a flat ~183 mA. 181 mA mean / 201 mA max around +0.55 s (the phase-0x40 rail-on) — no step (prediction [I ~75 %] ✓). The chips' unknown power-on setpoint is now irrelevant: off and 0 are written before the rail ever comes on.
+- **The supervisor path is unchanged (prediction [high] ✓):** ladder 0xAA / 0x00FF; the 0x9020 window 15 launches (+532.239 → +577.497 ms); descent identical (6 tokens, 'E' at +598 ms, 0x93B93 = 0x23); FSM 'E', J2 9000, C7 / gate 1, REQ/GRANT 01/01; mode 0, pending 0, `s_held` 0 (H5); boots = 1.
+- **Bus B under the doubled bus-A traffic (prediction [I ~60 %] ✓, within the r02u range):** at 42–49 s uptime, W1 errors 6 → 8 and W2 1 → 3, against r02u's first boot at W1 2 / W2 6. Walk polled fallback ~20/s. No new error class.
+- **Next: L3b** — release H4 + H5, plus the rail-off full-on tests (D4: ladder phase 0x10 / 0x94114 and the '3' diagnosis / 0x94115 → bus-A mode 4 on ch 0–7, and TOE30/31/32 duty 1000 — the TOE side needs Timer E group A first, or is stated as a deviation). That makes 0x9020 permanent at 'U', with bus A still all-off — the rail closed with no solenoid current. D1 (which solenoids, setpoints) is still open before any current is commanded.
