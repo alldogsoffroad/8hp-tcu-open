@@ -137,7 +137,10 @@
 /* linker .sup_s8 at 0xFFF9417C */
 #define CELL_S8_BUDGET      (*(volatile uint8_t  *)0xFFF9417Du) /* 0x8D136/0x8D020 budget */
 #define CELL_S8_KIND        (*(volatile uint8_t  *)0xFFF9417Eu) /* 0x8D020: 7 token / 0x19 resend / 0 attention */
-#define CELL_ERA_BASE_LO    (*(volatile uint8_t  *)0xFFF94FEAu)
+#define CELL_ERA_BASE_LO    (*(volatile uint8_t  *)0xFFF94FEAu) /* UNUSED and mislabelled: the stock's
+                                                                 * 0x94FEA is the TOE30 force-off
+                                                                 * (safety layer → 0x7B6D8; drv_cells.h
+                                                                 * CELL_GA_OFF10, M4) */
 #define CELL_SYS_MODE       (*(volatile uint8_t  *)0xFFF9500Cu)
 #define CELL_BOOT_FLAG      (*(volatile uint8_t  *)0xFFF9500Eu) /* 1 = walk armed */
 #define CELL_OUTER_FSM      (*(volatile uint8_t  *)0xFFF95010u) /* 0/8/0x12/0x23/0x45/0x34 */

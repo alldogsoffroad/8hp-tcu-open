@@ -229,6 +229,10 @@ void plat_adcmux_start(void) {}
 void plat_adcmux_finish_5ms(void) {}
 void plat_adcmux_status_5ms(void) {}
 bool plat_adcmux_ready(void) { return false; }   /* no AN0 chain on the host sim */
+void plat_adcmux_an_convert(void) {}
+uint16_t plat_te_ga_dtr(uint8_t sc) { (void)sc; return 0u; }
+void plat_te_ga_drld(uint8_t sc, uint16_t drld) { (void)sc; (void)drld; }
+void plat_te_ga_cycle(uint8_t sc, uint16_t drld, uint16_t crld) { (void)sc; (void)drld; (void)crld; }
 void plat_tioc_cut(void) {}
 void plat_tioc_restore(void) {}
 void plat_dei5_isr(void) {}

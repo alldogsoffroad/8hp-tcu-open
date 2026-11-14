@@ -49,6 +49,12 @@ typedef struct {
     bool adc_ready;             /* L1: plat_adcmux_ready() */
     bool tioc_cut;              /* L1: PD4/PD8 on GPIO (0x91E6C) until restored */
     unsigned tioc_cuts;         /* L1: plat_tioc_cut() calls */
+    /* ---- M4 group A (drv_groupa.c) ---- */
+    uint16_t te_drld[5];        /* DRLD per output k (E30 E31 E33 E32 E22) */
+    uint16_t te_dtr[5];         /* DTR model: follows DRLD */
+    uint16_t te_crld[5];
+    unsigned te_writes, te_cycle_writes, te_bad_sc;
+    unsigned an_converts;       /* plat_adcmux_an_convert() calls */
 } stub_plat_t;
 
 extern stub_plat_t stub;

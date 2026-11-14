@@ -74,6 +74,11 @@ SECTIONS
     .adc_cells 0xFFF90000 (NOLOAD) : { . += 0xB0; } > RAM   /* descriptor states + windows */
     .adc_out   0xFFF90184 (NOLOAD) : { . += 0x08; } > RAM   /* 0x90184..0x9018B */
     .adc_ms    0xFFF90628 (NOLOAD) : { . += 0x04; } > RAM
+    /* M4 (drv_temp.c): the ADC_A direct-scan sums the 1 ms ISR accumulates
+     * (stock 0x8F058 tail, 0x900E8 + 4n, n = AN0..AN27) and the AN table the
+     * reply proc's 0x8F70C publishes (0x9018C + 2n, mV) */
+    .adc_sum   0xFFF900E8 (NOLOAD) : { . += 0x70; } > RAM   /* 0x900E8..0x90157 */
+    .adc_an    0xFFF9018C (NOLOAD) : { . += 0x38; } > RAM   /* 0x9018C..0x901C3 */
 
     .sup_walk 0xFFF90540 (NOLOAD) : {      /* walk reply cells .. 0x90551    */
         __sup_walk_start = .; *(.sup_walk) . += 0x14; __sup_walk_end = .;
@@ -149,6 +154,14 @@ SECTIONS
     .drv_rq3 0xFFF9337C (NOLOAD) : { . += 0x14; } > RAM   /* 0x9337C..0x9338F        */
     .drv_rq4 0xFFF93978 (NOLOAD) : { . += 0x06; } > RAM   /* 0x93978..0x9397D        */
     .drv_rq5 0xFFF93A12 (NOLOAD) : { . += 0x02; } > RAM   /* 0x93A12..0x93A13        */
+    /* M4 group A (drv_groupa.c / drv_temp.c; ~/tcu_sweep/groupA_park_port.md):
+     * the stock cells outside .sup_value / .sup_cells / .sup_cnt / .sup_l1f,
+     * cleared by drv_ga_init / drv_temp_init — 0x93A66 the switch-output law's
+     * previous duty (0x8ADF4), 0x93A9C..0x93AAB the fluid-temperature
+     * acquisition 0x8D5BA, 0x9416E/F the 0x887D8 source flags */
+    .drv_ga1  0xFFF93A66 (NOLOAD) : { . += 0x0A; } > RAM   /* 0x93A66..0x93A6F        */
+    .drv_tmp1 0xFFF93A9C (NOLOAD) : { . += 0x10; } > RAM   /* 0x93A9C..0x93AAB        */
+    .drv_tmp2 0xFFF9416E (NOLOAD) : { . += 0x02; } > RAM   /* 0x9416E..0x9416F        */
     /* our request-law witnesses and the refresh snapshot (not stock cells;
      * free low RAM like .sup_wit, so they do not cost the stack guard) */
     .drv_wit 0xFFF84C40 (NOLOAD) : {

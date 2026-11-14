@@ -55,6 +55,7 @@ void plat_adcmux_init(void) {}
 
 void plat_adcmux_finish_5ms(void) {}
 void plat_adcmux_status_5ms(void) {}
+void plat_adcmux_an_convert(void) {}
 void plat_dei5_isr(void) {}
 void plat_dei4_isr(void) {}
 void plat_adcmux_mux_hold(void) {}
@@ -121,6 +122,10 @@ void plat_adcmux_mux_release(void) {}
 #define C_RIP13        0xFFF907F8u    /* u16: ripple (MAD + |delta|) mean */
 #define C_MIN13_RAW    0xFFF907FAu    /* u16 raw running minimum (reset 5 ms) */
 #define C_MIN13_MV     0xFFF907FCu    /* u16 mV: 5 ms minimum of mux 13 */
+/* M4 (groupA_park_port.md §3): the ADC_A direct-scan sums and the AN table */
+#define C_ANSUM        0xFFF900E8u    /* u32 [28]: sum of ADR0..27 since the last 0x8F70C */
+#define C_ANSUM_N      0xFFF907DEu    /* u16: scans summed (+1 per 1 ms ISR) */
+#define C_AN_MV        0xFFF9018Cu    /* u16 [28]: AN0..AN27 in mV (0x8F70C) */
 
 /* ---- the smoothing descriptors (ROM 0x40874..0x40903) [O bytes] -------- */
 typedef struct {
@@ -398,6 +403,11 @@ void plat_adcmux_init(void)
     adc_quiesce_ours();                                /* D5                 */
     adc_dmac_init();                                   /* 0x967F4            */
     adma_init();                                       /* 0x96900            */
+    for (uint32_t i = 0u; i < 28u; i++) {              /* M4: our NOLOAD     */
+        R32(C_ANSUM + 4u * i) = 0u;                    /* (the stock's RAM   */
+        R16(C_AN_MV + 2u * i) = 0u;                    /*  starts cleared)   */
+    }
+    R16(C_ANSUM_N) = 0u;
     R16(C_MIN13_RAW) = 0xFFFFu;
     (void)desc_init(&D_4088C);
     (void)desc_init(&D_408A4);
@@ -580,6 +590,15 @@ static void adcmux_1ms(void)
         }
         desc_push(&D_408EC, (uint16_t)m14);
     }
+    /* M4: the ADC_A direct-scan sums (0x8F47C..0x8F4B2): 0x900E8[i] +=
+     * ADR(i) for AN0..AN27 (the DMAC5 buffer 0xFFF88132..), 0x907DE += 1.
+     * Not ported from the same tail: the mux 0-7/9/15 and ADC_B sums, the
+     * ADRD0 self-diagnosis sum (0x908F5) and the 0x071D DMA-alive
+     * sentinels (D2) — no consumer here. */
+    for (uint32_t i = 0u; i < 28u; i++) {
+        R32(C_ANSUM + 4u * i) = R32(C_ANSUM + 4u * i) + (uint32_t)R16(RAM_ADCA_BUF + 2u + 2u * i);
+    }
+    R16(C_ANSUM_N) = (uint16_t)(R16(C_ANSUM_N) + 1u);
 }
 
 /* ---- 0x95FC4 (DEI5, vector 128) / 0x95FEA (DEI4, vector 124) ----------- */
@@ -657,6 +676,45 @@ void plat_adcmux_finish_5ms(void)
     desc_finish(&D_408D4);                             /* 0x9018A            */
     desc_finish(&D_408EC);                             /* 0x907EE            */
 
+    {                                                  /* 0x96674(old)       */
+        const uint32_t sr = sr_get();
+        sr_put(((old | ~0xF0u) & (sr | 0xF0u)));
+    }
+}
+
+/* ---- 0x8F70C, ADC_A part: the AN table (reply proc 0x8EE52's head; 5 ms in
+ * OS mode 0, 10 ms in mode 1), under SR.I >= 4 (0x9665C(0x40)) so the DEI5
+ * sums cannot move mid-loop. Per AN n: 0x9018C[n] = ftrc(float(sum) x
+ * scale[n] x (0x3D9C4000 = 5000/65536 / float(count))), sum cleared; then
+ * the count. Not ported from 0x8F70C: the 0x9360C descriptor finishers
+ * (0x40904..0x40940), the 0x907F2 rescale, the ADC_B table 0x901C4 / the
+ * 0x901D4 four, the guard-word checks (fault 0x232) and the ADRD0
+ * self-diagnosis cycle (ADCER0/1 bits 9:8). ----------------------------- */
+static const float AN_SCALE[28] = {                    /* flash 0x190184     */
+    1.0f, 1.0f, 2.0f, 2.5f, 2.5f, 2.5f, 2.5f, 4.0f, 1.0f, 2.5f,
+    2.5f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 5.0f,
+    5.0f, 5.0f, 4.8f, 2.0f, 1.0f, 1.0f, 1.0f, 1.0f,
+};
+
+void plat_adcmux_an_convert(void)
+{
+    const uint32_t old = sr_get();                     /* 0x9665C(0x40)      */
+    if ((old & 0xF0u) < 0x40u) {
+        sr_put((old & ~0xF0u) | 0x40u);
+    }
+    {
+        const uint32_t n = R16(C_ANSUM_N);
+        if (n != 0u) {
+            const float k = 0.0762939453125f / (float)(int32_t)n;   /* 0x8F9C0 */
+            for (uint32_t i = 0u; i < 28u; i++) {
+                const uint32_t sum = R32(C_ANSUM + 4u * i);
+                R32(C_ANSUM + 4u * i) = 0u;
+                R16(C_AN_MV + 2u * i) =
+                    (uint16_t)(int32_t)(((float)(int32_t)sum * AN_SCALE[i]) * k);
+            }
+        }
+        R16(C_ANSUM_N) = 0u;
+    }
     {                                                  /* 0x96674(old)       */
         const uint32_t sr = sr_get();
         sr_put(((old | ~0xF0u) & (sr | 0xF0u)));

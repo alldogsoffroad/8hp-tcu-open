@@ -640,6 +640,48 @@ void plat_adcmux_init(void) {}
 void plat_adcmux_start(void) {}
 void plat_adcmux_finish_5ms(void) {}
 void plat_adcmux_status_5ms(void) {}
+/* M4: the AN table is the test's to set (0xFFF9018C + 2n); count the calls */
+void plat_adcmux_an_convert(void) { stub.an_converts++; }
+/* M4: the group-A Timer E writer (0x91500); DTR follows DRLD at once */
+static int te_ga_idx(uint8_t sc)
+{
+    switch (sc) {
+    case 0x0Cu: return 0;
+    case 0x0Du: return 1;
+    case 0x0Fu: return 2;
+    case 0x0Eu: return 3;
+    case 0x0Au: return 4;
+    default:    return -1;
+    }
+}
+uint16_t plat_te_ga_dtr(uint8_t sc)
+{
+    const int i = te_ga_idx(sc);
+    return i < 0 ? 0u : stub.te_dtr[i];
+}
+void plat_te_ga_drld(uint8_t sc, uint16_t drld)
+{
+    const int i = te_ga_idx(sc);
+    if (i < 0) {
+        stub.te_bad_sc++;
+        return;
+    }
+    stub.te_drld[i] = drld;
+    stub.te_dtr[i] = drld;
+    stub.te_writes++;
+}
+void plat_te_ga_cycle(uint8_t sc, uint16_t drld, uint16_t crld)
+{
+    const int i = te_ga_idx(sc);
+    if (i < 0) {
+        stub.te_bad_sc++;
+        return;
+    }
+    stub.te_drld[i] = drld;
+    stub.te_dtr[i] = drld;
+    stub.te_crld[i] = crld;
+    stub.te_cycle_writes++;
+}
 /* L1: the ladder's start gate and the TIOC pin cut (the test drives them) */
 bool plat_adcmux_ready(void) { return stub.adc_ready; }
 void plat_tioc_cut(void)

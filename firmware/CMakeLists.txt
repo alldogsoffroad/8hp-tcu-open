@@ -20,6 +20,7 @@ set(CORE_SOURCES
     bsw/sup/sup_token.c
     bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c
     bsw/drv/drv_handlers.c
+    bsw/drv/drv_groupa.c bsw/drv/drv_temp.c
     bsw/com/crc8.c
     bsw/com/com.c
     bsw/com/com_tx.c
@@ -94,6 +95,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         COMPILE_OPTIONS -fno-tree-loop-distribute-patterns)
     target_include_directories(tcu_app.elf PRIVATE ${CMAKE_SOURCE_DIR}/platform/sh7254r/include)
     target_compile_definitions(tcu_app.elf PRIVATE TCU_AUTOENGAGE TCU_E60P)  # bench m4 series; E60x - the full walk, alive at last (boot death solved: no bit0 from word one)
+    # M4 group A (bsw/drv/drv_groupa.h): THE ONE STAGING MACRO of the flashed
+    # application — 0 (default) no group-A current, the law at zero demand;
+    # 1 the park hold (TOE31) at the stock's on-demand; 2 the rail-off
+    # full-on tests released. -DDRV_GA_STAGE=1 at configure time.
+    set(DRV_GA_STAGE 0 CACHE STRING "M4 group-A stage of tcu_app.elf (0 / 1 / 2)")
+    set_property(CACHE DRV_GA_STAGE PROPERTY STRINGS 0 1 2)
+    target_compile_definitions(tcu_app.elf PRIVATE DRV_GA_STAGE=${DRV_GA_STAGE})
     target_link_options(tcu_app.elf PRIVATE -T ${LDSCRIPT} -Wl,-Map=tcu_app.map)
     target_link_libraries(tcu_app.elf PRIVATE gcc)
     add_dependencies(tcu_app.elf tcu_flasher_bin)
@@ -215,6 +223,22 @@ else()
     add_executable(test_reqlaw tests/unit/test_reqlaw.c bsw/drv/drv_jobs.c
         bsw/drv/drv_reqlaw.c bsw/drv/drv_handlers.c tests/unit/stub_plat.c)
     add_test(NAME reqlaw COMMAND test_reqlaw)
+    # M4 group A (2026-11-14, ~/tcu_sweep/groupA_park_port.md): the stock's
+    # switch-output law 0x849D4 → 0x8ADF4 → 0x91500 and the hold-law
+    # temperature 0x887D8 — host runtime path, then the three compile-time
+    # stage configurations exactly as the target builds them
+    set(GA_TEST_SOURCES tests/unit/test_groupa.c bsw/drv/drv_groupa.c bsw/drv/drv_temp.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_handlers.c
+        bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
+        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c
+        bsw/sup/sup_token.c tests/unit/stub_plat.c)
+    add_executable(test_groupa ${GA_TEST_SOURCES})
+    add_test(NAME groupa COMMAND test_groupa)
+    foreach(st 0 1 2)
+        add_executable(test_groupa_stage${st} ${GA_TEST_SOURCES})
+        target_compile_definitions(test_groupa_stage${st} PRIVATE DRV_GA_COMPILE_TIME=1 DRV_GA_STAGE=${st})
+        add_test(NAME groupa_stage${st} COMMAND test_groupa_stage${st})
+    endforeach()
     # ... and the SH-only compile checks of the safety frame: with __sh__
     # (the cross compiler when present, else the host one with -D__sh__)
     # the control compiles, and every request source fails to compile
@@ -263,6 +287,43 @@ else()
         PASS_REGULAR_EXPRESSION "no group-A Timer E duty source")
     set_tests_properties(toe_sh_guard_m4b PROPERTIES
         PASS_REGULAR_EXPRESSION "TCU_M4B_OUTPUTS is refused on the flashed SH application")
+    # M4 group A safety frame: the stage-0 control (and stages 1 / 2) compile;
+    # a demand source, the host setters and a foreign Timer E writer do not
+    set(GA_SH_SRC ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard_ga.c)
+    add_test(NAME ga_sh_guard_control
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${GA_SH_SRC})
+    add_test(NAME ga_sh_guard_stage1
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DDRV_GA_STAGE=1 ${GA_SH_SRC})
+    add_test(NAME ga_sh_guard_stage2
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DDRV_GA_STAGE=2 ${GA_SH_SRC})
+    add_test(NAME ga_sh_guard_stage3
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DDRV_GA_STAGE=3 ${GA_SH_SRC})
+    add_test(NAME ga_sh_guard_source
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DDRV_GA_DEMAND_SOURCE=1 ${GA_SH_SRC})
+    add_test(NAME ga_sh_guard_setter
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_GA_SETTER ${GA_SH_SRC})
+    add_test(NAME ga_sh_guard_tests
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_GA_TESTS ${GA_SH_SRC})
+    add_test(NAME ga_sh_guard_writer
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_GA_WRITER ${GA_SH_SRC})
+    add_test(NAME ga_sh_guard_cycle
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_GA_CYCLE ${GA_SH_SRC})
+    add_test(NAME ga_sh_guard_d13
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DDRV_GA_D13=10000u ${GA_SH_SRC})
+    add_test(NAME ga_sh_guard_d11
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DDRV_GA_D11=5000u ${GA_SH_SRC})
+    set_tests_properties(ga_sh_guard_stage3 PROPERTIES
+        PASS_REGULAR_EXPRESSION "DRV_GA_STAGE must be 0, 1 or 2")
+    set_tests_properties(ga_sh_guard_source PROPERTIES
+        PASS_REGULAR_EXPRESSION "group-A demand source is refused on SH builds")
+    set_tests_properties(ga_sh_guard_setter ga_sh_guard_tests PROPERTIES
+        PASS_REGULAR_EXPRESSION "no group-A demand source on SH builds")
+    set_tests_properties(ga_sh_guard_writer ga_sh_guard_cycle PROPERTIES
+        PASS_REGULAR_EXPRESSION "only the group-A law")
+    set_tests_properties(ga_sh_guard_d13 PROPERTIES
+        PASS_REGULAR_EXPRESSION "only the park hold")
+    set_tests_properties(ga_sh_guard_d11 PROPERTIES
+        PASS_REGULAR_EXPRESSION "on/off value")
     add_executable(test_dump tests/unit/test_dump.c app/bench_dump.c tests/unit/stub_plat.c)
     add_executable(transcript tests/unit/transcript.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c

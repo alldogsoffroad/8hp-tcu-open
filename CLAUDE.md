@@ -848,3 +848,47 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
   - the walk polled-fallback rate.
 
 **README status (2026-11-13, user decision "follow the rule"):** row 3 rescored by README's own rule (M4–M6 15 % each): M0–M3 complete = 55 % + M4 partial 5 % → **60 %**; overall (95 + 95 + 60 + 0)/4 ≈ **62 %**. This corrects both the 2026-11-10 78 % (ahead of the evidence) and the 85 % written at the r03f result (6fd5e86), which ignored the rule.
+
+**M4b — PARK OUTPUTS: DECODE + USER DECISIONS (2026-11-13/14; `~/tcu_sweep/park_outputs_decode.md`, read-only subagent; cal claims re-checked this session: pull-in reload 0x1919C3 = 4, modulator cal 0x1918E7 = 0, hold curve 0x19157C = 5400 mV @ −30 °C … 9380 mV @ 140 °C):**
+- **Park release (bus-A ch 7):** a steady request of **10000 (1.0 A, current-regulated, letter '!')** whenever the park target is not P (0xE8888 → 0x7B6D8 slot 7); chip 3 8812 → 881A, F0 slot 3 → F682/F683. No pulse. Not inputs: brake, engine, line pressure, the park sensor. Chain: park target 0xFFF8D6D6 → … 0xCFFDE → park request 0xFFF8AE29 → 0xE88FA (release on iff request = 0; hold on iff the lock decision = 0).
+- **Group A:** **TOE31 = park hold** — needs 'U'; 20 ms at 100 % pull-in, then duty = curve 0x19157C(temperature 0x94F9C) / rail-node mV × 1000 (≈ 515 ‰ at 25.7 °C / 13.0 V). TOE30 is a battery-compensated coil (function unknown), forced off by 0x94FEA = 1. TOE32 is battery-supplied (≥ 6.7 V), function unknown. **No cycle-match ISR needed.**
+- **Order:** leaving P, release and hold come on in the same tick, open loop. Entering P, release drops at once and hold drops on the lock decision. The park "state" 0xFFF8BC70 is a timer model (release 150 ms, engage ≈ 200 ms at 27 °C), not the sensor.
+- **The stock has Auto-P** (the dump: no lever source → stationary → target 8, both park outputs off). The park position sensor's channel is not resolved (lead: 0x8DF2E inputs AN5/AN6, DTC group 98).
+- **The M4a audit:**
+  - `range.c` ≈ stock mode-4, but it treats an invalid output speed as moving (it would release park on a sensorless bench);
+  - `park_ctl.c`'s sequencing is invented and must be replaced;
+  - M4a's drive values are wrong (release full-on 2047 vs stock 1.0 A; hold 100 % vs pull-in + compensated).
+- **USER DECISIONS 2026-11-14:**
+  - **D-M4-1** dry bench (no pump, no driveline);
+  - **D-M4-2** park hold first;
+  - **D-M4-3** port the stock producer of 0x94F9C first;
+  - **D-M4-4/5** port the TOE30/TOE32 laws AND the rail-off group-A full-on tests.
+
+**THE GROUP-A CHAIN + THE HOLD TEMPERATURE PRODUCER, PORTED (2026-11-14; subagent, `~/tcu_sweep/groupA_park_port.md`; validated this session: sh2a + host 55/55, loader hex identical, every group-A DRLD/CYLR write call site in the stage-0 disassembly passes `#0`)** [O decode from the bytes]:
+- **What is ported:**
+  - `drv_groupa.c`: 0x7B6D8 slots 10–14 (+ 0x94FEA/0x94FEB force-offs), 0x849D4 / 0x8ADF4 / 0x8AFC0, curve 0x886AC → 0x8D42C, 0x91500, 0x9203C;
+  - `drv_temp.c`: the temperature **0x94F9C ← 0x887D8 / 0x8D5BA / 0x8D4B4 / 0x8D57C / 0x88A50, curve 0x8ED20 → 0x8ED60**. The sensor is **AN8 against AN1 as reference**, both already acquired by the DMAC5 chain; the 1 ms ADC_A sums (0x8F058 tail) and the AN-table conversion 0x8F70C were added.
+  - **The stock dump reproduces:** AN8 3031 mV → **0x94F9C = 0x019B (25.7 °C), status 8**.
+  - Stock cadence: 5 ms in mode 0, 10 ms in mode 1; pull-in 20 ms either way.
+- **CORRECTIONS to the park decode:**
+  - TOE32 is excluded from the full-on tests by the law itself (source 0xFE), so stage 2 drives no TOE32 current;
+  - **before 'L' (0x95005 = 1) group A is forced into the test branch and off whatever the demand**, so a hold demand acts only after 'L';
+  - the min-clamp mask is 0x1F; TOE32's supply cell is 0x94F86; 0x91500 refreshes only 0x90888[0];
+  - the decode's 518 ‰ / 1036 is at 12.94 V (r03f's rail node); at 13.0 V it is 515 ‰ / 1030.
+- **Staging:** `DRV_GA_STAGE` (CMake cache, `tcu_app.elf` only).
+  - **0 = every demand 0, full-on tests held (default)**;
+  - 1 = TOE31 demand 10000, tests held;
+  - 2 = tests released, demands 0, still behind the bus-A rail-quiet interlock.
+
+  Static asserts: only slot 11 may be nonzero, and only 0/10000 per stage. No SH demand setter (`#error`). `plat_te_ga_*` (the only Timer E group-A writers) refused outside `drv_groupa.c`, absent from the loader. A runtime stage guard forces a disallowed DRLD to 0 (counted) and clamps every DRLD to the cycle. 11 sh-elf-gcc compile checks; mutation-tested.
+- **Stand-ins:** 0x94FEA = 1 (TOE30 forced off, as in the dump); fault class no-fault (0x938F6 not ported); fault path 0x65 inactive; coding byte 0. The RAM app no longer carries this law (its 64 KB limit).
+
+**r03g = r03f + THE GROUP-A LAW AND TEMPERATURE PRODUCER AT STAGE 0 (2026-11-14; built, NOT flashed, `build/r03g_IFla.bin`, app CRC `FF809CA4`, blocks 0x40000 + 0x50000, app end 0x521AC; NOT committed at time of writing):**
+- RAM map unchanged except `.drv_wit` → 0xFFF84C84 (`s_ga_f238_n` 0x84C6C, `s_ga_ilock_n` 0x70, `s_ga_thold_n` 0x74, `s_ga_guard_n` 0x78, `s_ga_wit_drld` 0x7E, `_pm` 0x80, `_curve` 0x82).
+- Witness `/tmp/witness_r03g.py` (r03f's + a GROUPA line: 0x94F9C + status 0x94FF0, AN1 / AN8 table, 0x94110..13, modes 0x95000, duty 0x9086A, the counters and the would-be hold DRLD/‰/curve). Install `/tmp/install_r03g.py`.
+- **PREDICTION (rule 1):**
+  - [high] **no current change** — the r03f P set's ~1.775 A; Timer E as r03c (group-A DTR/DRLD 0000); everything else as r03f;
+  - **[I ~75 %] the temperature producer works: 0x94F9C ≈ the bench temperature (≈ 0x0140–0x01A0, 20–26 °C), status 8.** This is the gate for stage 1. If it reads 0x0780 / status 3, the AN table is not converting, and the hold would run on the 120 °C default (688 ‰);
+  - 0x94111 = 0x0B after 'U', modes 0x95000 = 00 ×5, `s_ga_guard_n` 0;
+  - the witness hold values ≈ 508–518 ‰ / DRLD 1014–1036 (the rail node sags to ~12.94 V under the P set);
+  - re-entries / bus errors still 0 (the AN conversion masks RSPI-B ≈ 3–5 µs per pass).

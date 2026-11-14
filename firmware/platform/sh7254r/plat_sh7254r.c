@@ -1,4 +1,5 @@
 /* SH7254R platform layer: safe pin state, watchdog, 1 ms tick, CAN buses 1 and 2, ADC, speed inputs. */
+#define PLAT_TE_GA_WRITER 1     /* defines plat_te_ga_* (platform.h safety frame) */
 #include "platform/platform.h"
 #include <stddef.h>
 
@@ -1304,9 +1305,13 @@ uint16_t plat_clock_probe(uint8_t *out, uint16_t max)
  * 0.5 us = 32.8 ms after TEE — the stock's every-boot state (user decision
  * D3 = match the stock).
  *
- * SAFETY FRAME: group A (TOE30/31/32/33, TOE22) duty is the compile-time
- * constant TE_GROUP_A_DUTY = 0; the only runtime group-A duty writer is
- * plat_toe_out_set, which platform.h refuses on the flashed application. */
+ * SAFETY FRAME: group A (TOE30/31/32/33, TOE22) init duty is the
+ * compile-time constant TE_GROUP_A_DUTY = 0. Runtime group-A duty writers:
+ * plat_toe_out_set (refused by platform.h on the flashed application) and,
+ * from M4, the stock law's 0x91500 port through plat_te_ga_drld — refused
+ * by platform.h to every TU but drv_groupa.c, whose demands are
+ * compile-time constants (drv_groupa.h: DRV_GA_STAGE 0 = every demand 0
+ * and the full-on tests held). */
 #define TE_GROUP_A_DUTY   0u
 #define TE_GROUP_A_CYCLE  2000u        /* cal 0x1914C2 / table 0x40CB4: 1 kHz at 2 MHz */
 #define TE_GROUP_B_FREQ   1000u        /* cal 0x191490 */
@@ -1662,6 +1667,69 @@ void plat_tioc_restore(void)                /* 0x91E4E */
     pfc[14] = (uint8_t)((pfc[14] & 0xFCu) | 0x01u);
     pfc[13] = (uint8_t)((pfc[13] & 0xFCu) | 0x01u);
     *(volatile uint8_t *)0xFFF90967u = 1u;
+}
+#endif /* !TCU_LOADER */
+
+/* ---- M4 group A: the runtime DRLD writer of the stock's 0x91500 (drv_groupa.c) ----
+ * Register forms from the bytes: DRLD = 0xFFFFF828 + 0x40·sub + 2·ch (0x91652 /
+ * 0x915FE), DTR = 0xFFFFF818 + .. (0x91626), CRLD = 0xFFFFF820 + .. and RLDCRE =
+ * 0xFFFFF803 + 0x40·sub (0x915BA..0x915E6) — the stage-0b TE_* map. Only the
+ * five group-A descriptors of table 0x40CB4 are accepted; the value is clamped to
+ * the channel's cycle (2000 = the stock law's 1000 ‰). Application only: not in
+ * the loader (byte identity), empty in the RAM application (park.c owns TOE31
+ * there through plat_toe_out_set). platform.h refuses these to every caller but
+ * drv_groupa.c. */
+#if !defined(TCU_LOADER)
+static bool te_ga_sc_ok(uint8_t sc)
+{
+    return sc == 0x0Cu || sc == 0x0Du || sc == 0x0Eu || sc == 0x0Fu || sc == 0x0Au;
+}
+
+uint16_t plat_te_ga_dtr(uint8_t sc)
+{
+    if (!te_ga_sc_ok(sc)) {
+        return 0u;
+    }
+    return TE_DTRE((uint32_t)sc >> 2, (uint32_t)sc & 3u);
+}
+
+void plat_te_ga_drld(uint8_t sc, uint16_t drld)
+{
+#if defined(TCU_RAM_APP)
+    (void)sc;
+    (void)drld;
+#else
+    if (!te_ga_sc_ok(sc)) {
+        return;
+    }
+    if (drld > TE_GROUP_A_CYCLE) {
+        drld = TE_GROUP_A_CYCLE;
+    }
+    TE_DRLDE((uint32_t)sc >> 2, (uint32_t)sc & 3u) = drld;
+#endif
+}
+
+void plat_te_ga_cycle(uint8_t sc, uint16_t drld, uint16_t crld)
+{
+#if defined(TCU_RAM_APP)
+    (void)sc;
+    (void)drld;
+    (void)crld;
+#else
+    const uint32_t sub = (uint32_t)sc >> 2, ch = (uint32_t)sc & 3u;
+    const uint8_t b = (uint8_t)(1u << ch);
+
+    if (!te_ga_sc_ok(sc)) {
+        return;
+    }
+    if (drld > crld) {
+        drld = crld;
+    }
+    TE_RLDCRE(sub) = (uint8_t)(TE_RLDCRE(sub) & (uint8_t)~b);
+    TE_DRLDE(sub, ch) = drld;
+    TE_CRLDE(sub, ch) = crld;
+    TE_RLDCRE(sub) = (uint8_t)(TE_RLDCRE(sub) | b);
+#endif
 }
 #endif /* !TCU_LOADER */
 

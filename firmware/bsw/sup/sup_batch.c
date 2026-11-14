@@ -30,6 +30,20 @@
 /* r02w: bus A's same-tick refresh (drv_jobs.c); weak so the supervisor
  * tests link without the bus-A driver */
 extern void drv_letter_refresh(void) __attribute__((weak));
+/* M4 group A (drv_groupa.c / drv_temp.c; ~/tcu_sweep/groupA_park_port.md):
+ * the stock's list entries, weak so the supervisor tests link without them —
+ *   0x8F70C   the AN table, first call of the reply proc 0x8EE52
+ *   0x7CB6E   → 0x83300 → 0x887D8, the hold-law temperature 0x94F9C
+ *   0x7AB9C   → 0x7B6D8, slots 10..14 → the group-A demand 0x94FAA
+ *   0x7CC32   → (0x85788 pin cut, 0x86A80, 0x86AF8) 0x849D4, the law
+ *   0x8EE30   → (0x901A0) 0x91500, the group-A DRLD writer (before 0x91810)
+ * Mode 0: all in the 5 ms list (entries 6/7, 17, 24, 26); mode 1: all in
+ * the 10 ms list (entries 4/5, 70, 75, 76) [O task table 0x43430]. */
+extern void drv_temp_an_tick(void) __attribute__((weak));
+extern void drv_temp_tick(void) __attribute__((weak));
+extern void drv_ga_slots_tick(void) __attribute__((weak));
+extern void drv_ga_law_tick(void) __attribute__((weak));
+extern void drv_ga_fstage(void) __attribute__((weak));
 
 static uint32_t s_stamp;            /* the batch timing journal (FRT us) */
 /* 0x67DF0 on one task object: countdown 0 → activate and reload, else
@@ -149,6 +163,9 @@ void sup_batch_init(void)
  * list entry 6; mode 1: 10 ms list entry 4. */
 static void reply_proc(void)
 {
+    if (drv_temp_an_tick) {
+        drv_temp_an_tick();             /* 0x8F70C (M4: ADC_A part) */
+    }
     sup_reply_condense();
     queue_pos();
     queue_sslb2();
@@ -263,8 +280,14 @@ void sup_batch_5ms(void)
     if (mode5 == 0u) {
         /* ── the 5 ms task, mode 0 ── */
         reply_proc();                   /* 6: 0x8EE52 */
+        if (drv_temp_tick) {
+            drv_temp_tick();            /* 7: 0x7CB6E → 0x887D8 (M4) */
+        }
         sup_ladder_tick_publish();      /* 8: 0x7CB74 */
         sup_mode_request();             /* 14: 0x6F0B4 */
+        if (drv_ga_slots_tick) {
+            drv_ga_slots_tick();        /* 17: 0x7AB9C → 0x7B6D8 (M4) */
+        }
         /* L1: entries 20..24 BEFORE the J2 stage 0x8EDF6, so a request
          * reaches the J2 word the same tick (letters_law_decode.md §2.4) */
         sup_ladder_tick_seq(true);      /* 20: 0x7CC76 → 0x8570E */
@@ -273,7 +296,13 @@ void sup_batch_5ms(void)
             drv_letter_refresh();       /* r02w: bus A follows seq2 this tick */
         }
         sup_ladder_tick_cut();          /* 24: 0x7CC32 */
+        if (drv_ga_law_tick) {
+            drv_ga_law_tick();          /* 24: 0x7CC32 → 0x849D4 (M4) */
+        }
         sup_j2_stage();                 /* 25: 0x8EDF6 → 0x91804 */
+        if (drv_ga_fstage) {
+            drv_ga_fstage();            /* 26: 0x8EE30 → 0x91500 (M4) */
+        }
         sup_f_stage();                  /* 26: 0x8EE30 → 0x91810 */
         batch_8ee82();                  /* 27: 0x8EE82 */
         /* pump the engine: launch whatever's queued and the bus is free
@@ -302,7 +331,19 @@ void sup_batch_5ms(void)
         } else {
             /* ── the 10 ms task, mode >= 1 ── */
             reply_proc();               /* 4: 0x8EE52 */
+            if (drv_temp_tick) {
+                drv_temp_tick();        /* 5: 0x7CB6E → 0x887D8 (M4) */
+            }
+            if (drv_ga_slots_tick) {
+                drv_ga_slots_tick();    /* 70: 0x7AB9C → 0x7B6D8 (M4) */
+            }
             sup_ladder_tick_cut();      /* 75: 0x7CC32 */
+            if (drv_ga_law_tick) {
+                drv_ga_law_tick();      /* 75: 0x7CC32 → 0x849D4 (M4) */
+            }
+            if (drv_ga_fstage) {
+                drv_ga_fstage();        /* 76: 0x8EE30 → 0x91500 (M4) */
+            }
             sup_f_stage();              /* 76: 0x8EE30 → 0x91810 */
             batch_8ee82();              /* 77: 0x8EE82 */
             sup_job_engine_pump();

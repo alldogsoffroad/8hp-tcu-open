@@ -17,6 +17,8 @@
 #include "bsw/sup/sup_ctrl.h"
 #include "bsw/sup/sup_letters.h"
 #include "bsw/drv/drv_jobs.h"
+#include "bsw/drv/drv_groupa.h"
+#include "bsw/drv/drv_temp.h"
 #include "bsw/com/com.h"
 #include "bsw/meas/meas.h"
 #include "bsw/diag/uds.h"
@@ -291,6 +293,8 @@ int main(void)
     sup_walk_init();                    /* fault_manager_init → walk init */
     sup_batch_init();                   /* serial_rx_init: request 0, J5 staged+queued */
     drv_jobs_init();
+    drv_temp_init();                    /* M4: 0x88A50 (row-9 entry 0x7CB5C) */
+    drv_ga_init();                      /* M4: group-A law (0x9136E shadows) */
     sol_init();
     bench_init();
     vehicle_init();

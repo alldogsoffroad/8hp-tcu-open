@@ -134,6 +134,9 @@ void plat_adcmux_start(void);
 void plat_adcmux_mux_hold(void);          /* r02p: CMEG2 off during a bus-B burst */
 void plat_adcmux_mux_release(void);       /* r02p: CMEG2 back on at burst end */             /* r02l: Timer G enable (TGE), deferred */
 void plat_adcmux_finish_5ms(void);        /* 0x8F62C */
+/* M4: the reply proc's 0x8F70C, ADC_A part — the 1 ms ISR's direct-scan sums
+ * 0x900E8[28] / count 0x907DE → the AN table 0x9018C[28] (mV), sums cleared */
+void plat_adcmux_an_convert(void);
 void plat_adcmux_status_5ms(void);        /* 0x8F5A0 (status ramp part) */
 /* L1 (2026-11-13): true once the deferred chain has run >= 20 DEI5 (1 ms)
  * passes since plat_adcmux_start — the mux-11 10-sample window is then
@@ -267,6 +270,30 @@ void plat_toe_out_set(uint16_t permil);
 #  endif
 #else
 void plat_toe_out_set(uint16_t permil);
+#endif
+
+/* ---- M4 group A: the stock's runtime group-A DRLD writer 0x91500 ----
+ * (drv_groupa.c; ~/tcu_sweep/groupA_park_port.md). sc = the stock descriptor byte
+ * (table 0x40CB4: sub-block << 2 | channel — E30 0x0C, E31 0x0D, E33 0x0F, E32 0x0E,
+ * E22 0x0A; any other value is refused). plat_te_ga_drld writes DRLD (the duty takes
+ * effect at the next cycle match: RLDCRE set by stage 0b); plat_te_ga_cycle is 0x91500's
+ * cycle-change branch (RLDCRE bit off, DRLD, CRLD, RLDCRE bit on); plat_te_ga_dtr reads
+ * the running DTR (the 0x238 head check).
+ *
+ * ── SAFETY FRAME: on SH the writers exist ONLY for the translation unit that defines
+ * PLAT_TE_GA_WRITER before including this header — drv_groupa.c (the ported law with
+ * compile-time demands, drv_groupa.h) and the platform itself; any other call is a
+ * _Static_assert failure. Not compiled into the loader; empty in the RAM application
+ * (whose park.c owns TOE31 through plat_toe_out_set). */
+uint16_t plat_te_ga_dtr(uint8_t sc);
+#if defined(__sh__) && !defined(PLAT_TE_GA_WRITER)
+#  define plat_te_ga_drld(sc, drld) \
+     _Static_assert(0, "plat_te_ga: only the group-A law (drv_groupa.c) writes a group-A Timer E duty (safety frame)")
+#  define plat_te_ga_cycle(sc, drld, crld) \
+     _Static_assert(0, "plat_te_ga: only the group-A law (drv_groupa.c) writes a group-A Timer E duty (safety frame)")
+#else
+void plat_te_ga_drld(uint8_t sc, uint16_t drld);
+void plat_te_ga_cycle(uint8_t sc, uint16_t drld, uint16_t crld);
 #endif
 
 /* ---- Mechatronic counterpart boot mailbox (spec 03 section 6.2) ----

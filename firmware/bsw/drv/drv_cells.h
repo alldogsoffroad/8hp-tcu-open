@@ -67,4 +67,79 @@
 #define REC_SP1             0x14u   /* u16, channel 2c+1 setpoint (0xF0 row) */
 #define REC_DITH1           0x18u   /* u8, 0xA6 row */
 
+/* ── M4 group A: the switch-output law 0x849D4 → 0x8ADF4 → 0x91500 ────────
+ * (drv_groupa.c; ~/tcu_sweep/groupA_park_port.md, park_outputs_decode.md
+ * §2). Outputs k = 0..4 = TOE30 (slot 10), TOE31 park hold (slot 11),
+ * TOE33 (12), TOE32 (13), TOE22 (14). Reservations: .sup_value (0x94F9C..
+ * 0x95004, complements 0x94E22.. / 0x94E62..), .sup_l1f (0x94110..0x94115),
+ * .sup_cnt (0x9480B), .sup_cells (0x9086A..0x9089B) and the new .drv_ga1
+ * (0x93A66). Every address from the stock bytes. */
+#define DRV_GA_N            5u
+#define CELL_GA_FIRST       (*(volatile uint8_t  *)0xFFF94110u) /* 1 from the end of pass 1 (0x8B284 gate) */
+#define CELL_GA_ALLOWED     (*(volatile uint8_t  *)0xFFF94111u) /* supply-allowed bits ('U' / battery) */
+#define CELL_GA_FAULT       (*(volatile uint8_t  *)0xFFF94112u) /* fault-class bits (0x7BB00 ∉ {0,1}) */
+#define CELL_GA_FULL        (*(volatile uint8_t  *)0xFFF94113u) /* full-on test bits (mode 2) */
+#define CELL_GA_DEMAND      ((volatile uint16_t *)0xFFF94FAAu)  /* [5] demand (0x7B6D8 slots 10..14) */
+#define CELL_GA_DEMAND_C    ((volatile uint16_t *)0xFFF94E22u)  /* [5] its complement */
+#define CELL_GA_GATED       ((volatile uint16_t *)0xFFF94FC0u)  /* [5] demand as gated (0x8ADF4 type 2) */
+#define CELL_GA_DEMPRES     ((volatile uint8_t  *)0xFFF94FF6u)  /* [5] demand present, no fault */
+#define CELL_GA_MODE_C      ((volatile uint8_t  *)0xFFF94FFBu)  /* [5] mode copy */
+#define CELL_GA_MODE        ((volatile uint8_t  *)0xFFF95000u)  /* [5] 0 off / 1 demand / 2 test full on */
+#define CELL_GA_PULLIN      ((volatile uint8_t  *)0xFFF9480Bu)  /* [5] pull-in countdown (0x7C7E4 bytes) */
+#define CELL_GA_PREV        ((volatile uint16_t *)0xFFF93A66u)  /* [5] last duty (pull-in re-arm) */
+#define CELL_GA_DUTY        ((volatile uint16_t *)0xFFF9086Au)  /* [5] duty ‰ → 0x91500 */
+#define CELL_GA_DUTY2       ((volatile uint16_t *)0xFFF94FB4u)  /* [5] duty ‰ copy */
+#define CELL_GA_TEMP_COPY   (*(volatile uint16_t *)0xFFF94FBEu) /* 0x94F9C as used by 0x8ADF4 */
+#define CELL_GA_FS_PREV     ((volatile uint16_t *)0xFFF90874u)  /* [5] 0x91500: duty last written (k >= 2) */
+#define CELL_GA_FS_DUTY     ((volatile uint16_t *)0xFFF9087Eu)  /* [5] 0x91500: duty this pass */
+#define CELL_GA_FS_CYC      ((volatile uint16_t *)0xFFF90888u)  /* [5] cycle wanted (cal 0x1914C2) */
+#define CELL_GA_FS_CYCNOW   ((volatile uint16_t *)0xFFF90892u)  /* [5] cycle running (0x9136E) */
+#define CELL_GA_OFF10       (*(volatile uint8_t  *)0xFFF94FEAu) /* 1 = slot 10 (TOE30) forced 0 (safety layer) */
+#define CELL_GA_OFF10_C     (*(volatile uint8_t  *)0xFFF94E62u)
+#define CELL_GA_OFF13       (*(volatile uint8_t  *)0xFFF94FEBu) /* 1 = slot 13 (TOE32) forced 0 */
+#define CELL_GA_OFF13_C     (*(volatile uint8_t  *)0xFFF94E63u)
+#define CELL_GA_BATT_FF     (*(volatile uint16_t *)0xFFF94F9Eu) /* source 0xFF supply (no output uses it) */
+
+/* ── M4 the hold-law temperature 0xFFF94F9C (drv_temp.c): 0x887D8 publishes
+ * it from the fluid-temperature acquisition 0x8D5BA (AN8 sensor, AN1
+ * reference, curve 0x1912F0). 1/16 °C. Reservations: .sup_value (0x94F98..
+ * 0x94F9C, 0x94FEE..0x94FF0; complements 0x94E10.. / 0x94E66..), .sup_l1f
+ * (0x940FC, 0x94102/3, 0x94155..0x94159), .sup_l1b (0x9393A), .sup_cnt
+ * (0x94770, 0x94822), .drv_tmp1 (0x93A9C..), .drv_tmp2 (0x9416E/F). */
+#define CELL_TMP_RAW        (*(volatile int16_t  *)0xFFF94F9Au) /* 0x93AA0 as published */
+#define CELL_TMP_RAW_C      (*(volatile uint16_t *)0xFFF94E12u)
+#define CELL_TMP_SEL        (*(volatile int16_t  *)0xFFF94F98u) /* raw or substitute */
+#define CELL_TMP_SEL_C      (*(volatile uint16_t *)0xFFF94E10u)
+#define CELL_TMP            (*(volatile int16_t  *)0xFFF94F9Cu) /* THE hold-law temperature */
+#define CELL_TMP_C          (*(volatile uint16_t *)0xFFF94E14u)
+#define CELL_TMP_SEL_ST     (*(volatile uint8_t  *)0xFFF94FEEu) /* status of 0x94F98 (8 ok / 7 hold / 3 default / 6 subst.) */
+#define CELL_TMP_SEL_ST_C   (*(volatile uint8_t  *)0xFFF94E66u)
+#define CELL_TMP_RAW_ST     (*(volatile uint8_t  *)0xFFF94FEFu)
+#define CELL_TMP_RAW_ST_C   (*(volatile uint8_t  *)0xFFF94E67u)
+#define CELL_TMP_ST         (*(volatile uint8_t  *)0xFFF94FF0u) /* status of 0x94F9C */
+#define CELL_TMP_ST_C       (*(volatile uint8_t  *)0xFFF94E68u)
+#define CELL_TMP_RATIO      (*(volatile uint16_t *)0xFFF93A9Cu) /* (5000 - diff) x 1000 / ref, cap 40000 */
+#define CELL_TMP_FLAGS      (*(volatile uint16_t *)0xFFF93A9Eu) /* plausibility bits 0x01..0x800 */
+#define CELL_TMP_ACQ        (*(volatile int16_t  *)0xFFF93AA0u) /* curve(sensor) - 0x8000, 1/16 °C */
+#define CELL_TMP_DDIFF      (*(volatile uint16_t *)0xFFF93AA2u) /* diff - previous diff */
+#define CELL_TMP_SENS       (*(volatile uint16_t *)0xFFF93AA4u) /* AN8 mV */
+#define CELL_TMP_REF        (*(volatile uint16_t *)0xFFF93AA6u) /* AN1 mV */
+#define CELL_TMP_DIFF       (*(volatile uint16_t *)0xFFF93AA8u) /* sensor - reference (>= 0) */
+#define CELL_TMP_DIFF_PREV  (*(volatile uint16_t *)0xFFF93AAAu)
+#define CELL_TMP_9393A      (*(volatile int16_t  *)0xFFF9393Au) /* substitute source (not produced here) */
+#define CELL_TMP_940FC      (*(volatile uint8_t  *)0xFFF940FCu) /* its status (not produced here) */
+#define CELL_TMP_BYTE_SEL   (*(volatile uint8_t  *)0xFFF94102u) /* (0x94F98 + 8) >> 4 + 40, 0..255 */
+#define CELL_TMP_BYTE       (*(volatile uint8_t  *)0xFFF94103u) /* (0x94F9C + 8) >> 4 + 40, 0..255 */
+#define CELL_TMP_94155      (*(volatile uint8_t  *)0xFFF94155u)
+#define CELL_TMP_VARIANT    (*(volatile uint8_t  *)0xFFF94156u) /* sensor variant index */
+#define CELL_TMP_CODE       (*(volatile uint8_t  *)0xFFF94157u) /* coding byte (stock 0xFFF84796) */
+#define CELL_TMP_VAR_RAW    (*(volatile uint8_t  *)0xFFF94158u)
+#define CELL_TMP_ACQ_ST     (*(volatile uint8_t  *)0xFFF94159u) /* 8 ok / 7 hold / 3 default */
+#define CELL_TMP_9416E      (*(volatile uint8_t  *)0xFFF9416Eu)
+#define CELL_TMP_9416F      (*(volatile uint8_t  *)0xFFF9416Fu)
+#define CELL_CNT_TMP_HOLD   (*(volatile uint16_t *)0xFFF94770u) /* 0x7C7E4 word: fault hold (20 = 100 ms) */
+#define CELL_CNT_TMP_START  (*(volatile uint8_t  *)0xFFF94822u) /* 0x7C7E4 byte: start-up grace (2) */
+/* the AN table (0x8F70C; plat_adcmux.c): AN0..AN27 in mV */
+#define CELL_AN_MV(n)       (*(volatile uint16_t *)(uintptr_t)(0xFFF9018Cu + 2u * (uint32_t)(n)))
+
 #endif /* TCU_DRV_CELLS_H */
