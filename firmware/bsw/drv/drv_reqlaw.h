@@ -76,6 +76,17 @@ void drv_rq_request_set(uint8_t ch, uint16_t req01ma);
 void drv_rq_corr_inject(uint8_t ch, int16_t corr);
 #endif
 
+/* r03j: THE RELEASE ON-WINDOW (ours, not stock; user D-M4-7 2026-11-14:
+ * "30 seconds"). On a DRY bench the park-release coil heats (~11 W, no
+ * oil; r03i's supply crept 2.63 -> 2.80 A in 60 s). The window opens on the
+ * first pass the law sees seq2 'U' with a nonzero release request and
+ * closes DRV_RQ_REL_WINDOW_MS later; once closed the release request is 0
+ * until the next power cycle. A pure step function so the host can test it.
+ * state: 0 not started, 1 open, 2 closed (latched). */
+#define DRV_RQ_REL_WINDOW_MS 30000u
+typedef struct { uint8_t state; uint32_t t0_ms; } drv_rq_win_t;
+uint16_t drv_rq_window_step(drv_rq_win_t *w, uint32_t now_ms, bool at_u, uint16_t req);
+
 /* 0x90010's part: letters '2', rounding offset cal 0x1918BB, the config
  * bytes; clears the law's own NOLOAD ranges (call after sup_cells_init) */
 void drv_rq_init(void);

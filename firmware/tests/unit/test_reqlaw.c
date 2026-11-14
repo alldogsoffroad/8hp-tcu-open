@@ -504,6 +504,22 @@ int main(void)
             CHECK(cy[23] == 0xF682u || cy[23] == 0xF683u);
         }
     }
+    /* r03j: the release on-window (30 s from the first 'U', then latched 0) */
+    {
+        drv_rq_win_t w = { 0u, 0u };
+        CHECK(drv_rq_window_step(&w, 100u, false, 10000u) == 0u);      /* before 'U' */
+        CHECK(drv_rq_window_step(&w, 600u, true, 10000u) == 10000u);   /* opens */
+        CHECK(drv_rq_window_step(&w, 600u + 29999u, true, 10000u) == 10000u);
+        CHECK(drv_rq_window_step(&w, 600u + 30000u, true, 10000u) == 0u);   /* closes */
+        CHECK(drv_rq_window_step(&w, 600u + 99999u, true, 10000u) == 0u);   /* stays */
+        CHECK(drv_rq_window_step(&w, 600u + 99999u, false, 10000u) == 0u);
+        CHECK(w.state == 2u);
+        drv_rq_win_t z = { 0u, 0u };
+        CHECK(drv_rq_window_step(&z, 600u, true, 0u) == 0u && z.state == 0u);
+        drv_rq_win_t q = { 0u, 0xFFFFF000u };                           /* wrap */
+        CHECK(drv_rq_window_step(&q, 0xFFFFF000u, true, 10000u) == 10000u);
+        CHECK(drv_rq_window_step(&q, 0xFFFFF000u + 30000u, true, 10000u) == 0u);
+    }
     printf("test_reqlaw: %s (%d failures)\n", fails ? "FAIL" : "ok", fails);
     return fails ? 1 : 0;
 }

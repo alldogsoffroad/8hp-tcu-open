@@ -944,3 +944,20 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
   1. **D-M4-7 (maximum on-time) is now required** before any further release or both-outputs test. A compile-time on-window (ours, not stock) must turn the release off after N seconds and stay off until the next power cycle.
   2. Restate the stop conditions for "both together": the stock out-of-P state ≈ P set 1.76 + release ≈ 0.87–1.04 (rising) + hold 0.17 ≈ **2.8–3.0 A** — above the 2.9 A line used here.
   3. Spec 12 coil resistances: pressure solenoids ≈ 7 Ω, park release ≈ 11 Ω, park hold ≈ 20 Ω [D, all from supply steps].
+
+**D-M4-7 (user, 2026-11-14): maximum release on-time = 30 seconds.**
+
+**r03j = BOTH PARK OUTPUTS — THE STOCK OUT-OF-P OUTPUT STATE — WITH A 30 s RELEASE WINDOW (2026-11-14; built, NOT flashed, `build/r03j_IFla.bin`, app CRC `4A0C517E`, blocks 0x40000 + 0x50000, app end 0x52504; NOT committed at time of writing):**
+- `DRV_GA_STAGE` 1 (park hold on, as r03h) + `DRV_RQ_P7` 10000 (release on, as r03i).
+- **The release on-window (ours, not stock):** `drv_rq_window_step()` opens on the first law pass with seq2 'U' and a nonzero release request, closes 30 000 ms later (`sched_now_ms`), and stays latched off until power-off. After that the law sees request 0 → ch 7 mode 1, letter 0 → chip 3 back to 0x8812, F0 slot 3 F000 (the same-tick refresh sends it at once).
+- Host test (window open/close/latch/wrap) — 55/55. The hold is NOT windowed (the stock's continuous out-of-P hold; ≈ 0.17 A, ~20 Ω).
+- **.bss/.noinit +8 (nm):** `s_rq_rel_win` 0xFFF95B7C (state, t0), `s_rst` 0xFFF9EB70, `s_w9020` 0xEB90, `s_open` 0xEBD4; `s_now_ms` and `s_chan` unchanged. Witness `/tmp/witness_r03j.py` (remapped + a RELEASE WINDOW line), install `/tmp/install_r03j.py`.
+- **PREDICTION (rule 1):**
+  - [high] during the window: chip 3 0x881A, F682/83; TOE31 DTR ≈ 1040–1060 after the 20 ms pull-in; RQLAW cur[7] 0x2710.
+  - **Current [D]:** ≈ 1.76 (P set) + 0.87 → 1.0 (release, creeping with heat) + 0.17 (hold) ≈ **2.80 A at first, creeping toward ≈ 2.95 A by 30 s**.
+  - **Then at ~30.6 s after power-on the release drops: ≈ 1.93 A** (P set + hold, the r03h level), and stays there. The witness, read after that, shows window state 2, cur[7] 0, chip 3 0x8812, F000, TOE31 still ≈ 1040.
+  - **Stop conditions:**
+    - mean above **3.2 A** at any time → power off;
+    - the release still on after ~35 s (current not back near 1.93 A) → power off: the window failed;
+    - 'U' lost;
+    - restarts or bus errors.

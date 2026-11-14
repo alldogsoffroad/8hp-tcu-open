@@ -67,6 +67,26 @@ uint32_t drv_rq_cguard_n(void) { return s_rq_cguard_n; }
 uint32_t drv_rq_f238_n(void)   { return s_rq_f238_n; }
 
 /* ── the request source ────────────────────────────────────────────────── */
+uint16_t drv_rq_window_step(drv_rq_win_t *w, uint32_t now_ms, bool at_u, uint16_t req)
+{
+    if (req == 0u) {
+        return 0u;
+    }
+    if (w->state == 0u && at_u) {
+        w->state = 1u;
+        w->t0_ms = now_ms;
+    }
+    if (w->state == 1u && (uint32_t)(now_ms - w->t0_ms) >= DRV_RQ_REL_WINDOW_MS) {
+        w->state = 2u;                          /* latched off until power-off */
+    }
+    return (w->state == 1u) ? req : 0u;
+}
+
+#if defined(__sh__) && defined(DRV_RQ_PSET)
+#include "bsw/sched/sched.h"
+static drv_rq_win_t s_rq_rel_win;               /* .bss: cleared at boot */
+#endif
+
 static inline uint16_t rq_request(uint8_t ch)
 {
 #if DRV_RQ_REQUEST_SOURCE
@@ -74,6 +94,10 @@ static inline uint16_t rq_request(uint8_t ch)
 #elif defined(__sh__) && defined(DRV_RQ_PSET)
     /* r03f: the stock P set (drv_reqlaw.h), compile-time constants */
     static const uint16_t PSET[10] = DRV_RQ_PSET_TABLE;
+    if (ch == 7u) {                             /* r03j: the release on-window */
+        return drv_rq_window_step(&s_rq_rel_win, sched_now_ms(),
+                                  CELL_SEQ2_STATE[0] == (uint8_t)'U', PSET[7]);
+    }
     return (ch < 10u) ? PSET[ch] : 0u;
 #else
     (void)ch;

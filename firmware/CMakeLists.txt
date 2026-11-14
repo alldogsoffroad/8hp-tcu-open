@@ -99,7 +99,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     # application — 0 (default) no group-A current, the law at zero demand;
     # 1 the park hold (TOE31) at the stock's on-demand; 2 the rail-off
     # full-on tests released. -DDRV_GA_STAGE=1 at configure time.
-    set(DRV_GA_STAGE 0 CACHE STRING "M4 group-A stage of tcu_app.elf (0 / 1 / 2)")
+    set(DRV_GA_STAGE 1 CACHE STRING "M4 group-A stage of tcu_app.elf (0 / 1 / 2)")
     set_property(CACHE DRV_GA_STAGE PROPERTY STRINGS 0 1 2)
     target_compile_definitions(tcu_app.elf PRIVATE DRV_GA_STAGE=${DRV_GA_STAGE})
     target_link_options(tcu_app.elf PRIVATE -T ${LDSCRIPT} -Wl,-Map=tcu_app.map)
