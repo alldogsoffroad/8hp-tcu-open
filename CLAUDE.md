@@ -1039,3 +1039,4 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
   - the park position sensor (AN5/AN6);
   - stage 2 (the full-on tests);
   - a vehicle-side test (M4's definition: "bench transmission or vehicle at standstill" — the bench is a dry mechatronic, so mechanical park engagement is not verified).
+- **User bench observation (2026-11-14):** "ammeter readings were as you described" — during the park-check, the meter swung between ≈ 1.76 A (P / Auto-P) and ≈ 2.83 A (R/N/D) [O, user].
