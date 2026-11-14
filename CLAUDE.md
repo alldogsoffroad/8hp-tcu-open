@@ -1064,3 +1064,11 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
   - the user's optional physical check (a magnet at the sensor during a zero-flash read) to identify which input is "Park";
   - the 0xA4F0C / 0xC58AA decode to resolve the contradiction;
   - or move on to M5.
+
+**PARK SENSOR STEEL TEST (2026-11-14 ~17:00–17:13, zero-flash watches on r03k; logs `/tmp/parksens_watch.log`, `/tmp/an_watch.log`, `/tmp/parksens_watch2.log`; scripts in the scratchpad: parksens_watch.py, an_watch.py, an_quick.py) — NO RESPONSE ON AN5/AN6; PAUSED** [O]:
+- **User fact:** the park sensor is the magnet itself and is triggered by FERROUS STEEL, not a magnet. The user applied steel several times; later: "I may be actuating the wrong sensor."
+- **Watch 1** (150 s, ~1 200 reads): AN5 = AN6 = 6266 mV, 69.8 % (band 3, both inactive), no change.
+- **Then, between watches, both lines jumped together to 634 mV = 7.1 % (band 1, "active")** and stayed there: the whole-AN-table watch (no channel moved > 300 mV from that baseline), a 40-read direct check with the steel removed (live: now_ms advancing, 0 failed reads), and a 90 s timed steel on/off ×3 watch (543 reads, constant 634/634). **No response to the steel in any run.**
+- **[I] AN5 and AN6 always read identically to the mV** (6266/6266, then 634/634), which is unlike two independent Hall outputs. They look like one shared node, or two lines held by something other than the sensor. The one-time jump coincides with bench handling between the watches (cause unknown: a connector, the mechatronic or steel moved?).
+- **To resume:** the user re-locates the real park sensor. Then a combined watch of the supervisor's digital view (0x90958 = (J6 rx[1] & 0x0F) ^ 0x0F, and the J6 reply) plus the whole AN table during steel on/off. Ask what changed on the bench between watch 1 and watch 2.
+- **Bench state at the pause:** r03k running — rail engaged, P set 1.76 A, Auto-P, both park outputs off; ≈ 18.7 s of the 30 s release budget used this power cycle (resets on power-off). Safe to power off.
