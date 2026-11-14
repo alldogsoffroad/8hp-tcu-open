@@ -892,3 +892,11 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
   - 0x94111 = 0x0B after 'U', modes 0x95000 = 00 ×5, `s_ga_guard_n` 0;
   - the witness hold values ≈ 508–518 ‰ / DRLD 1014–1036 (the rail node sags to ~12.94 V under the P set);
   - re-entries / bus errors still 0 (the AN conversion masks RSPI-B ≈ 3–5 µs per pass).
+
+**r03g BENCH RESULT (2026-11-14 14:06 install, blocks 0x40000 `6988c4637d42e5cf` + 0x50000 `112509098a556475`, all 21 verifies OK; power-on ≈ 14:27:50 under the ammeter; witness 14:28:58–29:00 at uptime ~72 s `/tmp/witness_r03g.log`) — STAGE 0 CONFIRMED: THE TEMPERATURE PRODUCER WORKS, GROUP A STAYS AT 0, NO CURRENT CHANGE** [O]:
+- **Temperature (the stage-1 gate) ✓ [I ~75 %]:** **0x94F9C = 0x0189 = 24.56 °C, status 08** (AN8 3072 mV, AN1 160 mV — the stock dump had 25.7 °C at AN8 3031 / AN1 164).
+- **The would-be hold:** curve **6677 mV**, **516 ‰**, DRLD **1032** — inside the predicted 508–518 ‰ / 1014–1036.
+- **Group A at 0:** 0x94110..13 = 01 0B 00 00 (0x94111 = 0x0B ✓); modes 0x95000 = 00 ×5; duty 0x9086A = 0 ×5; E3 DTR 0000×4, E22 0000; `s_ga_guard_n` 0, `s_ga_ilock_n` 0, `s_ga_f238_n` 0. **`s_ga_thold_n` = 2: the two held full-on test windows** (phase 0x10, the '3' diagnosis).
+- **Current:** steady mean **1 758.9 mA** (the r03f idle set; r03f 1 774.6) — no change ✓.
+- Everything else as r03f: 'c', J2 9020, mode 1, C7, request law at the P set; bus A 7 054 cyclics, 0 slips; re-entries 0; job errors 0; Timer E and pins as r03c.
+- **Next — stage 1 (`DRV_GA_STAGE 1`):** TOE31 park hold on at the stock demand 10000. Expected: DTR31 0 until 'L', then 2000 for 20 ms (pull-in), then ≈ 1030; supply step **+0.14 A (25 Ω) … +0.50 A (7 Ω)** — the step measures the hold coil.
