@@ -1022,3 +1022,20 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
     - the release on beyond ~35 s accumulated;
     - 'U' lost;
     - restarts.
+
+**r03k BENCH RESULT (2026-11-14 16:32 install, blocks 0x40000 `fa7483422c797397` + 0x50000 `ee1b6921124be234`, all 21 verifies OK; power-on ≈ 16:33:30 under the ammeter; witness 16:34:36; `park-check --hw --settle 2.0` 16:34:5x, log `/tmp/parkcheck_r03k.log`; witness after 16:35:39 `/tmp/witness_r03k_after.log`) — THE PARK OUTPUTS FOLLOW THE STOCK RANGE/PARK LOGIC: AUTO-P = THE STOCK DUMP BYTE FOR BYTE; THE LEVER TEST 13/13** [O]:
+- **(a) No lever frames — the stock Auto-P, byte for byte the driving dump (prediction [high] ✓):** E549 = **00 08 17**, D6D6 = **08 F7**, AE28/29 = **00 01**, model BC70 = **04 01 FF 00**, 851A8 = **00×5 FF×5**; both demands 0, TOE31 DTR 0000, chip 3 0x8812; release window idle. **Current 1 761.9 mA** — the P set (the hold now off in P, as the stock).
+- **(b) The lever test, 13/13 PASS (CAN lever simulation, both buses):**
+  - P → target 8 / reason "lever P", both off;
+  - **R, N, D, and "code 0 after D" → target 6 / "R/N/D", model "released", release ON, hold ON**, AE29 0, lock 0;
+  - the fallbacks behave as designed — 0x2EA bad CRC or missing → lever from the shifter bus (0x210); 0x210 missing → CAN-C;
+  - invalid code 7 / both frames missing → Auto-P, both off;
+  - back to P → both off;
+  - monitor 0x00 throughout.
+- **The drivers applied the logic's demands [O]:** after the test, the release window reads **acc_ms = 14 160** (= 7 R/N/D steps × 2 s — the release was ON on the wire for 14.2 s and OFF in every P / Auto-P step), state idle (budget 30 s not reached). Final state Auto-P again, matching the dump; bus A 13 077 cyclics, 0 slips; job errors 0; 'U', mode 1, C7. (The ammeter was off during the test — both Teensy ports were in use; the user watched the meter.)
+- **M4 status:** range/park control runs at standstill on the bench under the stock's own logic — lever → arbiter → park request / lock → timer model → both park outputs at the stock values, with Auto-P. **Open:**
+  - the stock lever object's writer (0xFFF8304C);
+  - the stood-in inputs;
+  - the park position sensor (AN5/AN6);
+  - stage 2 (the full-on tests);
+  - a vehicle-side test (M4's definition: "bench transmission or vehicle at standstill" — the bench is a dry mechatronic, so mechanical park engagement is not verified).
