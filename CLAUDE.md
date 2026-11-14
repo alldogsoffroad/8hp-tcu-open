@@ -912,3 +912,13 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
     - DTR31 stuck at 2000 (pull-in never ending);
     - any other group-A output nonzero;
     - restarts, bus errors, or 'U' lost under the load.
+
+**r03h BENCH RESULT (2026-11-14 14:35 install, blocks 0x40000 `a46d824dbf9b5032` + 0x50000 `dcabd6a9af950d0a`, all 21 verifies OK; power-on ≈ 14:36:35 under the ammeter; witness 14:37:41–44 at uptime ~67 s `/tmp/witness_r03h.log`) — THE PARK HOLD (TOE31) ON UNDER OPEN FIRMWARE, AT THE STOCK LAW'S DUTY** [O]:
+- **TOE31 duty = DTR (E3 m1) 0x0410 = 1040** (predicted 1030–1045 ✓); all other group-A DTR 0000; modes 0x95000 = 00 **01** 00 00 00; duty cell 0x9086A[1] = **0x0208 = 520 ‰**; witness curve **6708 mV** at **25.8 °C** (status 8), rail node 12 885 mV (sagging under the load, so the duty rose from stage 0's 516 ‰ — the compensation working); `s_ga_guard_n` 0. PLPR 0x0013 → **0x0053** — the TOE31 pin read high in its PWM high phase [I].
+- **Current:** steady mean **1 932.2 mA** vs stage 0's 1 758.9 → **+0.173 A** (prediction +0.14 … +0.49 ✓, low end). **Hold coil ≈ D²·V / ΔI = 0.52² × 12.9 / 0.173 ≈ 20 Ω [D]** — the hold coil is the high-resistance one (spec 12's "~25 Ω" fits it, not the pressure solenoids at ~7 Ω).
+- Everything else steady: the P set, 'c', J2 9020, mode 1, C7; bus A 6 591 cyclics, 0 slips; re-entries 0; job errors 0; boots = 1.
+- **M4b stage 1 done.** **Next:**
+  - the park release (bus-A ch 7) at the stock's 1.0 A — `DRV_RQ_P7` 0 → 10000, behind its compile-time bound; chip 3 8812 → 881A, F0 slot 3 → F682/F683; expected ≈ +0.5 A (≈ 7 Ω) or saturated if the coil is high-resistance;
+  - then both together (the stock's out-of-P state);
+  - then stage 2 (the rail-off full-on tests);
+  - then the range logic with the CAN lever simulation.
