@@ -961,3 +961,20 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
     - the release still on after ~35 s (current not back near 1.93 A) → power off: the window failed;
     - 'U' lost;
     - restarts or bus errors.
+
+**r03j BENCH RESULT (2026-11-14 15:43 install, blocks 0x40000 `63bb3b3a472ec95b` + 0x50000 `034df5e2d7461abb`, all 21 verifies OK; power-on ≈ 15:47:15 under a 100 s ammeter log; witness 15:49:20–22 at uptime ~114 s `/tmp/witness_r03j.log`) — PREDICTION CONFIRMED: BOTH PARK OUTPUTS (THE STOCK OUT-OF-P OUTPUT STATE) UNDER OPEN FIRMWARE; THE 30 s RELEASE WINDOW CLOSED ON TIME** [O]:
+- **Current:**
+  - outputs on at log t ≈ 8.6 s (0.7 s after power-on): **2.83 A**, creeping (5-s means 2.84 → 2.87 → 2.88 → 2.90 → 2.91, peak bins 2.93 A) — predicted 2.80 → 2.95 ✓, under the 3.2 A line;
+  - **the release dropped at log t ≈ 38.8 s — 30.2 s after it engaged — to 1.925 A** (the P set + hold, r03h's 1.93 ✓);
+  - then 1.926 → 1.968 A over the next 60 s (+0.7 mA/s: the hold coil and the pressure solenoids warming slowly).
+- **The witness after the window:**
+  - window state **2**, t0 = **622 ms** (the first 'U' pass);
+  - release cur[7] **0**; ch 7 mode 01 / letter 00; chip 3 back to **0x8812**, F0 slot 3 **F000**; config readback chip 3 **A292**; `drv_refresh_n` **3** (the window close was sent by the same-tick refresh);
+  - **the hold still on: TOE31 DTR 0x0412 = 1042 (521 ‰)**, modes 0x95000 = 00 01 00 00 00, temperature 26.7 °C status 8 (warming from 25.8);
+  - 'c', J2 9020, mode 1, C7; bus A 11 248 cyclics, 0 slips; re-entries 0; job errors 0; boots = 1.
+- **M4b output stages done:** hold alone (r03h), release alone (r03i), both together with the window (r03j) — every value the stock law's, every output confirmed on the wire, in the duty registers and on the ammeter. Coils [D]: pressure ≈ 7 Ω, release ≈ 11 Ω, hold ≈ 20 Ω.
+- **Remaining for M4:**
+  - stage 2 (release the rail-off group-A full-on tests — TOE30/31 only, TOE32 excluded by the law);
+  - the range logic (the stock arbiter → 0xCFFDE → 0xE88FA with its interlock and timer model, replacing the invented `park_ctl.c`) driven by the CAN lever simulation, so that P ↔ not-P switches these outputs at runtime instead of by compile-time constants;
+  - the park position sensor channel (lead AN5/AN6, 0x8DF2E);
+  - D-M4-6 (`park_ctl.c` / `park_mon.c` fate) and D-M4-8 (lever / output-speed sources).
