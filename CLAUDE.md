@@ -1040,3 +1040,27 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
   - stage 2 (the full-on tests);
   - a vehicle-side test (M4's definition: "bench transmission or vehicle at standstill" — the bench is a dry mechatronic, so mechanical park engagement is not verified).
 - **User bench observation (2026-11-14):** "ammeter readings were as you described" — during the park-check, the meter swung between ≈ 1.76 A (P / Auto-P) and ≈ 2.83 A (R/N/D) [O, user].
+
+**PARK POSITION SENSOR — DECODE + ZERO-FLASH READ (2026-11-14; decode `~/tcu_sweep/park_sensor_decode.md`, read-only subagent; zero-flash read on the running r03k this session, script `scratchpad/parksens_read.py`):**
+- **Decode [O]:**
+  - **Inputs:** switch evaluator 0x8DF2E inputs 2/3 = **AN5 / AN6** (ADC_A scan, already in our AN table 0x9018C[5]/[6]).
+  - **Reference:** NOT the battery but **AN0 mux input 15** (ring slots 16/36/56/76 → 0x900B0 → 0x9360C, ×15000/65536 → 0x907E8 → latched 0x93942 by 0x89320) — the shared sensor supply [I].
+  - **Conversion:** ratio = AN × 10000 / supply → 0x934C4[k]; bands (cal 0x1913A8) 100 / 1900 / 5000 / 8000 / 9500; state = ratio < 5000 (active low). Bands 1 and 3 are valid, the rest are electrical faults.
+  - **The safety pair object 0xFFF8EA28** (0x141B42/0x141BA2) → position 0xFFF8EA40: A0B1 → 0, A1B0 → 1, both active → 2, fault / both inactive → 3 (qualifier 0xFFF8EA42 = 2).
+  - **DTC group 98** (0x141E06): P07B2 / P07B8 = contact A / B electrical; P0850 m0 both inactive, m1 both active > 100 ticks. **The stock dump's group-98 status 0x3EBB = failed** (like the bench-absent groups), so the stock flags P0850 on this bench.
+  - **Into the park module:** D61A[0x2E] = position, [0x38] = qualifier, D5F8 = (position == 1 && qualifier == 0) → arbiter 0xA57DA (stationary + D5F8 → target 8 even in R/N/D), 0xA54A4 rows 2/3 need D5F8 = 0, P1B14. The park law / timer model never reads the sensor. **On this bench D5F8 = 0, so the sensor affects neither target nor outputs**; our D648 = 3 / D652 = 2 stand-ins are the live stock values.
+  - **OPEN:** which contact means "Park" — P1B14 implies position 1 = engaged, but then the arbiter could never release P from standstill. Decode 0xA4F0C / 0xA4FC4 / 0xC58AA / 0xC60CE before wiring the position into range.c.
+  - **CORRECTIONS:**
+    - spec 14 §5's 0x141A2C works on 0xFFF8E788 (not 0xFFF8EA38), and 0xFFF8EA40 comes from 0x141BA2;
+    - D61A[0x2E] is a position code, not a park request;
+    - spec 04's "supply reference" is mux 15;
+    - `sensors.c` divides by AN21 (≈ 50.65 % here — on the band 2/3 edge).
+- **ZERO-FLASH READ on r03k [O]:**
+  - at rest (Auto-P), with lever R (park release + hold ON: modes ch 7 = 03, TOE31 DTR 0x0436), and back in P: **AN5 = 6265–6267, AN6 = 6265–6267; mux-15 supply = 8980 ± 3 mV; ratio = 6976–6979 (69.8 %) on both contacts — band 3, "both inactive", exactly the stock dump's 69.8 %**;
+  - **no change at all when the park outputs switch** (decode [I ~85 %] ✓ — dry bench, no piston motion; the ratiometric supply cancels any sag);
+  - the park meas went 08 17 → 06 16 (R) → 08 15 (P) as designed;
+  - ≈ 4.5 s more of the release budget used this power cycle (accumulated ≈ 18.7 s).
+- **Verdict:** the sensor is present and electrically healthy, in the "both inactive" band — the stock reads the same and flags P0850 m0. On a dry mechatronic out of the gearbox its target is absent [I]. A read-only port flash would add no information beyond these reads. **Next options:**
+  - the user's optional physical check (a magnet at the sensor during a zero-flash read) to identify which input is "Park";
+  - the 0xA4F0C / 0xC58AA decode to resolve the contradiction;
+  - or move on to M5.
