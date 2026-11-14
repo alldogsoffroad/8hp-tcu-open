@@ -478,6 +478,32 @@ int main(void)
             CHECK(CELL_RQ_LETTER[7] == 0u && CELL_RQ_CUR[7] == 0u);   /* park release off */
         }
     }
+    /* r03i: the P set with the park release at the stock's out-of-P 10000
+     * (1.0 A): chip 3 mode 0x881A, F0 slot 3 = F682/F683; the 0x90232
+     * high-current rule (cal 0x191488 = 0x80: ch 7) sets chip 3's 0x90
+     * config byte to (x & 0xC0) | 2 on the pass the release first reaches
+     * 10000, then the normal 0x21 */
+    {
+        static const uint16_t PS[10] = { 500, 8500, 8500, 8500, 8500, 500, 500, 10000, 0, 0 };
+        reset();
+        CELL_OUT_MV[0] = 0x3420u;
+        CELL_SEQ2_STATE[0] = (uint8_t)'U';
+        set_req(PS);
+        drv_cyclic_build(0, 8u);
+        {
+            const uint16_t *cy = drv_job_tx(DRV_CYC), *cf = drv_job_tx(DRV_CFG);
+            CHECK(cy[3] == 0x881Au && cy[0] == 0x881Au && cy[4] == 0x8815u);
+            CHECK(cy[23] == (uint16_t)(0xF000u | (uint16_t)((10000u + CELL_RQ_ROUND) / 6u)));
+            CHECK(cf[8] == 0x9002u && cf[5] == 0x9021u);      /* the first pass */
+            CHECK(CELL_RQ_LETTER[7] == (uint8_t)'!' && CELL_RQ_CUR[7] == 10000u);
+        }
+        drv_cyclic_build(0, 8u);
+        {
+            const uint16_t *cy = drv_job_tx(DRV_CYC), *cf = drv_job_tx(DRV_CFG);
+            CHECK(cf[8] == 0x9021u);                           /* back to normal */
+            CHECK(cy[23] == 0xF682u || cy[23] == 0xF683u);
+        }
+    }
     printf("test_reqlaw: %s (%d failures)\n", fails ? "FAIL" : "ok", fails);
     return fails ? 1 : 0;
 }

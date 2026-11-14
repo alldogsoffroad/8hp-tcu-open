@@ -922,3 +922,16 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
   - then both together (the stock's out-of-P state);
   - then stage 2 (the rail-off full-on tests);
   - then the range logic with the CAN lever simulation.
+
+**r03i = THE PARK RELEASE (bus-A ch 7) ALONE AT THE STOCK'S 1.0 A (2026-11-14; built, NOT flashed, `build/r03i_IFla.bin`, app CRC `FD08E2D6`, blocks 0x40000 + 0x50000, app end 0x521AC; NOT committed at time of writing)** — the decode's plan "release alone":
+- **`DRV_RQ_P7` 0 → 10000** (the stock's out-of-P value: 0xE8888 returns 10000 → 1.0 A current-regulated, letter '!'). Its `_Static_assert` allows only 0 or 10000.
+- **`DRV_GA_STAGE` back to 0** (hold off), so the comparison is against r03g (P set + stage 0, 1.759 A) with exactly one difference. RAM identical to r03g. The P table with 0x2710 in slot 7 is at 0x51802.
+- **Host (55/55):** chip 3 mode **0x881A** (Sys '!' + release '!'), F0 slot 3 **F682/F683** ((10000 + round)/6). **The stock's 0x90232 high-current rule** (cal 0x191488 = 0x80 → ch 7) sets chip 3's 0x90 config byte to **(x & 0xC0) | 2 = 0x02 for the one pass** in which the release first reaches 10000, then the normal 0x21. Witness `/tmp/witness_r03i.py` (= r03g's), install `/tmp/install_r03i.py`.
+- **PREDICTION (rule 1):**
+  - [high] RQLAW modes 03 ×8; letters '!' ×8; cur[7] = 0x2710; records +7 1A 1A 1A **1A** 15; cyclic `881A 881A 881A 881A 8815 | … | F589/88 F588/89 F053/54 **F682/83** F000`; config readback chip 3 **A29A**; read row A682/A683 in chip 3's slot; group-A DTR all 0000 (hold off).
+  - **Current [D]:** a current-regulated 1.0 A. At ≈ 7 Ω the supply draw is ≈ I²R/V ≈ 0.54 A. At ≈ 20 Ω the coil cannot reach 1.0 A (V/R ≈ 0.65 A, full on), so the draw is ≈ 0.65 A. **So ≈ +0.5 … +0.65 A → ≈ 2.25–2.40 A total.** The step, and whether the chip saturates, tell us the release coil.
+  - **Stop conditions:**
+    - mean total above ~2.9 A → power off;
+    - any channel other than the P set + ch 7 changing;
+    - 'U' lost under the load;
+    - restarts or bus errors.

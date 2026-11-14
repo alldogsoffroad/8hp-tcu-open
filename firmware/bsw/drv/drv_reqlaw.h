@@ -56,12 +56,13 @@
 #  define DRV_RQ_P4 8500u
 #  define DRV_RQ_P5 500u
 #  define DRV_RQ_P6 500u
-#  define DRV_RQ_P7 0u
+#  define DRV_RQ_P7 10000u   /* r03i: park release ON at the stock's out-of-P value (0xE8888 returns 10000: 1.0 A) */
 _Static_assert(DRV_RQ_P0 == 0x01F4u && DRV_RQ_P1 == 0x2134u && DRV_RQ_P2 == 0x2134u &&
                DRV_RQ_P3 == 0x2134u && DRV_RQ_P4 == 0x2134u && DRV_RQ_P5 == 0x01F4u &&
                DRV_RQ_P6 == 0x01F4u,
                "drv_reqlaw P set: every request must equal the stock's P value (dump 0xFFF94EE8)");
-_Static_assert(DRV_RQ_P7 == 0u, "drv_reqlaw P set: park release stays 0");
+_Static_assert(DRV_RQ_P7 == 0u || DRV_RQ_P7 == 10000u,
+               "drv_reqlaw: park release is 0 (P) or the stock's out-of-P 10000 (1.0 A), nothing else");
 #  define DRV_RQ_PSET_TABLE { DRV_RQ_P0, DRV_RQ_P1, DRV_RQ_P2, DRV_RQ_P3, DRV_RQ_P4, \
                               DRV_RQ_P5, DRV_RQ_P6, DRV_RQ_P7, 0u, 0u }
 #  define DRV_RQ_PSET 1
