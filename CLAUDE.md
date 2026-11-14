@@ -935,3 +935,12 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
     - any channel other than the P set + ch 7 changing;
     - 'U' lost under the load;
     - restarts or bus errors.
+
+**r03i BENCH RESULT (2026-11-14 14:44 install, blocks 0x40000 `ab5a1a3621bd571f` + 0x50000 `f39e2adb5f19e433`, all 21 verifies OK; power-on ≈ 15:33:50 under the ammeter; witness 15:34:48–50 `/tmp/witness_r03i.log`; **powered off early by request — the release current was creeping**) — THE PARK RELEASE (ch 7) AT 1.0 A UNDER OPEN FIRMWARE; LARGER STEP THAN PREDICTED, AND A THERMAL CREEP** [O]:
+- **The law and the wire, as predicted:** modes 03 ×8; letters '!' ×8; **cur[7] = 0x2710**; records +7 1A 1A 1A **1A** 15; cyclic `881A ×4 8815 | … | F588 F588 F053 **F682** F000`; config readback chip 3 **A29A**; read row **A683** in chip 3's slot; group-A DTR 0000 (hold off); 'U', mode 1, C7, buses clean, boots = 1.
+- **Current:** 1.76 A before 'U', then **2.63 A** in the first 10 s → **+0.87 A — above the predicted +0.50 … +0.65 A (prediction refuted on size)**. **Release coil ≈ 11 Ω [D]:** at 1.0 A it needs ~11 V of the 12.7 V supply (≈ 88 % duty, near saturation), so the supply draw ≈ the coil current.
+- **Thermal creep [O]:** 10-s means **2.63 → 2.69 → 2.72 → 2.75 → 2.78 → 2.80 A** (≈ +3 mA/s, slowing). It approached the 2.9 A stop line, so the bench was powered off ~2.5 min after power-on. **[I] the dry release coil heats (≈ 11 W, no oil cooling):** R rises, the regulator raises duty to hold 1.0 A, and the supply draw climbs. The stock drives this coil continuously only out of P, in oil. Supply sagged to 12.70 V.
+- **Consequences for M4b on a dry bench:**
+  1. **D-M4-7 (maximum on-time) is now required** before any further release or both-outputs test. A compile-time on-window (ours, not stock) must turn the release off after N seconds and stay off until the next power cycle.
+  2. Restate the stop conditions for "both together": the stock out-of-P state ≈ P set 1.76 + release ≈ 0.87–1.04 (rising) + hold 0.17 ≈ **2.8–3.0 A** — above the 2.9 A line used here.
+  3. Spec 12 coil resistances: pressure solenoids ≈ 7 Ω, park release ≈ 11 Ω, park hold ≈ 20 Ω [D, all from supply steps].
