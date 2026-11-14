@@ -900,3 +900,15 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
 - **Current:** steady mean **1 758.9 mA** (the r03f idle set; r03f 1 774.6) — no change ✓.
 - Everything else as r03f: 'c', J2 9020, mode 1, C7, request law at the P set; bus A 7 054 cyclics, 0 slips; re-entries 0; job errors 0; Timer E and pins as r03c.
 - **Next — stage 1 (`DRV_GA_STAGE 1`):** TOE31 park hold on at the stock demand 10000. Expected: DTR31 0 until 'L', then 2000 for 20 ms (pull-in), then ≈ 1030; supply step **+0.14 A (25 Ω) … +0.50 A (7 Ω)** — the step measures the hold coil.
+
+**r03h = STAGE 1: THE PARK HOLD (TOE31) ON (2026-11-14; built, NOT flashed, `build/r03h_IFla.bin`, app CRC `C6031A08`, blocks 0x40000 + 0x50000, app end 0x5229C; NOT committed at time of writing)** — one variable vs r03g: `DRV_GA_STAGE` 0 → **1** (CMakeLists default now 1, so a clean configure reproduces this image). Slot 11 (TOE31) demand = the stock's 10000; every other group-A demand 0; the full-on tests still held. RAM map identical to r03g. Host `groupa_stage1` (2000 ×4 passes, then ≈ 1036) and the stage-1 compile check pass; 55/55. Witness `/tmp/witness_r03h.py` (= r03g's), install `/tmp/install_r03h.py`.
+- **PREDICTION (rule 1):**
+  - [high] **DTR/DRLD31 (E3 m1) = 0 until 'L'**, then **2000 (100 %) for 20 ms** (the pull-in), then **≈ 1030–1045** (≈ 516–522 ‰ — curve 6677 mV over the rail node, which sags further under the extra load, so the duty rises slightly);
+  - modes 0x95000[1] = 01; 0x94FAA[1] = 0x2710; 0x9086A[1] ≈ 0x0204–0x0215; `s_ga_guard_n` 0; every other group-A DTR 0000.
+  - **Current [D]:** the hold is a voltage-PWM coil (not current-regulated), so the supply draw ≈ D²·V/R. At D ≈ 0.52 and V ≈ 12.9 V that is ≈ 3.4 V / R: **+0.49 A at 7 Ω, +0.14 A at 25 Ω**. So ≈ 1.90–2.25 A total, after a ~20 ms pull-in spike (≈ V/R in the coil) too short for the 0.2 s bins. The step gives the hold coil's resistance.
+  - Everything else as r03g (the P set, the rail, the buses).
+  - **Stop conditions:**
+    - mean total above ~2.6 A → power off;
+    - DTR31 stuck at 2000 (pull-in never ending);
+    - any other group-A output nonzero;
+    - restarts, bus errors, or 'U' lost under the load.
