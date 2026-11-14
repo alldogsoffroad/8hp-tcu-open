@@ -69,17 +69,31 @@ uint32_t drv_rq_f238_n(void)   { return s_rq_f238_n; }
 /* ── the request source ────────────────────────────────────────────────── */
 uint16_t drv_rq_window_step(drv_rq_win_t *w, uint32_t now_ms, bool at_u, uint16_t req)
 {
-    if (req == 0u) {
-        return 0u;
+    const bool on = (req != 0u) && at_u;
+
+    if (w->state == 2u) {
+        return 0u;                              /* latched off until power-off */
     }
-    if (w->state == 0u && at_u) {
+    if (w->state == 1u) {
+        /* the release was on since the previous pass: count that time */
+        w->acc_ms += (uint32_t)(now_ms - w->t_last_ms);
+        w->t_last_ms = now_ms;
+        if (w->acc_ms >= DRV_RQ_REL_WINDOW_MS) {
+            w->state = 2u;
+            return 0u;
+        }
+        if (!on) {
+            w->state = 0u;                      /* off: the window closes, time kept */
+            return 0u;
+        }
+        return req;
+    }
+    if (on) {                                   /* the release turns on: open */
         w->state = 1u;
-        w->t0_ms = now_ms;
+        w->t_last_ms = now_ms;
+        return req;
     }
-    if (w->state == 1u && (uint32_t)(now_ms - w->t0_ms) >= DRV_RQ_REL_WINDOW_MS) {
-        w->state = 2u;                          /* latched off until power-off */
-    }
-    return (w->state == 1u) ? req : 0u;
+    return 0u;
 }
 
 #if defined(__sh__) && defined(DRV_RQ_PSET)
@@ -92,11 +106,18 @@ static inline uint16_t rq_request(uint8_t ch)
 #if DRV_RQ_REQUEST_SOURCE
     return CELL_RQ_REQ[ch];
 #elif defined(__sh__) && defined(DRV_RQ_PSET)
-    /* r03f: the stock P set (drv_reqlaw.h), compile-time constants */
+    /* r03f: the stock P set (drv_reqlaw.h), compile-time constants (ch 7:
+     * the bound of the park-release demand) */
     static const uint16_t PSET[10] = DRV_RQ_PSET_TABLE;
-    if (ch == 7u) {                             /* r03j: the release on-window */
+    if (ch == 7u) {
+        /* the park release: the ported range/park logic's demand (stock
+         * slot getter 0xA469A ← 0xE8888(id 2), app/park.c), passed only
+         * when it equals the compile-time bound DRV_RQ_P7 (0 or 10000),
+         * then our D-M4-7 on-time limit */
+        const uint16_t v = (PSET[7] != 0u) ? park_slot7_release() : 0u;
+        const uint16_t r = (PSET[7] != 0u && v == PSET[7]) ? PSET[7] : 0u;
         return drv_rq_window_step(&s_rq_rel_win, sched_now_ms(),
-                                  CELL_SEQ2_STATE[0] == (uint8_t)'U', PSET[7]);
+                                  CELL_SEQ2_STATE[0] == (uint8_t)'U', r);
     }
     return (ch < 10u) ? PSET[ch] : 0u;
 #else

@@ -34,7 +34,7 @@ set(CORE_SOURCES
     io/actuators/sol_ctl.c
     app/bench_out.c
     app/range.c
-    app/park_ctl.c
+    app/park_law.c
     app/park.c
     safety/park_mon.c
     app/bench_dump.c
@@ -95,11 +95,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         COMPILE_OPTIONS -fno-tree-loop-distribute-patterns)
     target_include_directories(tcu_app.elf PRIVATE ${CMAKE_SOURCE_DIR}/platform/sh7254r/include)
     target_compile_definitions(tcu_app.elf PRIVATE TCU_AUTOENGAGE TCU_E60P)  # bench m4 series; E60x - the full walk, alive at last (boot death solved: no bit0 from word one)
-    # M4 group A (bsw/drv/drv_groupa.h): THE ONE STAGING MACRO of the flashed
-    # application — 0 (default) no group-A current, the law at zero demand;
-    # 1 the park hold (TOE31) at the stock's on-demand; 2 the rail-off
-    # full-on tests released. -DDRV_GA_STAGE=1 at configure time.
-    set(DRV_GA_STAGE 1 CACHE STRING "M4 group-A stage of tcu_app.elf (0 / 1 / 2)")
+    # M4 park outputs (bsw/drv/drv_park.h, drv_groupa.h): THE ONE STAGING
+    # MACRO of the flashed application — 0 SAFE BUILD: both park outputs
+    # (release ch 7, hold TOE31) held at 0, the logic runs at zero demand;
+    # 1 (default) the park outputs FOLLOW THE PORTED RANGE/PARK LOGIC
+    # (app/range.c, app/park_law.c), bounded to {0, 10000}, the release
+    # under the D-M4-7 30 s on-time limit; 2 the rail-off group-A full-on
+    # tests released, park outputs 0. -DDRV_GA_STAGE=0 at configure time
+    # for a build that cannot drive any park current.
+    set(DRV_GA_STAGE 1 CACHE STRING "M4 park-output stage of tcu_app.elf (0 / 1 / 2)")
     set_property(CACHE DRV_GA_STAGE PROPERTY STRINGS 0 1 2)
     target_compile_definitions(tcu_app.elf PRIVATE DRV_GA_STAGE=${DRV_GA_STAGE})
     target_link_options(tcu_app.elf PRIVATE -T ${LDSCRIPT} -Wl,-Map=tcu_app.map)
@@ -206,15 +210,15 @@ else()
         tests/unit/stub_plat.c)
     target_compile_definitions(test_bench PRIVATE TCU_M4B_OUTPUTS)
     add_test(NAME bench COMMAND test_bench)
-    add_executable(test_park tests/unit/test_park.c app/range.c app/park_ctl.c app/park.c
-        app/bench_out.c bsw/diag/uds.c bsw/diag/isotp.c bsw/diag/boot_record.c
+    # M4 range / park (2026-11-14, ~/tcu_sweep/range_logic_port.md): the
+    # stock arbiter 0xA557C, the output law 0xCFFDE / 0xE88FA / 0xE89DE /
+    # 0xE8888, the cross-check, driven from CAN lever frames; the slot
+    # getters into the request law's on-time limit
+    add_executable(test_park tests/unit/test_park.c app/range.c app/park_law.c app/park.c
         safety/park_mon.c io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c
-        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c
-    bsw/drv/drv_handlers.c
-    bsw/com/crc8.c io/actuators/sol_ctl.c bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c
-        bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
+        bsw/com/crc8.c bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_handlers.c
         tests/unit/stub_plat.c)
-    target_compile_definitions(test_park PRIVATE PARK_TEST_HOOKS TCU_M4B_OUTPUTS)
+    target_compile_definitions(test_park PRIVATE PARK_TEST_HOOKS)
     add_test(NAME park COMMAND test_park)
     # r03b: the stock's solenoid request law (drv_reqlaw.c) — the driving
     # dump reproduced, the zero-request content per seq2 state, the full-on
@@ -269,6 +273,19 @@ else()
         PASS_REGULAR_EXPRESSION "solenoid request source is refused on SH builds")
     set_tests_properties(rq_sh_guard_cell PROPERTIES
         PASS_REGULAR_EXPRESSION "read-only")
+    # the park-release bound (2026-11-14, range/park logic port): stage 1
+    # compiles; any bound but 0 / 10000, or a bound not implied by
+    # DRV_GA_STAGE, does not
+    add_test(NAME rq_sh_guard_park_live
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DDRV_GA_STAGE=1 ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard.c)
+    add_test(NAME rq_sh_guard_p7_value
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DDRV_GA_STAGE=1 -DDRV_RQ_P7=5000u ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard.c)
+    add_test(NAME rq_sh_guard_p7_stage
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DDRV_GA_STAGE=0 -DDRV_RQ_P7=10000u ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard.c)
+    set_tests_properties(rq_sh_guard_p7_value PROPERTIES
+        PASS_REGULAR_EXPRESSION "nothing else")
+    set_tests_properties(rq_sh_guard_p7_stage PROPERTIES
+        PASS_REGULAR_EXPRESSION "follows DRV_GA_STAGE alone")
     # Timer E stage 0b (2026-11-13): the group-A duty setter (TOE31 park
     # hold) is refused on every SH build except the RAM application with
     # TCU_M4B_OUTPUTS; TCU_M4B_OUTPUTS on the flashed application is #error

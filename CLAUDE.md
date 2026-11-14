@@ -978,3 +978,47 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
   - the range logic (the stock arbiter → 0xCFFDE → 0xE88FA with its interlock and timer model, replacing the invented `park_ctl.c`) driven by the CAN lever simulation, so that P ↔ not-P switches these outputs at runtime instead of by compile-time constants;
   - the park position sensor channel (lead AN5/AN6, 0x8DF2E);
   - D-M4-6 (`park_ctl.c` / `park_mon.c` fate) and D-M4-8 (lever / output-speed sources).
+
+**D-M4-6 / D-M4-8 (user, 2026-11-14):** retire `park_ctl.c` (replace it with the stock logic), keep `park_mon.c` as the cross-check; lever = Chrysler type-1 CAN frames from the bench tool; output speed = the stock's own rule.
+
+**THE STOCK RANGE/PARK LOGIC, PORTED (2026-11-14; subagent, `~/tcu_sweep/range_logic_port.md`; validated this session: sh2a + host 58/58, the two driver call sites pass a park demand only when it equals the compile-time bound 0/10000):**
+- **What is ported:**
+  - **Arbiter** `app/range.c` = 0xA548C / 0xA557C, the special rows 0xA54A4 (the decompile inverts one speed test; the bytes need D650 ≥ 320), all five modes, mode 4 = 0xA57DA; result 0xFFF8E549 / 0xFFF8D6D6.
+  - **Output law** `app/park_law.c`:
+    - park request AE29 = (target 8 && no aux) || (aux && no car-wash inhibit);
+    - lock = inhibit 0x89C30 clear && (aux || (AE29 && (locked || interlock 0xE8B56)));
+    - release on iff AE29 = 0, hold on iff lock = 0;
+    - timer model 0xE89DE (release 150 ms; engage from map 0x1B5044, 200 ms at 27 °C);
+    - demands 0xE8888 = 10000 / 0.
+  - Cells pinned at the stock addresses (`.park_*`).
+  - `park_ctl.c` deleted. `park_mon.c` keeps an independent arbiter recompute vs 0xFFF8D6D6; a mismatch over 2 cycles or a corrupt copy latches both demands 0 until power-off (ours).
+- **THE SPEED RULE [O]:** the stock arbiter has **no validity term** — output speed > 80 rpm counts as moving, and moving without lever P → target 6 → **park released**. On this bench our speed code reports 0 rpm with good quality when no edges arrive, so the logic sits in Auto-P. **Do not turn the output shaft without lever P.**
+- **OPEN [I]:** the stock lever object 0xFFF8304C has no writer in flash except a safety reset; the dump holds 8 there, contradicting the arbiter's own reason 0x17. Our arbiter takes `profile_fca.c`'s type-1 CAN evaluation (5–8, 0 if no source is valid). Stood-in inputs (dump values): 0x89C30, 0x89CF2, 0x8E69B, 0x89C13 (← our 0x94103), 0x89D00, 0x89CB8, 0x89D49, 0xFFF8B272, D650, D648/D652.
+- **`DRV_GA_STAGE` NEW MEANING:**
+  - 0 = safe (both park outputs 0, tests held; header default, RAM app);
+  - **1 (CMake default) = the park outputs FOLLOW THE PORTED LOGIC** (release ∈ {0, 10000} under the 30 s limit, hold ∈ {0, 10000}), tests held;
+  - 2 = tests released, both park outputs 0.
+
+  Demands leave `app/park.c` only through `park_slot7_release()` / `park_slot11_hold()` (`bsw/drv/drv_park.h`), each with exactly one caller in the SH image. There is no setter and no UDS path.
+- **The 30 s limit (D-M4-7) now:** it accumulates release-on time across the power cycle (per law pass while the release is requested and seq2 is 'U') and at 30 000 ms latches the release off until power-off. Cell `s_rq_rel_win` 0xFFF95B7C: state, t_last, acc_ms.
+- **Bench tool:** `park` / `park-check` defaults fixed (`--bus 1`, `build/sh2a/tcu_app.elf`). LeverSender: 0x2EA on bus 1 (CRC-8 + counter), 0x210 on bus 2, every 10 ms (firmware timeout 50 ms). **Caution:**
+  - the tool uses BOTH Teensy ports (0x210 on ACM1 = the ammeter's port), so the ammeter logger cannot run during a lever test — watch the meter by eye;
+  - a USB stall > 50 ms gives a one-tick Auto-P flicker;
+  - `park-check --hw` at settle 2.0 spends ~14 s in R/N/D, so two runs exhaust the 30 s budget.
+
+**r03k = THE PARK OUTPUTS DRIVEN BY THE STOCK RANGE/PARK LOGIC (2026-11-14; built, NOT flashed, `build/r03k_IFla.bin`, app CRC `9109DB32`, blocks 0x40000 + 0x50000, app end 0x52864; NOT committed at time of writing):**
+- .bss tail/.noinit −8 (`s_rst` 0xFFF9EB68, `s_w9020` 0xEB88, `s_open` 0xEBCC); meas table `_s_m` 0xFFF9E194 (park bytes 48–53). Witness `/tmp/witness_r03k.py` (remapped + a PARK line: E549, D6D6, AE28/29, BC70, 851A8; window state/t_last/acc). Install `/tmp/install_r03k.py`.
+- **PREDICTION (rule 1):**
+  - **(a) Boot, no lever frames [high]:** the stock Auto-P — E549 = 00 08 17, D6D6 = 08 F7, AE28/29 = 00 01, BC70 = 04 01 FF 00 (the dump's), 851A8 = 00×5 FF×5; both demands 0 (chip 3 0x8812, TOE31 DTR 0000). **Current = the P set ≈ 1.76 A** (the hold is now OFF in P, as the stock; r03h/r03j had it on as a constant).
+  - **(b) `park-check --hw --settle 2.0`** (no ammeter logger — watch the meter):
+    - lever P → target 8 / 0x15, both off;
+    - **R / N / D → target 6 / 0x16, release + hold ON the same tick → ≈ 2.83 A** (model 2 → 1 in 150 ms);
+    - back to P → both off (≈ 1.76 A);
+    - no or invalid lever → Auto-P 8 / 0x17, both off;
+    - the tool's 13 steps all PASS; the accumulated release time ≈ 14 s (< 30 s); monitor 0x00.
+  - **Stop conditions:**
+    - mean above 3.2 A;
+    - outputs on with lever P or no lever;
+    - the release on beyond ~35 s accumulated;
+    - 'U' lost;
+    - restarts.

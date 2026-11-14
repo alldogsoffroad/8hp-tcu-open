@@ -162,6 +162,19 @@ SECTIONS
     .drv_ga1  0xFFF93A66 (NOLOAD) : { . += 0x0A; } > RAM   /* 0x93A66..0x93A6F        */
     .drv_tmp1 0xFFF93A9C (NOLOAD) : { . += 0x10; } > RAM   /* 0x93A9C..0x93AAB        */
     .drv_tmp2 0xFFF9416E (NOLOAD) : { . += 0x02; } > RAM   /* 0x9416E..0x9416F        */
+    /* M4 range / park (app/range.c, app/park_law.c, app/park_cells.h;
+     * ~/tcu_sweep/range_logic_port.md): the stock cells of the park module,
+     * cleared by park_init — 0x851A8 output flags + complements, 0x89C6C /
+     * 0x89CDC the target as read / with the diag overrides, 0x8AE28 the
+     * direction + park request, 0x8BC70 the park object, 0x8D6D6 the target
+     * + complement, 0x8E549 the arbiter result object */
+    .park_out  0xFFF851A8 (NOLOAD) : { . += 0x0A; } > RAM   /* 0x851A8..0x851B1        */
+    .park_rng  0xFFF89C6C (NOLOAD) : { . += 0x01; } > RAM   /* 0x89C6C                 */
+    .park_rngd 0xFFF89CDC (NOLOAD) : { . += 0x01; } > RAM   /* 0x89CDC                 */
+    .park_req  0xFFF8AE28 (NOLOAD) : { . += 0x02; } > RAM   /* 0x8AE28..0x8AE29        */
+    .park_obj  0xFFF8BC70 (NOLOAD) : { . += 0x04; } > RAM   /* 0x8BC70..0x8BC73        */
+    .park_tgt  0xFFF8D6D6 (NOLOAD) : { . += 0x02; } > RAM   /* 0x8D6D6..0x8D6D7        */
+    .park_arb  0xFFF8E549 (NOLOAD) : { . += 0x03; } > RAM   /* 0x8E549..0x8E54B        */
     /* our request-law witnesses and the refresh snapshot (not stock cells;
      * free low RAM like .sup_wit, so they do not cost the stack guard) */
     .drv_wit 0xFFF84C40 (NOLOAD) : {

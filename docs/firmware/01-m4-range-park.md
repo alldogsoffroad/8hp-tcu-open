@@ -1,5 +1,14 @@
 # M4 — Range and Park control (design)
 
+> **Superseded in part (2026-11-14, D-M4-6):** the invented sequencing of §4 (`park_ctl.c`:
+> contact feedback, timeouts, engine-running precondition) and the M4a drive values are
+> retired. The firmware now runs the stock's own logic, ported from the bytes: the arbiter
+> 0xA557C (`app/range.c`), the output law 0xCFFDE / 0xE88FA / 0xE8B56 / 0xE89DE / 0xE8888
+> (`app/park_law.c`) and a trimmed cross-check (`safety/park_mon.c`). The two demands reach
+> the drivers only through the slot getters of `bsw/drv/drv_park.h`, gated by
+> `DRV_GA_STAGE`. See `~/tcu_sweep/range_logic_port.md`. The rest of this document is the
+> October design record.
+
 Status: **draft for review** (2026-10-18). Behaviour reference: spec 14 (park arbitration),
 spec 12 §1.1–1.2 (park actuators), spec 07 §2 (CAN protection). Architecture: 00 §5–8.
 

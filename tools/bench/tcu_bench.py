@@ -1111,33 +1111,38 @@ def cmd_sensors(b, args):
         pass
 
 
-PARK_STATES = ["init", "in P", "releasing", "holding", "engaging", "SAFE"]
-PARK_REASONS = ["-", "lever P", "moving", "park request", "lever R/N/D", "auto P"]
+# the stock park module (~/tcu_sweep/range_logic_port.md): timer model 0xFFF8BC70[0] and the
+# arbiter's reason codes (0xA557C / 0xA57DA)
+PARK_STATES = {0: "boot", 1: "released", 2: "releasing", 3: "engaging", 4: "engaged"}
+PARK_REASONS = {0x15: "lever P", 0x16: "R/N/D or moving", 0x17: "Auto-P", 1: "D special 1",
+                2: "D special 2", 3: "special 3", 5: "forced rel 5", 6: "forced rel 6", 8: "D at speed"}
+
+
+def park_line(d):
+    """Decode the park block of the measurement table (offsets 48..53, app/meas_table.c)."""
+    tgt = {8: "engage", 6: "release", 5: "drive5"}.get(d[48], f"?{d[48]}")
+    rsn = PARK_REASONS.get(d[49], f"0x{d[49]:02X}")
+    st = PARK_STATES.get(d[50], f"?{d[50]}")
+    return (f"target {tgt:7s} reason {rsn:16s} model {st:9s} release {'ON ' if d[51] & 1 else 'off'} "
+            f"hold {'ON ' if d[51] & 2 else 'off'} req {d[52] & 1} lock {d[52] >> 1 & 1} mon 0x{d[53]:02X}")
 
 
 def cmd_park(b, args):
-    """Range / park control of the PROJECT firmware (M4, docs/firmware/01-m4-range-park.md):
-    lever, park target and reason, sequencing state, the requested outputs and the
-    fault bits, from the measurement table every --period seconds. In an M4b build the
-    requests are DRIVEN (channel 7 + TOE31); in a gated build they stay requests only."""
+    """Range / park logic of the PROJECT firmware (the stock arbiter + output law,
+    ~/tcu_sweep/range_logic_port.md): lever, park target and stock reason, the timer model,
+    the two park demands as the drivers pull them (DRV_GA_STAGE 1 drives them), the park
+    request / lock and the cross-check faults, from the measurement table every --period s."""
     addr = meas_table_addr(args.elf, 54)
     u16 = lambda d, o: int.from_bytes(d[o:o + 2], "big")
     levers = {0: "-", 5: "D", 6: "N", 7: "R", 8: "P"}
     srcs = {0: "CAN-C", 1: "shifter bus", 2: "none"}
-    park_names = {0: "unknown", 1: "in P", 2: "not in P"}
     print(f"measurement table at 0x{addr:08X} ({args.elf}); Ctrl-C to stop")
-    print("  uptime  engine  lever (source)      contacts   target   reason        state      release hold  faults ctl/mon")
     n = 0
     try:
         while args.count == 0 or n < args.count:
             d = read_mem(b, args.bus, addr, 54)
-            tgt = {8: "engage", 6: "release"}.get(d[48], f"?{d[48]}")
-            rsn = PARK_REASONS[d[49]] if d[49] < len(PARK_REASONS) else f"?{d[49]}"
-            st = PARK_STATES[d[50]] if d[50] < len(PARK_STATES) else f"?{d[50]}"
             lev = f"{levers.get(d[19], d[19])} ({srcs.get(d[20], d[20])})"
-            print(f"  {u16(d, 24):5d} s  {u16(d, 0):5d}   {lev:18s}  {park_names.get(d[42], d[42]):9s}  {tgt:7s}  "
-                  f"{rsn:12s}  {st:9s}  {'on' if d[51] & 1 else 'off':7s} {'on' if d[51] & 2 else 'off':4s}  "
-                  f"0x{d[52]:02X}/0x{d[53]:02X}")
+            print(f"  {u16(d, 24):5d} s  out {u16(d, 32):5d} rpm  lever {lev:18s} {park_line(d)}")
             n += 1
             time.sleep(args.period)
     except KeyboardInterrupt:
@@ -1235,17 +1240,23 @@ class LeverSender(threading.Thread):
 
 
 def cmd_park_check(b, args):
-    """Bench check of M4 (docs/firmware/01-m4-range-park.md): sends lever frames, reads the
-    lever decode and the park target from the measurement table and compares them with the
-    expected values. Without --hw (module alone, no park contacts) the sequencing ends in
-    SAFE. With --hw (M4b build + E-Shift mechatronic connected) the outputs are DRIVEN and
-    the sequencing state and requests are logged per step; a dry mechatronic has no line
-    pressure, so the release piston may not move and RELEASING can time out (that fault
-    path is the expected outcome without hydraulics)."""
+    """Bench check of the range/park logic (~/tcu_sweep/range_logic_port.md): sends the
+    Chrysler type-1 shifter frames (0x2EA on bus 1 with CRC-8 + counter, 0x210 on bus 2,
+    every 10 ms; the firmware's timeout is 50 ms), reads the lever decode, the park target /
+    stock reason, the timer model and the two park demands from the measurement table, and
+    compares them with the stock rule (0xA57DA mode 4 + 0xCFFDE / 0xE88FA):
+      P                         -> target 8 / 0x15, release off, hold off
+      R / N / D (stationary)    -> target 6 / 0x16, release ON, hold ON (model 2 -> 1 in 150 ms)
+      no valid lever, still     -> target 8 / 0x17 (Auto-P), both off
+      moving (output > 80 rpm)  -> target 6 / 0x16 whatever the lever but P
+    With --hw the demands are expected to reach the drivers (an image built with
+    DRV_GA_STAGE 1): release = bus-A ch 7 at 1.0 A (under the 30 s accumulated on-time limit,
+    then latched off until power-off), hold = TOE31. Without --hw only the logic is checked."""
     addr = meas_table_addr(args.elf, 54)
     if args.hw:
-        print("M4b HARDWARE CHECK - PARK OUTPUTS WILL BE DRIVEN (channel 7 + TOE31)")
-        if input("E-Shift mechatronic connected, rig secured at standstill? [yes/no] ").strip() != "yes":
+        print("PARK OUTPUTS WILL BE DRIVEN (bus-A ch 7 1.0 A + TOE31) WHENEVER THE LEVER IS R/N/D")
+        print("dry bench, ammeter on; the release is limited to 30 s accumulated per power cycle")
+        if input("Mechatronic dry (no pump, no driveline), ammeter running? [yes/no] ").strip() != "yes":
             return 1
     P, R, N, D = 1, 2, 3, 4
     # (description, code, 0x2EA on, 0x210 on, bad CRC, lever expected or None, source expected,
@@ -1257,6 +1268,7 @@ def cmd_park_check(b, args):
         ("N on both buses",                N, True,  True,  False, 6,    0, "RND"),
         ("D on both buses",                D, True,  True,  False, 5,    0, "RND"),
         ("code 0 (no change) after D",     0, True,  True,  False, 5,    0, "RND"),
+        ("P on both buses",                P, True,  True,  False, 8,    0, "P"),
         ("0x2EA bad CRC, 0x210 R",         R, True,  True,  True,  7,    1, "RND"),
         ("0x2EA missing, 0x210 N",         N, False, True,  False, 6,    1, "RND"),
         ("0x2EA D, 0x210 missing",         D, True,  False, False, 5,    0, "RND"),
@@ -1274,31 +1286,25 @@ def cmd_park_check(b, args):
             snd.code, snd.on_2ea, snd.on_210, snd.bad_crc = code, a, c, bad
             time.sleep(args.settle)
             d = read_mem(b, args.bus, addr, 54)
-            if still is None:                          # first step: no lever -> Auto P or moving
-                still = d[49] == 5
-                print(f"  output speed {'valid and stationary' if still else 'not valid / moving'}"
-                      f" (reason {d[49]})")
-            want_t, want_r = {"P": (8, 1), "RND": (6, 4 if still else 2),
-                              "none": (8, 5) if still else (6, 2)}[kind]
+            if still is None:                          # first step: no lever -> Auto-P or moving
+                still = d[49] == 0x17
+                print(f"  output speed {'stationary' if still else 'MOVING (> 80 rpm)'} "
+                      f"(reason 0x{d[49]:02X}, output {int.from_bytes(d[32:34], 'big')} rpm)")
+            want_t, want_r = {"P": (8, 0x15), "RND": (6, 0x16),
+                              "none": (8, 0x17) if still else (6, 0x16)}[kind]
+            want_out = 3 if want_t == 6 else 0          # release + hold out of P, both off in P
             ok = d[20] == src and (lev is None or d[19] == lev) and d[48] == want_t and d[49] == want_r
+            ok = ok and (d[51] & 3) == want_out and d[53] == 0
             results.append(ok)
-            hw = ""
-            if args.hw:
-                st_h = PARK_STATES[d[50]] if d[50] < len(PARK_STATES) else d[50]
-                hw = f"  [state {st_h}, contacts {d[42]}, release {'on' if d[51] & 1 else 'off'}, " \
-                     f"hold {'on' if d[51] & 2 else 'off'}]"
             print(f"  {'PASS' if ok else 'FAIL'}  {desc:30s} lever {d[19]} ({srcs.get(d[20], d[20])})  "
-                  f"target {d[48]} reason {PARK_REASONS[d[49]] if d[49] < len(PARK_REASONS) else d[49]}"
-                  + ("" if ok else f"   expected lever {lev} src {src} target {want_t} reason {want_r}")
-                  + hw)
+                  + park_line(d)
+                  + ("" if ok else f"   expected lever {lev} src {src} target {want_t} reason 0x{want_r:02X}"
+                                   f" demands {want_out}"))
     finally:
         snd.stop.set()
         snd.join(1.0)
-    d = read_mem(b, args.bus, addr, 54)
-    st = PARK_STATES[d[50]] if d[50] < len(PARK_STATES) else d[50]
-    print(f"  sequencing: state {st}, requests release {'on' if d[51] & 1 else 'off'} / hold "
-          f"{'on' if d[51] & 2 else 'off'}, faults ctl 0x{d[52]:02X} mon 0x{d[53]:02X} (module alone: SAFE "
-          f"with ctl 0x02 engage timeout is expected, no contacts)")
+    print("  (the demands are the logic's; whether the drivers apply them depends on DRV_GA_STAGE and"
+          " the 30 s release on-time limit — witness s_rq_rel_win, chip 3 8812/881A, TOE31 DTR)")
     print(f"{sum(results)}/{len(results)} steps passed")
     return 0 if all(results) else 1
 
@@ -1334,12 +1340,12 @@ def main():
     p = sub.add_parser("sensors"); p.add_argument("--bus", type=int, default=2)
     p.add_argument("--elf", default="build/sh2a/tcu_app_ram.elf"); p.add_argument("--period", type=float, default=1.0)
     p.add_argument("--count", type=int, default=0)
-    p = sub.add_parser("park"); p.add_argument("--bus", type=int, default=2)
-    p.add_argument("--elf", default="build/sh2a/tcu_app_ram.elf"); p.add_argument("--period", type=float, default=1.0)
+    p = sub.add_parser("park"); p.add_argument("--bus", type=int, default=1)
+    p.add_argument("--elf", default="build/sh2a/tcu_app.elf"); p.add_argument("--period", type=float, default=1.0)
     p.add_argument("--count", type=int, default=0)
-    p = sub.add_parser("park-check"); p.add_argument("--bus", type=int, default=2)
-    p.add_argument("--elf", default="build/sh2a/tcu_app_ram.elf"); p.add_argument("--settle", type=float, default=1.0)
-    p.add_argument("--hw", action="store_true", help="M4b: drive the park outputs (mechatronic connected)")
+    p = sub.add_parser("park-check"); p.add_argument("--bus", type=int, default=1)
+    p.add_argument("--elf", default="build/sh2a/tcu_app.elf"); p.add_argument("--settle", type=float, default=1.0)
+    p.add_argument("--hw", action="store_true", help="the image drives the park outputs (DRV_GA_STAGE 1)")
     p = sub.add_parser("park-out"); p.add_argument("--bus", type=int, default=1)
     p.add_argument("--csv", default="m4b_park_out_results.csv")
     p = sub.add_parser("app-flash"); p.add_argument("image", nargs="?", default="build/sh2a/tcu_app_df.bin")

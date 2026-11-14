@@ -1,22 +1,22 @@
-/* Unit and closed-loop test: range / park control (milestones M4a/M4b,
- * docs/firmware/01-m4-range-park.md sections 3-6 and 8).
+/* Unit and closed-loop test: the stock range / park logic (M4,
+ * ~/tcu_sweep/range_logic_port.md) — the arbiter 0xA557C (app/range.c), the
+ * output law 0xCFFDE / 0xE88FA / 0xE8B56 / 0xE89DE / 0xE8888
+ * (app/park_law.c), the cross-check (safety/park_mon.c), and the request
+ * law's D-M4-7 on-time limit (drv_rq_window_step).
  *
- * The loop: CAN frames (0x108 engine speed, 0x2EA / 0x210 lever, real CRC and counter) ->
- * FCA profile -> park_tick_10ms() -> park mechanism model -> park contacts. sensors_in() is
- * provided here (speeds, supply and contacts come from the scenario and the model).
- * With TCU_M4B_OUTPUTS the output path is live: the park hold duty lands in the platform
- * stub (stub.toe_duty) and the park release request in the driver layer (channel 7), so
- * every scenario also checks what the actuators would physically see.
+ * The loop: CAN frames (0x2EA on bus 1 with the real CRC-8 and counter,
+ * 0x210 on bus 2) -> FCA profile -> park_tick_10ms() -> the pinned cells and
+ * the slot getters. sensors_in() is provided here (the output speed comes
+ * from the scenario).
  */
 #include "app/park.h"
-#include "app/bench_out.h"
+#include "app/park_cells.h"
 #include "bsw/com/crc8.h"
-#include "bsw/diag/uds.h"
-#include "bsw/sup/sup_jobs.h"
-#include "bsw/sup/sup_batch.h"
-#include "bsw/sup/sup_walk.h"
-#include "bsw/sup/sup_cells.h"
-#include "io/actuators/sol_ctl.h"
+#include "bsw/drv/drv_cells.h"
+#include "bsw/drv/drv_park.h"
+#include "bsw/drv/drv_reqlaw.h"
+#include "io/vehicle/vehicle.h"
+#include "io/sensors/sensors.h"
 #include "tests/unit/stub_plat.h"
 
 #include <stdio.h>
@@ -25,24 +25,8 @@
 
 static int fails;
 #define CHECK(c) do { if (!(c)) { printf("FAIL %s:%d %s\n", __FILE__, __LINE__, #c); fails++; } } while (0)
-
-/* scripted supervisor: the 0x22 read mirrors the staged ctrl byte (the
- * healthy-supervisor law); everything else reads 0 */
-static uint16_t sup_mirror(uint16_t tx)
-{
-    return (tx & 0xFF00u) == 0x2200u ? CELL_CTRL_STAGED : 0x0000u;
-}
-
-/* run the job engine's completions (the test plays the RX ISR) */
-static void drain_rspi(void)
-{
-    for (uint8_t b = 0u; b < 2u; b++) {
-        unsigned guard = 100u;
-        while (stub_rspi_busy(b) && guard-- != 0u) {
-            stub_rspi_isr(b);
-        }
-    }
-}
+#define CHECKV(a, b) do { long _a = (long)(a), _b = (long)(b); if (_a != _b) { \
+    printf("FAIL %s:%d %s = %ld, expected %ld\n", __FILE__, __LINE__, #a, _a, _b); fails++; } } while (0)
 
 /* ---------------------------------------------------------------- sensors stand-in */
 
@@ -53,48 +37,15 @@ const sensors_in_t *sensors_in(void)
     return &s_z;
 }
 
-/* ---------------------------------------------------------------- park mechanism model */
-
-#define PRESSURE_RPM 300        /* line pressure for the release piston (model)          */
-#define RATCHET_RPM  200        /* above this output speed the pawl ratchets, no engage  */
-
-static struct {
-    int  pawl;                  /* 0 = engaged (in P) ... 100 = fully released           */
-    bool latched;               /* hold magnet holds the release piston                  */
-} m;
-
-static void model_step(const park_out_t *o, rpm_t engine, rpm_t out_speed)
-{
-    if (!o->hold) {
-        m.latched = false;
-    }
-    if (o->hold && m.pawl == 100) {
-        m.latched = true;
-    }
-    if (m.latched) {
-        m.pawl = 100;
-    } else if (o->release && engine >= PRESSURE_RPM) {
-        m.pawl = m.pawl + 25 > 100 ? 100 : m.pawl + 25;
-    } else if (abs(out_speed) <= RATCHET_RPM) {
-        m.pawl = m.pawl - 25 < 0 ? 0 : m.pawl - 25;
-    } else {
-        m.pawl = m.pawl - 25 < 50 ? 50 : m.pawl - 25;
-    }
-}
-
 /* ---------------------------------------------------------------- scenario driver */
 
 static struct {
-    uint8_t lever_code;         /* 1 P, 2 R, 3 N, 4 D */
+    uint8_t lever_code;         /* 1 P, 2 R, 3 N, 4 D (0 no change, 7 invalid) */
     bool    send_2ea, send_210, bad_crc;
-    rpm_t   engine, out_speed;
-    mv_t    battery;
-    int     stuck;              /* -1 = contacts follow the model, else park_pos_t */
 } sc;
 
 static uint8_t s_ctr[0x800];
-static bool s_prev_release;
-static unsigned s_violations;
+static unsigned s_bound_violations;
 
 static void send(can_bus_t bus, uint16_t id, uint8_t dlc, bool prot, const uint8_t *data)
 {
@@ -112,41 +63,27 @@ static void send(can_bus_t bus, uint16_t id, uint8_t dlc, bool prot, const uint8
     vehicle_rx(bus, &f);
 }
 
+static void set_speed(rpm_t rpm, quality_t q)
+{
+    s_z.output_speed = rpm;
+    s_z.q_output_speed = q;
+}
+
 static void reset_all(void)
 {
     memset(&sc, 0, sizeof sc);
-    sc.lever_code = 1u;
-    sc.send_2ea = sc.send_210 = true;
-    sc.battery = 13500u;
-    sc.stuck = -1;
-    m.pawl = 0;
-    m.latched = false;
-    s_prev_release = false;
-    s_violations = 0u;
+    memset(&s_z, 0, sizeof s_z);
+    set_speed(0, Q_OK);
+    s_bound_violations = 0u;
+    CELL_TMP_BYTE = 67u;            /* 27 °C: the dump's 0x89C13 = 0x43 */
     vehicle_init();
-    sol_init();
-    sup_jobs_init();
-    sup_batch_init();           /* serial_rx_init: request 0, outputs disabled, J5 queued */
-    plat_toe_out_init();
-    bench_init();
     park_init();
-    stub.sup_reply_fn = sup_mirror;
-    drain_rspi();
-    sup_batch_5ms();            /* one J1 pass: the bench's supervisor-health witness */
-    drain_rspi();
-    sup_batch_5ms();
-    drain_rspi();
 }
 
 static void step(void)
 {
-    const uint8_t e[8] = { (uint8_t)((uint16_t)sc.engine >> 8), (uint8_t)sc.engine, 0x09, 0x60, 0, 0, 0, 0 };
     const uint8_t l[5] = { sc.lever_code, 0, 0, 0, 0 };
-    const park_status_t *ps = park_status();
-    const bool still = abs(sc.out_speed) <= RANGE_STATIONARY_RPM;
-    const int pawl_before = m.pawl;
 
-    send(CAN_BUS1, 0x108u, 8u, true, e);
     if (sc.send_2ea) {
         send(CAN_BUS1, 0x2EAu, 5u, true, l);
     }
@@ -154,29 +91,12 @@ static void step(void)
         send(CAN_BUS2, 0x210u, 5u, false, l);
     }
     vehicle_update_10ms();
-
-    s_z.output_speed = sc.out_speed;
-    s_z.q_output_speed = Q_OK;
-    s_z.battery = sc.battery;
-    s_z.q_battery = Q_OK;
-    s_z.park = sc.stuck >= 0 ? (park_pos_t)sc.stuck
-             : m.pawl == 0 ? PARK_IN_P : m.pawl == 100 ? PARK_NOT_P : PARK_UNKNOWN;
-    s_z.q_park = Q_OK;
-
     park_tick_10ms();
-    bench_tick_10ms();                   /* production order: park requests, then bench force */
-    sol_tick_10ms();                     /* applies the staged channel requests               */
-    drain_rspi();                        /* the cyclic's completion (ISR context)             */
-
-    /* pass criteria (section 6): no release out of P unless stationary with the engine running;
-     * the pawl never starts to drop while moving except in SAFE */
-    if (ps->req.release && !ps->req.hold && !s_prev_release && (!still || sc.engine < 400)) {
-        s_violations++;
-    }
-    s_prev_release = ps->req.release;
-    model_step(&ps->req, sc.engine, sc.out_speed);
-    if (pawl_before == 100 && m.pawl < 100 && !still && ps->state != PC_SAFE) {
-        s_violations++;
+    {
+        const uint16_t r = park_slot7_release(), h = park_slot11_hold();
+        if ((r != 0u && r != DRV_PARK_ON_REQ) || (h != 0u && h != DRV_PARK_ON_REQ)) {
+            s_bound_violations++;
+        }
     }
 }
 
@@ -187,444 +107,537 @@ static void run(unsigned n)
     }
 }
 
+static void lever(uint8_t code)
+{
+    sc.lever_code = code;
+    sc.send_2ea = sc.send_210 = true;
+}
+
+static void no_lever(void)
+{
+    sc.send_2ea = sc.send_210 = false;
+}
+
+#define REL() park_slot7_release()
+#define HOLD() park_slot11_hold()
+
 /* ---------------------------------------------------------------- tests */
 
-static void test_decide(void)
+/* the u8 map 0xB6D6C on the stock maps 0x1B5044 / 0x1B5050 */
+static void test_maps(void)
 {
-    static const range_req_t levers[5] = { RANGE_NONE, RANGE_P, RANGE_R, RANGE_N, RANGE_D };
-    static const rpm_t speeds[5] = { 0, 80, -80, 81, 1500 };
-    range_reason_t why;
+    CHECKV(park_law_engage_ticks(0u), 100);     /* below the first x: y[0] */
+    CHECKV(park_law_engage_ticks(10u), 100);    /* −30 °C */
+    CHECKV(park_law_engage_ticks(25u), 50);     /* −15 °C */
+    CHECKV(park_law_engage_ticks(40u), 30);     /*   0 °C */
+    CHECKV(park_law_engage_ticks(67u), 20);     /*  27 °C: 30 − trunc(15·27/40) = 20 → 200 ms */
+    CHECKV(park_law_engage_ticks(65u), 21);     /*  25 °C: 30 − trunc(15·25/40 = 9.375) */
+    CHECKV(park_law_engage_ticks(80u), 15);     /*  40 °C */
+    CHECKV(park_law_engage_ticks(200u), 15);    /* clamped */
+    CHECKV(park_law_engage_ticks(17u), 77);     /* 100 − trunc(50·7/15 = 23.3) */
+    CHECKV(park_law_window_ticks(20u), 0);
+    CHECKV(park_law_window_ticks(58u), 0);
+    CHECKV(park_law_window_ticks(59u), 0);
+    CHECKV(park_law_window_ticks(60u), 20);     /* from 20 °C: 200 ms */
+    CHECKV(park_law_window_ticks(67u), 20);
+    CHECKV(park_law_window_ticks(255u), 20);
+}
 
-    for (int l = 0; l < 5; l++) {
-        for (int ok = 0; ok < 2; ok++) {
-            for (int s = 0; s < 5; s++) {
-                for (int sok = 0; sok < 2; sok++) {
-                    for (int pr = 0; pr < 2; pr++) {
-                        const range_in_t in = { levers[l], ok != 0, speeds[s], sok != 0, pr != 0 };
-                        const bool still = sok && speeds[s] <= 80 && speeds[s] >= -80;
-                        const bool lever_valid = ok && levers[l] != RANGE_NONE;
-                        const park_target_t t = range_decide(&in, &why);
+/* no lever frames: the stock's Auto-P — and the driving dump's cells */
+static void test_auto_p(void)
+{
+    reset_all();
+    no_lever();
+    step();                                     /* tick 1: 0 → 3 (engaging) */
+    CHECKV(PCELL_TGT, 8);
+    CHECKV(PCELL_TGT_C, 0xF7);
+    CHECKV(range_reason(), 0x17);
+    CHECKV(PCELL_AE29, 1);
+    CHECKV(park_law_lock(), 1);
+    CHECKV(park_law_state(), 3);
+    CHECK(REL() == 0u && HOLD() == 0u);
+    run(18u);                                   /* tick 19: timer 18 */
+    CHECKV(park_law_state(), 3);
+    step();                                     /* tick 20: timer 19 */
+    CHECKV(park_law_state(), 3);
+    step();                                     /* tick 21: timer 20 >= map(27 °C) */
+    CHECKV(park_law_state(), 4);
+    run(300u);
+    /* the stock driving dump, cell for cell */
+    CHECK(PCELL_ARB[0] == 0x00u && PCELL_ARB[1] == 0x08u && PCELL_ARB[2] == 0x17u);
+    CHECK(PCELL_OBJ[0] == 0x04u && PCELL_OBJ[1] == 0x01u && PCELL_OBJ[2] == 0xFFu &&
+          PCELL_OBJ[3] == 0x00u);
+    CHECK(PCELL_AE28 == 0x00u && PCELL_AE29 == 0x01u);
+    CHECK(PCELL_RNG == 0x08u && PCELL_RNGD == 0x08u);
+    for (uint8_t k = 0u; k < 5u; k++) {
+        CHECK(PCELL_OUT[k] == 0x00u && PCELL_OUT_C[k] == 0xFFu);
+    }
+    CHECK(REL() == 0u && HOLD() == 0u);
+    CHECKV(park_mon_faults(), 0);
+    CHECKV(s_bound_violations, 0);
+}
 
-                        if (lever_valid && levers[l] == RANGE_P) {
-                            CHECK(t == PARK_ENGAGE && why == R_LEVER_P);
-                        } else if (!still) {
-                            CHECK(t == PARK_RELEASE && why == R_MOVING);
-                        } else if (pr) {
-                            CHECK(t == PARK_ENGAGE && why == R_PARK_REQ);
-                        } else if (lever_valid) {
-                            CHECK(t == PARK_RELEASE && why == R_LEVER_RND);
-                        } else {
-                            CHECK(t == PARK_ENGAGE && why == R_AUTO_P);
-                        }
-                    }
+/* P → R → N → D → P with the stock timings */
+static void test_lever_sequence(void)
+{
+    reset_all();
+    lever(1u);                                  /* P */
+    run(50u);
+    CHECKV(PCELL_TGT, 8);
+    CHECKV(range_reason(), 0x15);
+    CHECKV(park_law_state(), 4);
+    CHECK(REL() == 0u && HOLD() == 0u);
+
+    lever(2u);                                  /* R: release + hold in the same tick */
+    step();
+    CHECKV(PCELL_TGT, 6);
+    CHECKV(range_reason(), 0x16);
+    CHECKV(PCELL_AE28, 0);                      /* table 0x63445[6] = 0 */
+    CHECKV(PCELL_AE29, 0);
+    CHECKV(park_law_lock(), 0);
+    CHECKV(park_law_state(), 2);                /* releasing */
+    CHECK(REL() == DRV_PARK_ON_REQ && HOLD() == DRV_PARK_ON_REQ);
+    run(14u);                                   /* t0 + 14: timer 14 */
+    CHECKV(park_law_state(), 2);
+    step();                                     /* t0 + 15: 150 ms */
+    CHECKV(park_law_state(), 1);                /* released */
+
+    lever(3u);                                  /* N */
+    run(5u);
+    CHECKV(PCELL_TGT, 6);
+    CHECKV(park_law_state(), 1);
+    CHECK(REL() == DRV_PARK_ON_REQ && HOLD() == DRV_PARK_ON_REQ);
+
+    lever(4u);                                  /* D */
+    run(5u);
+    CHECKV(PCELL_TGT, 6);
+    CHECKV(range_reason(), 0x16);
+    CHECK(REL() == DRV_PARK_ON_REQ && HOLD() == DRV_PARK_ON_REQ);
+
+    lever(1u);                                  /* back to P: both drop in the same tick */
+    step();
+    CHECKV(PCELL_TGT, 8);
+    CHECKV(PCELL_AE29, 1);
+    CHECKV(park_law_lock(), 1);
+    CHECK(REL() == 0u && HOLD() == 0u);
+    CHECKV(park_law_state(), 3);                /* engaging */
+    run(19u);                                   /* t1 + 19: timer 19 */
+    CHECKV(park_law_state(), 3);
+    step();                                     /* t1 + 20: 200 ms at 27 °C */
+    CHECKV(park_law_state(), 4);
+
+    /* R then back to P while still releasing (state 2 → 3) */
+    lever(2u);
+    run(5u);
+    CHECKV(park_law_state(), 2);
+    lever(1u);
+    step();
+    CHECKV(park_law_state(), 3);
+    CHECK(REL() == 0u && HOLD() == 0u);
+    /* and P → R while engaging (state 3 → 2) */
+    lever(2u);
+    step();
+    CHECKV(park_law_state(), 2);
+    CHECK(REL() == DRV_PARK_ON_REQ && HOLD() == DRV_PARK_ON_REQ);
+    CHECKV(park_mon_faults(), 0);
+    CHECKV(s_bound_violations, 0);
+}
+
+/* the shifter sources: code 0 keeps, bad CRC falls back, timeouts → Auto-P */
+static void test_lever_sources(void)
+{
+    reset_all();
+    lever(2u);                                  /* R */
+    run(20u);
+    CHECK(REL() == DRV_PARK_ON_REQ);
+    lever(0u);                                  /* code 0 = no change */
+    run(5u);
+    CHECKV(PCELL_TGT, 6);
+    sc.lever_code = 1u;                         /* P on 0x210 only, 0x2EA bad CRC: the */
+    sc.bad_crc = true;                          /* last good 0x2EA (R) holds until its */
+    run(1u);                                    /* 50 ms timeout, then the fallback */
+    CHECKV(PCELL_TGT, 6);
+    run(6u);
+    CHECKV(vehicle_in()->lever_src, LEVER_SRC_FALLBACK);
+    CHECKV(PCELL_TGT, 8);
+    sc.bad_crc = false;
+    lever(2u);
+    run(5u);
+    CHECKV(PCELL_TGT, 6);
+    sc.lever_code = 7u;                         /* invalid code on both → no valid lever */
+    run(1u);
+    CHECKV(PCELL_TGT, 8);
+    CHECKV(range_reason(), 0x17);               /* Auto-P (stationary) */
+    CHECK(REL() == 0u && HOLD() == 0u);
+
+    /* lever lost by timeout while in R, stationary: Auto-P after > 50 ms */
+    lever(4u);
+    run(10u);
+    CHECK(REL() == DRV_PARK_ON_REQ);
+    no_lever();
+    {
+        unsigned n = 0u;
+        while (PCELL_TGT != 8u && n < 20u) {
+            step();
+            n++;
+        }
+        CHECK(n >= 5u && n <= 7u);              /* the 50 ms profile timeout (spec 07 §3) */
+        printf("  lever timeout -> Auto-P after %u ticks\n", n);
+    }
+    CHECKV(range_reason(), 0x17);
+    CHECK(REL() == 0u && HOLD() == 0u);
+    CHECKV(s_bound_violations, 0);
+}
+
+/* the output speed: no validity term, unsigned > 80 = moving */
+static void test_speed_rule(void)
+{
+    reset_all();
+    no_lever();
+    set_speed(0, Q_INVALID);                    /* a sensorless bench: 0, whatever the quality */
+    run(3u);
+    CHECKV(PCELL_TGT, 8);
+    CHECKV(range_reason(), 0x17);
+    set_speed(80, Q_OK);                        /* 80 is still stationary */
+    run(1u);
+    CHECKV(range_reason(), 0x17);
+    set_speed(81, Q_OK);                        /* MOVING WITHOUT A LEVER RELEASES PARK (stock) */
+    run(1u);
+    CHECKV(PCELL_TGT, 6);
+    CHECKV(range_reason(), 0x16);
+    CHECK(REL() == DRV_PARK_ON_REQ && HOLD() == DRV_PARK_ON_REQ);
+    set_speed(-500, Q_OK);                      /* magnitude */
+    run(1u);
+    CHECKV(PCELL_TGT, 6);
+    set_speed(500, Q_INVALID);                  /* a stale nonzero value is used as is */
+    run(1u);
+    CHECKV(PCELL_TGT, 6);
+    set_speed(3000, Q_OK);
+    lever(1u);                                  /* P at speed: target 8, park request on */
+    run(1u);
+    CHECKV(PCELL_TGT, 8);
+    CHECKV(range_reason(), 0x15);
+    CHECK(REL() == 0u && HOLD() == 0u);         /* no interlock window open: lock at once */
+    CHECKV(park_mon_faults(), 0);
+}
+
+/* the lock decision and the 0xE8B56 interlock, on park_law alone */
+static void test_lock_interlock(void)
+{
+    park_law_in_t in;
+
+    memset(&in, 0, sizeof in);
+    in.temp40 = 67u;
+    in.v89d49 = 2u;
+    park_law_init();
+    for (int i = 0; i < 30; i++) {
+        park_law_step(8u, &in);
+    }
+    CHECK(park_law_lock() == 1u && park_law_state() == 4u);
+    CHECK(park_law_demand(2u) == 0u && park_law_demand(3u) == 0u);
+
+    /* the global inhibit 0x89C30: lock forced 0 (hold ON even in P), the
+     * window reloaded from map 0x1B5050 every pass */
+    in.inhibit = 1u;
+    park_law_step(8u, &in);
+    CHECK(park_law_lock() == 0u && PCELL_OBJ[PO_WIN] == 20u);
+    CHECK(park_law_demand(2u) == 0u && park_law_demand(3u) == 10000u);
+
+    /* inhibit gone, moving (0x89D00 > 10, 0x89CB8 < 5, valid): the new lock
+     * is refused while the window runs */
+    in.inhibit = 0u;
+    in.vspeed = 20;
+    in.v89cb8 = 0u;
+    in.v89d49 = 0u;
+    {
+        unsigned n = 0u;
+        do {
+            park_law_step(8u, &in);
+            n++;
+        } while (park_law_lock() == 0u && n < 50u);
+        CHECKV(n, 20u);                         /* 20 − 1 per pass: lock once it reads 0 */
+    }
+    CHECK(park_law_demand(3u) == 0u);
+
+    /* the same with the speed at the limit (10): not "moving" → lock at once */
+    in.inhibit = 1u;
+    park_law_step(8u, &in);
+    in.inhibit = 0u;
+    in.vspeed = 10;
+    park_law_step(8u, &in);
+    CHECKV(park_law_lock(), 1);
+    /* 0x89CB8 >= 5 → no refusal */
+    in.inhibit = 1u;
+    park_law_step(8u, &in);
+    in.inhibit = 0u;
+    in.vspeed = 20;
+    in.v89cb8 = 5u;
+    park_law_step(8u, &in);
+    CHECKV(park_law_lock(), 1);
+    /* invalid (0x89D49 != 0) → no refusal */
+    in.inhibit = 1u;
+    park_law_step(8u, &in);
+    in.inhibit = 0u;
+    in.v89cb8 = 0u;
+    in.v89d49 = 2u;
+    park_law_step(8u, &in);
+    CHECKV(park_law_lock(), 1);
+    /* the 0xE8BAA bypass (0xFFF8B272 != 0) */
+    in.inhibit = 1u;
+    park_law_step(8u, &in);
+    in.inhibit = 0u;
+    in.v89d49 = 0u;
+    in.b272 = 1u;
+    park_law_step(8u, &in);
+    CHECKV(park_law_lock(), 1);
+    in.b272 = 0u;
+    /* cold (window map 0 below 19 °C): no window, lock at once */
+    in.temp40 = 50u;
+    in.inhibit = 1u;
+    park_law_step(8u, &in);
+    CHECKV(PCELL_OBJ[PO_WIN], 0);
+    in.inhibit = 0u;
+    park_law_step(8u, &in);
+    CHECKV(park_law_lock(), 1);
+    in.temp40 = 67u;
+
+    /* a held lock is not re-checked: the window cannot drop it */
+    in.vspeed = 20;
+    park_law_step(8u, &in);
+    CHECKV(park_law_lock(), 1);
+
+    /* the auxiliary request 0x89CF2: lock regardless of the target, park
+     * request = (no car-wash inhibit) */
+    in.aux = 1u;
+    park_law_step(6u, &in);
+    CHECK(park_law_lock() == 1u && PCELL_AE29 == 1u);
+    in.carwash = 1u;
+    park_law_step(6u, &in);
+    CHECK(park_law_lock() == 1u && PCELL_AE29 == 0u);
+    CHECK(park_law_demand(2u) == 10000u && park_law_demand(3u) == 0u);   /* release on, hold off */
+    in.aux = 0u;
+    in.carwash = 0u;
+
+    /* the diag range overrides (0xB97F8) */
+    in.diag_rng6 = 1u;
+    park_law_step(5u, &in);
+    CHECKV(PCELL_RNGD, 6);
+    park_law_step(8u, &in);
+    CHECKV(PCELL_RNGD, 8);                      /* P is kept */
+    in.diag_rng6 = 0u;
+    in.diag_rng8 = 1u;
+    park_law_step(6u, &in);
+    CHECKV(PCELL_RNGD, 8);
+    in.diag_rng8 = 0u;
+    /* a target > 8 leaves AE28 / AE29 unchanged (fault report path) */
+    park_law_step(8u, &in);
+    {
+        const uint8_t a = PCELL_AE29;
+        park_law_step(0x20u, &in);
+        CHECKV(PCELL_AE29, a);
+    }
+    /* the diag output override 0xBB110 / 0xBB120 (k = 3, hold forced on) */
+    in.diag_out_en = 1u << 3;
+    in.diag_out_val = 1u << 3;
+    park_law_step(8u, &in);
+    CHECKV(park_law_demand(3u), 10000);
+    CHECK(park_law_integrity_ok());
+    in.diag_out_en = 0u;
+    in.diag_out_val = 0u;
+    park_law_step(8u, &in);
+    CHECKV(park_law_demand(3u), 0);
+    /* id 1 / 4 / other */
+    CHECK(park_law_demand(1u) == 0u && park_law_demand(4u) == 0u && park_law_demand(9u) == 0u);
+}
+
+/* the arbiter's other rows and modes (pure) */
+static void test_arbiter_rows(void)
+{
+    range_in_t in;
+    range_res_t r;
+
+    memset(&in, 0, sizeof in);
+    memset(&r, 0, sizeof r);
+    in.lever = 5u;
+    in.dir = 1u;
+    in.d650 = 321u;                             /* row 8: D at speed, plausible direction */
+    range_arbitrate(&in, &r);
+    CHECK(r.target == 5u && r.reason == 8u && r.flag == 0u);
+    in.d650 = 320u;                             /* not above 320 → mode 4 (D → 6 / 0x16) */
+    range_arbitrate(&in, &r);
+    CHECK(r.target == 6u && r.reason == 0x16u);
+    in.fast = 1u;                               /* row 5 */
+    in.d650 = 400u;
+    range_arbitrate(&in, &r);
+    CHECK(r.target == 6u && r.reason == 5u && r.flag == 1u);
+    memset(&r, 0, sizeof r);
+    in.fast = 0u;
+    in.lever = 0u;
+    in.dir = 0u;                                /* row 6 */
+    range_arbitrate(&in, &r);
+    CHECK(r.target == 6u && r.reason == 6u && r.flag == 1u);
+    memset(&r, 0, sizeof r);
+    in.lever2 = 5u;                             /* rows 2/3: D650 >= 320, D5F8 0, status 1 */
+    in.status = 1u;
+    in.d650 = 320u;
+    in.dir = 1u;
+    range_arbitrate(&in, &r);
+    CHECK(r.target == 5u && r.reason == 2u);
+    in.dir = 2u;
+    range_arbitrate(&in, &r);
+    CHECK(r.target == 6u && r.reason == 3u);
+    in.d5f8 = 1u;                               /* D5F8 blocks rows 2/3; stationary + D5F8 → 8 */
+    in.d650 = 0u;
+    range_arbitrate(&in, &r);
+    CHECK(r.target == 8u && r.reason == 0x15u);
+    in.d646 = 81u;                              /* moving: D5F8 does not engage */
+    range_arbitrate(&in, &r);
+    CHECK(r.target == 6u && r.reason == 0x16u);
+}
+
+/* the cross-check agrees with the arbiter everywhere; a forced
+ * disagreement / corruption latches and removes both demands */
+static void test_monitor(void)
+{
+    static const uint8_t levers[] = { 0u, 1u, 4u, 5u, 6u, 7u, 8u, 9u };
+    static const uint16_t speeds[] = { 0u, 80u, 81u, 3000u, 0xFFFFu };
+    static const uint16_t sp2[] = { 0u, 319u, 320u, 321u, 1000u };
+    unsigned n = 0u, bad = 0u;
+
+    for (unsigned a = 0u; a < sizeof levers; a++) {
+        for (unsigned b = 0u; b < 5u; b++) {
+            for (unsigned c = 0u; c < 5u; c++) {
+                for (unsigned m = 0u; m < 64u; m++) {
+                    range_in_t in;
+                    range_res_t r = { 0u, 0u, 0u };
+                    park_mon_in_t mi;
+                    memset(&in, 0, sizeof in);
+                    in.lever = levers[a];
+                    in.d646 = speeds[b];
+                    in.d650 = sp2[c];
+                    in.lever2 = (m & 1u) ? 5u : 0u;
+                    in.status = (m & 2u) ? 1u : 0u;
+                    in.dir = (uint8_t)((m >> 2) & 3u);
+                    in.fast = (m & 16u) ? 1u : 0u;
+                    in.d5f8 = (m & 32u) ? 1u : 0u;
+                    range_arbitrate(&in, &r);
+                    mi.lever = in.lever;
+                    mi.lever2 = in.lever2;
+                    mi.dir = in.dir;
+                    mi.fast = in.fast;
+                    mi.status = in.status;
+                    mi.out_speed = in.d646;
+                    mi.speed2 = in.d650;
+                    mi.park_req = in.d5f8;
+                    mi.target = r.target;
+                    mi.app_integrity_ok = true;
+                    bad += park_mon_target(&mi) != r.target ? 1u : 0u;
+                    n++;
                 }
             }
         }
     }
-    range_init();
-    CHECK(range_target() == PARK_ENGAGE && range_integrity_ok());
-}
+    CHECKV(bad, 0u);
+    printf("  monitor recompute agrees with the arbiter on %u input sets\n", n);
 
-/* P -> R -> N -> D -> P at standstill with the engine running. */
-static void test_standstill_cycle(void)
-{
-    const park_status_t *ps = park_status();
-
+    /* in the loop: R → release; then corrupt the target copy → latched,
+     * both demands 0 at once and for good */
     reset_all();
-    run(5u);
-    CHECK(ps->state == PC_IN_P && !ps->req.release && !ps->req.hold);
-
-    sc.lever_code = 2u;                 /* R, engine off: no release */
-    run(20u);
-    CHECK(ps->target == PARK_RELEASE && ps->state == PC_IN_P && m.pawl == 0);
-
-    sc.engine = 800;                    /* engine starts: release, then hold */
-    run(20u);
-    CHECK(ps->state == PC_HOLDING && ps->req.hold && ps->req.release && m.pawl == 100);
-    CHECK(stub.toe_duty == 1000u);                          /* park hold energised      */
-    CHECK(sol_channel(7u)->mode == SOL_MODE_CURRENT &&
-          sol_channel(7u)->setpoint == 2047u);              /* release kept on while holding */
-    sc.lever_code = 3u;
+    lever(2u);
     run(10u);
-    sc.lever_code = 4u;
-    run(10u);
-    CHECK(ps->state == PC_HOLDING && ps->reason == R_LEVER_RND);
-
-    sc.lever_code = 1u;                 /* P: engage */
-    run(20u);
-    CHECK(ps->state == PC_IN_P && !ps->req.hold && !ps->req.release && m.pawl == 0);
-    CHECK(stub.toe_duty == 0u && sol_channel(7u)->mode == SOL_MODE_OFF);
-    CHECK(ps->ctl_faults == 0u && ps->mon_faults == 0u && s_violations == 0u);
-}
-
-/* N with the engine stopped: the hold stays on (car wash); P then engages. */
-static void test_car_wash(void)
-{
-    const park_status_t *ps = park_status();
-
-    reset_all();
-    sc.engine = 800;
-    sc.lever_code = 3u;
-    run(30u);
-    CHECK(ps->state == PC_HOLDING);
-    sc.engine = 0;
-    run(100u);
-    CHECK(ps->state == PC_HOLDING && ps->req.hold && m.pawl == 100);
-    CHECK(stub.toe_duty == 1000u);      /* the hold magnet stays energised with the engine off */
-    sc.lever_code = 1u;
-    run(20u);
-    CHECK(ps->state == PC_IN_P && m.pawl == 0);
-    CHECK(ps->mon_faults == 0u && s_violations == 0u);
-}
-
-/* A bench commissioning test (FE11) owns the park outputs while it runs: the park module
- * suspends its own outputs and resumes afterwards (car-wash state, engine off). */
-static void test_bench_suspension(void)
-{
-    static const uds_app_t app = { NULL, NULL, bench_routine };
-    const park_status_t *ps = park_status();
-    const uint8_t start_in[2] = { 0u, 2u };          /* FE11 out 0 = park release, 2 s */
-    uint8_t out[7];
-
-    reset_all();
-    uds_init(&app);                                  /* extended session for the bench test */
-    {
-        const uint8_t s[] = { 0x10, 0x03 };
-        can_frame_t f = { .id = 0x7E1u, .dlc = 8u };
-        memset(f.data, 0, 8u);
-        f.data[0] = sizeof s;
-        memcpy(&f.data[1], s, sizeof s);
-        (void)uds_rx(CAN_BUS1, &f);
-        uds_tick_1ms();
-    }
-    sc.engine = 800;
-    sc.lever_code = 3u;                              /* reach HOLDING, then engine off */
-    run(30u);
-    sc.engine = 0;
-    run(20u);
-    CHECK(ps->state == PC_HOLDING && stub.toe_duty == 1000u);
-
-    /* healthy supervisor so the bench start conditions pass — through the
-     * ~95ms silence window (the opening releases at pass 20) */
-    for (int i = 0; i < 22; i++) {
-        sup_batch_5ms();
-        sup_monitor_poll();
-        drain_rspi();
-    }
-    CHECK(bench_routine(1u, BENCH_PARK_RID, start_in, 2u, out, sizeof out) == 0);
-    step();
-    CHECK(bench_active());
-    CHECK(stub.toe_duty == 0u);                      /* park hold suspended          */
-    CHECK(sol_channel(7u)->mode == SOL_MODE_CURRENT &&
-          sol_channel(7u)->setpoint == 2047u);       /* bench drives the release     */
-    CHECK(ps->state == PC_HOLDING && ps->req.hold);  /* requests keep being computed */
-
-    CHECK(bench_routine(2u, BENCH_PARK_RID, NULL, 0u, out, sizeof out) == 0);
-    step();
-    CHECK(!bench_active());
-    CHECK(stub.toe_duty == 1000u && sol_channel(7u)->mode == SOL_MODE_CURRENT &&
-          sol_channel(7u)->setpoint == 2047u);
-    CHECK(ps->mon_faults == 0u && s_violations == 0u);
-}
-
-/* P selected at speed: the hold stays on until below 80 rpm, then Park engages. */
-static void test_p_at_speed(void)
-{
-    const park_status_t *ps = park_status();
-
-    reset_all();
-    sc.engine = 800;
-    sc.lever_code = 4u;
-    run(30u);
-    sc.out_speed = 1500;
-    run(10u);
-    sc.lever_code = 1u;
-    run(100u);
-    CHECK(ps->target == PARK_ENGAGE && ps->state == PC_HOLDING && ps->req.hold && m.pawl == 100);
-    sc.out_speed = 81;
-    run(10u);
-    CHECK(ps->state == PC_HOLDING);
-    sc.out_speed = 60;
-    run(20u);
-    CHECK(ps->state == PC_IN_P && m.pawl == 0);
-    CHECK(ps->mon_faults == 0u && s_violations == 0u);
-}
-
-/* Lever lost while moving: released (moving); once stopped, Auto P. */
-static void test_lever_lost_moving(void)
-{
-    const park_status_t *ps = park_status();
-
-    reset_all();
-    sc.engine = 800;
-    sc.lever_code = 4u;
-    run(30u);
-    sc.out_speed = 1500;
-    run(10u);
-    sc.send_2ea = sc.send_210 = false;
-    run(100u);
-    CHECK(vehicle_in()->q_lever == Q_INVALID);
-    CHECK(ps->target == PARK_RELEASE && ps->reason == R_MOVING && ps->req.hold);
-    sc.out_speed = 0;
-    run(20u);
-    CHECK(ps->reason == R_AUTO_P && ps->state == PC_IN_P && m.pawl == 0);
-    CHECK(ps->mon_faults == 0u && s_violations == 0u);
-}
-
-/* Lever lost while stationary in D: Auto P after the message timeout. */
-static void test_lever_lost_still(void)
-{
-    const park_status_t *ps = park_status();
-
-    reset_all();
-    sc.engine = 800;
-    sc.lever_code = 4u;
-    run(30u);
-    sc.send_2ea = sc.send_210 = false;
-    run(30u);
-    CHECK(ps->reason == R_AUTO_P && ps->state == PC_IN_P);
-    CHECK(ps->mon_faults == 0u && s_violations == 0u);
-}
-
-/* Bus 1 lost or 0x2EA corrupt: the shifter bus copy (0x210) is used. */
-static void test_fallback(void)
-{
-    const park_status_t *ps = park_status();
-
-    reset_all();
-    sc.engine = 800;
-    sc.lever_code = 2u;
-    sc.send_2ea = false;
-    run(30u);
-    CHECK(vehicle_in()->lever_src == LEVER_SRC_FALLBACK && ps->state == PC_HOLDING);
-
-    sc.send_2ea = true;
-    sc.bad_crc = true;
-    run(20u);
-    CHECK(vehicle_in()->lever_src == LEVER_SRC_FALLBACK && ps->state == PC_HOLDING);
-
-    sc.send_210 = false;                /* both sources unusable -> Auto P */
-    run(30u);
-    CHECK(vehicle_in()->q_lever == Q_INVALID && ps->state == PC_IN_P);
-    CHECK(ps->mon_faults == 0u && s_violations == 0u);
-}
-
-/* In P with a moving (or not valid) output speed: no release until stationary. */
-static void test_no_release_moving(void)
-{
-    const park_status_t *ps = park_status();
-
-    reset_all();
-    sc.engine = 800;
-    sc.out_speed = 300;                 /* e.g. a speed signal glitch while in P */
-    sc.lever_code = 4u;
-    run(30u);
-    CHECK(ps->target == PARK_RELEASE && ps->state == PC_IN_P && !ps->req.release);
-    sc.out_speed = 0;
-    run(20u);
-    CHECK(ps->state == PC_HOLDING && ps->mon_faults == 0u && s_violations == 0u);
-}
-
-/* Low supply: no release. */
-static void test_supply_low(void)
-{
-    const park_status_t *ps = park_status();
-
-    reset_all();
-    sc.engine = 800;
-    sc.battery = 8500u;
-    sc.lever_code = 4u;
-    run(30u);
-    CHECK(ps->target == PARK_RELEASE && ps->state == PC_IN_P && !ps->req.release);
-    sc.battery = 12000u;
-    run(20u);
-    CHECK(ps->state == PC_HOLDING);
-}
-
-/* Contacts stuck in P: release times out, no retry until P is selected again. */
-static void test_contacts_stuck_in_p(void)
-{
-    const park_status_t *ps = park_status();
-    unsigned releasing = 0u;
-
-    reset_all();
-    sc.stuck = PARK_IN_P;
-    sc.engine = 800;
-    sc.lever_code = 4u;
-    for (unsigned i = 0u; i < 200u; i++) {
-        step();
-        releasing += ps->req.release ? 1u : 0u;
-    }
-    CHECK((ps->ctl_faults & PC_F_RELEASE_TIMEOUT) != 0u && ps->state == PC_IN_P);
-    CHECK(releasing >= 45u && releasing <= 51u);        /* one 500 ms attempt only */
-    sc.lever_code = 1u;
-    run(5u);
-    sc.lever_code = 4u;
-    run(5u);
-    CHECK(ps->state == PC_RELEASING);                    /* P selected again: retry allowed */
-}
-
-/* Contacts say "not in P" while the sequence is in P: monitor fault -> SAFE, latched. */
-static void test_contacts_disagree(void)
-{
-    const park_status_t *ps = park_status();
-
-    reset_all();
-    run(5u);
-    CHECK(ps->state == PC_IN_P);
-    sc.stuck = PARK_NOT_P;
-    run(15u);
-    CHECK(ps->mon_faults == 0u);
-    run(10u);
-    CHECK(ps->mon_faults == MON_F_CONTACTS && ps->state == PC_SAFE);
-    sc.stuck = -1;
-    sc.engine = 800;
-    sc.lever_code = 4u;
-    run(50u);
-    CHECK(ps->state == PC_SAFE && !ps->req.release && !ps->req.hold);
-    CHECK(stub.toe_duty == 0u && sol_channel(7u)->mode == SOL_MODE_OFF);   /* outputs dead in SAFE */
-}
-
-/* Engage times out (contacts never reach P): SAFE. */
-static void test_engage_timeout(void)
-{
-    const park_status_t *ps = park_status();
-
-    reset_all();
-    sc.engine = 800;
-    sc.lever_code = 4u;
-    run(30u);
-    CHECK(ps->state == PC_HOLDING);
-    sc.stuck = PARK_UNKNOWN;
-    sc.lever_code = 1u;
-    run(110u);
-    CHECK((ps->ctl_faults & PC_F_ENGAGE_TIMEOUT) != 0u && ps->state == PC_SAFE);
-}
-
-/* Reset while moving with the pawl out: the hold is re-latched without a monitor fault. */
-static void test_reset_moving(void)
-{
-    const park_status_t *ps = park_status();
-
-    reset_all();
-    m.pawl = 100;
-    sc.engine = 1500;
-    sc.out_speed = 2000;
-    sc.lever_code = 4u;
-    run(10u);
-    CHECK(ps->state == PC_HOLDING && ps->req.hold && m.pawl == 100);
-    CHECK(ps->mon_faults == 0u && s_violations == 0u);
-}
-
-/* Monitor on its own: target mismatch, release / hold-drop conditions, integrity. */
-static park_mon_in_t mon_in(void)
-{
-    park_mon_in_t mi;
-
-    memset(&mi, 0, sizeof mi);
-    mi.lever = RANGE_P;
-    mi.lever_ok = mi.speed_ok = mi.engine_ok = mi.contacts_ok = mi.app_integrity_ok = true;
-    mi.contacts = PARK_IN_P;
-    mi.target = PARK_ENGAGE;
-    mi.state = PC_IN_P;
-    return mi;
-}
-
-static void test_monitor(void)
-{
-    park_mon_in_t mi;
-
-    park_mon_init();                    /* wrong target: tolerated 2 cycles, fault on the 3rd */
-    mi = mon_in();
-    mi.target = PARK_RELEASE;
-    park_mon_step(&mi);
-    park_mon_step(&mi);
-    CHECK(park_mon_enable());
-    park_mon_step(&mi);
-    CHECK(!park_mon_enable() && park_mon_faults() == MON_F_TARGET);
-
-    park_mon_init();                    /* release out of P with the engine off */
-    mi = mon_in();
-    mi.lever = RANGE_D;
-    mi.target = PARK_RELEASE;
-    mi.out.release = true;
-    park_mon_step(&mi);
-    CHECK(park_mon_faults() == MON_F_RELEASE);
-
-    park_mon_init();                    /* release out of P while moving */
-    mi = mon_in();
-    mi.lever = RANGE_D;
-    mi.target = PARK_RELEASE;
-    mi.engine_speed = 800;
-    mi.output_speed = 300;
-    mi.out.release = true;
-    park_mon_step(&mi);
-    CHECK(park_mon_faults() == MON_F_RELEASE);
-
-    park_mon_init();                    /* hold dropped while moving */
-    mi = mon_in();
-    mi.lever = RANGE_D;
-    mi.target = PARK_RELEASE;
-    mi.state = PC_HOLDING;
-    mi.contacts = PARK_NOT_P;
-    mi.output_speed = 1500;
-    mi.out.hold = true;
-    park_mon_step(&mi);
-    CHECK(park_mon_enable());
-    mi.out.hold = false;
-    park_mon_step(&mi);
-    CHECK(park_mon_faults() == MON_F_HOLD_DROP);
-
-    park_mon_init();                    /* corrupt application copy */
-    mi = mon_in();
-    mi.app_integrity_ok = false;
-    park_mon_step(&mi);
-    CHECK(park_mon_faults() == MON_F_INTEGRITY);
-
-    park_mon_init();                    /* speed not valid counts as moving: P stays P */
-    mi = mon_in();
-    mi.speed_ok = false;
-    park_mon_step(&mi);
-    mi.lever = RANGE_NONE;
-    mi.lever_ok = false;
-    mi.target = PARK_RELEASE;
-    park_mon_step(&mi);
-    park_mon_step(&mi);
-    park_mon_step(&mi);
-    CHECK(park_mon_enable());
-}
-
-/* Inverted copies: a corrupt copy reads as the safe value and is reported. */
-static void test_integrity(void)
-{
-    reset_all();
-    run(5u);
+    CHECK(REL() == DRV_PARK_ON_REQ && HOLD() == DRV_PARK_ON_REQ);
     range_test_corrupt();
-    CHECK(!range_integrity_ok() && range_target() == PARK_ENGAGE);
-    park_ctl_test_corrupt();
-    CHECK(!park_ctl_integrity_ok() && park_ctl_state() == PC_SAFE);
-    run(1u);                            /* park_ctl repairs to SAFE; range copy rewritten */
-    CHECK(park_ctl_state() == PC_SAFE && (park_ctl_faults() & PC_F_INTEGRITY) != 0u);
+    park_mon_in_t mi;
+    memset(&mi, 0, sizeof mi);
+    mi.lever = 7u;
+    mi.target = 6u;
+    mi.app_integrity_ok = range_integrity_ok();
+    park_mon_step(&mi);
+    CHECK(!park_mon_enable() && (park_mon_faults() & MON_F_INTEGRITY) != 0u);
+    run(5u);
+    CHECK(REL() == 0u && HOLD() == 0u);
+    lever(1u);
+    run(5u);
+    lever(2u);
+    run(5u);
+    CHECK(REL() == 0u && HOLD() == 0u);         /* latched until power-off */
+
+    /* a persistent disagreement (> 2 cycles) latches MON_F_TARGET */
+    park_mon_init();
+    memset(&mi, 0, sizeof mi);
+    mi.lever = 8u;
+    mi.target = 6u;                             /* wrong on purpose */
+    mi.app_integrity_ok = true;
+    park_mon_step(&mi);
+    park_mon_step(&mi);
+    CHECK(park_mon_enable());                   /* 2 cycles tolerated */
+    park_mon_step(&mi);
+    CHECK(!park_mon_enable() && (park_mon_faults() & MON_F_TARGET) != 0u);
+}
+
+/* D-M4-7: the release on-time limit (accumulated, latched) */
+static void test_window(void)
+{
+    drv_rq_win_t w;
+
+    memset(&w, 0, sizeof w);
+    CHECK(drv_rq_window_step(&w, 100u, false, 10000u) == 0u && w.state == 0u);   /* before 'U' */
+    CHECK(drv_rq_window_step(&w, 600u, true, 0u) == 0u && w.state == 0u);        /* off */
+    CHECK(drv_rq_window_step(&w, 1000u, true, 10000u) == 10000u && w.state == 1u);   /* opens */
+    CHECK(drv_rq_window_step(&w, 11000u, true, 10000u) == 10000u);               /* 10 s */
+    CHECK(drv_rq_window_step(&w, 11005u, true, 0u) == 0u && w.state == 0u);      /* off: 10.005 s */
+    CHECKV(w.acc_ms, 10005u);
+    CHECK(drv_rq_window_step(&w, 50000u, true, 0u) == 0u && w.acc_ms == 10005u); /* off time not counted */
+    CHECK(drv_rq_window_step(&w, 60000u, true, 10000u) == 10000u);               /* reopens */
+    CHECK(drv_rq_window_step(&w, 79990u, true, 10000u) == 10000u);               /* 29.995 s */
+    CHECKV(w.acc_ms, 29995u);
+    CHECK(drv_rq_window_step(&w, 79995u, true, 10000u) == 0u && w.state == 2u);  /* 30 s: latched */
+    CHECK(drv_rq_window_step(&w, 90000u, true, 0u) == 0u && w.state == 2u);
+    CHECK(drv_rq_window_step(&w, 99000u, true, 10000u) == 0u && w.state == 2u);  /* stays off */
+    /* 'U' lost while on: off (counted up to that pass) */
+    memset(&w, 0, sizeof w);
+    CHECK(drv_rq_window_step(&w, 0xFFFFF000u, true, 10000u) == 10000u);          /* wrap */
+    CHECK(drv_rq_window_step(&w, 0xFFFFF000u + 5000u, false, 10000u) == 0u && w.state == 0u);
+    CHECKV(w.acc_ms, 5000u);
+
+    /* the closed loop: lever R held for 40 s, law passes every 5 ms */
+    reset_all();
+    lever(2u);
+    memset(&w, 0, sizeof w);
+    {
+        uint32_t now = 0u, on_ms = 0u, first_off = 0u;
+        for (unsigned t = 0u; t < 4000u; t++) {             /* 10 ms park ticks */
+            step();
+            for (unsigned p = 0u; p < 2u; p++) {             /* two 5 ms law passes */
+                const uint16_t r = drv_rq_window_step(&w, now, true, park_slot7_release());
+                if (r != 0u) {
+                    on_ms += 5u;
+                } else if (first_off == 0u && now > 0u) {
+                    first_off = now;
+                }
+                now += 5u;
+            }
+        }
+        CHECK(park_slot7_release() == DRV_PARK_ON_REQ);    /* the logic still wants it */
+        CHECKV(w.state, 2u);
+        CHECK(first_off >= 30000u && first_off <= 30010u);
+        CHECK(on_ms >= 30000u && on_ms <= 30010u);
+        printf("  release on-time limit: off at %u ms after %u ms on\n",
+               (unsigned)first_off, (unsigned)on_ms);
+    }
 }
 
 int main(void)
 {
-    test_decide();
-    test_standstill_cycle();
-    test_car_wash();
-    test_bench_suspension();
-    test_p_at_speed();
-    test_lever_lost_moving();
-    test_lever_lost_still();
-    test_fallback();
-    test_no_release_moving();
-    test_supply_low();
-    test_contacts_stuck_in_p();
-    test_contacts_disagree();
-    test_engage_timeout();
-    test_reset_moving();
+    test_maps();
+    test_auto_p();
+    test_lever_sequence();
+    test_lever_sources();
+    test_speed_rule();
+    test_lock_interlock();
+    test_arbiter_rows();
     test_monitor();
-    test_integrity();
+    test_window();
     printf("%s (%d failures)\n", fails ? "FAILED" : "passed", fails);
     return fails ? 1 : 0;
 }

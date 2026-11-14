@@ -14,17 +14,20 @@
  * mode 1 (0x7CC32 and 0x8EE30 sit in the mode-1 10 ms list).
  *
  * ── THE SAFETY FRAME (non-negotiable; a real mechatronic on the bench) ──
- * On SH every group-A demand is a COMPILE-TIME constant chosen by ONE macro,
- * DRV_GA_STAGE (default 0), and the rail-off full-on tests are a
- * compile-time hold:
+ * On SH every group-A demand is BOUNDED AT COMPILE TIME by ONE macro,
+ * DRV_GA_STAGE (default 0; bsw/drv/drv_park.h), and the rail-off full-on
+ * tests are a compile-time hold:
  *   stage 0  every demand 0, tests HELD     → no group-A current anywhere;
  *            the law, the pull-in machinery and the temperature producer
  *            run at zero demand; the witnesses show what TOE31 WOULD get
- *   stage 1  TOE31 (slot 11) = 10000 (the stock's "on"), tests held
+ *   stage 1  TOE31 (slot 11) = the PORTED PARK LOGIC's demand (app/park.c
+ *            park_slot11_hold(): 0 or the stock's 10000, passed through
+ *            only when it equals the bound exactly), tests held.
+ *            (r03h/r03j: stage 1 was the constant 10000.)
  *   stage 2  every demand 0, tests RELEASED (TOE30/31 at 1000 ‰ inside the
  *            stock's test windows, rail-supplied; TOE32 is excluded from
  *            the tests by the law itself: its source is 0xFE)
- * There is no runtime demand source, setter or RAM read on SH:
+ * There is no other runtime demand source, setter or RAM read on SH:
  *   - drv_ga_demand_set / drv_ga_tests_set do not exist on __sh__ (a call
  *     is a _Static_assert failure); -DDRV_GA_DEMAND_SOURCE=1 is an #error;
  *   - CELL_GA_DEMAND is written only by the slot split from the table;
@@ -51,25 +54,24 @@
 #  if defined(DRV_GA_DEMAND_SOURCE) && (DRV_GA_DEMAND_SOURCE != 0)
 #    error "drv_groupa: a group-A demand source is refused on SH builds (safety frame: demands are compile-time constants)"
 #  endif
-#  ifndef DRV_GA_STAGE
-#    define DRV_GA_STAGE 0           /* THE TARGET DEFAULT: no group-A current */
-#  endif
+#  include "bsw/drv/drv_park.h"      /* DRV_GA_STAGE (default 0), the slot-11 getter */
 #  if DRV_GA_STAGE == 0
 #    define DRV_GA_TOE31_ON   0
 #    define DRV_GA_TESTS      0
 #  elif DRV_GA_STAGE == 1
-#    define DRV_GA_TOE31_ON   1
+#    define DRV_GA_TOE31_ON   1      /* 2026-11-14: the park hold FOLLOWS THE PORTED LOGIC */
 #    define DRV_GA_TESTS      0
-#  elif DRV_GA_STAGE == 2
+#  else
 #    define DRV_GA_TOE31_ON   0
 #    define DRV_GA_TESTS      1
-#  else
-#    error "drv_groupa: DRV_GA_STAGE must be 0, 1 or 2"
 #  endif
    /* the stock's on/off actuator demand (0xE8888: 10000 when on) */
-#  define DRV_GA_ON_REQ   10000u
+#  define DRV_GA_ON_REQ   DRV_PARK_ON_REQ
    /* per slot: 10 TOE30, 11 TOE31 park hold, 12 TOE33 (disabled), 13 TOE32,
-    * 14 TOE22 (disabled) */
+    * 14 TOE22 (disabled). Slots 10/12/13/14 are compile-time 0. Slot 11 is
+    * the BOUND of the park-hold demand: the slot getter park_slot11_hold()
+    * (app/park.c, the ported 0xE88FA → 0xE8888 chain) is passed through
+    * only when it equals DRV_GA_D11 exactly — 0 or the stock 10000. */
    /* (overridable only so the guard tests can show the asserts bite: any
     * value but the one DRV_GA_STAGE implies fails to compile) */
 #  ifndef DRV_GA_D10
@@ -93,6 +95,7 @@ _Static_assert(DRV_GA_D11 == 0u || DRV_GA_D11 == 10000u,
                "drv_groupa: the park-hold demand is the stock's on/off value (0 or 10000)");
 _Static_assert(DRV_GA_D11 == ((DRV_GA_TOE31_ON) ? DRV_GA_ON_REQ : 0u),
                "drv_groupa: the park-hold demand follows DRV_GA_STAGE alone");
+   /* the bound per slot (slot 11: the getter is gated by it in ga_demand) */
 #  define DRV_GA_DEMAND_TABLE { DRV_GA_D10, DRV_GA_D11, DRV_GA_D12, DRV_GA_D13, DRV_GA_D14 }
    /* the outputs the stage may put a nonzero duty on (the guard):
     * stage 1 the park hold; stage 2 the two rail-supplied test outputs */

@@ -45,8 +45,9 @@
  * 0xFFF94EE8 (0.1 mA): A 500, D/B/E/C 8500, WK 500, Sys 500, park release
  * 0, ch 8/9 0 — compile-time constants, still no runtime source, setter or
  * RAM read. Bounds: every entry equals the stock's P value (the table is
- * asserted against it entry by entry), park release is 0. r03d/r03e were
- * the single-channel pilots (E at 500, then 8500). */
+ * asserted against it entry by entry). r03d/r03e were the single-channel
+ * pilots (E at 500, then 8500). 2026-11-14: ch 7 (park release) is the
+ * ported park logic's demand, bounded to {0, 10000} (below). */
 /* per channel: ch0 A, ch1 D, ch2 B, ch3 E, ch4 C, ch5 WK, ch6 Sys,
  * ch7 park release, ch8/9 masked */
 #  define DRV_RQ_P0 500u
@@ -56,13 +57,24 @@
 #  define DRV_RQ_P4 8500u
 #  define DRV_RQ_P5 500u
 #  define DRV_RQ_P6 500u
-#  define DRV_RQ_P7 10000u   /* r03i: park release ON at the stock's out-of-P value (0xE8888 returns 10000: 1.0 A) */
+/* ch 7, the park release: NOT a constant since 2026-11-14 — the ported
+ * range/park logic's demand (app/park.c park_slot7_release(), stock getter
+ * 0xA469A → *0x89EBA ← 0xE8888(id 2)). DRV_RQ_P7 is its compile-time BOUND:
+ * the demand passes only when it equals DRV_RQ_P7 exactly, so the release
+ * is 0 or the stock's out-of-P 10000 (1.0 A), and 0 in every stage but
+ * DRV_GA_STAGE 1 (bsw/drv/drv_park.h) */
+#  include "bsw/drv/drv_park.h"
+#  ifndef DRV_RQ_P7
+#    define DRV_RQ_P7 ((DRV_PARK_LIVE) ? DRV_PARK_ON_REQ : 0u)
+#  endif
 _Static_assert(DRV_RQ_P0 == 0x01F4u && DRV_RQ_P1 == 0x2134u && DRV_RQ_P2 == 0x2134u &&
                DRV_RQ_P3 == 0x2134u && DRV_RQ_P4 == 0x2134u && DRV_RQ_P5 == 0x01F4u &&
                DRV_RQ_P6 == 0x01F4u,
                "drv_reqlaw P set: every request must equal the stock's P value (dump 0xFFF94EE8)");
 _Static_assert(DRV_RQ_P7 == 0u || DRV_RQ_P7 == 10000u,
                "drv_reqlaw: park release is 0 (P) or the stock's out-of-P 10000 (1.0 A), nothing else");
+_Static_assert(DRV_RQ_P7 == ((DRV_PARK_LIVE) ? DRV_PARK_ON_REQ : 0u),
+               "drv_reqlaw: the park-release bound follows DRV_GA_STAGE alone");
 #  define DRV_RQ_PSET_TABLE { DRV_RQ_P0, DRV_RQ_P1, DRV_RQ_P2, DRV_RQ_P3, DRV_RQ_P4, \
                               DRV_RQ_P5, DRV_RQ_P6, DRV_RQ_P7, 0u, 0u }
 #  define DRV_RQ_PSET 1
@@ -76,15 +88,20 @@ void drv_rq_request_set(uint8_t ch, uint16_t req01ma);
 void drv_rq_corr_inject(uint8_t ch, int16_t corr);
 #endif
 
-/* r03j: THE RELEASE ON-WINDOW (ours, not stock; user D-M4-7 2026-11-14:
+/* THE RELEASE ON-TIME LIMIT (ours, not stock; user D-M4-7 2026-11-14:
  * "30 seconds"). On a DRY bench the park-release coil heats (~11 W, no
- * oil; r03i's supply crept 2.63 -> 2.80 A in 60 s). The window opens on the
- * first pass the law sees seq2 'U' with a nonzero release request and
- * closes DRV_RQ_REL_WINDOW_MS later; once closed the release request is 0
- * until the next power cycle. A pure step function so the host can test it.
- * state: 0 not started, 1 open, 2 closed (latched). */
+ * oil; r03i's supply crept 2.63 -> 2.80 A in 60 s). 2026-11-14 (range
+ * logic port): the window OPENS EACH TIME the release turns on (a law pass
+ * at seq2 'U' with a nonzero release request) and counts the release-on
+ * time — the time between consecutive law passes while it is on, including
+ * the pass on which it turns off — ACCUMULATED OVER THE POWER CYCLE. Once
+ * DRV_RQ_REL_WINDOW_MS of release-on time has accumulated, the release
+ * request is 0 until the next power cycle (latched; .bss is cleared only
+ * at boot). Before 'U' the request is 0 and nothing counts. A pure step
+ * function so the host can test it.
+ * state: 0 off (not on now), 1 on (counting), 2 latched off. */
 #define DRV_RQ_REL_WINDOW_MS 30000u
-typedef struct { uint8_t state; uint32_t t0_ms; } drv_rq_win_t;
+typedef struct { uint8_t state; uint32_t t_last_ms; uint32_t acc_ms; } drv_rq_win_t;
 uint16_t drv_rq_window_step(drv_rq_win_t *w, uint32_t now_ms, bool at_u, uint16_t req);
 
 /* 0x90010's part: letters '2', rounding offset cal 0x1918BB, the config

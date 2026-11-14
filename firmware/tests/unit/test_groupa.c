@@ -541,6 +541,21 @@ static void sweep_all_states(void)
 }
 #endif
 
+#if DRV_GA_CT
+/* the slot-11 getter (app/park.c on the target): the test plays the park
+ * logic's demand. Stage 1 passes it only when it equals the bound (10000);
+ * stages 0 / 2 never read it. */
+#include "bsw/drv/drv_park.h"
+static uint16_t s_test_hold = 10000u;
+static unsigned s_test_hold_reads;
+uint16_t park_slot11_hold(void)
+{
+    s_test_hold_reads++;
+    return s_test_hold;
+}
+uint16_t park_slot7_release(void) { return 0u; }
+#endif
+
 #if DRV_GA_CT && DRV_GA_STAGE == 0
 static void test_stage0(void)
 {
@@ -563,6 +578,7 @@ static void test_stage0(void)
     CHECKV(drv_ga_wit_drld(), 1036u);
     CHECKV(stub.te_drld[1], 0u);
     CHECKV(CELL_GA_PULLIN[1], 4u);               /* the pull-in machinery runs */
+    CHECKV(s_test_hold_reads, 0u);               /* stage 0 never asks the park logic */
 }
 #endif
 
@@ -587,6 +603,21 @@ static void test_stage1(void)
     CHECKV(s_max[1], 2000u);                     /* the pull-in only */
     CHECKV(drv_ga_guard_n(), 0u);
     CHECK(drv_ga_thold_n() > 0u);                /* tests still held */
+    CHECK(s_test_hold_reads > 0u);               /* the demand came from the getter */
+    /* the bound: the logic's "off" (0) and any non-stock value give 0 */
+    s_test_hold = 0u;
+    pass5_mode0();
+    CHECKV(CELL_GA_DEMAND[1], 0u);
+    s_test_hold = 5000u;
+    pass5_mode0();
+    CHECKV(CELL_GA_DEMAND[1], 0u);
+    s_test_hold = 0xFFFFu;
+    pass5_mode0();
+    CHECKV(CELL_GA_DEMAND[1], 0u);
+    CHECKV(stub.te_drld[1], 0u);
+    s_test_hold = 10000u;
+    pass5_mode0();
+    CHECKV(CELL_GA_DEMAND[1], 10000u);
 }
 #endif
 

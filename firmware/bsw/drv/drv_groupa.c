@@ -17,9 +17,11 @@
  *   0x72AE0  profiling hooks
  *   the 0x84890 slot array (slots 10..14 are computed straight into
  *            0xFFF94FAA / 0x94E22 — same values, no intermediate copy)
- *   the slot getters (0xA46AC .. / 0x1520B4 / 0x152F68 / 0x1520B8 — the
- *            on/off actuator objects 0x107F36 / 0xE8888 and the park module
- *            0xE88FA): compile-time demands (drv_groupa.h)
+ *   the slot getters 0xA46AC / 0x1520B4 / 0x152F68 / 0x1520B8 (slots 10,
+ *            12, 13, 14): compile-time 0 (drv_groupa.h). Slot 11 (0xA46B2,
+ *            the park hold) is app/park.c's park_slot11_hold() — the
+ *            ported 0xE88FA → 0xE8888 chain — bounded by DRV_GA_D11
+ *            (2026-11-14, ~/tcu_sweep/range_logic_port.md)
  *   0x94FEA / 0x94FEB: written by the safety layer (0x141294 init 1 / 0xFE,
  *            0x141300 at run time) — stand-in constants = its init value and
  *            the driving dump (01 / 00): TOE30 forced off, TOE32 not
@@ -119,6 +121,13 @@ uint32_t drv_ga_f238_n(void)     { return s_ga_f238_n; }
 static inline uint16_t ga_demand(uint8_t k)
 {
     static const uint16_t T[DRV_GA_N] = DRV_GA_DEMAND_TABLE;
+    if (k == 1u) {
+        /* slot 11, the park hold: the ported park logic's demand (stock
+         * getter 0xA46B2 → *0x89EC2 ← 0xE8888(id 3)), passed through only
+         * when it equals the compile-time bound exactly (0 or 10000) */
+        const uint16_t v = (T[1] != 0u) ? park_slot11_hold() : 0u;
+        return (T[1] != 0u && v == T[1]) ? T[1] : 0u;
+    }
     return k < DRV_GA_N ? T[k] : 0u;
 }
 #define GA_TESTS_RELEASED() ((DRV_GA_TESTS) != 0)
