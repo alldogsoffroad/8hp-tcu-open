@@ -1179,3 +1179,15 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
   - [high] At rest: `ch_speed` 0/0/0; F12/F13 edge counters as before.
   - [I] The cheap check: sweep steel past the OSS a few times a second. `ch_speed[0]` shows a small nonzero rpm (single digits; 40 pulses/rev) and decays to 0 within ~1 s. A magnet past the ISS moves `ch_speed[1]` (30 pulses/rev). Neither reaches the arbiter's 80 rpm, so park is unaffected.
   - **Stop:** any current change, a park output on without lever R/N/D, or restarts.
+
+**r03l BENCH RESULT (2026-11-16 16:50 install, blocks 0x40000 `39d78601f1a0d988` + 0x50000 `a8e43e1aba508ee1`, all 21 verifies OK; power-on 16:54:21 under the ammeter "=== r03l boot"; witness 16:55:52 `/tmp/witness_r03l.log`; speed watch 16:56 `/tmp/rpm_watch.log`) — AS r03k; THE OUTPUT SPEED CHANNEL READS THE OUTPUT SENSOR** [O]:
+- **As r03k (prediction [high] ✓):**
+  - boots = 1; letter 'c' (63 00 00), 0x907D6 0x20, seq2 'U', J2 9020, mode 1, 0x14 = C7, gate 1;
+  - Auto-P = the dump (E549 00 08 17, D6D6 08 F7, AE28/29 00 01, model 04 01 FF 00); both park outputs off;
+  - RQLAW the P set; bus A 8 206 cyclics, 0 slips; RSPI re-entries 0; job errors 0.
+- **Current: 1.81 → 1.86 A** over 10–75 s after power-on (r03k: 1.762 A), creeping with no step. Fluid temperature 36.0 °C (r03k ≈ 25 °C). [I] Warmer coils on a bench powered most of the day.
+- **Speed check:**
+  - **OSS (steel):** F12 counted 4 edges; after the 2nd edge (0.3 s after the 1st) **ch_speed[0] = 7 rpm**, decaying 6, 5, 4, 3, 2 → 0 within ~1 s. That fits 40 pulses/rev (one edge per 0.3 s ≈ 5 rpm).
+  - **ISS (magnet):** F13 counted 6 edges, 1.2–3.5 s apart. **ch_speed[1] stayed 0**, as expected from our 1 s no-edge stop rule (an edge gap > 1 s reads as stopped). The turbine speed itself is therefore not shown moving. That needs passes < 1 s apart, or a turning shaft.
+  - **No cross-talk:** steel moved only channel 0, the magnet only channel 1. Peak rpm far below the arbiter's 80.
+- **ISS, fast passes (16:58–16:59, `/tmp/rpm_watch2.log`; an overlapping watch start was caught by a port error before any reading and re-run alone) [O]:** F13 counted 15 edges (6 → 21) at ~0.4 s intervals. **ch_speed[1] (turbine) read a steady 5 rpm**, which fits 30 pulses/rev (60 / (0.4 × 30) = 5). One close edge pair gave a 40 rpm spike that decayed to 5 within ~0.4 s; after the passes stopped the value decayed to 0. ch_speed[0] stayed 0. **Both speed channels are now shown working on their correct sensors at the stock pulse counts.**
