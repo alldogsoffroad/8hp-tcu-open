@@ -1154,3 +1154,11 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
 - **Both speed channels are now bench-confirmed:** output = TIF12 (G195, parking-gear teeth), turbine = TIF13 (G182, magnetic ring). TIF14 is unused (stock).
 - This matches the source fix (`main.c` {turbine 1, output 0}); the comment and spec 02 now cite this test.
 - AN5/AN6 are only the park sensor (G747).
+
+**REFERENCE: FCA 8-speed Diagnosis and Repair workbook (2015), public copy reviewed (2026-11-16, `docs/reference/fca-8speed-diagnosis-repair-workbook.md`)** [M]:
+- It is the same document the specs already cite as "user's copy". The ATRA slides reviewed earlier today correspond to the "ATRA ZF8HP Introduction webinar" spec 01 §2.8 already cites, so `docs/reference/8hp45-70-atra-seminar.md` duplicates known content (kept for its page notes).
+- **New for the park question:**
+  - Fig. 50: one target on the **park selector shaft**, watched by **two digital Hall elements** in the valve body;
+  - Fig. 47: the two signals are labelled **"Park"** and **"Not Park"**.
+- With the stock code's position 1 = A (AN5) alone = Park, **AN5 is the "Park" element and AN6 "Not Park"** [I, code + figure]. The user's hand-magnet spot activated AN5, so it is the Park spot under that reading. The earlier "magnet at the sensor = out of Park" may describe the target's travel (the target may sit by the sensor in both states, over a different element). **Still to be decided on the real mechanism.**
+- Fig. 43 (park hydraulics) matches the ported law.
