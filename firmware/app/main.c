@@ -38,8 +38,14 @@
  * identified that sensor as the output speed sensor at the rear of the transmission].
  * Turbine = channel 1 [O bench 2026-11-16: a magnet with alternating poles passed across the
  * input speed sensor (G182, which reads a magnetic ring) counted on F13 only].
- * Before 2026-11-16 this was turbine 0 / output 1, which fed TIF13 into the park arbiter. */
-static const sensors_cfg_t s_sensors_cfg = { 1u, 0u, { 60u, 60u, 60u } };
+ * Before 2026-11-16 this was turbine 0 / output 1, which fed TIF13 into the park arbiter.
+ * Pulses per revolution = the stock's own, from the speed computation 0x143686 that feeds D646 /
+ * 0xFFF8EE6E: output 40 (cal 0x195DCD = 0x28), turbine 30 (cal 0x195DCE = 0x1E) [O bytes;
+ * ~/tcu_sweep/park_position_speed_decode.md]. The user accepts the stock values (2026-11-16); not
+ * physically counted (the transmission cannot be opened now). Channel 2 (TIF14) is unused and
+ * keeps the Timer F calibration's 60. Before 2026-11-16 all three were 60, which made output rpm
+ * read 2/3 of the stock's. */
+static const sensors_cfg_t s_sensors_cfg = { 1u, 0u, { 40u, 30u, 60u } };
 
 /* F2 (protocol_audit §1/F2): how long the ATU tick must be quiet before the
  * CMT fallback re-engages (the audit's "> 10 ms" un-retire threshold). The

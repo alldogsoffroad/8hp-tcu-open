@@ -1162,3 +1162,20 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
   - Fig. 47: the two signals are labelled **"Park"** and **"Not Park"**.
 - With the stock code's position 1 = A (AN5) alone = Park, **AN5 is the "Park" element and AN6 "Not Park"** [I, code + figure]. The user's hand-magnet spot activated AN5, so it is the Park spot under that reading. The earlier "magnet at the sensor = out of Park" may describe the target's travel (the target may sit by the sensor in both states, over a different element). **Still to be decided on the real mechanism.**
 - Fig. 43 (park hydraulics) matches the ported law.
+
+**SPEED PULSE COUNTS SET TO THE STOCK'S (2026-11-16, user: "the stock pulse counts are accurate. lets update"):**
+- `app/main.c` `s_sensors_cfg = { turbine 1, output 0, { 40, 30, 60 } }`: output 40 and turbine 30 pulses/rev, from the stock's 0x143686 cal (0x195DCD/CE = 28 1E [O]); TIF14 unused, kept at 60. Spec 02 §4.1 updated.
+- Not physically counted (the transmission cannot be opened now); count the parking-gear teeth and ring poles when it is.
+- Effect: our output rpm now matches the stock's D646 scaling, so the arbiter's 80 rpm limit is the stock's. Previously output read 2/3 of the stock's value.
+- Not flashed: r03k on the bench has neither this nor the channel swap.
+
+**r03l = r03k + THE SPEED CHANNELS AND PULSE COUNTS (2026-11-16; built, NOT flashed, `build/r03l_IFla.bin`, app CRC `F9EECFD7`, blocks 0x40000 + 0x50000, app end 0x52864):**
+- **Change vs r03k:** exactly 8 image bytes differ, the header CRC (0x40044–47) and `s_sensors_cfg` at 0x526D8 (`00 01 00 3C 00 3C` → `01 00 00 28 00 1E`). The rest of the 20-byte struct is unchanged.
+- **Variables:** two, both in the speed path: the channel swap and the stock pulse counts.
+- **Witness:** RAM map identical to r03k (nm: `s_rst` 0xFFF9EB68, `s_w9020` 0xEB88, `s_open` 0xEBCC, `s_rq_rel_win` 0xFFF95B7C, `_s_m` 0xFFF9E194). The sensor struct `s_in` is at 0xFFF95E1C, with `ch_speed[0..2]` (int16 rpm) at +0/+2/+4.
+- **Files:** install `/tmp/install_r03l.py` (sigs `/tmp/r03l_sigs.json`, both blocks None), witness `/tmp/witness_r03l.py` (= r03k's).
+- **PREDICTION (rule 1):**
+  - [high] Everything as r03k: rail engaged, P set ≈ 1.76 A, Auto-P with no lever (E549 00 08 17, D6D6 08 F7), both park outputs off, buses clean, no restarts. **No current change** (nothing driven depends on speed at standstill).
+  - [high] At rest: `ch_speed` 0/0/0; F12/F13 edge counters as before.
+  - [I] The cheap check: sweep steel past the OSS a few times a second. `ch_speed[0]` shows a small nonzero rpm (single digits; 40 pulses/rev) and decays to 0 within ~1 s. A magnet past the ISS moves `ch_speed[1]` (30 pulses/rev). Neither reaches the arbiter's 80 rpm, so park is unaffected.
+  - **Stop:** any current change, a park output on without lever R/N/D, or restarts.

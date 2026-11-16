@@ -144,6 +144,8 @@ transmission.
 
 **Bench resolution (2026-11-16) [O]:** steel passed across the sensor at the rear of the transmission (the output speed sensor, identified by the user) counted on TIF12 only (ECNTBF(12) +1 per pass, 7 passes; F0–F15 otherwise unchanged). So **channel 0 = TIF12 = output speed**, and stock signal B (`0xFFF93048`) is output speed. Signal A (`0xFFF93044`, TIF13) is turbine speed [O bench 2026-11-16: a magnet with alternating poles passed across the input speed sensor counted on TIF13 only, +1 per pass, 6 passes; that sensor reads a magnetic ring, so steel does not trigger it]. The path from A/B into the safety layer's `0xFFF8EE6E` / `0xFFF8EF06` (spec 07 §7.1) is still not decoded.
 
+**Pulses per revolution, project (2026-11-16):** the stock's speed computation `0x143686`, which feeds output speed `0xFFF8EE6E` (D646) and turbine speed `0xFFF8EF06`, uses **40 for output and 30 for turbine** (cal `0x195DCD` = 0x28, `0x195DCE` = 0x1E) [O bytes; `~/tcu_sweep/park_position_speed_decode.md`], not the Timer F table's 60. The project now uses 40 (channel 0, output) / 30 (channel 1, turbine) / 60 (channel 2, unused), on the user's decision to follow the stock. Not physically counted: parking-gear teeth and magnetic-ring poles remain to be checked when the transmission is open.
+
 ### 4.1a Stock register values and project implementation (M2)
 
 Stock set-up [O]: prescalers `PSCR0..3 = 19, 4, 6, 0` and noise-canceller mode `NCMR = 0x9F`
