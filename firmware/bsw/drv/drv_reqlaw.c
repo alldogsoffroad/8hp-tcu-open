@@ -18,6 +18,10 @@
  *   0x921E0  chip-ID harvest into the records → 0x9091B stays 0
  *   0x91E34 / 0x8FDB6 / the 0x90919 tail (reduced frequency, group B)
  */
+/* READ-ONLY park position sensor (2026-11-16): this translation unit is
+ * an output path — the sensor headers refuse to compile here (and the
+ * ctest pksens_readonly_scan fails if this file names a sensor cell) */
+#define TCU_OUTPUT_PATH 1
 #include "bsw/drv/drv_reqlaw.h"
 #include "bsw/drv/drv_cells.h"
 #include "bsw/drv/drv_jobs.h"

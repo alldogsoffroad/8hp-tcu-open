@@ -5,6 +5,10 @@
  * The engine is shared with bus-B (sup_jobs.c); these descriptors extend
  * the same table and queue through the same one-in-flight path.
  */
+/* READ-ONLY park position sensor (2026-11-16): this translation unit is
+ * an output path — the sensor headers refuse to compile here (and the
+ * ctest pksens_readonly_scan fails if this file names a sensor cell) */
+#define TCU_OUTPUT_PATH 1
 #include "bsw/drv/drv_jobs.h"
 #include "bsw/drv/drv_cells.h"
 #include "bsw/drv/drv_reqlaw.h"

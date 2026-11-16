@@ -25,13 +25,15 @@
  *   D1  the 80-byte mux sequence lives at 0xFFF88500 (alias offset 0x0500),
  *       not 0xFFF8844C: ours keeps .sup_stage2 (W1/W2/fault-twin staging)
  *       at 0xFFF88450..0x8847F — the stock copy would overwrite it.
- *   D2  0x8F058 is ported only through the mux 13/11/8/10/14 loops
- *       (0x8F058..0x8F1B4); the remaining accumulators (mux 0-7/9/15, the
- *       ADC_A/ADC_B direct-scan sums, the 0x071D DMA-alive sentinels) are
- *       not ported (no consumer in L0).
- *   D3  0x8F5A0: only the status ramp of 0x9002F/0x90017/0x9001F; the
- *       20-call span check's fault-561 report is not ported (no fault
- *       manager) — the span cell 0x910FC is still measured by the ISR.
+ *   D2  0x8F058 is ported through the mux 13/11/8/10/14 loops
+ *       (0x8F058..0x8F1B4), the mux-15 accumulator (0x8F1B4..0x8F1FC,
+ *       2026-11-16, park position sensor) and the ADC_A direct-scan sums
+ *       (M4); the remaining accumulators (mux 0-7/9, the ADC_B sums, the
+ *       0x071D DMA-alive sentinels) are not ported (no consumer).
+ *   D3  0x8F5A0: only the status ramp of 0x900B6 (2026-11-16) and
+ *       0x9002F/0x90017/0x9001F; the 20-call span check's fault-561 report
+ *       is not ported (no fault manager) — the span cell 0x910FC is still
+ *       measured by the ISR.
  *   D4  the profiling hooks 0x68F5C/0x68F66 around 0x8F058 are not ported.
  *   D5  before 0x967F4 our own continuous scan (adc_init, shared plat_init)
  *       is stopped and ADSCACT waited out — the manual forbids changing
@@ -126,6 +128,14 @@ void plat_adcmux_mux_release(void) {}
 #define C_ANSUM        0xFFF900E8u    /* u32 [28]: sum of ADR0..27 since the last 0x8F70C */
 #define C_ANSUM_N      0xFFF907DEu    /* u16: scans summed (+1 per 1 ms ISR) */
 #define C_AN_MV        0xFFF9018Cu    /* u16 [28]: AN0..AN27 in mV (0x8F70C) */
+/* park position sensor (2026-11-16): the mux-15 state of descriptor 0x40904
+ * (0x8F058 accumulates with GBR = 0xFFF90028: @(136) sum, @(140) count,
+ * @(142) status) and its output, the sensor-supply reference */
+#define C_M15_SUM      0xFFF900B0u    /* u32: sum of the mux-15 ring slots */
+#define C_M15_CNT      0xFFF900B4u    /* u16: slots summed */
+#define C_M15_ST       0xFFF900B6u    /* u8: status (0 -> 2, 5 ms ramp 0x8F5A0) */
+#define C_MUX15_MV     0xFFF907E8u    /* u16 mV: mux 15 (0x9360C(0x40904)) */
+#define SCALE_15V      0.2288818359375f  /* 0x3E6A6000 = 15000/65536 (0x40908) */
 
 /* ---- the smoothing descriptors (ROM 0x40874..0x40903) [O bytes] -------- */
 typedef struct {
@@ -408,6 +418,10 @@ void plat_adcmux_init(void)
         R16(C_AN_MV + 2u * i) = 0u;                    /*  starts cleared)   */
     }
     R16(C_ANSUM_N) = 0u;
+    R32(C_M15_SUM) = 0u;                               /* park sensor: our   */
+    R16(C_M15_CNT) = 0u;                               /* NOLOAD .adc_m15    */
+    R8(C_M15_ST) = 0u;                                 /* (stock RAM: 0)     */
+    R8(C_M15_ST + 1u) = 0u;
     R16(C_MIN13_RAW) = 0xFFFFu;
     (void)desc_init(&D_4088C);
     (void)desc_init(&D_408A4);
@@ -590,6 +604,21 @@ static void adcmux_1ms(void)
         }
         desc_push(&D_408EC, (uint16_t)m14);
     }
+    /* mux 15 (0x8F1B4..0x8F1FC, the sensor supply of the park position
+     * sensor): slots 16, 36, 56, 76 (r13 + 32, step 40 bytes) summed;
+     * status byte @(142,gbr) = 0x900B6 read with mov.b (sign-extended) and
+     * compared cmp/hs #2: >= 2 -> 0x900B0 += sum, 0x900B4 += 4 (mov.w,
+     * add #4); else 0x900B0 = sum, 0x900B4 = 4 (the window restarts). */
+    {
+        const uint32_t m15 = sum_stride(h + 16, 20u, 4u);
+        if ((uint32_t)(int32_t)(int8_t)R8(C_M15_ST) >= 2u) {
+            R32(C_M15_SUM) = R32(C_M15_SUM) + m15;
+            R16(C_M15_CNT) = (uint16_t)(R16(C_M15_CNT) + 4u);
+        } else {
+            R32(C_M15_SUM) = m15;
+            R16(C_M15_CNT) = 4u;
+        }
+    }
     /* M4: the ADC_A direct-scan sums (0x8F47C..0x8F4B2): 0x900E8[i] +=
      * ADR(i) for AN0..AN27 (the DMAC5 buffer 0xFFF88132..), 0x907DE += 1.
      * Not ported from the same tail: the mux 0-7/9/15 and ADC_B sums, the
@@ -682,12 +711,44 @@ void plat_adcmux_finish_5ms(void)
     }
 }
 
+/* ---- 0x9360C: publish one sum/count descriptor (0x8F70C's finishers) -----
+ * Bytes 0x9360C..0x93652: r5 = state; count = movu.w @(4,r5); cmp/pl ->
+ * out = clipu.w(ftrc(float(sum) x scale / float(count) + 0.5)) (the scale is
+ * fmov.s @(4,r4) - objdump labels the even-register form "fmov.d"), then
+ * count = sum = 0; the status byte @(6,r5) (movu.b) steps 1 -> 2 when
+ * 0 < status < 2 (cmp/ge #2, cmp/pl). */
+static void desc_publish_9360c(uintptr_t state, float scale, uintptr_t out)
+{
+    const uint32_t c = R16(state + 4u);
+    if ((int32_t)c > 0) {
+        float f = (float)(int32_t)R32(state);
+        f = f * scale;
+        f = f / (float)(int32_t)c;
+        f = f + 0.5f;
+        int32_t t = (int32_t)f;                        /* ftrc               */
+        if ((uint32_t)t > 0xFFFFu) {                   /* clipu.w            */
+            t = 0xFFFF;
+        }
+        R16(out) = (uint16_t)t;
+        R16(state + 4u) = 0u;
+        R32(state) = 0u;
+    }
+    {
+        const uint32_t st = R8(state + 6u);
+        if ((int32_t)st < 2 && (int32_t)st > 0) {
+            R8(state + 6u) = (uint8_t)(st + 1u);
+        }
+    }
+}
+
 /* ---- 0x8F70C, ADC_A part: the AN table (reply proc 0x8EE52's head; 5 ms in
  * OS mode 0, 10 ms in mode 1), under SR.I >= 4 (0x9665C(0x40)) so the DEI5
  * sums cannot move mid-loop. Per AN n: 0x9018C[n] = ftrc(float(sum) x
  * scale[n] x (0x3D9C4000 = 5000/65536 / float(count))), sum cleared; then
- * the count. Not ported from 0x8F70C: the 0x9360C descriptor finishers
- * (0x40904..0x40940), the 0x907F2 rescale, the ADC_B table 0x901C4 / the
+ * the count. Ported (2026-11-16, park position sensor): its FIRST call,
+ * 0x9360C(0x40904) -> 0x907E8 (mux 15), under the same lock (bytes
+ * 0x8F714..0x8F71E). Not ported from 0x8F70C: the other 0x9360C finishers
+ * (0x40910..0x40940), the 0x907F2 rescale, the ADC_B table 0x901C4 / the
  * 0x901D4 four, the guard-word checks (fault 0x232) and the ADRD0
  * self-diagnosis cycle (ADCER0/1 bits 9:8). ----------------------------- */
 static const float AN_SCALE[28] = {                    /* flash 0x190184     */
@@ -702,6 +763,7 @@ void plat_adcmux_an_convert(void)
     if ((old & 0xF0u) < 0x40u) {
         sr_put((old & ~0xF0u) | 0x40u);
     }
+    desc_publish_9360c(C_M15_SUM, SCALE_15V, C_MUX15_MV);   /* 0x9360C(0x40904) */
     {
         const uint32_t n = R16(C_ANSUM_N);
         if (n != 0u) {
@@ -724,6 +786,11 @@ void plat_adcmux_an_convert(void)
 /* ---- 0x8F5A0 (D3: status ramp only), 5 ms ------------------------------ */
 void plat_adcmux_status_5ms(void)
 {
+    /* 0x8F5A2..0x8F5B2: r5 = 0xFFF900B0, mov.b @(6,r5) (sign-extended),
+     * cmp/hs #2 -> else +1 (park position sensor, mux 15) */
+    if ((uint32_t)(int32_t)(int8_t)R8(C_M15_ST) < 2u) {
+        R8(C_M15_ST) = (uint8_t)(R8(C_M15_ST) + 1u);
+    }
     if (R8(0xFFF9002Fu) < 2u) { R8(0xFFF9002Fu) = (uint8_t)(R8(0xFFF9002Fu) + 1u); }
     if (R8(0xFFF90017u) < 2u) { R8(0xFFF90017u) = (uint8_t)(R8(0xFFF90017u) + 1u); }
     if (R8(0xFFF9001Fu) < 2u) { R8(0xFFF9001Fu) = (uint8_t)(R8(0xFFF9001Fu) + 1u); }

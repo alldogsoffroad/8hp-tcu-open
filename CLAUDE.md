@@ -1191,3 +1191,46 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
   - **ISS (magnet):** F13 counted 6 edges, 1.2–3.5 s apart. **ch_speed[1] stayed 0**, as expected from our 1 s no-edge stop rule (an edge gap > 1 s reads as stopped). The turbine speed itself is therefore not shown moving. That needs passes < 1 s apart, or a turning shaft.
   - **No cross-talk:** steel moved only channel 0, the magnet only channel 1. Peak rpm far below the arbiter's 80.
 - **ISS, fast passes (16:58–16:59, `/tmp/rpm_watch2.log`; an overlapping watch start was caught by a port error before any reading and re-run alone) [O]:** F13 counted 15 edges (6 → 21) at ~0.4 s intervals. **ch_speed[1] (turbine) read a steady 5 rpm**, which fits 30 pulses/rev (60 / (0.4 × 30) = 5). One close edge pair gave a 40 rpm spike that decayed to 5 within ~0.4 s; after the passes stopped the value decayed to 0. ch_speed[0] stayed 0. **Both speed channels are now shown working on their correct sensors at the stock pulse counts.**
+
+**r03m = r03l + THE READ-ONLY PARK POSITION SENSOR PORT (2026-11-16; subagent port `~/tcu_sweep/park_sensor_port.md`, validated this session; built, NOT flashed, `build/r03m_IFla.bin`, app CRC `2D7899D9`, app end 0x536E8, blocks 0x40000 + 0x50000):**
+- **Ported (stock order, from the bytes):**
+  - mux-15 sum/publish/status in `plat_adcmux.c` (0x8F058 / 0x9360C(0x40904) → 0x907E8 / 0x8F5A0, `.adc_m15` 0xFFF900B0);
+  - `bsw/drv/drv_pksens.c`: 0x89320, 0x88EF0 → 0x8DF2E (+0x8ED40) → 0x7B07A/0x7B05C, init 0x88EB0/0x8DEF0, 0x7B150;
+  - `safety/park_pair.c`: the gather, 0x141B42/0x141BA2/0x141AF4, init 0x141B1C, group 98 0x141E06, run from `task_10ms`.
+- **Findings (subagent; two re-checked here [O]):**
+  - the stock's initialised-data table DTBL 0x415B0 (ROM 0x65110 → RAM 0xFFF84000) gives 0x847F4..7FB = 00 and 0x847FC..803 = FF;
+  - 0x8DFB0 stores the whole flag byte to 0x94169;
+  - 0x72AE0 is a profiling hook, not a lock;
+  - group 98 reports source 0 when no status bit is set;
+  - a chip-view/analog mismatch → error 0x02 (P07B2/P07B8).
+- **Deviations:**
+  - the safety slice runs at 10 ms (stock rate undecoded; P0850 m1 after 1.0 s);
+  - fatals 0x221/0x794C8 → counters + breadcrumb;
+  - the DTC reporter 0xA0E70 → witness cells `.pk_wit` 0xFFF84D00..23;
+  - 0xA0FE8 → "nothing stored";
+  - fault memory ready = 1;
+  - group 33 not ported.
+- **Read-only enforcement (validated):**
+  - every output TU defines `TCU_OUTPUT_PATH` and the sensor headers `#error` on it, with sh-elf-gcc pass/fail checks;
+  - a cmake source scan of the output files, with a negative fixture;
+  - a host test showing demands, target and park cells bit-identical across 7 sensor scenarios.
+  
+  The output files' diffs are the guard line only. `park.c` keeps D648 = 3 / D652 = 2. Host 63/63, sh2a green, `.bss` and `.noinit` unchanged (`s_rst` 0xFFF9EB68 etc.).
+- **Files:** install `/tmp/install_r03m.py` (sigs `/tmp/r03m_sigs.json`, both blocks None). Witness `/tmp/witness_r03l.py` (general) + `/tmp/witness_pksens.py N` (sensor cells).
+- **PREDICTION (rule 1), r03m:**
+  - [high] **Everything as r03l:** no restarts, rail and mode 1, Auto-P = dump, both park outputs off. Current as r03l (1.76–1.86 A, temperature-dependent). **No wire or output change.**
+  - [high] **At rest:**
+    - 0x907E8 = 0x93942 ≈ 8 975–8 990 mV; AN5/AN6 ≈ 6266; ratio [2]/[3] ≈ 0x1B41; bands 0x93AD6 = 02 02 03 03 02 02;
+    - safety pair 0xFFF8EA40/42/44 = **03 FC 02 FD 04 FB** (position 3, qualifier 2, status 04 both inactive);
+    - group 98 = 00 01 01 (P0850 m0 failed, tested), fail count = calls, pass 0;
+    - fatal / f221 counters 0; 0x847F4..803 = 00×8 FF×8.
+  - [I] **With the magnet:**
+    - on the AN5 element: position 01 (qualifier 00, status 00), group 98 passing;
+    - on the AN6 element: position 00;
+    - on both for > 1 s: status 10, group 98 source 01 (P0850 m1).
+    - **None of these may change the target, the park outputs or the current.**
+  - **Refutations:**
+    - 0x907E8 far from 9 V → the mux-15 port;
+    - fatal > 0 → complement handling;
+    - 0x847FE ≠ FF → the initial-data finding;
+    - any change in target, outputs or current with the magnet → "read-only" refuted: stop.

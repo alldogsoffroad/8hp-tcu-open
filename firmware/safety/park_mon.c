@@ -1,3 +1,7 @@
+/* READ-ONLY park position sensor (2026-11-16): this translation unit is
+ * an output path — the sensor headers refuse to compile here (and the
+ * ctest pksens_readonly_scan fails if this file names a sensor cell) */
+#define TCU_OUTPUT_PATH 1
 #include "safety/park_mon.h"
 
 /* Own copies of the limits (not taken from the application headers on

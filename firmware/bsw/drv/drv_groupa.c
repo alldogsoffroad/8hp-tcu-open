@@ -32,6 +32,10 @@
  *            nothing reads; TIERE stays 0 (stage 0b)
  */
 #define PLAT_TE_GA_WRITER 1             /* the one TU allowed plat_te_ga_* */
+/* READ-ONLY park position sensor (2026-11-16): this translation unit is
+ * an output path — the sensor headers refuse to compile here (and the
+ * ctest pksens_readonly_scan fails if this file names a sensor cell) */
+#define TCU_OUTPUT_PATH 1
 #include "bsw/drv/drv_groupa.h"
 #include "bsw/drv/drv_cells.h"
 #include "bsw/drv/drv_reqlaw.h"

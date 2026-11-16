@@ -44,6 +44,16 @@ extern void drv_temp_tick(void) __attribute__((weak));
 extern void drv_ga_slots_tick(void) __attribute__((weak));
 extern void drv_ga_law_tick(void) __attribute__((weak));
 extern void drv_ga_fstage(void) __attribute__((weak));
+/* the park position sensor, READ-ONLY (2026-11-16, drv_pksens.c;
+ * ~/tcu_sweep/park_sensor_port.md) — hub c 0x83300 (behind 0x7CB6E):
+ * entry 2 0x89320 (the reference latch) BEFORE 0x887D8, entry 9 0x88EF0
+ * (monitor + evaluator 0x8DF2E) after it [O pool 0x8338C]; and 0x7B150 in
+ * the poll group 0x7AB48 (mode 0: 5 ms list entry 9, right after the
+ * publishers 0x7CB74; mode 1: 10 ms, right after 0x7CB6E) [O lists
+ * 0x44CCC / 0x44E34]. Weak, so the supervisor tests link without them. */
+extern void drv_pksens_ref_tick(void) __attribute__((weak));
+extern void drv_pksens_tick(void) __attribute__((weak));
+extern void drv_pksens_copy_tick(void) __attribute__((weak));
 
 static uint32_t s_stamp;            /* the batch timing journal (FRT us) */
 /* 0x67DF0 on one task object: countdown 0 → activate and reload, else
@@ -280,10 +290,19 @@ void sup_batch_5ms(void)
     if (mode5 == 0u) {
         /* ── the 5 ms task, mode 0 ── */
         reply_proc();                   /* 6: 0x8EE52 */
+        if (drv_pksens_ref_tick) {
+            drv_pksens_ref_tick();      /* 7: 0x7CB6E → 0x89320 (park sensor) */
+        }
         if (drv_temp_tick) {
             drv_temp_tick();            /* 7: 0x7CB6E → 0x887D8 (M4) */
         }
+        if (drv_pksens_tick) {
+            drv_pksens_tick();          /* 7: 0x7CB6E → 0x88EF0 (park sensor) */
+        }
         sup_ladder_tick_publish();      /* 8: 0x7CB74 */
+        if (drv_pksens_copy_tick) {
+            drv_pksens_copy_tick();     /* 9: 0x7AB48 → 0x7B150 (park sensor) */
+        }
         sup_mode_request();             /* 14: 0x6F0B4 */
         if (drv_ga_slots_tick) {
             drv_ga_slots_tick();        /* 17: 0x7AB9C → 0x7B6D8 (M4) */
@@ -331,8 +350,17 @@ void sup_batch_5ms(void)
         } else {
             /* ── the 10 ms task, mode >= 1 ── */
             reply_proc();               /* 4: 0x8EE52 */
+            if (drv_pksens_ref_tick) {
+                drv_pksens_ref_tick();  /* 5: 0x7CB6E → 0x89320 (park sensor) */
+            }
             if (drv_temp_tick) {
                 drv_temp_tick();        /* 5: 0x7CB6E → 0x887D8 (M4) */
+            }
+            if (drv_pksens_tick) {
+                drv_pksens_tick();      /* 5: 0x7CB6E → 0x88EF0 (park sensor) */
+            }
+            if (drv_pksens_copy_tick) {
+                drv_pksens_copy_tick(); /* 6: 0x7AB48 → 0x7B150 (park sensor) */
             }
             if (drv_ga_slots_tick) {
                 drv_ga_slots_tick();    /* 70: 0x7AB9C → 0x7B6D8 (M4) */

@@ -79,6 +79,10 @@ SECTIONS
      * reply proc's 0x8F70C publishes (0x9018C + 2n, mV) */
     .adc_sum   0xFFF900E8 (NOLOAD) : { . += 0x70; } > RAM   /* 0x900E8..0x90157 */
     .adc_an    0xFFF9018C (NOLOAD) : { . += 0x38; } > RAM   /* 0x9018C..0x901C3 */
+    /* park position sensor (2026-11-16, ~/tcu_sweep/park_sensor_port.md):
+     * the mux-15 accumulator of 0x8F058 / descriptor 0x40904 state —
+     * 0x900B0 sum (u32), 0x900B4 count (u16), 0x900B6 status (u8) */
+    .adc_m15   0xFFF900B0 (NOLOAD) : { . += 0x08; } > RAM   /* 0x900B0..0x900B7 */
 
     .sup_walk 0xFFF90540 (NOLOAD) : {      /* walk reply cells .. 0x90551    */
         __sup_walk_start = .; *(.sup_walk) . += 0x14; __sup_walk_end = .;
@@ -175,6 +179,33 @@ SECTIONS
     .park_obj  0xFFF8BC70 (NOLOAD) : { . += 0x04; } > RAM   /* 0x8BC70..0x8BC73        */
     .park_tgt  0xFFF8D6D6 (NOLOAD) : { . += 0x02; } > RAM   /* 0x8D6D6..0x8D6D7        */
     .park_arb  0xFFF8E549 (NOLOAD) : { . += 0x03; } > RAM   /* 0x8E549..0x8E54B        */
+    /* park position sensor, READ-ONLY (2026-11-16; bsw/drv/drv_pksens.c,
+     * safety/park_pair.c; ~/tcu_sweep/park_sensor_port.md): the stock cells
+     * of the switch evaluator 0x8DF2E / monitor 0x88EF0 / copy 0x7B150 and
+     * the safety-layer pair object 0xFFF8EA28 that lie outside .sup_value /
+     * .sup_l1g / .sup_cells / .sup_cnt / .drv_tmp2; cleared and initialised
+     * by drv_pksens_init / park_pair_init — 0x847F4 state/fault copies (the
+     * stock's initialised-data block), 0x8EA28 the pair object, 0x92FE4 the
+     * monitor's tested flags + error words, 0x934C4 ratios / error words /
+     * tested words, 0x93942 the latched sensor-supply reference, 0x93AC4
+     * states / complements / digital bits / bands / latch / previous bands,
+     * 0x9415F..0x9416D and 0x94170..0x94173 the evaluator's bytes (0x9416E/F
+     * are .drv_tmp2's, 0x887D8's own) */
+    .pks_cp    0xFFF847F4 (NOLOAD) : { . += 0x10; } > RAM   /* 0x847F4..0x84803        */
+    .pkp_obj   0xFFF8EA28 (NOLOAD) : { . += 0x24; } > RAM   /* 0x8EA28..0x8EA4B        */
+    .pks_mon   0xFFF92FE4 (NOLOAD) : { . += 0x0C; } > RAM   /* 0x92FE4..0x92FEF        */
+    .pks_rat   0xFFF934C4 (NOLOAD) : { . += 0x24; } > RAM   /* 0x934C4..0x934E7        */
+    .pks_ref   0xFFF93942 (NOLOAD) : { . += 0x02; } > RAM   /* 0x93942..0x93943        */
+    .pks_eval  0xFFF93AC4 (NOLOAD) : { . += 0x40; } > RAM   /* 0x93AC4..0x93B03        */
+    .pks_ev1   0xFFF9415F (NOLOAD) : { . += 0x0F; } > RAM   /* 0x9415F..0x9416D        */
+    .pks_ev2   0xFFF94170 (NOLOAD) : { . += 0x04; } > RAM   /* 0x94170..0x94173        */
+    /* our park-sensor witnesses (fatal counters, group-98 verdict; not stock
+     * cells): free low RAM like .drv_wit, so they do not cost the stack guard */
+    .pk_wit 0xFFF84D00 (NOLOAD) : {
+        __pk_wit_start = .; *(.pk_wit) . = ALIGN(4); __pk_wit_end = .;
+    } > RAM
+    ASSERT(__pk_wit_end <= 0xFFF84D40, ".pk_wit overflow")
+
     /* our request-law witnesses and the refresh snapshot (not stock cells;
      * free low RAM like .sup_wit, so they do not cost the stack guard) */
     .drv_wit 0xFFF84C40 (NOLOAD) : {

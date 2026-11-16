@@ -19,6 +19,7 @@
 #include "bsw/drv/drv_jobs.h"
 #include "bsw/drv/drv_groupa.h"
 #include "bsw/drv/drv_temp.h"
+#include "bsw/drv/drv_pksens.h"
 #include "bsw/com/com.h"
 #include "bsw/meas/meas.h"
 #include "bsw/diag/uds.h"
@@ -28,6 +29,7 @@
 #include "io/actuators/sol_ctl.h"
 #include "app/bench_out.h"
 #include "app/bench_dump.h"
+#include "safety/park_pair.h"
 #include "app/flash_entry.h"
 #include "app/meas_table.h"
 #include "app/park.h"
@@ -222,6 +224,9 @@ static void task_10ms(void)
     sol_tick_10ms();        /* builds the 45-frame cyclic, queues DRV_CYC */
     meas_table_update();
     meas_tick_10ms();
+    park_pair_tick_10ms();  /* park position sensor, READ-ONLY: the safety
+                             * layer's pair object + group 98 (10 ms is OUR
+                             * rate — the stock's is not decoded) */
 }
 
 /* ── 100 ms: heartbeat ─────────────────────────────────────────────────── */
@@ -306,11 +311,13 @@ int main(void)
     sup_batch_init();                   /* serial_rx_init: request 0, J5 staged+queued */
     drv_jobs_init();
     drv_temp_init();                    /* M4: 0x88A50 (row-9 entry 0x7CB5C) */
+    drv_pksens_init();                  /* park sensor: 0x88EB0 (row-9 list's last) */
     drv_ga_init();                      /* M4: group-A law (0x9136E shadows) */
     sol_init();
     bench_init();
     vehicle_init();
     park_init();
+    park_pair_init();                   /* park sensor: 0x141B1C (safety layer) */
     sensors_init(&s_sensors_cfg);
     fca_tx_init();
     meas_table_init();                  /* meas_init with the project index list */

@@ -21,6 +21,7 @@ set(CORE_SOURCES
     bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c
     bsw/drv/drv_handlers.c
     bsw/drv/drv_groupa.c bsw/drv/drv_temp.c
+    bsw/drv/drv_pksens.c
     bsw/com/crc8.c
     bsw/com/com.c
     bsw/com/com_tx.c
@@ -37,6 +38,7 @@ set(CORE_SOURCES
     app/park_law.c
     app/park.c
     safety/park_mon.c
+    safety/park_pair.c
     app/bench_dump.c
     app/flash_entry.c
     io/vehicle/profile_fca.c
@@ -341,6 +343,46 @@ else()
         PASS_REGULAR_EXPRESSION "only the park hold")
     set_tests_properties(ga_sh_guard_d11 PROPERTIES
         PASS_REGULAR_EXPRESSION "on/off value")
+    # the park position sensor, READ-ONLY (2026-11-16,
+    # ~/tcu_sweep/park_sensor_port.md): the evaluator 0x8DF2E / monitor
+    # 0x88EF0 / copy 0x7B150 and the safety pair object 0x141BA2 / group 98
+    # 0x141E06 at the bench mV values; and the park demands / arbiter target
+    # bit-identical with the sensor in every state
+    add_executable(test_pksens tests/unit/test_pksens.c bsw/drv/drv_pksens.c
+        safety/park_pair.c app/range.c app/park_law.c app/park.c safety/park_mon.c
+        io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_handlers.c
+        tests/unit/stub_plat.c)
+    add_test(NAME pksens COMMAND test_pksens)
+    # ... and its read-only frame: no output path names the sensor (source
+    # scan; the negative run scans a fixture that does), and the sensor
+    # headers refuse to compile in a TU that defines TCU_OUTPUT_PATH
+    set(PKS_OUTPUT_PATHS
+        ${CMAKE_SOURCE_DIR}/app/range.c ${CMAKE_SOURCE_DIR}/app/range.h
+        ${CMAKE_SOURCE_DIR}/app/park_law.c ${CMAKE_SOURCE_DIR}/app/park_law.h
+        ${CMAKE_SOURCE_DIR}/app/park.c ${CMAKE_SOURCE_DIR}/app/park.h
+        ${CMAKE_SOURCE_DIR}/app/park_cells.h
+        ${CMAKE_SOURCE_DIR}/safety/park_mon.c ${CMAKE_SOURCE_DIR}/safety/park_mon.h
+        ${CMAKE_SOURCE_DIR}/bsw/drv/drv_park.h
+        ${CMAKE_SOURCE_DIR}/bsw/drv/drv_reqlaw.c ${CMAKE_SOURCE_DIR}/bsw/drv/drv_reqlaw.h
+        ${CMAKE_SOURCE_DIR}/bsw/drv/drv_jobs.c ${CMAKE_SOURCE_DIR}/bsw/drv/drv_jobs.h
+        ${CMAKE_SOURCE_DIR}/bsw/drv/drv_groupa.c ${CMAKE_SOURCE_DIR}/bsw/drv/drv_groupa.h
+        ${CMAKE_SOURCE_DIR}/bsw/drv/drv_cells.h)
+    string(REPLACE ";" "," PKS_OUTPUT_PATHS_ARG "${PKS_OUTPUT_PATHS}")
+    add_test(NAME pksens_readonly_scan
+        COMMAND ${CMAKE_COMMAND} "-DFILES=${PKS_OUTPUT_PATHS_ARG}"
+            -P ${CMAKE_SOURCE_DIR}/tests/unit/pksens_readonly_scan.cmake)
+    add_test(NAME pksens_readonly_scan_negative
+        COMMAND ${CMAKE_COMMAND} -DFILES=${CMAKE_SOURCE_DIR}/tests/unit/sh_guard_pksens.c
+            -P ${CMAKE_SOURCE_DIR}/tests/unit/pksens_readonly_scan.cmake)
+    set_tests_properties(pksens_readonly_scan_negative PROPERTIES
+        PASS_REGULAR_EXPRESSION "park sensor read-only violation")
+    add_test(NAME pks_sh_guard_control
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard_pksens.c)
+    add_test(NAME pks_sh_guard_output
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_PKS_OUTPUT ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard_pksens.c)
+    set_tests_properties(pks_sh_guard_output PROPERTIES
+        PASS_REGULAR_EXPRESSION "park position sensor is read-only")
     add_executable(test_dump tests/unit/test_dump.c app/bench_dump.c tests/unit/stub_plat.c)
     add_executable(transcript tests/unit/transcript.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c

@@ -13,6 +13,10 @@
  * array path 0xA3646 → 0xBC0F4 (pass-through per the park decode: the slot
  * getters of app/park.c return 0xE8888's value directly).
  */
+/* READ-ONLY park position sensor (2026-11-16): this translation unit is
+ * an output path — the sensor headers refuse to compile here (and the
+ * ctest pksens_readonly_scan fails if this file names a sensor cell) */
+#define TCU_OUTPUT_PATH 1
 #include "app/park_law.h"
 #include "app/park_cells.h"
 
