@@ -1234,3 +1234,23 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
     - fatal > 0 → complement handling;
     - 0x847FE ≠ FF → the initial-data finding;
     - any change in target, outputs or current with the magnet → "read-only" refuted: stop.
+
+**r03m BENCH RESULT (2026-11-16 17:31 install, blocks 0x40000 `04350a6e09ff9f11` + 0x50000 `080e9f07895b33d6`, all 21 verifies OK; power-on ≈ 17:33:50 under the ammeter "=== r03m boot"; witnesses 17:35 `/tmp/witness_r03m.log`, `/tmp/witness_pksens_r03m.log`; magnet watch 17:35:31 `/tmp/pksens_watch.log`) — PREDICTION CONFIRMED: THE STOCK PARK SENSOR LOGIC RUNS READ-ONLY, EVERY STATE AS PREDICTED, NO OUTPUT EFFECT** [O]:
+- **As r03l:**
+  - boots = 1; 'c', J2 9020, mode 1, C7, gate 1; Auto-P = the dump (E549 00 08 17, D6D6 08 F7);
+  - the P set; bus A 8 110 cyclics, 0 slips; RSPI re-entries 0; job errors 0;
+  - current 1.82 → 1.87 A at 36 °C (r03l 1.81 → 1.86).
+  - One A8 OK read of 0x37 is a mid-round read (the other round 0x77; ERR and job errors 0).
+- **At rest, every §8 prediction matched:**
+  - 0x907E8 = 0x93942 = 0x2313 (8 979 mV); AN5/AN6 6 266/6 268; ratio [2]/[3] 0x1B42/0x1B44; bands 02 02 03 03 02 02;
+  - 0x93AC4 00×6 / 0x93ACA FF×6; 0x94160..69 = 00 03 08 00 … 01; 0x847F4..803 = 00×8 FF×8;
+  - pair EA28 = 00064A1C, +4/+8 = 64 / FFFFFF9B; **EA40..45 = 03 FC 02 FD 04 FB**;
+  - **group 98 = 00 01 01** (P0850 m0 failed), fail count = calls ≈ 100/s, pass 0; fatal and f221 counters 0.
+- **Magnet test (the user, several minutes):**
+  - **AN5 alone → position 01** (01 FE 00 FF 00 FF), group 98 00 00 01 (passing);
+  - **AN6 alone → position 00**;
+  - **both → position 02, then after 1.0 s status 10 → position 03, qualifier 02, group 98 = 01 01 01 (P0850 m1 failed)**;
+  - release → back to 03 / 04 / P0850 m0;
+  - chip view 0x90958 tracked every switch (04 / 08 / 0C).
+- **Read-only held:** across ~70 sensor transitions the target (E549), D6D6 and the request-law modes never changed (the watch flags any output-side change; zero flagged). The ammeter was not on during the magnet watch (it uses the same port); before it, the current was flat.
+- **Open (unchanged):** which element is mechanically "Park". The sensor stays out of `range.c` until the real mechanism can be moved.
