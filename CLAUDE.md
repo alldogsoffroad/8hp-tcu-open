@@ -1114,3 +1114,43 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
   - [O bench 2026-11-14] AN6 switched (mostly together with AN5) only under the magnet at the park Hall sensor;
   - a speed sensor is a pulse input (Timer F), as the output sensor on F12 showed.
 - [I] Turbine speed is most likely TIF13, whose input is live (3 edges at power-up). This sensor did not switch on steel at its face. Candidates: it needs the wheel's tooth gap and speed, it is not connected in this setup, or it is not the sensor that was tested.
+
+**PARK POSITION + OUTPUT SPEED DECODE (2026-11-16, read-only subagent, `~/tcu_sweep/park_position_speed_decode.md`; the key claims re-checked this session against the flash bytes) — EVERY STOCK CONSUMER READS POSITION 1 (CONTACT A / AN5 ALONE) AS PARK ENGAGED; THE BENCH'S "MAGNET = OUT OF PARK" CONFLICTS, AND THE CONFLICT IS OPEN** [O bytes, I where marked]:
+- **Re-checked here [O]:**
+  - Position mapping 0x141C7A–0x141CAC: status 0 → qualifier 0; A (+0x0C) = 0 and B (+0x10) = 1 → 0; A = 1 and B = 0 → 1; else 2.
+  - **P1B13** 0xC5E12–0xC5E22: fails on model D61A[0x06] == 4 AND position ≠ 1.
+  - **P1B14** 0xC5E8A–0xC5E98: fails on position == 1 AND model == 1.
+  - Arbiter mode 4 0xA57E6–0xA5846: lever ≠ 8, D646 ≤ [cal] and 0xA7716() (D5F8) == 1 → target 8 / reason 0x15; else lever 7/6/5 → 6 / 0x16; else D646 ≤ [cal] → 8 / 0x17.
+  - Cal 0x1918DF = 01 (signal A ← channel 1), 0x1918E0 = 00 (signal B ← channel 0); safety ppr 0x195DCD/CE = 0x28/0x1E.
+- **Model encoding [O subagent, 0xE89DE; consistent with r03k's park-check]:** 4 = engaged (the dump's P state), 1 = released (150 ms after the request drops). So P1B13 = "model says engaged but the sensor does not say 1" and P1B14 = "model says released but the sensor says 1": **the stock expects position 1 in Park**. The other consumers agree [O subagent]: 0xA4FC4 (P confirmed only with D5F8 = 1), 0xA4F0C / 0xA8336 (flag when the target is P and D5F8 = 0), 0xC5912 (group 192, faults on 1 → 0/2 transitions while P is commanded). Arbiter mode 2 (not selected in this calibration) treats position 0 as not-P.
+- **The conflict:** if "magnet at the sensor = out of Park" (the user's 2026-11-16 inspection) is right, the stock would set P1B14 while driving, P1B13 while parked, and force P at every stop in D. A stationary P → D release in mode 4 needs D5F8 = 0. No other release path is decoded: the pre-mode rows need D650 > 320 plus lever-object fields with no decoded writer. Candidates: (a) the mechanical reading is the other way round (the magnet sits on contact A in Park); (b) an undecoded writer of the lever object 0xFFF8304C. **Discriminator:** move the real park mechanism with the valve body fitted and read AN5/AN6/0x90958. **Until then the sensor stays read-only and out of `range.c`.**
+- **Group 98:** positions 0 and 1 are equally valid. P0850 m0 = both inactive; m1 = both active > 100 ticks; P07B2/P07B8 = contact A/B electrical.
+- **Output speed path [O subagent]:** TIF12 → 0x7C3AA → 0x93048 → slot 0x4C790 → 0xFFF8E7A0+0x10 → 0x143686 rpm → 0xFFF8E7C0 → 0x14C23E selection → **0xFFF8EE6E = D646**; turbine TIF13 → E7A0+0x48 → 0x14C818 → 0xFFF8EF06. **This confirms today's channel fix (output = channel 0) from the bytes.**
+  - 0x93044/0x93048 are time words, not speeds (dump FFFFFFFF).
+  - On a sensor fault, D646 takes a substitute 0xFFF8E798 (321) × 0xFFF955B4 / 10000 with quality 1 ([I] wheel speed × axle ratio 3.21). On a supply fault the value is held (quality 2). With no pulses it decays to 0 (forced 0 below 5 rpm). The arbiter never reads the quality.
+  - **The safety layer uses 40 pulses/rev for output and 30 for turbine** (cal 0x195DCD = 0x28, 0x195DCE = 0x1E [O]); our speed path uses Timer F's 60. If these are pulses per revolution [I], **our output rpm reads 2/3 of the stock's D646**, so our 80 rpm "moving" threshold trips at 1.5× the stock's shaft speed. Resolve before any shaft turns.
+- **CORRECTIONS (subagent, not yet applied to specs):**
+  - spec 13: 0xC5E02 is P1B13 (model 4 && position ≠ 1), not a transition timer; the transition logic is 0xC5912 (group 192); D61A[0x2E]'s producer is 0x141BA2;
+  - park_sensor_decode §2.4: candidate (a) "position 1 is abnormal" is refuted;
+  - spec 02/07: signals A/B are time words, not speeds.
+
+**REFERENCE: Land Rover 8HP70 workshop overview (2026-11-16, `docs/reference/8hp70-landrover-l320-overview.md`)** [M, first-gen 8HP70 / Land Rover TCM — a different variant]:
+- **Coil resistances at 20 °C: EPRS 5.05 Ω, MV1 10–11 Ω, MV2 (park hold) 25 Ω.** These match our supply-step estimates: release ≈ 11 Ω, hold ≈ 20 Ω, pressure ≈ 7 Ω warm. **Spec 12's "~25 Ω" is the park-hold coil**, which resolves the r03e conflict.
+- **Park lock:** a torsion spring engages park; main pressure on the piston releases it; MV2's claws latch the piston out of park while energised. This matches the ported stock law.
+- **Speed sensors:** turbine and output are Hall sensors inside the mechatronic.
+- **No park position sensor in this variant**, so it cannot settle our AN5/AN6 polarity question.
+- **EPRS polarity:** C and SYS fall with current, A/B/D/E/WK rise. This **conflicts with spec 12 §1.1 (FCA) on D and E** — open, not applied.
+- Also: ratios, clutch-B standstill decoupling, 32 bar relief.
+
+**REFERENCE: ATRA 8HP45/70 seminar (2026-11-16, `docs/reference/8hp45-70-atra-seminar.md`, VW/Audi part codes)** [M]:
+- **G182 input speed sensor reads a MAGNETIC RING** (alternating poles on the drum next to the P2 planet). That is why steel never triggered the turbine-side sensor, and why the user's magnet grabs the turbine-side drum at even spacing.
+- **G195 output speed sensor reads the parking-gear teeth** (steel), which matches TIF12.
+- **G747 "Parking Lock Sender" is the park position sensor**, which is AN5/AN6.
+- **Next zero-flash test:** magnet with alternating poles across G182, combined watch on F13 (the 15:27 magnet test watched only AN channels).
+
+**TIF13 IS THE TURBINE (INPUT) SPEED SENSOR (2026-11-16 16:31–16:34, one-process combined watch on r03k, `/tmp/combo_watch2.log`)** [O]:
+- A magnet, flipped between passes, was passed across the input speed sensor (G182, which reads a magnetic ring). **F13 counted +1 per pass (13 → 19), with nothing else moving:** AN0–27, 0x90958 and F12 all stayed put.
+- Between 15:50 and 16:31, F13 had also taken 10 unwatched edges, most likely during the user's handling.
+- **Both speed channels are now bench-confirmed:** output = TIF12 (G195, parking-gear teeth), turbine = TIF13 (G182, magnetic ring). TIF14 is unused (stock).
+- This matches the source fix (`main.c` {turbine 1, output 0}); the comment and spec 02 now cite this test.
+- AN5/AN6 are only the park sensor (G747).

@@ -142,7 +142,7 @@ channels in use. Which of A/B is turbine and which is output could not be resolv
 60 pulses per revolution is a calibration value and must be confirmed for the target
 transmission.
 
-**Bench resolution (2026-11-16) [O]:** steel passed across the sensor at the rear of the transmission (the output speed sensor, identified by the user) counted on TIF12 only (ECNTBF(12) +1 per pass, 7 passes; F0–F15 otherwise unchanged). So **channel 0 = TIF12 = output speed**, and stock signal B (`0xFFF93048`) is output speed. Signal A (`0xFFF93044`, TIF13) is turbine speed [I: the only other routed channel; not bench-confirmed]. The path from A/B into the safety layer's `0xFFF8EE6E` / `0xFFF8EF06` (spec 07 §7.1) is still not decoded.
+**Bench resolution (2026-11-16) [O]:** steel passed across the sensor at the rear of the transmission (the output speed sensor, identified by the user) counted on TIF12 only (ECNTBF(12) +1 per pass, 7 passes; F0–F15 otherwise unchanged). So **channel 0 = TIF12 = output speed**, and stock signal B (`0xFFF93048`) is output speed. Signal A (`0xFFF93044`, TIF13) is turbine speed [O bench 2026-11-16: a magnet with alternating poles passed across the input speed sensor counted on TIF13 only, +1 per pass, 6 passes; that sensor reads a magnetic ring, so steel does not trigger it]. The path from A/B into the safety layer's `0xFFF8EE6E` / `0xFFF8EF06` (spec 07 §7.1) is still not decoded.
 
 ### 4.1a Stock register values and project implementation (M2)
 

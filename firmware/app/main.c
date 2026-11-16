@@ -36,7 +36,8 @@
  * channel 0 = TIF12 -> stock signal B (0xFFF93048), channel 1 = TIF13 -> signal A (0xFFF93044).
  * Output = channel 0 [O bench 2026-11-16: the steel test counted on F12 only, and the user
  * identified that sensor as the output speed sensor at the rear of the transmission].
- * Turbine = channel 1 [I: the stock's only other routed channel; not bench-confirmed].
+ * Turbine = channel 1 [O bench 2026-11-16: a magnet with alternating poles passed across the
+ * input speed sensor (G182, which reads a magnetic ring) counted on F13 only].
  * Before 2026-11-16 this was turbine 0 / output 1, which fed TIF13 into the park arbiter. */
 static const sensors_cfg_t s_sensors_cfg = { 1u, 0u, { 60u, 60u, 60u } };
 
