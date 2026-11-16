@@ -32,8 +32,13 @@
 #include "app/meas_table.h"
 #include "app/park.h"
 
-/* [I] shaft assignment of the speed channels (spec 02 section 4.1) */
-static const sensors_cfg_t s_sensors_cfg = { 0u, 1u, { 60u, 60u, 60u } };
+/* Shaft assignment of the speed channels (spec 02 section 4.1), the stock calibration's routing:
+ * channel 0 = TIF12 -> stock signal B (0xFFF93048), channel 1 = TIF13 -> signal A (0xFFF93044).
+ * Output = channel 0 [O bench 2026-11-16: the steel test counted on F12 only, and the user
+ * identified that sensor as the output speed sensor at the rear of the transmission].
+ * Turbine = channel 1 [I: the stock's only other routed channel; not bench-confirmed].
+ * Before 2026-11-16 this was turbine 0 / output 1, which fed TIF13 into the park arbiter. */
+static const sensors_cfg_t s_sensors_cfg = { 1u, 0u, { 60u, 60u, 60u } };
 
 /* F2 (protocol_audit §1/F2): how long the ATU tick must be quiet before the
  * CMT fallback re-engages (the audit's "> 10 ms" un-retire threshold). The
