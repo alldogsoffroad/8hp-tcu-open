@@ -40,6 +40,8 @@ pressure solenoids.** That resolves the conflict noted at r03e.
 - **C, SYS:** pressure *falls* with current (grey cap; 4.7 → 0 bar).
 - **Conflicts with spec 12 §1.1 (FCA), which lists D and E as normally open.** Different variant
   or different source. Do not change spec 12 on this document alone.
+- **Resolved for our unit (2026-11-16):** our TCM's own actuator objects type D and E as normally open
+  (spec 12 §5 table, [O]). The Land Rover statement is variant-specific.
 
 ## Park lock (p. 12)
 - Shift-by-wire, no Bowden cable. An emergency release cable is provided.

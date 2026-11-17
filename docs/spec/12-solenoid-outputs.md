@@ -278,6 +278,8 @@ override is active, `0xBB100` supplies the current directly instead):
 | `0xFFF8B21C` | 5 | 0 | WK | supply, `0x107FA6` |
 | `0xFFF8B22C` | 6 | 1 | Sys | supply |
 
+**Polarity cross-check (2026-11-16):** the Land Rover 8HP70 workshop extract (`docs/reference/8hp70-landrover-l320-overview.md`, a first-generation 8HP70 with a Land Rover TCM [M]) says D and E raise pressure with current and only C and Sys fall. **This TCM's own calibration types C, D, E and Sys as type 1 (normally open) [O, this table]**, which agrees with §1.1. That is consistent with the stock P set driving D, B, E and C at 850 mA in P (B normally closed → applied; C, D, E normally open → held off). For this unit, the firmware's type byte rules; the Land Rover statement is taken as variant-specific.
+
 **3. Current calculation.** Element regulators (`0x107C3E`); WK and Sys (`0x107FE0`):
 
 ```

@@ -136,13 +136,19 @@ calibration:
 | — | channel 2 = TIF14 is not routed to the application in this calibration |
 
 Both signals are then gathered with many others into the application's input structure.
+
+**CORRECTION (2026-11-16) [O]** (`~/tcu_sweep/park_position_speed_decode.md`, re-checked against the bytes 2026-11-16):
+- A/B (`0x93044`/`0x93048`) are **not speeds**. They are u32 copies of word +4 of the per-channel record `0xFFF90444 + 12·ch` (a time base, [I] µs; the dump reads FFFFFFFF at rest).
+- The safety layer's `0x143686` turns them, with the edge counts `0x940F0`/`0x940EC`, into rpm, using 40 (output, B) / 30 (turbine, A) pulses per revolution.
+- `0x14C23E` selects that rpm into output speed `0xFFF8EE6E`; turbine goes via `0x14C818` → `0xFFF8EF06`.
+- On a sensor fault, output speed is a substitute 0xFFF8E798 × 0xFFF955B4 / 10000 ([I] wheel speed × axle ratio).
 [I] The 8HP family has two transmission speed sensors (turbine and output), consistent with two
 channels in use. Which of A/B is turbine and which is output could not be resolved statically
 (the application layer accesses them through indirect calls) — **open, resolve on the bench**.
 60 pulses per revolution is a calibration value and must be confirmed for the target
 transmission.
 
-**Bench resolution (2026-11-16) [O]:** steel passed across the sensor at the rear of the transmission (the output speed sensor, identified by the user) counted on TIF12 only (ECNTBF(12) +1 per pass, 7 passes; F0–F15 otherwise unchanged). So **channel 0 = TIF12 = output speed**, and stock signal B (`0xFFF93048`) is output speed. Signal A (`0xFFF93044`, TIF13) is turbine speed [O bench 2026-11-16: a magnet with alternating poles passed across the input speed sensor counted on TIF13 only, +1 per pass, 6 passes; that sensor reads a magnetic ring, so steel does not trigger it]. The path from A/B into the safety layer's `0xFFF8EE6E` / `0xFFF8EF06` (spec 07 §7.1) is still not decoded.
+**Bench resolution (2026-11-16) [O]:** steel passed across the sensor at the rear of the transmission (the output speed sensor, identified by the user) counted on TIF12 only (ECNTBF(12) +1 per pass, 7 passes; F0–F15 otherwise unchanged). So **channel 0 = TIF12 = output speed**, and stock signal B (`0xFFF93048`) is output speed. Signal A (`0xFFF93044`, TIF13) is turbine speed [O bench 2026-11-16: a magnet with alternating poles passed across the input speed sensor counted on TIF13 only, +1 per pass, 6 passes; that sensor reads a magnetic ring, so steel does not trigger it]. The path from A/B into the safety layer's `0xFFF8EE6E` / `0xFFF8EF06` (spec 07 §7.1) is now decoded (correction above).
 
 **Pulses per revolution, project (2026-11-16):** the stock's speed computation `0x143686`, which feeds output speed `0xFFF8EE6E` (D646) and turbine speed `0xFFF8EF06`, uses **40 for output and 30 for turbine** (cal `0x195DCD` = 0x28, `0x195DCE` = 0x1E) [O bytes; `~/tcu_sweep/park_position_speed_decode.md`], not the Timer F table's 60. The project now uses 40 (channel 0, output) / 30 (channel 1, turbine) / 60 (channel 2, unused), on the user's decision to follow the stock. Not physically counted: parking-gear teeth and magnetic-ring poles remain to be checked when the transmission is open.
 

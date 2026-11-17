@@ -163,6 +163,13 @@ module).
 The neighbouring monitor for **P1B13-00** (group 114) is in `0xC5C7C` / `0xC5E02`; it watches
 transitions of the range code (from 5, 6 or 7 to 8 = P) over a timer.
 
+**CORRECTION (2026-11-16) [O]** (`~/tcu_sweep/park_position_speed_decode.md`, re-checked against the bytes 2026-11-16):
+- `0xC5E02` reports group 114 (**P1B13**) with failed = model `[0x06]` == 4 (engaged) **and** position `[0x2E]` ≠ 1 (bytes `0xC5E12–0xC5E22`). It is not a transition timer; the range-transition logic is `0xC5912` (group 192).
+- P1B14 (`0xC5E78`) fails on position == 1 **and** model == 1 (released) (bytes `0xC5E8A–0xC5E98`).
+- Model encoding (`0xE89DE`): 4 = engaged, 1 = released.
+- `[0x2E]` is the park **position code** produced by `0x141BA2` (not `0x141A2C`, and not a park request): A alone → 1, B alone → 0, both active → 2, otherwise 3. The stock expects 1 in Park.
+- Both checks are enabled by `0xC5E40`.
+
 ## 5. Open items
 
 1. Meaning of `0xFFF8D61A[0x06]` and of the enable input at `0xFFF84ADC + 0x10`; the struct

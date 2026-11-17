@@ -152,7 +152,8 @@ when `0xFFF893E8` is 1 or 2 and `D62F` ≠ 1: value 7 → 7 (or 6 when the rever
 
 ## 5. Safety-layer inputs [O]
 
-- `0xFFF8EA40` (`D61A[0x2E]`) and `0xFFF8EA41` are produced by `0x141A2C` from the object at
+- **CORRECTION (2026-11-16) [O]** (`~/tcu_sweep/park_position_speed_decode.md`, re-checked against the bytes 2026-11-16): the producer of `0xFFF8EA40` is the pair evaluator `0x141B42` → `0x141BA2` on the object `0xFFF8EA28`. It produces position (A = AN5 alone → 1, B = AN6 alone → 0, both → 2, else 3), qualifier `0xFFF8EA42` and status `0xFFF8EA44`. The text below (`0x141A2C`) describes another object (`0xFFF8E788`). The project now ports `0x141B42/0x141BA2` read-only (`safety/park_pair.c`, r03m). Arbiter modes, decoded to the byte: mode 1 = sensor only, mode 2 also maps position 0 → 6, mode 3 = moving first; this calibration selects mode 4.
+- (Superseded) `0xFFF8EA40` (`D61A[0x2E]`) and `0xFFF8EA41` are produced by `0x141A2C` from the object at
   `0xFFF8EA38`: depending on a calibration flag, from status byte `0xFFF8EA3C/3D`
   (`0xFFF84A1F/20`, written by the status handler `0x7C4F6`, which also reports **fault group
   33**) or from `0xFFF8EA3E/3F` (`0xFFF92FE6/7`). Value 2 in `+9` marks the input invalid.
