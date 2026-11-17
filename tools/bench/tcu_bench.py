@@ -97,6 +97,22 @@ class Buses:
         with self._lock:                  # park-check sends from a second thread
                 self.get(n).send(can.Message(arbitration_id=arb_id, data=data, is_extended_id=arb_id > 0x7FF))
 
+    def start_drain(self):
+        """Read every port continuously from background threads (2026-11-17). If the host stops
+        reading a Teensy port, the Teensy's USB serial write blocks until its transmit timeout
+        (~70 ms [I: Teensyduino usb_serial TX_TIMEOUT_MSEC]) and its loop stops sending OUR frames
+        on both CAN channels - the lever-sim gaps of the r03r shadow-check (the TCU counted
+        counter errors on bus 1 and 0x210 timeouts at each moment the script stopped reading).
+        After this call get(n).recv() reads from the drained queue; send() is unchanged."""
+        import queue
+        for n, real in list(self.bus.items()):
+            if isinstance(real, _DrainedBus):
+                continue
+            self.bus[n] = _DrainedBus(real, queue)
+
+    def drain_stats(self):
+        return {n: (b.dropped, b.got) for n, b in self.bus.items() if isinstance(b, _DrainedBus)}
+
     def shutdown(self):
         for b in self.bus.values():
             try:
@@ -104,6 +120,54 @@ class Buses:
             except Exception:
                 pass                      # already closed (canstat uses the raw ports)
         self.bus = {}
+
+
+class _DrainedBus:
+    """A python-can bus read by a background thread into a bounded queue (see Buses.start_drain)."""
+    def __init__(self, real, queue_mod):
+        self.real = real
+        self.q = queue_mod.Queue(maxsize=20000)
+        self._empty = queue_mod.Empty
+        self.dropped = self.got = 0
+        self.stop = threading.Event()
+        self.t = threading.Thread(target=self._run, daemon=True)
+        self.t.start()
+
+    def _run(self):
+        while not self.stop.is_set():
+            try:
+                m = self.real.recv(0.01)
+            except Exception:
+                if self.stop.is_set():
+                    return
+                continue
+            if m is None:
+                continue
+            self.got += 1
+            try:
+                self.q.put_nowait(m)
+            except Exception:                      # full: drop the oldest, keep the newest
+                try:
+                    self.q.get_nowait(); self.dropped += 1
+                    self.q.put_nowait(m)
+                except Exception:
+                    pass
+
+    def recv(self, timeout=None):
+        try:
+            if timeout == 0:
+                return self.q.get_nowait()
+            return self.q.get(timeout=timeout)
+        except self._empty:
+            return None
+
+    def send(self, msg, timeout=None):
+        return self.real.send(msg)
+
+    def shutdown(self):
+        self.stop.set()
+        self.t.join(0.5)
+        self.real.shutdown()
 
 
 # ----------------------------------------------------------------------------- ISO-TP / UDS
@@ -1256,6 +1320,8 @@ def cmd_park_check(b, args):
     With --hw the demands are expected to reach the drivers (an image built with
     DRV_GA_STAGE 1): release = bus-A ch 7 at 1.0 A (under the 30 s accumulated on-time limit,
     then latched off until power-off), hold = TOE31. Without --hw only the logic is checked."""
+    b.start_drain()     # keep the Teensy ports drained (lever-sim gaps, 2026-11-17)
+
     addr = meas_table_addr(args.elf, 54)
     if args.hw:
         print("PARK OUTPUTS WILL BE DRIVEN (bus-A ch 7 1.0 A + TOE31) WHENEVER THE LEVER IS R/N/D")
@@ -1405,6 +1471,8 @@ def cmd_shadow_check(b, args):
     the mode-1 switch, ~0.67 s after power-on in our firmware; the stock's U1267 window is
     0.5 s from there). Without it the TCU has been up without lever frames, U1267 is already
     failed in the shadow, and the shadow stays 8 whatever the sims."""
+    b.start_drain()     # keep the Teensy ports drained (lever-sim gaps, 2026-11-17)
+
     m_addr = meas_table_addr(args.elf, 54)
     rs_addr, rs_size = elf_sym(args.elf, "_s_rs")
     if rs_size != RS_SIZE:
