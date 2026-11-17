@@ -1359,3 +1359,18 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
     - Sys request 0x4E20; WK 0;
     - element currents 500/8500 by type.
   - [high] All M5 witnesses 0. Any guard count > 0 → the producer disagrees with the stock on the SH target: stop and read.
+
+**r03n BENCH RESULT (2026-11-16 18:51 install, blocks 0x40000 `2d6ad9edab3eecb7` + 0x50000 `13df7b9cdcf65280`, all 21 verifies OK; power-on ≈ 18:56 under the ammeter "=== r03n boot"; witnesses 18:57 `/tmp/witness_r03n.log`, `/tmp/witness_m5_r03n.log`) — PREDICTION CONFIRMED: THE STOCK REQUEST PRODUCER RUNS ON THE TARGET AND DRIVES THE P SET, WIRE-IDENTICAL** [O]:
+- **Wire and current as r03m:**
+  - RQLAW modes 03×7 01, letters '!'×7, currents `01F4 2134 2134 2134 2134 01F4 01F4 0000`;
+  - bus A 8 647 cyclics, 0 slips; RSPI re-entries 0; job errors 0;
+  - 'c', J2 9020, C7, mode 1; Auto-P = the dump; boots = 1;
+  - current 1.83 → 1.87 A over 10–80 s (r03m 1.82 → 1.87).
+  - One A8 OK read 0x27 is a mid-round read (the other 0x77; ERR 0).
+- **The producer's cells = the dump, value for value (both rounds):**
+  - 0xFFF84B78 = `01F4 2134 2134 2134 2134 01F4 01F4 0000…`, complements `FE0B DECB … FFFF`;
+  - request objects A/C/D/E `0000 0000 0000 00 01 00 04`, **B `4E20 4E20 4E20 00 01 00 04`**, Sys `4E20 … 00 01 15 04`, WK `0000 … 00 01 16 04`;
+  - input mirrors 03 / 00 / 01 / 4E20.
+- **All M5 witnesses (guard, unported, faults 0x1C4/0x19F/0x19A) = 0.**
+- **M5-0 done:** the solenoid requests now come from the stock's own producer (holder + shift-matrix table + on/off current law), still fed by compile-time constants.
+- **Next — M5-1 (block-0 gear 1, A instead of B):** decode the element switch-on transient first (rule 2; the open point from the port).
