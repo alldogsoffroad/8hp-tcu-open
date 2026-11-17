@@ -78,6 +78,21 @@ _Static_assert(DRV_RQ_P7 == ((DRV_PARK_LIVE) ? DRV_PARK_ON_REQ : 0u),
 #  define DRV_RQ_PSET_TABLE { DRV_RQ_P0, DRV_RQ_P1, DRV_RQ_P2, DRV_RQ_P3, DRV_RQ_P4, \
                               DRV_RQ_P5, DRV_RQ_P6, DRV_RQ_P7, 0u, 0u }
 #  define DRV_RQ_PSET 1
+/* M5-0 (2026-11-16, ~/tcu_sweep/m5_0_port.md): on the flashed application
+ * channels 0–6 come from the ported stock request PRODUCER (app/rq_prod.c,
+ * 0xDC4C4 → 0xE53DA → 0x107CFC → 0xD9F70; via bsw/drv/drv_rqprod.h) fed
+ * with the driving dump's inputs as compile-time constants (app/rq_prod.h).
+ * DRV_RQ_P0..P6 above stay the r03f values: the request law's GUARD forces
+ * any producer value other than 500 / 8500 to them (counted, .m5_wit), and
+ * they remain the RAM application's requests (its 64 KB limit). */
+#  if !defined(TCU_RAM_APP)
+#    define DRV_RQ_USE_PRODUCER 1
+#  endif
+_Static_assert((DRV_RQ_P0 == 500u || DRV_RQ_P0 == 8500u) && (DRV_RQ_P1 == 500u || DRV_RQ_P1 == 8500u) &&
+               (DRV_RQ_P2 == 500u || DRV_RQ_P2 == 8500u) && (DRV_RQ_P3 == 500u || DRV_RQ_P3 == 8500u) &&
+               (DRV_RQ_P4 == 500u || DRV_RQ_P4 == 8500u) && (DRV_RQ_P5 == 500u || DRV_RQ_P5 == 8500u) &&
+               (DRV_RQ_P6 == 500u || DRV_RQ_P6 == 8500u),
+               "drv_reqlaw: the guard's fallback values are mode-1 currents (500 / 8500)");
 #else
 #  ifndef DRV_RQ_REQUEST_SOURCE
 #    define DRV_RQ_REQUEST_SOURCE 1
@@ -86,7 +101,24 @@ _Static_assert(DRV_RQ_P7 == ((DRV_PARK_LIVE) ? DRV_PARK_ON_REQ : 0u),
  * writer 0x7B6D8) and the 0x837E0 adaptive-correction stand-in value */
 void drv_rq_request_set(uint8_t ch, uint16_t req01ma);
 void drv_rq_corr_inject(uint8_t ch, int16_t corr);
+#  if defined(DRV_RQ_USE_PRODUCER) && DRV_RQ_USE_PRODUCER
+/* host only (test executables built with -DDRV_RQ_USE_PRODUCER=1): take
+ * channels 0–6 from the producer (true, the target's configuration) or
+ * from CELL_RQ_REQ (false, the r03f-style constant requests), so one
+ * binary can compare the two on the wire */
+void drv_rq_prod_host_select(bool on);
+#  endif
 #endif
+#ifndef DRV_RQ_USE_PRODUCER
+#  define DRV_RQ_USE_PRODUCER 0
+#endif
+
+/* the r03f value of channel ch (0..6), the guard's fallback: A 500, D/B/E/C
+ * 8500, WK 500, Sys 500 (SH: asserted equal to DRV_RQ_P0..P6) */
+#define DRV_RQ_R03F_TABLE { 500u, 8500u, 8500u, 8500u, 8500u, 500u, 500u }
+
+/* M5-0 witness (ours, .m5_wit): producer values the guard replaced */
+uint32_t drv_rq_m5_guard_n(void);
 
 /* THE RELEASE ON-TIME LIMIT (ours, not stock; user D-M4-7 2026-11-14:
  * "30 seconds"). On a DRY bench the park-release coil heats (~11 W, no

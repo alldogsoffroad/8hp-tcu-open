@@ -32,6 +32,9 @@
 _Static_assert(DRV_RQ_REQUEST_SOURCE == 0,
                "drv_reqlaw: SH builds carry no solenoid request source");
 #endif
+#if DRV_RQ_USE_PRODUCER
+#include "bsw/drv/drv_rqprod.h"
+#endif
 
 /* ── calibration (flash 0x19xxxx, read through the 0x66xxx tables) ────── */
 #define CAL_CHIP_EN     0x1Fu       /* 0x1918C1 (0x8FD94, pool 0x8FE8C) */
@@ -65,6 +68,14 @@ _Static_assert(DRV_RQ_REQUEST_SOURCE == 0,
 static volatile uint32_t s_rq_ilock_n WIT;
 static volatile uint32_t s_rq_cguard_n WIT;
 static volatile uint32_t s_rq_f238_n WIT;
+
+/* M5-0 guard (.m5_wit at 0xFFF84D40, with app/rq_prod.c's counters) */
+#if defined(__sh__) && DRV_RQ_USE_PRODUCER
+static volatile uint32_t s_m5_guard_n __attribute__((section(".m5_wit")));
+#else
+static volatile uint32_t s_m5_guard_n;
+#endif
+uint32_t drv_rq_m5_guard_n(void) { return s_m5_guard_n; }
 
 uint32_t drv_rq_ilock_n(void)  { return s_rq_ilock_n; }
 uint32_t drv_rq_cguard_n(void) { return s_rq_cguard_n; }
@@ -105,8 +116,42 @@ uint16_t drv_rq_window_step(drv_rq_win_t *w, uint32_t now_ms, bool at_u, uint16_
 static drv_rq_win_t s_rq_rel_win;               /* .bss: cleared at boot */
 #endif
 
+#if DRV_RQ_USE_PRODUCER
+#if defined(__sh__)
+#define rq_prod_on() true
+_Static_assert(DRV_RQ_P0 == 500u && DRV_RQ_P1 == 8500u && DRV_RQ_P2 == 8500u &&
+               DRV_RQ_P3 == 8500u && DRV_RQ_P4 == 8500u && DRV_RQ_P5 == 500u &&
+               DRV_RQ_P6 == 500u,
+               "drv_reqlaw: DRV_RQ_R03F_TABLE is DRV_RQ_P0..P6");
+#else
+static bool s_rq_prod_host = true;
+void drv_rq_prod_host_select(bool on) { s_rq_prod_host = on; }
+#define rq_prod_on() s_rq_prod_host
+#endif
+
+/* M5-0: the producer's channel 0..6 current through OUR GUARD (not stock):
+ * only the two mode-1 currents pass; anything else (a value outside
+ * {500, 8500}, or a complement mismatch, RQ_PROD_INVALID) is replaced by
+ * the r03f value of that channel and counted */
+static uint16_t rq_prod_guarded(uint8_t ch)
+{
+    static const uint16_t R03F[RQ_PROD_NCH] = DRV_RQ_R03F_TABLE;
+    const uint16_t v = rq_prod_ch(ch);
+    if (v == 500u || v == 8500u) {
+        return v;
+    }
+    s_m5_guard_n++;
+    return R03F[ch];
+}
+#endif
+
 static inline uint16_t rq_request(uint8_t ch)
 {
+#if DRV_RQ_USE_PRODUCER
+    if (ch < RQ_PROD_NCH && rq_prod_on()) {
+        return rq_prod_guarded(ch);
+    }
+#endif
 #if DRV_RQ_REQUEST_SOURCE
     return CELL_RQ_REQ[ch];
 #elif defined(__sh__) && defined(DRV_RQ_PSET)
@@ -238,6 +283,14 @@ static void rq_letters(uint8_t ch)
 /* ── 0x83DB0: the per-channel gates ───────────────────────────────────── */
 void drv_rq_law(void)
 {
+#if DRV_RQ_USE_PRODUCER
+    /* M5-0: one producer pass (0xDC4C4, the actuator methods → 0xFFF84B78)
+     * before the law reads its requests (ours: the stock runs it in its
+     * own application task; constant inputs make the cadence immaterial) */
+    if (rq_prod_on()) {
+        rq_prod_step();
+    }
+#endif
     uint16_t full_mask = 0u;                    /* @(4,r15) → 0x9397C */
     uint16_t fault_mask = 0u;                   /* @(8,r15) → 0x9397A */
 
@@ -512,4 +565,8 @@ void drv_rq_init(void)
     s_rq_ilock_n = 0u;
     s_rq_cguard_n = 0u;
     s_rq_f238_n = 0u;
+    s_m5_guard_n = 0u;
+#if DRV_RQ_USE_PRODUCER
+    rq_prod_init();                     /* M5-0: 0xD9CF8 + the objects */
+#endif
 }

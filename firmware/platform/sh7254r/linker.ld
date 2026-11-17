@@ -206,6 +206,26 @@ SECTIONS
     } > RAM
     ASSERT(__pk_wit_end <= 0xFFF84D40, ".pk_wit overflow")
 
+    /* M5-0, the stock request producer (app/rq_prod.c; ~/tcu_sweep/
+     * m5_0_port.md): the stock cells, cleared by rq_prod_init — 0x84B78 the
+     * actuator currents + complements at +0x18 (0xD9F70), 0x8B154 the seven
+     * actuator objects (0x15BF2C: 5 × 0x28 + 2 × 0x10), 0x8B7C8 the request
+     * objects A..E (5 × 0x60), Sys 0x8B9A8, WK 0x8B9B8 (0x10 each); and the
+     * WRITE-ONLY mirrors of the compile-time inputs 0x89C2B (gear code),
+     * 0x89C30 (power flow), 0x89CF5 (Sys mode), 0x8BCB0 (line pressure) */
+    .m5_cur  0xFFF84B78 (NOLOAD) : { . += 0x30; } > RAM   /* 0x84B78..0x84BA7        */
+    .m5_act  0xFFF8B154 (NOLOAD) : { . += 0xE8; } > RAM   /* 0x8B154..0x8B23B        */
+    .m5_req  0xFFF8B7C8 (NOLOAD) : { . += 0x200; } > RAM  /* 0x8B7C8..0x8B9C7        */
+    .m5_in1  0xFFF89C2B (NOLOAD) : { . += 0x01; } > RAM   /* 0x89C2B                 */
+    .m5_in2  0xFFF89C30 (NOLOAD) : { . += 0x01; } > RAM   /* 0x89C30                 */
+    .m5_in3  0xFFF89CF5 (NOLOAD) : { . += 0x01; } > RAM   /* 0x89CF5                 */
+    .m5_in4  0xFFF8BCB0 (NOLOAD) : { . += 0x02; } > RAM   /* 0x8BCB0..0x8BCB1        */
+    /* our M5-0 witnesses (guard, faults, unported branches; not stock cells) */
+    .m5_wit 0xFFF84D40 (NOLOAD) : {
+        __m5_wit_start = .; *(.m5_wit) . = ALIGN(4); __m5_wit_end = .;
+    } > RAM
+    ASSERT(__m5_wit_end <= 0xFFF84D80, ".m5_wit overflow")
+
     /* our request-law witnesses and the refresh snapshot (not stock cells;
      * free low RAM like .sup_wit, so they do not cost the stack guard) */
     .drv_wit 0xFFF84C40 (NOLOAD) : {

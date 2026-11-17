@@ -1326,3 +1326,36 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
   | M5-4 | N | −0.38 A |
   | M5-5 | Sys below 20 bar | ≈ +0.2 A |
   | M5-6 | Runtime lever / engine logic | needs the brake/speed/engine interlocks decoded first, and the transmission for any meaning |
+
+**r03n = M5-0: THE STOCK REQUEST PRODUCER, WIRE-IDENTICAL (2026-11-16; subagent port `~/tcu_sweep/m5_0_port.md`, validated this session; built, NOT flashed, `build/r03n_IFla.bin`, app CRC `3845F36D`, app end 0x53BC8, blocks 0x40000 + 0x50000):**
+- **Ported (from the bytes):**
+  - producer 0xDC4C4: the Sys call (source 0x15), the WK call (source 0x16, the not-lockup path), the source-0 holder loop + 0xDCE9A;
+  - table lookup 0xDC1E2 / 0xDC1C4 / 0xD0C94 / 0xD11EC with tables 0x505A4, 0x63122, 0x63128, 0x6314C, 0x6312E;
+  - setter 0xE53DA (faults → witnesses); element method 0xE4E5C (head + 0xE4490); Sys/WK method 0xE54A4; end-of-pass clear 0xE5548;
+  - the actuator objects as 0x15BF2C builds them; element law 0x107BD2 → 0x107CFC; Sys/WK law 0x107FB8 → 0x10809C (binary in mode ≠ 0); i_min/i_max 0xD9CBC/0xD9CEE (cal 500/8500); 0xD9F70; init 0xD9CF8.
+  - Files: `app/rq_prod.{c,h}`, `bsw/drv/drv_rqprod.h`; `drv_reqlaw.{c,h}`, `linker.ld`, `CMakeLists.txt` changed. Channel 7 (park release) untouched. The RAM app keeps the r03f constants (64 KB limit).
+- **Re-checked here [O]:** 0xDCC3A `movi20 #20000` → E53DA(…, mode 1, prio 4, source 0) at 0xDCC42–0xDCC4E; 0x107FBC: a nonzero mode byte → `bsr 0x10809C`.
+- **Corrections to the M5 decode:** Sys/WK in mode 1 use the binary law 0x10809C (not the curve); the element law reads the result at +2 (not the Sys-limited +4); the 0x63128 park branch also needs 0xFFF8E6C3 ≠ 0.
+- **Not ported (unreachable with the M5-0 inputs; counted as faults → 0 if reached on the host):**
+  - shift sources, the lockup branch, the fill FSM past state 0, the curves, the diagnostic override;
+  - copy stages 3–5 (the law reads 0xFFF84B78 directly; all four arrays are identical in the dump);
+  - the tail of 0xE4E5C / 0xE4522 incl. 0xE40DA (mode +7 = 0 unless +0x46 = 10000). The dump holds B at +0x46 = 0x2710, mode 1.
+  
+  **Open:** what the stock does in the first passes after an element turns on (a mode-0 or fill transient). It matters for M5-1+.
+- **Safety frame:**
+  - all 13 producer inputs are compile-time `RQ_M5_*` constants `_Static_assert`-ed to the dump (power-flow 0, gear code 3, …); a runtime input source is `#error`; stock input cells are write-only mirrors; 0xAE29 is never read;
+  - guard: a channel 0–6 value passes only if it is 500 or 8500 with a matching complement, else it is forced to the r03f value and counted;
+  - six sh-elf-gcc checks.
+- **Tests:** host 71/71.
+  - Wire identity: 40 passes across all seq2 states, the full-on tests, the 'U' rounding phases and park release 0/10000; all 45 cyclic + 40 config words and the law cells byte-identical to r03f's constant requests.
+  - 94 producer cells match the dump; tables and 30 code constants match the image; a table mutation is caught.
+  - sh2a green, `__noinit_end` 0xFFF9EFD0.
+- **RAM moved +4 in .noinit** (symbol remap from a rebuilt r03m ELF): `s_rst` 0xFFF9EB6C, `s_w9020` 0xEB8C, `s_open` 0xEBD0, `s_trc` 0xE744, `s_isr_n` 0xEB54; `_s_m` 0xFFF9E198. Unchanged: `s_now_ms` 0xFFF956A8, `s_in` 0xFFF95E1C, `s_rq_rel_win` 0xFFF95B7C.
+- **Files:** witness `/tmp/witness_r03n.py` + `/tmp/witness_pksens_r03n.py` (remapped by symbol); install `/tmp/install_r03n.py` (sigs `/tmp/r03n_sigs.json`, both blocks None). M5 witnesses (guard 0xFFF84D40, unported 0x84D44, faults 0x1C4/0x19F/0x19A at 0x84D48/4C/50).
+- **PREDICTION (rule 1), r03n:**
+  - [high] **Wire and current identical to r03m:** RQLAW modes 03×7 01, letters, currents `01F4 2134 2134 2134 2134 01F4 01F4 0000`, cyclic `881A 881A 881A 8812 8815 | …`, ≈ 1.76–1.87 A in P (temperature-dependent); no restarts; Auto-P = the dump; park sensor as r03m.
+  - [high] **The producer cells read as the dump:**
+    - holder requests: B = 0x4E20 (mode 01, prio 04), A/C/D/E = 0;
+    - Sys request 0x4E20; WK 0;
+    - element currents 500/8500 by type.
+  - [high] All M5 witnesses 0. Any guard count > 0 → the producer disagrees with the stock on the SH target: stop and read.

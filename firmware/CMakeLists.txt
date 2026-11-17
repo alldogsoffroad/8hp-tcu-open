@@ -37,6 +37,7 @@ set(CORE_SOURCES
     app/range.c
     app/park_law.c
     app/park.c
+    app/rq_prod.c
     safety/park_mon.c
     safety/park_pair.c
     app/bench_dump.c
@@ -229,6 +230,24 @@ else()
     add_executable(test_reqlaw tests/unit/test_reqlaw.c bsw/drv/drv_jobs.c
         bsw/drv/drv_reqlaw.c bsw/drv/drv_handlers.c tests/unit/stub_plat.c)
     add_test(NAME reqlaw COMMAND test_reqlaw)
+    # M5-0 (2026-11-16, ~/tcu_sweep/m5_0_port.md): the stock request
+    # producer (app/rq_prod.c) in front of the law, built as the target
+    # runs it (DRV_RQ_USE_PRODUCER): the P set, the dump's cells, the wire
+    # byte-identical to the r03f constant requests, the guard, the table
+    # law; --stock compares the const data / code constants with the
+    # pristine image and the cells with the driving dump (skipped, exit 77,
+    # when the files are absent)
+    set(TCU_STOCK_IMAGE "$ENV{HOME}/Downloads/260924131233 1034420267_IFla.bin" CACHE FILEPATH
+        "the pristine stock flash image (M5-0 byte checks)")
+    set(TCU_STOCK_DUMP "${CMAKE_SOURCE_DIR}/../stockram_driving_20261104.bin" CACHE FILEPATH
+        "the stock driving RAM dump (M5-0 cell checks)")
+    add_executable(test_m5prod tests/unit/test_m5prod.c app/rq_prod.c bsw/drv/drv_jobs.c
+        bsw/drv/drv_reqlaw.c bsw/drv/drv_handlers.c tests/unit/stub_plat.c)
+    target_compile_definitions(test_m5prod PRIVATE DRV_RQ_USE_PRODUCER=1
+        "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"" "TCU_STOCK_DUMP=\"${TCU_STOCK_DUMP}\"")
+    add_test(NAME m5prod COMMAND test_m5prod)
+    add_test(NAME m5_stock_bytes COMMAND test_m5prod --stock)
+    set_tests_properties(m5_stock_bytes PROPERTIES SKIP_RETURN_CODE 77)
     # M4 group A (2026-11-14, ~/tcu_sweep/groupA_park_port.md): the stock's
     # switch-output law 0x849D4 → 0x8ADF4 → 0x91500 and the hold-law
     # temperature 0x887D8 — host runtime path, then the three compile-time
@@ -288,6 +307,31 @@ else()
         PASS_REGULAR_EXPRESSION "nothing else")
     set_tests_properties(rq_sh_guard_p7_stage PROPERTIES
         PASS_REGULAR_EXPRESSION "follows DRV_GA_STAGE alone")
+    # M5-0 (2026-11-16): the request producer's inputs are compile-time
+    # constants on SH — the control (and the producer itself) compiles; a
+    # runtime input path, a runtime input source, or a gear code / power
+    # flow other than the M5-0 (dump) value does not
+    set(M5_SH_SRC ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard_m5.c)
+    add_test(NAME m5_sh_guard_control
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${M5_SH_SRC})
+    add_test(NAME m5_sh_guard_producer
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${CMAKE_SOURCE_DIR}/app/rq_prod.c)
+    add_test(NAME m5_sh_guard_runtime
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_M5_RUNTIME ${M5_SH_SRC})
+    add_test(NAME m5_sh_guard_source
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DRQ_PROD_INPUT_SOURCE=1 ${M5_SH_SRC})
+    add_test(NAME m5_sh_guard_gear
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DRQ_M5_GEAR=1 ${M5_SH_SRC})
+    add_test(NAME m5_sh_guard_pflow
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DRQ_M5_PFLOW=1 ${M5_SH_SRC})
+    set_tests_properties(m5_sh_guard_runtime PROPERTIES
+        PASS_REGULAR_EXPRESSION "no runtime producer input on SH builds")
+    set_tests_properties(m5_sh_guard_source PROPERTIES
+        PASS_REGULAR_EXPRESSION "runtime producer input source is refused on SH builds")
+    set_tests_properties(m5_sh_guard_gear PROPERTIES
+        PASS_REGULAR_EXPRESSION "M5-0 gear code is 3")
+    set_tests_properties(m5_sh_guard_pflow PROPERTIES
+        PASS_REGULAR_EXPRESSION "M5-0 power-flow state is 0")
     # Timer E stage 0b (2026-11-13): the group-A duty setter (TOE31 park
     # hold) is refused on every SH build except the RAM application with
     # TCU_M4B_OUTPUTS; TCU_M4B_OUTPUTS on the flashed application is #error
@@ -367,7 +411,9 @@ else()
         ${CMAKE_SOURCE_DIR}/bsw/drv/drv_reqlaw.c ${CMAKE_SOURCE_DIR}/bsw/drv/drv_reqlaw.h
         ${CMAKE_SOURCE_DIR}/bsw/drv/drv_jobs.c ${CMAKE_SOURCE_DIR}/bsw/drv/drv_jobs.h
         ${CMAKE_SOURCE_DIR}/bsw/drv/drv_groupa.c ${CMAKE_SOURCE_DIR}/bsw/drv/drv_groupa.h
-        ${CMAKE_SOURCE_DIR}/bsw/drv/drv_cells.h)
+        ${CMAKE_SOURCE_DIR}/bsw/drv/drv_cells.h
+        ${CMAKE_SOURCE_DIR}/app/rq_prod.c ${CMAKE_SOURCE_DIR}/app/rq_prod.h
+        ${CMAKE_SOURCE_DIR}/bsw/drv/drv_rqprod.h)
     string(REPLACE ";" "," PKS_OUTPUT_PATHS_ARG "${PKS_OUTPUT_PATHS}")
     add_test(NAME pksens_readonly_scan
         COMMAND ${CMAKE_COMMAND} "-DFILES=${PKS_OUTPUT_PATHS_ARG}"
