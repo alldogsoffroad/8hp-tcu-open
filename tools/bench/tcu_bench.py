@@ -1444,6 +1444,23 @@ def cmd_shadow_check(b, args):
                   + ") - switch the TCU ON now, then press Enter ... ")
             print("waiting 5 s for boot, mode 1 and the 0x9B228 one-shot")
             time.sleep(5.0)
+        # read hygiene (CLAUDE.md rule 6): meas 0x02 first - the periodic 0x398 stream
+        # races the meas replies and garbles reads; then retry each read a few times
+        for _ in range(10):
+            if meas(b, args.bus, [0x02], timeout=1.5):
+                break
+            time.sleep(0.4)
+        else:
+            print("  WARNING: meas 0x02 got no reply (continuing with retries)")
+
+        def read_retry(addr, n):
+            for k in range(5):
+                try:
+                    return read_mem(b, args.bus, addr, n)
+                except RuntimeError:
+                    if k == 4:
+                        raise
+                    time.sleep(0.2)
         P, R, N, D = 1, 2, 3, 4
         steps = [("P", P, 8), ("R", R, 7), ("N", N, 6), ("D", D, 5), ("P", P, 8)]
         release = bool(sim.brake) and sim.rpm > 430
@@ -1453,8 +1470,8 @@ def cmd_shadow_check(b, args):
         for name, code, lev in steps:
             sim.code = code
             time.sleep(args.settle)
-            d = read_mem(b, args.bus, m_addr, 54)
-            c = read_mem(b, args.bus, rs_addr, RS_SIZE)
+            d = read_retry(m_addr, 54)
+            c = read_retry(rs_addr, RS_SIZE)
             d6d6 = c[RS_D6D4 + 2]
             g109 = c[RS_G109]
             want = lev if (release and not g109) else 8
