@@ -33,7 +33,7 @@
 #include "app/flash_entry.h"
 #include "app/meas_table.h"
 #include "app/park.h"
-#include "app/rng_shadow.h"
+#include "app/rng_chain.h"
 
 /* Shaft assignment of the speed channels (spec 02 section 4.1), the stock calibration's routing:
  * channel 0 = TIF12 -> stock signal B (0xFFF93048), channel 1 = TIF13 -> signal A (0xFFF93044).
@@ -231,17 +231,18 @@ static void task_10ms(void)
     sensors_update_10ms();
     vehicle_update_10ms();
     {
-        /* READ-ONLY range shadow: the stock's cyclic chain 0x9B306/0x9B322/
-         * 0x9B34A, which the stock list 0x4D834 runs before 0xA2EBC
-         * (0xB912C, our park_tick); after vehicle_update so it sees the
-         * lever, brake and engine speed park.c sees this pass. Writes only
-         * .rng_shadow. It runs in OS modes 1..3 (as the stock's lists) and
-         * takes the group-98 verdict of the park sensor (park_pair, the
-         * previous pass's report) as a value. */
+        /* THE RANGE: the stock's cyclic chain 0x9B306/0x9B322/0x9B34A, the
+         * live owner of D6D6 (app/rng_chain.c), which the stock list
+         * 0x4D834 runs before 0xA2EBC (0xB912C, our park_tick); after
+         * vehicle_update so it sees this pass's lever, brake and engine
+         * speed. It runs in OS modes 1..3 (as the stock's lists; D6D6 keeps
+         * the init arbiter's value before) and takes the group-98 verdict
+         * of the park sensor (park_pair, the previous pass's report) as a
+         * value. */
         park_pair_wit_t pw;
 
         park_pair_witness(&pw);
-        rng_shadow_tick_10ms(sup_mode(), pw.failed, pw.tested);
+        rng_chain_tick_10ms(sup_mode(), pw.failed, pw.tested);
     }
     park_tick_10ms();
     bench_tick_10ms();
@@ -341,7 +342,7 @@ int main(void)
     bench_init();
     vehicle_init();
     park_init();
-    rng_shadow_init();                  /* range shadow: the 0x9B228 one-shot (read-only) */
+    rng_chain_init();                   /* the range: the 0x9B228 one-shot (init arbiter → D6D6) */
     park_pair_init();                   /* park sensor: 0x141B1C (safety layer) */
     sensors_init(&s_sensors_cfg);
     fca_tx_init();

@@ -7,22 +7,10 @@
 #include "bsw/drv/drv_park.h"
 #include "bsw/drv/drv_cells.h"
 #include "io/vehicle/vehicle.h"
-#include "io/sensors/sensors.h"
 
 #if defined(TCU_RAM_APP)
 volatile uint8_t g_park_cells[32];      /* the RAM app keeps the park cells in .bss */
 #endif
-
-/* ── stand-ins for the inputs whose stock producers are not ported ──────
- * (range_logic_port.md §4). Values = the stock driving dump (P, no lever,
- * engine off, this bench) unless stated. */
-#define SI_D648     3u      /* D61A+0x2E safety-layer park request (dump 03) */
-#define SI_D652     2u      /* D61A+0x38 its qualifier (dump 02) → D5F8 = 0 */
-#define SI_D650     0u      /* D61A+0x36 [I] speed (dump 0): special rows inactive */
-#define SI_LEVER2   0u      /* lever object +0x08 (writer 0xA7C1A default 0) */
-#define SI_DIR      0u      /* lever object +0x10 (0xA52A2 not ported) */
-#define SI_FAST     0u      /* lever object +0x20 (0xA5448 not ported) */
-#define SI_STATUS   0u      /* lever object +0x28 (0x9B6C8 not ported) */
 
 static park_status_t s_st;
 static uint16_t s_dem_release, s_dem_hold;  /* 0 or DRV_PARK_ON_REQ, nothing else */
@@ -40,7 +28,7 @@ uint16_t park_slot11_hold(void)
 
 void park_init(void)
 {
-    range_init();
+    /* the range itself (D6D6, E549) is the chain's: rng_chain_init */
     park_law_init();
     park_mon_init();
     s_dem_release = 0u;
@@ -56,12 +44,10 @@ void park_init(void)
     s_st.mon_faults = 0u;
 }
 
-/* The lever request the arbiter sees (lever object +0x00, D-M4-8): the
- * Chrysler type-1 shifter evaluation of 0x2EA / 0x210 (io/vehicle,
- * profile_fca.c: the stock's 0x13CD80 table 0x646D8 + source selection
- * 0x13DB34 → E964), 0 when no source is valid (E95D = 2 → E964 = 0, as the
- * dump). [open] The stock's writer of the lever object from E964 was not
- * found (range_logic_port.md §1.3). */
+/* The lever as the monitor sees it: the Chrysler type-1 shifter evaluation
+ * of 0x2EA / 0x210 (io/vehicle, profile_fca.c), 5..8, 0 with no valid
+ * source — the same request the chain gathers as D672 (rng_chain.c
+ * rs_lever), evaluated here on its own. */
 static uint8_t lever_request(const vehicle_in_t *v)
 {
     if (v->q_lever != Q_OK) {
@@ -76,39 +62,19 @@ static uint8_t lever_request(const vehicle_in_t *v)
     }
 }
 
-/* D646, the output speed as the arbiter compares it: a raw unsigned rpm
- * value with NO validity term (stock 0xA57DA `cmp/hi`; the stock's producer
- * 0x14BB90 → 0xFFF8EE6E reads 0 on this sensorless bench, dump). Our speed
- * reports 0 when no edge arrives (io/sensors/speed.c); its quality is NOT
- * used, as in the stock. */
-static uint16_t output_speed_d646(const sensors_in_t *z)
-{
-    const int32_t s = z->output_speed;
-    const uint32_t a = (uint32_t)(s < 0 ? -s : s);
-
-    return (uint16_t)(a > 0xFFFFu ? 0xFFFFu : a);
-}
-
+/* Call every 10 ms after rng_chain_tick_10ms(): the stock list 0x4D834
+ * runs 0x9B306 / 0x9B322 / 0x9B34A (the chain) before 0xA2EBC (0xB912C, the
+ * start of this path). */
 void park_tick_10ms(void)
 {
     const vehicle_in_t *v = vehicle_in();
-    const sensors_in_t *z = sensors_in();
-    range_in_t ri;
+    const uint8_t tgt = PCELL_TGT;          /* 0x9B588 → 0xA7B78: D6D6, raw */
+    const uint8_t tgt_c = PCELL_TGT_C;
     park_law_in_t li;
     park_mon_in_t mi;
 
-    ri.lever = lever_request(v);
-    ri.lever2 = SI_LEVER2;
-    ri.dir = SI_DIR;
-    ri.fast = SI_FAST;
-    ri.status = SI_STATUS;
-    ri.d646 = output_speed_d646(z);
-    ri.d648 = SI_D648;
-    ri.d650 = SI_D650;
-    ri.d652 = SI_D652;
-    ri.d5f8 = (uint8_t)((ri.d648 == 1u && ri.d652 == 0u) ? 1u : 0u);   /* 0xA9126 */
-    range_update(&ri);
-
+    /* stand-ins for the law's inputs whose stock producers are not ported
+     * (range_logic_port.md §4): the driving dump's values */
     li.inhibit = 0u;                /* 0x89C30 (dump 0) */
     li.aux = 0u;                    /* 0x89CF2 (dump 0) */
     li.carwash = 0u;                /* 0x8E69B (dump 0) */
@@ -121,18 +87,20 @@ void park_tick_10ms(void)
     li.diag_rng8 = 0u;
     li.diag_out_en = 0u;
     li.diag_out_val = 0u;
-    park_law_step((uint8_t)PCELL_TGT, &li);
+    park_law_step(tgt, &li);
 
-    mi.lever = ri.lever;
-    mi.lever2 = ri.lever2;
-    mi.dir = ri.dir;
-    mi.fast = ri.fast;
-    mi.status = ri.status;
-    mi.out_speed = ri.d646;
-    mi.speed2 = ri.d650;
-    mi.park_req = ri.d5f8;
-    mi.target = PCELL_TGT;
-    mi.app_integrity_ok = range_integrity_ok() && park_law_integrity_ok();
+    mi.lever = lever_request(v);
+    mi.lever_ok = mi.lever != 0u;
+    mi.brake_ok = v->q_brake == Q_OK;
+    mi.brake_on = v->brake == BRAKE_ON;
+    mi.speed14b_ok = v->q_park_speed == Q_OK;
+    mi.speed14b_raw = v->park_speed_raw;
+    mi.engine_ok = v->q_engine_speed == Q_OK;
+    mi.engine_rpm = (uint16_t)(v->engine_speed < 0 ? 0 :
+                               v->engine_speed);
+    mi.target = tgt;
+    mi.target_c = tgt_c;
+    mi.law_integrity_ok = park_law_integrity_ok();
     park_mon_step(&mi);
 
     if (park_mon_enable()) {
@@ -143,9 +111,9 @@ void park_tick_10ms(void)
         s_dem_hold = 0u;
     }
 
-    s_st.lever = ri.lever;
-    s_st.target = range_target();
-    s_st.reason = range_reason();
+    s_st.lever = mi.lever;
+    s_st.target = (tgt == (uint8_t)~tgt_c && tgt >= 5u && tgt <= 8u) ? (park_target_t)tgt : PARK_ENGAGE;
+    s_st.reason = PCELL_RSN;        /* 0xFFF8D6D9, the chain's reason */
     s_st.state = park_law_state();
     s_st.request = park_law_request();
     s_st.lock = park_law_lock();

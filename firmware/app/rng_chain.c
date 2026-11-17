@@ -1,5 +1,7 @@
-/* rng_shadow.c — the stock's cyclic 10 ms range chain as a READ-ONLY
- * SHADOW (2026-11-17). Ported from the bytes of the pristine image
+/* rng_chain.c — the stock's cyclic 10 ms range chain, THE LIVE OWNER OF
+ * THE RANGE (D6D6 / 304C) since 2026-11-17 (~/tcu_sweep/
+ * range_chain_live_port.md; it ran as a read-only shadow r03q..r03s, with
+ * the same code). Ported from the bytes of the pristine image
  * (sh-elf-objdump -m sh2a -EB; every function cites its address range);
  * ~/tcu_sweep/range_shadow_port.md has the function map, the stand-ins
  * and the corrections to m5_reverse_range_decode.md.
@@ -22,8 +24,12 @@
  * "No chain reader" = no ported function reads a cell the skipped one
  * writes (getter/literal audit, range_shadow_port.md §4).
  *
- * The shadow writes ONLY its own block (.rng_shadow). It cannot name a
- * live cell: TCU_RNG_SHADOW_TU makes every live cell header #error.
+ * Its cells are the stock cells at the stock addresses (rng_chain.h has
+ * the map). It is the only writer of D6D6 / D6D7 / D6D8 / D6D9, E549..E54B
+ * and 0xFFF8304C (TCU_RNG_CHAIN_TU unlocks the writer macros of
+ * app/park_cells.h for the RAM-app stub; the ctest
+ * range_chain_writer_scan refuses those addresses elsewhere). The init
+ * arbiter 0xA548C runs ONCE, in rng_chain_init (the 0x9B228 one-shot).
  *
  * LIVE INPUTS (2026-11-17, ~/tcu_sweep/range_shadow_live_inputs.md):
  *   - the chain runs only in OS modes 1..3: the 10 ms lists of modes 1..3
@@ -49,25 +55,97 @@
  *   power cycle (cfg+0x1C bit 8). Replaces the "first failed report
  *   latches" stand-in.
  */
-#define TCU_RNG_SHADOW_TU 1
-#include "app/rng_shadow.h"
+/* the park position sensor is READ-ONLY (r03m): the chain feeds the park
+ * outputs, so it is an output path — the sensor headers refuse it; the
+ * group-98 verdict arrives as a value (rng_chain_tick_10ms) */
+#define TCU_OUTPUT_PATH 1
+#define TCU_RNG_CHAIN_TU 1           /* the one writer of D6D6 / 304C (app/park_cells.h) */
+#include "app/rng_chain.h"
 #include "app/range.h"              /* range_arbitrate: pure (writes *res only) */
 #include "io/vehicle/vehicle.h"     /* the lever evaluation, read-only */
 #include "bsw/sched/sched.h"        /* sched_now_ms, read-only */
 
+#include <stdint.h>
 #include <string.h>
 
 #if defined(TCU_RAM_APP)
-/* the RAM application does not carry the shadow (its 64 KB limit) */
-void rng_shadow_init(void) {}
-void rng_shadow_tick_10ms(uint8_t os_mode, uint8_t g98_failed, uint8_t g98_tested) { (void)os_mode; (void)g98_failed; (void)g98_tested; }
+#include "app/park_cells.h"
+/* The RAM application does not carry the chain (its 64 KB limit). Its
+ * range is the 0x9B228 one-shot alone: the init arbiter with no lever
+ * (304C+0 = 0, the dump's D648 / D652) → 8 / 0x17 (Auto-P), held. The RAM
+ * app's park outputs are at DRV_GA_STAGE 0 (no park current) in any case. */
+void rng_chain_init(void)
+{
+    range_in_t in;
+    range_res_t res = { 0u, 0u, 0u };
+
+    memset(&in, 0, sizeof in);
+    in.d648 = 3u;
+    in.d652 = 2u;
+    range_arbitrate(&in, &res);
+    PCELL_ARB_W[0] = res.flag;
+    PCELL_ARB_W[1] = res.target;
+    PCELL_ARB_W[2] = res.reason;
+    PCELL_TGT_W = res.target;
+    PCELL_TGT_C_W = (uint8_t)~res.target;
+}
+void rng_chain_tick_10ms(uint8_t os_mode, uint8_t g98_failed, uint8_t g98_tested)
+{
+    (void)os_mode;
+    (void)g98_failed;
+    (void)g98_tested;
+}
 #else
 
-#define RS_SECT __attribute__((section(".rng_shadow")))
+/* ══ the chain's cells at the stock addresses (rng_chain.h) ═══════════ */
+#if defined(__sh__)
+#define RC_SEC(s) __attribute__((section(s)))
+RC_SEC(".rng_d5e4")  rc_d5e4_t  rc_d5e4;        /* 0xFFF8D5E4 (linker asserts) */
+RC_SEC(".rng_d61a")  rc_d61a_t  rc_d61a;        /* 0xFFF8D61A */
+RC_SEC(".rng_d6ca")  rc_d6ca_t  rc_d6ca;        /* 0xFFF8D6CA */
+RC_SEC(".rng_e530")  uint8_t    rc_e530[0x1C];  /* 0xFFF8E530 */
+RC_SEC(".rng_e572")  uint8_t    rc_e572;        /* 0xFFF8E572 */
+RC_SEC(".rng_e64b")  rc_e64b_t  rc_e64b;        /* 0xFFF8E64B */
+RC_SEC(".rng_e912")  uint16_t   rc_e912;        /* 0xFFF8E912 */
+RC_SEC(".rng_893e0") rc_893e0_t rc_893e0;       /* 0xFFF893E0 */
+RC_SEC(".rng_89418") rc_89418_t rc_89418;       /* 0xFFF89418 */
+RC_SEC(".rng_304c")  uint32_t   rc_304c[6];     /* 0xFFF8304C */
+RC_SEC(".rng_85160") rc_85160_t rc_85160;       /* 0xFFF85160 */
+RC_SEC(".rng_8975c") uint32_t   rc_8975c;       /* 0xFFF8975C */
+#define RC_D5E4    rc_d5e4
+#define RC_D61A    rc_d61a.b
+#define RC_D6CA    rc_d6ca
+#define RC_E530    rc_e530
+#define RC_E572    rc_e572
+#define RC_E64B    rc_e64b
+#define RC_E912    rc_e912
+#define RC_893E0   rc_893e0
+#define RC_89418   rc_89418
+#define RC_304C    rc_304c
+#define RC_85160   rc_85160
+#define RC_8975C   rc_8975c
+#else   /* host: the same regions over the mapped stock window (stub_plat.c) */
+#define RC_D5E4    (*(rc_d5e4_t *)(uintptr_t)RC_ADDR_D5E4)
+#define RC_D61A    ((uint8_t *)(uintptr_t)RC_ADDR_D61A)
+#define RC_D6CA    (*(rc_d6ca_t *)(uintptr_t)RC_ADDR_D6CA)
+#define RC_E530    ((uint8_t *)(uintptr_t)RC_ADDR_E530)
+#define RC_E572    (*(uint8_t *)(uintptr_t)RC_ADDR_E572)
+#define RC_E64B    (*(rc_e64b_t *)(uintptr_t)RC_ADDR_E64B)
+#define RC_E912    (*(uint16_t *)(uintptr_t)RC_ADDR_E912)
+#define RC_893E0   (*(rc_893e0_t *)(uintptr_t)RC_ADDR_893E0)
+#define RC_89418   (*(rc_89418_t *)(uintptr_t)RC_ADDR_89418)
+#define RC_304C    ((uint32_t *)(uintptr_t)RC_ADDR_304C)
+#define RC_85160   (*(rc_85160_t *)(uintptr_t)RC_ADDR_85160)
+#define RC_8975C   (*(uint32_t *)(uintptr_t)RC_ADDR_8975C)
+#endif
 
-RS_SECT rng_shadow_cells_t s_rs;
-RS_SECT rng_shadow_wit_t   s_rs_wit;
-RS_SECT rng_shadow_rec_t   s_rs_rec[RNG_SHADOW_REC_N];
+/* ours: the recorder, the witnesses and the fault-manager model, in low
+ * RAM (.rng_wit 0xFFF87000, not a stock cell window) */
+#define RC_WIT __attribute__((section(".rng_wit")))
+RC_WIT rng_chain_rec_t   s_rc_rec[RNG_CHAIN_REC_N];
+RC_WIT rng_chain_wit_t   s_rc_wit;
+RC_WIT rng_chain_model_t s_rc_m;
+#define M s_rc_m
 
 /* ══ stand-ins: the stock driving dump stockram_driving_20261104.bin (P, no
  * lever, engine off, this bench), D61A+off. D672 / D673 come from the lever
@@ -163,7 +241,7 @@ _Static_assert(SI_D641 == 0x02u && SI_D660 == 0x01u && SI_D664 == 0x01u &&
                SI_D651 == 0x00u && SI_D654 == 0x00u && SI_D63C == 0x02u &&
                SI_D640 == 0x00u && SI_D661 == 0x01u && SI_D681 == 0x00u &&
                SI_D656 == 0x01u && SI_D65A == 0x32u && SI_D65B == 0x8Bu,
-               "range shadow stand-ins are the stock driving dump's bytes");
+               "range chain stand-ins are the stock driving dump's bytes");
 /* the live inputs reproduce these bytes exactly when their signal is absent
  * (rs_live_inputs): brake invalid → 02 / 00, 0x108 invalid → E912 = EF0A
  * (D63E, 0000; EF0C = D640 = 00) / 02, 0x14B invalid → 0000 / 02 */
@@ -277,33 +355,74 @@ static const uint8_t s_cal_af8_34[10] = { 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u
 _Static_assert(CAL_14B_W1 == 1u && CAL_14B_W2 == 0u, "0x154918 is the identity at this calibration");
 
 /* 0x15BB28: the filter tables, written as constants at init (GBR =
- * 0xFFF8E64C; the dump holds the same bytes). [row = D6D6 8/7/6/5]
- * [col = the request 8/7/6/5]; 0xFF = no change */
-static const uint8_t s_flt_tabs[4][16] = {
+ * 0xFFF8E64C, @(0..67,gbr); the dump holds the same 68 bytes): 4 × 17
+ * bytes, [row = D6D6 8/7/6/5][col = the request 8/7/6/5], 0xFF = no
+ * change, then a 17th byte (+0x10: 01 / 03 / 02 / 0D, 0x15BB36 /
+ * 0x15BB6A / 0x15BB98 / 0x15BBCE [O]) that the chain does not read.
+ * rng_chain_init copies them into RAM at 0xFFF8E64C; 0xC816C reads RAM
+ * through the sub-object's pointer */
+static const uint8_t s_flt_tabs[4][17] = {
     /* 0xFFF8E64C */ { 0xFFu, 0x00u, 0x00u, 0x00u, 0xFFu, 0xFFu, 0xFFu, 0xFFu,
-                       0xFFu, 0x00u, 0xFFu, 0x00u, 0xFFu, 0xFFu, 0xFFu, 0xFFu },
+                       0xFFu, 0x00u, 0xFFu, 0x00u, 0xFFu, 0xFFu, 0xFFu, 0xFFu, 0x01u },
     /* 0xFFF8E65D */ { 0xFFu, 0xFFu, 0xFFu, 0xFFu, 0xFFu, 0xFFu, 0xFFu, 0xFFu,
-                       0xFFu, 0x00u, 0xFFu, 0xFFu, 0xFFu, 0x06u, 0xFFu, 0xFFu },
+                       0xFFu, 0x00u, 0xFFu, 0xFFu, 0xFFu, 0x06u, 0xFFu, 0xFFu, 0x03u },
     /* 0xFFF8E66E */ { 0xFFu, 0x00u, 0x00u, 0x00u, 0xFFu, 0xFFu, 0xFFu, 0xFFu,
-                       0xFFu, 0x00u, 0xFFu, 0x00u, 0xFFu, 0x06u, 0xFFu, 0xFFu },
+                       0xFFu, 0x00u, 0xFFu, 0x00u, 0xFFu, 0x06u, 0xFFu, 0xFFu, 0x02u },
     /* 0xFFF8E67F */ { 0xFFu, 0x00u, 0x00u, 0x00u, 0xFFu, 0x06u, 0xFFu, 0x06u,
-                       0xFFu, 0x00u, 0x00u, 0x00u, 0xFFu, 0x06u, 0xFFu, 0x06u },
+                       0xFFu, 0x00u, 0x00u, 0x00u, 0xFFu, 0x06u, 0xFFu, 0x06u, 0x0Du },
 };
+_Static_assert(sizeof s_flt_tabs == 0x44u && sizeof(rc_e64b_t) == 1u + 0x44u,
+               "the four 0x15BB28 tables after the E64B mirror byte");
 enum { T_E64C = 0, T_E65D = 1, T_E66E = 2, T_E67F = 3 };
 
-/* ══ cell access, named by stock address ═════════════════════════════ */
-#define R              s_rs
-#define D5(a)          R.d5e6[(a) - 0xD5E6u]
-#define D6(a)          R.d61a[(a) - 0xD61Au]
-#define E5(a)          R.e530[(a) - 0xE530u]
-#define CA(a)          R.d6ca[(a) - 0xD6CAu]
-#define D4(a)          R.d6d4[(a) - 0xD6D4u]
-#define F3(a)          R.x893e0[(a) - 0x893E0u]
-#define X18(a)         R.x89418[(a) - 0x89418u]
-#define X20(a)         R.x89420[(a) - 0x89420u]
+/* ══ cell access, named by stock address ═════════════════════════════
+ * The chain's cells are the STOCK cells (rng_chain.h, the cell map): on the
+ * target each region is an object in its own pinned NOLOAD section
+ * (linker.ld .rng_*; the linker asserts each at its stock address); on the
+ * host the same region types lie over the mapped stock window. Word fields
+ * are reached through a union of the region (no punning casts). */
+#define D5(a)          RC_D5E4.b[(a) - 0xD5E4u]
+#define D6(a)          RC_D61A[(a) - 0xD61Au]
+#define E5(a)          RC_E530[(a) - 0xE530u]
+#define CA(a)          RC_D6CA.b[(a) - 0xD6CAu]
+#define D4(a)          RC_D6CA.b[(a) - 0xD6CAu]
+#define F3(a)          RC_893E0.b[(a) - 0x893E0u]
+#define X18(a)         RC_89418.b[(a) - 0x89418u]
+#define X20(a)         RC_89418.b[(a) - 0x89418u]
 #define D6D6           D4(0xD6D6u)
-#define D6DE           R.d6de[0]
-#define D6DF           R.d6de[1]
+#define D6DE           D4(0xD6DEu)
+#define D6DF           D4(0xD6DFu)
+
+/* the 0x89434 filter object's seven sub-objects in 0xC85D6's order
+ * (+0x58, +0x40, +0x4C, +0x34, +0, +0x70, +0x64): +0 the u32 table pointer
+ * (0xC8528 at init), +4 the enable (0xC8650); offsets in the 0x89418
+ * region (0x89434 = +0x1C). The dump: 89434 FFF8E64C 01, 89468 / 89474 /
+ * 89480 / 8948C FFF8E64C 00, 89498 FFF8E67F 00, 894A4 FFF8E65D 00 */
+static const uint8_t k_flt_sub[7] = {
+    0x1Cu + 0x58u, 0x1Cu + 0x40u, 0x1Cu + 0x4Cu, 0x1Cu + 0x34u,
+    0x1Cu + 0x00u, 0x1Cu + 0x70u, 0x1Cu + 0x64u,
+};
+#define FLT_EN(k)      RC_89418.b[k_flt_sub[(k)] + 4u]
+
+static void flt_tab_set(uint8_t k, uint8_t t)
+{
+    RC_89418.w32[k_flt_sub[k] / 4u] = 0xFFF8E64Cu + 0x11u * (uint32_t)t;
+}
+
+/* 0xC816C reads the table through the sub-object's pointer. Ours (not
+ * stock): a pointer that is not one of the four tables (never written so)
+ * reads the 0xFFF8E64C table — row D6D6 = 8 maps R/N/D to 0 — and is
+ * counted */
+static const uint8_t *flt_tab_row(uint8_t k)
+{
+    const uint32_t off = RC_89418.w32[k_flt_sub[k] / 4u] - 0xFFF8E64Cu;
+
+    if (off > 0x33u || off % 0x11u != 0u) {
+        s_rc_wit.flt_ptr_bad_n++;
+        return &RC_E64B.b[1];
+    }
+    return &RC_E64B.b[1u + off];
+}
 
 static uint16_t w61a(uint32_t a)            /* big-endian word of D61A */
 {
@@ -344,7 +463,7 @@ static uint16_t w61a(uint32_t a)            /* big-endian word of D61A */
 /* 0xA5204: 304C+0x10 with its complement, 0 when torn */
 static uint8_t g_304c_10(void)
 {
-    return (uint8_t)(R.o304c[4] == (uint32_t)~R.o304c[5] ? R.o304c[4] : 0u);
+    return (uint8_t)(RC_304C[4] == (uint32_t)~RC_304C[5] ? RC_304C[4] : 0u);
 }
 
 /* ══ 0x9B306 ═════════════════════════════════════════════════════════ */
@@ -370,13 +489,13 @@ static void rs_lever(uint8_t *lev, uint8_t *src)
     *src = v->lever_src == LEVER_SRC_FALLBACK ? 1u : 0u;
 }
 
-#if defined(RNG_SHADOW_TEST_HOOKS)
+#if defined(RNG_CHAIN_TEST_HOOKS)
 #if defined(__sh__)
-#error "RNG_SHADOW_TEST_HOOKS (input overrides) is host-only: the SH shadow runs on the dump stand-ins"
+#error "RNG_CHAIN_TEST_HOOKS (input overrides) is host-only: the SH chain runs on the dump stand-ins"
 #endif
 static uint8_t s_ovr_on[0x80], s_ovr_val[0x80];
 
-void rng_shadow_test_override(uint8_t off, uint8_t val)
+void rng_chain_test_override(uint8_t off, uint8_t val)
 {
     if (off < 0x80u) {
         s_ovr_on[off] = 1u;
@@ -384,7 +503,7 @@ void rng_shadow_test_override(uint8_t off, uint8_t val)
     }
 }
 
-void rng_shadow_test_clear(void)
+void rng_chain_test_clear(void)
 {
     memset(s_ovr_on, 0, sizeof s_ovr_on);
 }
@@ -419,16 +538,16 @@ static void rs_live_inputs(void)
      * raw 0x8000..0xFFFE, which the stock would pass [deviation, I: never
      * seen]. EF0A / EF0C are the gathered D63E / D640 (dump stand-ins). */
     if (v->q_engine_speed == Q_OK) {
-        R.e912 = (uint16_t)v->engine_speed;
+        RC_E912 = (uint16_t)v->engine_speed;
         D6(0xD63Cu) = 0u;
     } else {
         if (D6(0xD640u) == 0u) {
-            R.e912 = w61a(0xD63Eu);
+            RC_E912 = w61a(0xD63Eu);
         }
         D6(0xD63Cu) = 2u;
     }
-    D6(0xD63Au) = (uint8_t)(R.e912 >> 8);
-    D6(0xD63Bu) = (uint8_t)R.e912;
+    D6(0xD63Au) = (uint8_t)(RC_E912 >> 8);
+    D6(0xD63Bu) = (uint8_t)RC_E912;
     /* 0x13608C, the 0x14B object 0xFFF8E8B0 (+4 raw word, +8 raw status):
      * status 0 and raw != 0x7FF → E8BE = 0, +18 = 0x154918(raw, +18, 01,
      * 00) = raw, E8BA = +18 / 5 (divs); else E8BE = 2, E8BA = 0 [O].
@@ -448,11 +567,11 @@ static void rs_live_inputs(void)
      * stored groups (28: 9, 40; 136: 13, 23, 34, 36, 49, 50, 62, 63) carry
      * none of 16 / 53 / 59 / 60 / 61, and 897D4 / DC / E0 / E4 / 89810 / 14
      * are 0 [O dump] — so on this bench these five bytes are exactly: */
-    D6(0xD660u) = (uint8_t)(R.g109 != 0u || R.g98 != 0u);   /* id 53 (*0x4B8F0 = 0x35) */
-    D6(0xD661u) = R.g109;                                   /* id 16 (*0x4B8CC = 0x16) */
-    D6(0xD664u) = R.g109;                                   /* id 59 (*0x4B8FC = 0x3B) */
+    D6(0xD660u) = (uint8_t)(M.g109 != 0u || M.g98 != 0u);   /* id 53 (*0x4B8F0 = 0x35) */
+    D6(0xD661u) = M.g109;                                   /* id 16 (*0x4B8CC = 0x16) */
+    D6(0xD664u) = M.g109;                                   /* id 59 (*0x4B8FC = 0x3B) */
     D6(0xD665u) = 0u;                                       /* id 60: no group here */
-    D6(0xD666u) = R.g109;                                   /* id 61 (*0x4B904 = 0x3D) */
+    D6(0xD666u) = M.g109;                                   /* id 61 (*0x4B904 = 0x3D) */
     /* D65F (D61A+0x45) = group 113 (P1B14) status via 0xA0FA0: not ported,
      * the dump's 00 stays */
 }
@@ -463,15 +582,15 @@ static void rs_gather(void)
 {
     uint8_t lev, src;
 
-    memcpy(R.d61a, s_d61a_dump, sizeof R.d61a);
+    memcpy(RC_D61A, s_d61a_dump, sizeof s_d61a_dump);
     rs_lever(&lev, &src);
     D6(0xD672u) = lev;
     D6(0xD673u) = src;
     rs_live_inputs();
-#if defined(RNG_SHADOW_TEST_HOOKS)
+#if defined(RNG_CHAIN_TEST_HOOKS)
     for (uint8_t k = 0u; k < 0x80u; k++) {
         if (s_ovr_on[k] != 0u) {
-            R.d61a[k] = s_ovr_val[k];
+            RC_D61A[k] = s_ovr_val[k];
         }
     }
 #endif
@@ -491,9 +610,9 @@ static void a8f5c(void)
     uint8_t r5, r0;
     const uint8_t d641 = D6(0xD641u);
 
-    if (R.f8975c == 0u) {
-        R.e572 = D5(0xD5F2u);
-        R.f8975c = 1u;
+    if (RC_8975C == 0u) {
+        RC_E572 = D5(0xD5F2u);
+        RC_8975C = 1u;
     }
     r5 = (uint8_t)(!(d641 >= 1u && d641 <= 4u));
     if (D6(0xD642u) == 0u && r5 == 0u) {
@@ -510,39 +629,39 @@ static void a8f5c(void)
         r0 = 0u;
     }
     D5(0xD5F2u) = r0;
-    D5(0xD5F4u) = (uint8_t)(r0 == 1u && R.e572 == 0u);
-    D5(0xD5F5u) = (uint8_t)(r0 == 0u && R.e572 == 1u);
-    R.e572 = r0;
+    D5(0xD5F4u) = (uint8_t)(r0 == 1u && RC_E572 == 0u);
+    D5(0xD5F5u) = (uint8_t)(r0 == 0u && RC_E572 == 1u);
+    RC_E572 = r0;
 }
 
 /* ══ U1267 (group 109): 0xA6A3E (10 ms, via 0xA6A2C(D60C) in 0xA5944) ═══ */
 static void a6a3e(void)                     /* 0xA6A3E..0xA6AAE */
 {
     if (G_D5F2 == 1u) {                     /* 0xA6A40: D5E6+12 */
-        R.p85160 = 1u;
+        RC_85160.b[0x00] = 1u;
     }
     if (D6(0xD656u) == 0u) {                /* 0xA6A4C */
-        R.p85160 = 0u;
+        RC_85160.b[0x00] = 0u;
     }
-    if (R.p85160 != 0u) {                   /* 0xA6A5A */
-        if (R.d60c_0 == 0xFFFFu) {
-            R.d60c_2 = 0u;                  /* bt.s with mov #0, stored at 0xA6A7E */
+    if (RC_85160.b[0x00] != 0u) {                   /* 0xA6A5A */
+        if (RC_D5E4.w16[0x14] == 0xFFFFu) {
+            RC_D5E4.b[0x2A] = 0u;                  /* bt.s with mov #0, stored at 0xA6A7E */
         } else {
-            R.d60c_0++;
-            R.d60c_2 = (uint8_t)(R.d60c_0 == 0xFFFFu);
+            RC_D5E4.w16[0x14]++;
+            RC_D5E4.b[0x2A] = (uint8_t)(RC_D5E4.w16[0x14] == 0xFFFFu);
         }
     } else {
-        R.d60c_0 = 0u;                      /* 0xA6A80 (+2 not written) */
+        RC_D5E4.w16[0x14] = 0u;                      /* 0xA6A80 (+2 not written) */
     }
     if (G_D5F2 == 1u) {                     /* 0xA6A84 */
-        if (R.d60c_4 == 0xFFFFu) {
-            R.d60c_6 = 0u;
+        if (RC_D5E4.w16[0x16] == 0xFFFFu) {
+            RC_D5E4.b[0x2E] = 0u;
         } else {
-            R.d60c_4++;
-            R.d60c_6 = (uint8_t)(R.d60c_4 == 0xFFFFu);
+            RC_D5E4.w16[0x16]++;
+            RC_D5E4.b[0x2E] = (uint8_t)(RC_D5E4.w16[0x16] == 0xFFFFu);
         }
     } else {
-        R.d60c_4 = 0u;                      /* 0xA6AA6 (+6 not written) */
+        RC_D5E4.w16[0x16] = 0u;                      /* 0xA6AA6 (+6 not written) */
     }
 }
 
@@ -599,7 +718,7 @@ static const rs_fm_cfg_t s_fm_cfg98 = { 0x1AD0u, 2500u, 100u, 0x0011u, 0x0000u, 
 #define FM_REC_MASK   0x0010u
 
 /* 0xAAC0E (mode 2 rule of 0xABDFA): which records stay in the masks */
-static uint8_t fm_kept(const rng_shadow_fm_t *f, const rs_fm_cfg_t *c)
+static uint8_t fm_kept(const rng_chain_fm_t *f, const rs_fm_cfg_t *c)
 {
     if ((f->rec & FM_REC_EXISTS) == 0u || (f->rec & FM_REC_MASK) == 0u) {
         return 0u;
@@ -616,18 +735,18 @@ static uint8_t fm_kept(const rng_shadow_fm_t *f, const rs_fm_cfg_t *c)
  * record (only the two groups the gather reads are modelled) */
 static void fm_rebuild(void)
 {
-    R.fm109.react = fm_kept(&R.fm109, &s_fm_cfg109);
-    if (R.fm109.react == 0u) {
-        R.fm109.rec = (uint16_t)(R.fm109.rec & ~FM_REC_MASK);   /* 0xAACD0: bclr #4 */
+    M.fm109.react = fm_kept(&M.fm109, &s_fm_cfg109);
+    if (M.fm109.react == 0u) {
+        M.fm109.rec = (uint16_t)(M.fm109.rec & ~FM_REC_MASK);   /* 0xAACD0: bclr #4 */
     }
-    R.fm98.react = fm_kept(&R.fm98, &s_fm_cfg98);
-    if (R.fm98.react == 0u) {
-        R.fm98.rec = (uint16_t)(R.fm98.rec & ~FM_REC_MASK);
+    M.fm98.react = fm_kept(&M.fm98, &s_fm_cfg98);
+    if (M.fm98.react == 0u) {
+        M.fm98.rec = (uint16_t)(M.fm98.rec & ~FM_REC_MASK);
     }
 }
 
 /* c0b2(g, fail): the timer starts — 1 on a failure, the heal time on a pass */
-static void fm_start(rng_shadow_fm_t *f, uint16_t v, uint8_t fail, uint16_t now)
+static void fm_start(rng_chain_fm_t *f, uint16_t v, uint8_t fail, uint16_t now)
 {
     f->d714 = v;
     if (fail != 0u && f->dd2c < 1u) {
@@ -639,7 +758,7 @@ static void fm_start(rng_shadow_fm_t *f, uint16_t v, uint8_t fail, uint16_t now)
 }
 
 /* c110: the timer stops */
-static void fm_stop(rng_shadow_fm_t *f)
+static void fm_stop(rng_chain_fm_t *f)
 {
     f->d714 = 0u;
     f->st = (uint16_t)(f->st & ~FM_ST_TIMER);
@@ -648,19 +767,19 @@ static void fm_stop(rng_shadow_fm_t *f)
 /* confirmation (0x9CA70 / 0x9C720): the record is created or updated
  * (0x9CE52: +4 |= 0x4F, b4 when the reaction words are nonzero), 0x9CF9E
  * ORs the reaction words into the masks, st |= 0x2098, the timer stops */
-static void fm_confirm(rng_shadow_fm_t *f)
+static void fm_confirm(rng_chain_fm_t *f)
 {
     f->rec = (uint16_t)(f->rec | FM_REC_EXISTS | 0x004Fu | FM_REC_MASK);
     f->react = 1u;
     f->st = (uint16_t)(f->st | 0x2098u);
     fm_stop(f);
     f->confirm_n++;
-    f->confirm_ms = R.fm_ms;
+    f->confirm_ms = M.fm_ms;
 }
 
 /* heal (0x9C608..0x9C63C): the record's active bits clear (0x9CF88), the
  * masks are rebuilt (0xAAC0E), st b3 clears */
-static void fm_heal(rng_shadow_fm_t *f)
+static void fm_heal(rng_chain_fm_t *f)
 {
     if ((f->rec & FM_REC_EXISTS) != 0u) {
         f->rec = (uint16_t)((f->rec & 0xFFF5u) | 0x0001u);
@@ -669,13 +788,13 @@ static void fm_heal(rng_shadow_fm_t *f)
     fm_stop(f);
     f->st = (uint16_t)(f->st & ~FM_ST_CONF);
     f->heal_n++;
-    f->heal_ms = R.fm_ms;
+    f->heal_ms = M.fm_ms;
 }
 
 /* 0x9BE50 for one report; now = the low 16 bits of the time base */
-static void fm_report(rng_shadow_fm_t *f, const rs_fm_cfg_t *c, uint8_t failed, uint8_t tested)
+static void fm_report(rng_chain_fm_t *f, const rs_fm_cfg_t *c, uint8_t failed, uint8_t tested)
 {
-    const uint16_t now = (uint16_t)R.fm_ms;
+    const uint16_t now = (uint16_t)M.fm_ms;
     uint16_t el;
 
     f->rep_n++;
@@ -771,20 +890,20 @@ static void fm_report(rng_shadow_fm_t *f, const rs_fm_cfg_t *c, uint8_t failed, 
 
 static void fm_report_109(uint8_t failed, uint8_t tested)
 {
-    R.u_failed = failed;
-    R.u_tested = tested;
-    R.u_rep_n++;
+    M.u_failed = failed;
+    M.u_tested = tested;
+    M.u_rep_n++;
     if (failed != 0u && tested != 0u) {
-        R.u_fail_n++;
+        M.u_fail_n++;
     } else if (tested != 0u) {
-        R.u_pass_n++;
+        M.u_pass_n++;
     }
-    fm_report(&R.fm109, &s_fm_cfg109, failed, tested);
-    if (R.fm109.react != 0u && R.g109 == 0u) {
-        R.g109_ms = sched_now_ms();
+    fm_report(&M.fm109, &s_fm_cfg109, failed, tested);
+    if (M.fm109.react != 0u && M.g109 == 0u) {
+        M.g109_ms = sched_now_ms();
     }
-    R.g109 = R.fm109.react;
-    R.g98 = R.fm98.react;           /* a 109 heal rebuilds the masks */
+    M.g109 = M.fm109.react;
+    M.g98 = M.fm98.react;           /* a 109 heal rebuilds the masks */
 }
 
 /* 0xA6AB0 (20 ms, via 0xA6A3A in 0x9B39E): 0xA6AB0..0xA6B04 */
@@ -792,7 +911,7 @@ static void a6ab0(void)
 {
     /* mov.w (sign-extending) loads, cmp/hs (unsigned) compares [O] */
     const uint32_t n = (uint32_t)(int32_t)(int16_t)CAL_U1267_N;
-    const uint32_t c = (uint32_t)(int32_t)(int16_t)R.d60c_0;
+    const uint32_t c = (uint32_t)(int32_t)(int16_t)RC_D5E4.w16[0x14];
     const uint32_t mv = (uint32_t)(int32_t)(int16_t)CAL_U1267_MV;
     const uint32_t sup = (uint32_t)(int32_t)(int16_t)w61a(0xD65Au);
     const uint8_t failed = (uint8_t)(G_D673 == 2u);      /* 0xA6AC2: getter 0xA7848 */
@@ -810,74 +929,74 @@ static void c3716(void)
     uint8_t r0;
 
     if (D6(0xD63Cu) == 0u) {
-        R.x893e0_c = w61a(0xD63Au);
+        RC_893E0.w16[6] = w61a(0xD63Au);
         r0 = 0u;
     } else if (D6D6 == 8u) {
         if (D6(0xD640u) == 0u) {
-            R.x893e0_c = w61a(0xD63Eu);
+            RC_893E0.w16[6] = w61a(0xD63Eu);
             r0 = 1u;
         } else {
             r0 = 2u;
         }
     } else if (D6D6 == 6u && D6(0xD640u) == 0u && D5(0xD5F9u) == 0u) {
-        R.x893e0_c = w61a(0xD63Eu);
+        RC_893E0.w16[6] = w61a(0xD63Eu);
         r0 = 1u;
     } else {
         r0 = 2u;
     }
     F3(0x893EAu) = r0;
-    if (R.x893e0_t0 != 0u) {
-        R.x893e0_t0--;
-        F3(0x893E2u) = (uint8_t)(R.x893e0_t0 == 0u);
+    if (RC_893E0.w16[0] != 0u) {
+        RC_893E0.w16[0]--;
+        F3(0x893E2u) = (uint8_t)(RC_893E0.w16[0] == 0u);
     } else {
         F3(0x893E2u) = 0u;
     }
-    if (R.x893e0_c > CAL_FSM_C) {
+    if (RC_893E0.w16[6] > CAL_FSM_C) {
         goto latch;
     }
-    if ((int32_t)R.x893e0_c > (int32_t)CAL_FSM_8) {
-        if (R.x893e0_e == 0u) {
+    if ((int32_t)RC_893E0.w16[6] > (int32_t)CAL_FSM_8) {
+        if (RC_893E0.w16[7] == 0u) {
             return;
         }
         goto latch;
     }
-    if (R.x893e0_t0 > 0u) {
+    if (RC_893E0.w16[0] > 0u) {
         return;
     }
-    R.x893e0_e = 0u;
+    RC_893E0.w16[7] = 0u;
     return;
 latch:
-    R.x893e0_e = R.x893e0_c;
-    R.x893e0_t0 = CAL_FSM_10;
+    RC_893E0.w16[7] = RC_893E0.w16[6];
+    RC_893E0.w16[0] = CAL_FSM_10;
     F3(0x893E2u) = 0u;
 }
 
 static void c37be(void)
 {
-    if (R.x893e0_t4 != 0u) {
-        R.x893e0_t4--;
-        F3(0x893E6u) = (uint8_t)(R.x893e0_t4 == 0u);
+    if (RC_893E0.w16[2] != 0u) {
+        RC_893E0.w16[2]--;
+        F3(0x893E6u) = (uint8_t)(RC_893E0.w16[2] == 0u);
     } else {
         F3(0x893E6u) = 0u;
     }
-    if (R.x893e0_c > CAL_FSM_8) {
-        if ((int32_t)R.x893e0_c > (int32_t)CAL_FSM_4 || R.x893e0_10 != 0u) {
-            R.x893e0_10 = R.x893e0_c;
-            R.x893e0_t4 = CAL_FSM_10;
+    if (RC_893E0.w16[6] > CAL_FSM_8) {
+        if ((int32_t)RC_893E0.w16[6] > (int32_t)CAL_FSM_4 || RC_893E0.w16[8] != 0u) {
+            RC_893E0.w16[8] = RC_893E0.w16[6];
+            RC_893E0.w16[2] = CAL_FSM_10;
             F3(0x893E6u) = 0u;
         } else {
-            R.x893e0_t4 = 0u;
+            RC_893E0.w16[2] = 0u;
         }
-    } else if (R.x893e0_t4 == 0u) {
-        R.x893e0_10 = 0u;
+    } else if (RC_893E0.w16[2] == 0u) {
+        RC_893E0.w16[8] = 0u;
     }
-    F3(0x893F2u) = (uint8_t)(F3(0x893EAu) != 2u && R.x893e0_10 > 0u);
+    F3(0x893F2u) = (uint8_t)(F3(0x893EAu) != 2u && RC_893E0.w16[8] > 0u);
 }
 
 static void c3832(void)
 {
     const uint8_t a = F3(0x893EAu);
-    const uint8_t r1 = (uint8_t)(a != 2u && R.x893e0_e > 0u);
+    const uint8_t r1 = (uint8_t)(a != 2u && RC_893E0.w16[7] > 0u);
     const uint8_t r7 = (uint8_t)(a == 2u && D5(0xD5F2u) == 1u && D5(0xD5F3u) != 2u);
     uint8_t r4 = 0u, r2;
     const uint16_t d5f6 = (uint16_t)((uint16_t)D5(0xD5F6u) << 8 | D5(0xD5F7u));
@@ -906,7 +1025,7 @@ static void c3900(void)
     F3(0x893E9u) = s;
     switch (s) {
     case 0u:
-        if (R.x893e0_c > CAL_FSM_C && F3(0x893EAu) != 2u) {
+        if (RC_893E0.w16[6] > CAL_FSM_C && F3(0x893EAu) != 2u) {
             s = 1u;
             break;
         }
@@ -924,13 +1043,13 @@ static void c3900(void)
             s = 0u;
             break;
         }
-        if (F3(0x893F7u) != 1u || R.x893e0_c > CAL_FSM_0) {
+        if (F3(0x893F7u) != 1u || RC_893E0.w16[6] > CAL_FSM_0) {
             return;
         }
         s = 2u;
         break;
     case 2u:
-        if (R.x893e0_c > CAL_FSM_C && F3(0x893EAu) != 2u && F3(0x893F7u) == 1u) {
+        if (RC_893E0.w16[6] > CAL_FSM_C && F3(0x893EAu) != 2u && F3(0x893F7u) == 1u) {
             s = 1u;
             break;
         }
@@ -1158,8 +1277,8 @@ static void a52a2(void)
     } else {
         return;
     }
-    R.o304c[4] = v;
-    R.o304c[5] = ~v;
+    RC_304C[4] = v;
+    RC_304C[5] = ~v;
 }
 
 /* ══ 0x9B34A ═════════════════════════════════════════════════════════ */
@@ -1217,7 +1336,7 @@ static void c7d64(void)
     c7de2_c7e52_c7e30();
     /* 0xC7FDA */
     if (D6(0xD61Bu) == 1u && CAL_E53C_OVR != 0xFFu) {
-        s_rs_wit.ovr_n++;
+        s_rc_wit.ovr_n++;
         E5(0xE53Cu) = CAL_E53C_OVR;
     }
 }
@@ -1319,7 +1438,7 @@ static void c29a0(void)
     }
     /* 0xC2C04 */
     if (D6(0xD61Bu) == 1u && CAL_8941A_OVR != 0xFFu) {
-        s_rs_wit.ovr_n++;
+        s_rc_wit.ovr_n++;
         X18(0x8941Au) = CAL_8941A_OVR;
     }
 }
@@ -1331,18 +1450,18 @@ static void c8578(void)                     /* 0x894B8 */
     const int32_t r1 = (int32_t)d5f6() * 10;
     const int32_t r6 = (int32_t)CAL_B10_14;
     const int32_t r4 = r13 >= r6 ? r13 - r6 : 0;
-    uint8_t r5 = R.x894b8;
+    uint8_t r5 = RC_89418.b[0xA0];
 
-    if (R.x894b8 == 0u) {
+    if (RC_89418.b[0xA0] == 0u) {
         if (r1 > r13) {
             r5 = 1u;
         }
-    } else if (R.x894b8 == 1u) {
+    } else if (RC_89418.b[0xA0] == 1u) {
         if (!(r1 > r4)) {
             r5 = 0u;
         }
     }
-    R.x894b8 = r5;
+    RC_89418.b[0xA0] = r5;
 }
 
 /* an enable whose result the coding-mask virtual call (+8 object, method
@@ -1350,37 +1469,37 @@ static void c8578(void)                     /* 0x894B8 */
  * counted (when another gate already forces 0, the mask cannot matter) */
 static uint8_t mask_reach(uint8_t k)
 {
-    s_rs_wit.mask_n[k]++;
+    s_rc_wit.mask_n[k]++;
     return s_flt_en_dump[k];
 }
 
 static void c8650(void)
 {
     /* 0xC8300: sub-object 0's table */
-    R.flt_tab[4] = (uint8_t)(E5(0xE530u) == 1u ? T_E66E : T_E64C);
+    flt_tab_set(4u, (uint8_t)(E5(0xE530u) == 1u ? T_E66E : T_E64C));
     /* 0xC856A */
     c8578();
     /* 0xC848E (+0x58): mask, then D5F2 == 1 && D68C == 1 && D68D == 0 */
-    R.flt_en[0] = (G_D5F2 == 1u && D6(0xD68Cu) == 1u && D6(0xD68Du) == 0u) ?
+    FLT_EN(0) = (G_D5F2 == 1u && D6(0xD68Cu) == 1u && D6(0xD68Du) == 0u) ?
                   mask_reach(0u) : 0u;
     /* 0xC83E8 (+0x40): mask, then D60A == 1 */
-    R.flt_en[1] = G_D60A == 1u ? mask_reach(1u) : 0u;
+    FLT_EN(1) = G_D60A == 1u ? mask_reach(1u) : 0u;
     /* 0xC842E (+0x4C): D675 == 1, 893EE > cal, 893EA != 2, then mask */
-    R.flt_en[2] = (D6(0xD675u) == 1u && (int32_t)R.x893e0_e > (int32_t)CAL_B10_C &&
+    FLT_EN(2) = (D6(0xD675u) == 1u && (int32_t)RC_893E0.w16[7] > (int32_t)CAL_B10_C &&
                    G_893EA != 2u) ? mask_reach(2u) : 0u;
     /* 0xC823E (+0x34): 894B8 == 0, 893EE > cal, 893EA != 2, then mask */
-    R.flt_en[3] = (R.x894b8 == 0u && (int32_t)R.x893e0_e > (int32_t)CAL_B10_10 &&
+    FLT_EN(3) = (RC_89418.b[0xA0] == 0u && (int32_t)RC_893E0.w16[7] > (int32_t)CAL_B10_10 &&
                    G_893EA != 2u) ? mask_reach(3u) : 0u;
     /* 0xC829E (+0): [cal > 0 → 0xC5F14(+0xC)], then 894B8 == 0 && D607 == 0
      * && (+0xC)+4 == 0 */
     if (CAL_AE0_0E > 0u) {
-        s_rs_wit.c5f14_n++;
+        s_rc_wit.c5f14_n++;
     }
-    R.flt_en[4] = (uint8_t)(R.x894b8 == 0u && G_D607 == 0u && SI_89444 == 0u);
+    FLT_EN(4) = (uint8_t)(RC_89418.b[0xA0] == 0u && G_D607 == 0u && SI_89444 == 0u);
     /* 0xC8352 (+0x70): the mask first — not ported */
-    R.flt_en[5] = mask_reach(5u);
+    FLT_EN(5) = mask_reach(5u);
     /* 0xC84E6 (+0x64): mask, then D703 == 1 */
-    R.flt_en[6] = SI_D703 == 1u ? mask_reach(6u) : 0u;
+    FLT_EN(6) = SI_D703 == 1u ? mask_reach(6u) : 0u;
 }
 
 /* 0xC81A6: range code → index */
@@ -1397,17 +1516,17 @@ static int8_t c81a6(uint8_t v)
 
 static void c85d6(void)
 {
-    R.x894b6 = G_8941A;
+    RC_89418.b[0x9E] = G_8941A;
     for (uint8_t k = 0u; k < 7u; k++) {     /* +0x58 +0x40 +0x4C +0x34 +0 +0x70 +0x64 */
         /* 0xC820A → 0xC816C(table, 0x8941A, D6D6) */
-        if (R.flt_en[k] != 0u) {
+        if (FLT_EN(k) != 0u) {
             const int8_t i1 = c81a6(D6D6), i2 = c81a6(G_8941A);
 
             if (i1 >= 0 && i2 >= 0) {
-                const uint8_t v = s_flt_tabs[R.flt_tab[k]][(uint8_t)(i1 * 4 + i2)];
+                const uint8_t v = flt_tab_row(k)[(uint8_t)(i1 * 4 + i2)];
 
                 if (v != 0xFFu) {
-                    R.x894b6 = v;
+                    RC_89418.b[0x9E] = v;
                 }
             }
         }
@@ -1415,7 +1534,7 @@ static void c85d6(void)
 }
 
 /* ══ 0xC64D4: D6CE and the candidate arbiter 0xC6512 (0xC64D4..0xC6E0A) ═ */
-#define CA_T     R.d6ca_t
+#define CA_T     RC_D6CA.w16[0]
 #define CA_EXP   CA(0xD6CCu)      /* +2 */
 #define CA_OUT   CA(0xD6CEu)      /* +4 */
 #define CA_PREV  CA(0xD6CFu)      /* +5 */
@@ -1444,7 +1563,7 @@ static void c6b8e(uint8_t v)
 
 static uint8_t c6ba8(void)
 {
-    const uint8_t b6 = R.x894b6, d = D6D6;
+    const uint8_t b6 = RC_89418.b[0x9E], d = D6D6;
     const uint8_t r10 = (uint8_t)(G_D605 == 1u || (G_D605 == 2u && CAL_AF0_28 == 1u));
     const uint8_t r13 = (uint8_t)(G_D604 == 1u || (G_D604 == 2u && CAL_AF0_28 == 1u));
     const uint8_t dir = g_304c_10();
@@ -1465,7 +1584,7 @@ static uint8_t c6ba8(void)
 
 static uint8_t c6578(void)
 {
-    const uint8_t b6 = R.x894b6;
+    const uint8_t b6 = RC_89418.b[0x9E];
     uint16_t t = 0u;
 
     if (!(b6 == 7u || b6 == 5u) || CA_D3 != 0u || G_D5F2 != 1u || G_D608 != 0u) {
@@ -1503,7 +1622,7 @@ static uint8_t c6578(void)
 
 static uint8_t c6664(void)
 {
-    if (R.x894b6 == 8u &&
+    if (RC_89418.b[0x9E] == 8u &&
         (G_D603 == 1u || (CAL_AF0_20 == 1u && G_D603 == 2u)) &&
         D6D6 != 8u && CAL_AF0_4 > 0u) {
         CA_T = CAL_AF0_4;
@@ -1567,11 +1686,11 @@ static uint8_t c6822(void)
 
     if (p == 8u) {
         if (a == 5u || a == 6u || a == 7u) {
-            c6b8e(R.x894b6);
+            c6b8e(RC_89418.b[0x9E]);
         }
     } else if (p == 5u || p == 7u) {
         if (((a == 8u || a == 6u) && a != p) || ((a == 5u || a == 7u) && a != p)) {
-            c6b8e(R.x894b6);
+            c6b8e(RC_89418.b[0x9E]);
         }
     }
     return CA_HIT;
@@ -1587,7 +1706,7 @@ static uint8_t c687e(void)
 
 static uint8_t c68cc(void)
 {
-    const uint8_t s8 = G_893E8, s9 = G_893E9, b6 = R.x894b6;
+    const uint8_t s8 = G_893E8, s9 = G_893E9, b6 = RC_89418.b[0x9E];
 
     if (!(CA_PREV == 5u || CA_PREV == 7u)) {
         return CA_HIT;
@@ -1658,7 +1777,7 @@ static void c69fc(void)
     }
     if (CA_EXP == 1u) {
         if (CA_PREV == 7u || CA_PREV == 5u) {
-            if (R.x894b6 == 0u) {
+            if (RC_89418.b[0x9E] == 0u) {
                 c6b7a();
             }
         } else if (CA_PREV == 8u) {
@@ -1703,7 +1822,7 @@ static void c6a46(void)                     /* D6D2 */
 
 static void c64d4(void)
 {
-    CA_OUT = R.x894b6;
+    CA_OUT = RC_89418.b[0x9E];
     /* 0xC6512 */
     CA_HIT = 0u;
     CA_D3 = (uint8_t)(D6(0xD661u) == 1u ? 0u : 1u);        /* 0xC6502 */
@@ -1713,7 +1832,7 @@ static void c64d4(void)
     }
     c6a46();
     if (D6(0xD61Bu) == 1u && CAL_AF0_1C != 0xFFu) {
-        s_rs_wit.ovr_n++;
+        s_rc_wit.ovr_n++;
         CA_OUT = CAL_AF0_1C;
     }
 }
@@ -1849,7 +1968,7 @@ static void c7a14(void)
     }
     /* 0xC7CCA */
     if (D6(0xD61Bu) == 1u && CAL_E545_OVR != 0xFFu) {
-        s_rs_wit.ovr_n++;
+        s_rc_wit.ovr_n++;
         E5(0xE545u) = CAL_E545_OVR;
     }
 }
@@ -1880,18 +1999,18 @@ static void c3a7e(void)
         }
     }
     /* 0xC3A94 → 0xC3A40 */
-    R.x89420_lim = (uint32_t)((int32_t)w61a(0xD682u) * (int32_t)CAL_8942C_18 / 1000) +
+    RC_89418.w32[4] = (uint32_t)((int32_t)w61a(0xD682u) * (int32_t)CAL_8942C_18 / 1000) +
                    CAL_8942C_14;
-    R.x89420_t = R.x89420_t >= R.x89420_lim ? R.x89420_t - R.x89420_lim : 0u;
+    RC_89418.w32[2] = RC_89418.w32[2] >= RC_89418.w32[4] ? RC_89418.w32[2] - RC_89418.w32[4] : 0u;
     X20(0x89424u) = 0u;
     /* 0xC3AE6 */
     if (X20(0x8942Du) != 0u) {
-        s_rs_wit.s8942c_n++;            /* 0xC3A98 + states 1/2: unreachable, see below */
+        s_rc_wit.s8942c_n++;            /* 0xC3A98 + states 1/2: unreachable, see below */
         return;
     }
     X20(0x8942Eu) = 0u;
     X20(0x8942Cu) = 0u;
-    R.x89420_t = 0u;
+    RC_89418.w32[2] = 0u;
     X20(0x89424u) = 1u;
     if (D6D6 != 6u || G_E545 != 6u) {
         return;
@@ -1913,12 +2032,12 @@ static void c290e(uint8_t v, uint8_t rsn)
 
     if (e == 8u) {
         if (v != 8u) {
-            s_rs_wit.guard_c290e_n++;
+            s_rc_wit.guard_c290e_n++;
             return;
         }
     } else if (e == 6u) {
         if (!(v == 8u || v == 6u)) {
-            s_rs_wit.guard_c290e_n++;
+            s_rc_wit.guard_c290e_n++;
             return;
         }
     }
@@ -1964,7 +2083,7 @@ static void c360a(void)
     if (CAL_E546_EN != 1u) {
         E5(0xE548u) = 0u;
         E5(0xE546u) = 0u;
-        R.p8517e = D6D6;
+        RC_85160.b[0x1E] = D6D6;
         return;
     }
     {
@@ -1978,7 +2097,7 @@ static void c360a(void)
     }
     if (D6D6 == 8u || s == 1u) {
         E5(0xE546u) = 0u;
-    } else if (R.p8517e == 8u && D6D6 != 8u && s == 2u) {
+    } else if (RC_85160.b[0x1E] == 8u && D6D6 != 8u && s == 2u) {
         E5(0xE546u) = CAL_E546_T;
         E5(0xE547u) = 0u;
     }
@@ -1990,7 +2109,7 @@ static void c360a(void)
     } else {
         E5(0xE548u) = 0u;
     }
-    R.p8517e = D6D6;
+    RC_85160.b[0x1E] = D6D6;
 }
 
 /* ══ 0xC70CE: D6D6 (0xC70CE..0xC79EC) ══════════════════════════════════ */
@@ -2000,12 +2119,12 @@ static void c792e(uint8_t v, uint8_t rsn)   /* the write guard */
 
     if (de == 8u) {
         if (v != 8u) {
-            s_rs_wit.guard_c792e_n++;
+            s_rc_wit.guard_c792e_n++;
             return;
         }
     } else if (de == 6u) {
         if (!(v == 8u || v == 6u)) {
-            s_rs_wit.guard_c792e_n++;
+            s_rc_wit.guard_c792e_n++;
             return;
         }
     }
@@ -2019,12 +2138,12 @@ static void c7110(void)                     /* D6DB */
 
     if (D4(0xD6D8u) == 6u || G_E53C == 6u) {
         D4(0xD6DBu) = 0u;
-    } else if (R.p85182 != r1) {
+    } else if (RC_85160.b[0x22] != r1) {
         if ((CAL_AF8_10 != 0u && r1 == CAL_AF8_10) || (CAL_AF8_C != 0u && r1 == CAL_AF8_C)) {
             D4(0xD6DBu) = 1u;
         }
     }
-    R.p85182 = D6(0xD68Eu);
+    RC_85160.b[0x22] = D6(0xD68Eu);
 }
 
 static void c71be(void)                     /* D6DC */
@@ -2033,12 +2152,12 @@ static void c71be(void)                     /* D6DC */
 
     if (D4(0xD6D8u) == 6u || G_E53C == 6u) {
         D4(0xD6DCu) = 0u;
-    } else if (R.p85183 != r1) {
+    } else if (RC_85160.b[0x23] != r1) {
         if ((CAL_AF8_8 != 0u && r1 == CAL_AF8_8) || (CAL_AF8_4 != 0u && r1 == CAL_AF8_4)) {
             D4(0xD6DCu) = 1u;
         }
     }
-    R.p85183 = D6(0xD68Fu);
+    RC_85160.b[0x23] = D6(0xD68Fu);
 }
 
 static void c7258(void)                     /* D6DD, the D6D4 timer */
@@ -2238,7 +2357,7 @@ static uint8_t c78be(void)
         c792e(6u, 0x8Cu);
         hit = 1u;
     }
-    s_rs_wit.report_c78be_n++;              /* *0x4B888(.., hit, 1): not ported */
+    s_rc_wit.report_c78be_n++;              /* *0x4B888(.., hit, 1): not ported */
     return hit;
 }
 
@@ -2287,15 +2406,15 @@ static void c79b8(uint8_t v)                /* 304C+0 (and the E64B mirror) */
 {
     uint32_t r1 = v;
 
-    R.o304c[0] = r1;
-    R.e64b = v;
+    RC_304C[0] = r1;
+    RC_E64B.b[0] = v;
     if (D6(0xD61Bu) == 1u && CAL_304C_OVR != 0xFFu) {
-        s_rs_wit.ovr_n++;
+        s_rc_wit.ovr_n++;
         r1 = CAL_304C_OVR;
-        R.e64b = CAL_304C_OVR;
+        RC_E64B.b[0] = CAL_304C_OVR;
     }
-    R.o304c[0] = r1 & 0xFFu;
-    R.o304c[1] = ~(r1 & 0xFFu);
+    RC_304C[0] = r1 & 0xFFu;
+    RC_304C[1] = ~(r1 & 0xFFu);
 }
 
 static void c70ce(void)
@@ -2307,12 +2426,12 @@ static void c70ce(void)
     c7390();
     /* 0xC709C: the cal override (D61B == 1 only) */
     if (D6(0xD61Bu) == 1u) {
-        s_rs_wit.ovr_n++;
+        s_rc_wit.ovr_n++;
     }
     c79b8(D6D6);
     if (G_D5F9 == 0u) {
-        R.o304c[2] = D6D6;
-        R.o304c[3] = (uint32_t)~(uint32_t)D6D6;
+        RC_304C[2] = D6D6;
+        RC_304C[3] = (uint32_t)~(uint32_t)D6D6;
     }
     D4(0xD6DAu) = 0u;
 }
@@ -2320,8 +2439,8 @@ static void c70ce(void)
 /* ══ the recorder ═══════════════════════════════════════════════════════ */
 static void rs_record(void)
 {
-    rng_shadow_rec_t e;
-    const rng_shadow_rec_t *last;
+    rng_chain_rec_t e;
+    const rng_chain_rec_t *last;
 
     memset(&e, 0, sizeof e);
     e.now_ms = sched_now_ms();
@@ -2331,7 +2450,7 @@ static void rs_record(void)
     e.e531 = G_E531;
     e.e53c = G_E53C;
     e.x8941a = G_8941A;
-    e.x894b6 = R.x894b6;
+    e.x894b6 = RC_89418.b[0x9E];
     e.d6ce = G_D6CE;
     e.e545 = G_E545;
     e.d6de = D6DE;
@@ -2344,28 +2463,47 @@ static void rs_record(void)
                         (D6(0xD664u) != 0u ? 0x04u : 0u) | (D6(0xD665u) != 0u ? 0x08u : 0u) |
                         (D6(0xD666u) != 0u ? 0x10u : 0u) | (D6(0xD631u) == 0u ? 0x20u : 0u) |
                         (D6(0xD64Bu) != 0u ? 0x40u : 0u) | (D6(0xD63Cu) == 0u ? 0x80u : 0u));
-    if (s_rs_wit.rec_n != 0u) {
-        last = &s_rs_rec[(uint8_t)(s_rs_wit.rec_head + RNG_SHADOW_REC_N - 1u) % RNG_SHADOW_REC_N];
+    if (s_rc_wit.rec_n != 0u) {
+        last = &s_rc_rec[(uint8_t)(s_rc_wit.rec_head + RNG_CHAIN_REC_N - 1u) % RNG_CHAIN_REC_N];
         if (memcmp(&last->d672, &e.d672, sizeof e - sizeof e.now_ms) == 0) {
             return;
         }
     }
-    s_rs_rec[s_rs_wit.rec_head] = e;
-    s_rs_wit.rec_head = (uint8_t)((s_rs_wit.rec_head + 1u) % RNG_SHADOW_REC_N);
-    if (s_rs_wit.rec_n < 255u) {
-        s_rs_wit.rec_n++;
+    s_rc_rec[s_rc_wit.rec_head] = e;
+    s_rc_wit.rec_head = (uint8_t)((s_rc_wit.rec_head + 1u) % RNG_CHAIN_REC_N);
+    if (s_rc_wit.rec_n < 255u) {
+        s_rc_wit.rec_n++;
     }
 }
 
 /* ══ entry points ═══════════════════════════════════════════════════════ */
-void rng_shadow_init(void)
+static void rc_clear(void)
+{
+    memset(&RC_D5E4, 0, sizeof(rc_d5e4_t));
+    memset(RC_D61A, 0, 0x80u);
+    memset(&RC_D6CA, 0, sizeof(rc_d6ca_t));
+    memset(RC_E530, 0, 0x1Cu);
+    RC_E572 = 0u;
+    memset(&RC_E64B, 0, sizeof(rc_e64b_t));
+    RC_E912 = 0u;
+    memset(&RC_893E0, 0, sizeof(rc_893e0_t));
+    memset(&RC_89418, 0, sizeof(rc_89418_t));
+    memset(RC_304C, 0, 6u * sizeof(uint32_t));
+    memset(&RC_85160, 0, sizeof(rc_85160_t));
+    RC_8975C = 0u;
+}
+
+void rng_chain_init(void)
 {
     range_in_t in;
     range_res_t res;
 
-    memset(&s_rs, 0, sizeof s_rs);
-    memset(&s_rs_wit, 0, sizeof s_rs_wit);
-    memset(s_rs_rec, 0, sizeof s_rs_rec);
+    rc_clear();
+    memset(&s_rc_wit, 0, sizeof s_rc_wit);
+    memset(s_rc_rec, 0, sizeof s_rc_rec);
+    memset(&s_rc_m, 0, sizeof s_rc_m);
+    /* 0x15BB28: the filter tables (the stock's init) */
+    memcpy(&RC_E64B.b[1], s_flt_tabs, sizeof s_flt_tabs);
     /* the 0x9B228 one-shot (0xFFF8D5E4 == 0): the list entries that touch
      * a chain cell, in list order */
     rs_gather();                                    /* 0xA7C9C */
@@ -2375,8 +2513,9 @@ void rng_shadow_init(void)
     a9126();
     D5(0xD5FBu) = 1u;
     /* 0xA548C(E549): the init arbiter (app/range.c's pure 0xA557C), with the
-     * lever object 0xFFF8304C still 0 at this pass and the dump's D61A */
-    in.lever = (uint8_t)R.o304c[0];
+     * lever object 0xFFF8304C still 0 at this pass and the dump's D61A —
+     * the arbiter's ONLY run in a power cycle (0x9B22A: gate D5E4) */
+    in.lever = (uint8_t)RC_304C[0];
     in.lever2 = 0u;
     in.dir = 0u;
     in.fast = 0u;
@@ -2393,45 +2532,45 @@ void rng_shadow_init(void)
     E5(0xE549u) = res.flag;
     E5(0xE54Au) = res.target;
     E5(0xE54Bu) = res.reason;
-    D6D6 = res.target;
+    D6D6 = res.target;                              /* 0xA548C: D6D6 + complement */
     D4(0xD6D7u) = (uint8_t)~res.target;
-    /* 0xC8528(89434): the sub-objects' tables (enables follow 0xC8650) */
-    R.flt_tab[0] = T_E64C;                          /* 0xC84DE (+0x58) */
-    R.flt_tab[1] = T_E64C;                          /* 0xC8426 (+0x40) */
-    R.flt_tab[2] = T_E64C;                          /* 0xC8486 (+0x4C) */
-    R.flt_tab[3] = T_E64C;                          /* 0xC8296 (+0x34) */
-    R.flt_tab[4] = (uint8_t)(E5(0xE530u) == 1u ? T_E66E : T_E64C);  /* 0xC82EE → 0xC8300 */
-    R.flt_en[4] = 1u;
-    R.flt_tab[5] = T_E65D;                          /* 0xC83B0 (+0x70) */
-    R.flt_tab[6] = T_E67F;                          /* 0xC8520 (+0x64) */
+    /* 0xC8528(89434): the sub-objects' table pointers (enables follow 0xC8650) */
+    flt_tab_set(0u, T_E64C);                        /* 0xC84DE (+0x58) */
+    flt_tab_set(1u, T_E64C);                        /* 0xC8426 (+0x40) */
+    flt_tab_set(2u, T_E64C);                        /* 0xC8486 (+0x4C) */
+    flt_tab_set(3u, T_E64C);                        /* 0xC8296 (+0x34) */
+    flt_tab_set(4u, (uint8_t)(E5(0xE530u) == 1u ? T_E66E : T_E64C));  /* 0xC82EE → 0xC8300 */
+    FLT_EN(4) = 1u;
+    flt_tab_set(5u, T_E65D);                        /* 0xC83B0 (+0x70) */
+    flt_tab_set(6u, T_E67F);                        /* 0xC8520 (+0x64) */
     /* 0xC3A76(89420), 0xC3604(E546): cleared above */
-    R.d5e4 = 1u;                                    /* 0xA5864 */
+    RC_D5E4.b[0] = 1u;                              /* 0xA5864 */
 }
 
-void rng_shadow_tick_10ms(uint8_t os_mode, uint8_t g98_failed, uint8_t g98_tested)
+void rng_chain_tick_10ms(uint8_t os_mode, uint8_t g98_failed, uint8_t g98_tested)
 {
-    if (R.d5e4 == 0u) {
-        rng_shadow_init();
+    if (RC_D5E4.b[0] == 0u) {
+        rng_chain_init();
     }
     /* the fault manager's time base 0xFFF89898 (ms; 0xADE6E copies the ms
      * counter *0x4CE64 = 0x7A90C at the 10 ms task's 0xA0E2E / 0xA0E44, in
      * every mode): ours steps 10 ms per call [deviation: a stalled 10 ms
      * task stretches it] */
-    R.fm_ms += 10u;
-    /* group 98 (P0850 / P07B2 / P07B8), reported by safety/park_pair.c's
+    M.fm_ms += 10u;
+    /* group 98 (P0850 / P07B2 / P07B8), reported by the park sensor safety slice's
      * 0x141E06 every 10 ms from boot (its stock rate is not decoded) */
-    fm_report(&R.fm98, &s_fm_cfg98, g98_failed, g98_tested);
-    if (R.fm98.react != 0u && R.g98 == 0u) {
-        R.g98_ms = sched_now_ms();
+    fm_report(&M.fm98, &s_fm_cfg98, g98_failed, g98_tested);
+    if (M.fm98.react != 0u && M.g98 == 0u) {
+        M.g98_ms = sched_now_ms();
     }
-    R.g98 = R.fm98.react;
-    R.g109 = R.fm109.react;         /* a 98 heal rebuilds the masks */
+    M.g98 = M.fm98.react;
+    M.g109 = M.fm109.react;         /* a 98 heal rebuilds the masks */
     /* the chain is in the 10 ms lists of modes 1..3 only */
     if (os_mode < 1u || os_mode > 3u) {
-        R.skip_mode_n++;
+        M.skip_mode_n++;
         return;
     }
-    s_rs_wit.passes++;
+    s_rc_wit.passes++;
     /* 0x9B306 */
     rs_gather();
     E5(0xE530u) = a5884();
@@ -2456,15 +2595,15 @@ void rng_shadow_tick_10ms(uint8_t os_mode, uint8_t g98_failed, uint8_t g98_teste
     /* the 20 ms list (0x9B39E → 0xA6A3A → 0xA6AB0), modes 1..3: on the
      * first chain pass and every second one after [I: the 20 ms task's
      * phase and its order against the 10 ms task are not decoded] */
-    if (R.ph20 == 0u) {
+    if (M.ph20 == 0u) {
         a6ab0();
     }
-    R.ph20 = (uint8_t)(R.ph20 ^ 1u);
+    M.ph20 = (uint8_t)(M.ph20 ^ 1u);
     rs_record();
 }
 
-const rng_shadow_cells_t *rng_shadow_cells(void) { return &s_rs; }
-const rng_shadow_wit_t   *rng_shadow_wit(void)   { return &s_rs_wit; }
-const rng_shadow_rec_t   *rng_shadow_rec(void)   { return s_rs_rec; }
+const rng_chain_model_t *rng_chain_model(void) { return &s_rc_m; }
+const rng_chain_wit_t   *rng_chain_wit(void)   { return &s_rc_wit; }
+const rng_chain_rec_t   *rng_chain_rec(void)   { return s_rc_rec; }
 
 #endif /* !TCU_RAM_APP */

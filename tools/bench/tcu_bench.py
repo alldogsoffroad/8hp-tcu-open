@@ -47,10 +47,13 @@ Commands:
   plant-dump-session      download the dumper (firmware/plantdump) through 34/36/37 and read the
                           session RAM out over CAN 0x7EA: the service nodes and handlers incl.
                           the 27 seed/key transform (spec 17 follow-up). RAM only, no flash writes
-  shadow-check [--sim-brake] [--sim-engine RPM] [--start-before-power] [--settle S]
-                          PROJECT firmware: lever P R N D P with the CAN lever simulation and,
-                          optionally, FAKE 0x140 brake / 0x108 engine frames (DRY BENCH ONLY);
-                          prints the live park path and the read-only range shadow per step
+  park-check [--hw] [--sim-brake] [--sim-engine RPM] [--start-before-power] [--settle S]
+                          PROJECT firmware: the shifter sequence against the STOCK range chain
+                          (live since 2026-11-17): without the sims every step keeps P; with
+                          FAKE 0x140 brake + 0x108 engine (DRY BENCH ONLY) R/N/D release
+  range-check [--sim-brake] [--sim-engine RPM] [--start-before-power] [--settle S]
+                          (alias shadow-check) PROJECT firmware: lever P R N D P, the live range
+                          chain's cells (at the stock addresses) and the park path per step
   canstat [--send]        Teensy adapter error counters per bus (slcan only); --send first
                           transmits a tester-present frame on each bus to provoke ACK errors
 """
@@ -1182,16 +1185,21 @@ def cmd_sensors(b, args):
 # the stock park module (~/tcu_sweep/range_logic_port.md): timer model 0xFFF8BC70[0] and the
 # arbiter's reason codes (0xA557C / 0xA57DA)
 PARK_STATES = {0: "boot", 1: "released", 2: "releasing", 3: "engaging", 4: "engaged"}
-PARK_REASONS = {0x15: "lever P", 0x16: "R/N/D or moving", 0x17: "Auto-P", 1: "D special 1",
-                2: "D special 2", 3: "special 3", 5: "forced rel 5", 6: "forced rel 6", 8: "D at speed"}
+# 2026-11-17: the range is the stock CYCLIC CHAIN's D6D6 (app/rng_chain.c); the reason is its
+# D6D9 (0xC7390 candidates; 0 = the lever request went through)
+PARK_REASONS = {0x00: "-", 0x0A: "C7444", 0x14: "C747C P", 0x15: "C747C 6", 0x20: "C75FA",
+                0x28: "C77FE", 0x33: "U1267 R (C767C)", 0x3C: "U1267 (C7756)", 0x50: "C7178 P",
+                0x51: "C7178 6", 0x52: "C7226 P", 0x53: "C7226 6", 0x59: "C733A",
+                0x5A: "C7630", 0x6E: "U D->6 (C76D8)", 0x6F: "U R->6 (C76D8)",
+                0x78: "C77A0 P", 0x82: "C785C P", 0x83: "C785C 6", 0x8C: "C78BE"}
 
 
 def park_line(d):
     """Decode the park block of the measurement table (offsets 48..53, app/meas_table.c)."""
-    tgt = {8: "engage", 6: "release", 5: "drive5"}.get(d[48], f"?{d[48]}")
+    tgt = {8: "P", 7: "R", 6: "N", 5: "D"}.get(d[48], f"?{d[48]}")
     rsn = PARK_REASONS.get(d[49], f"0x{d[49]:02X}")
     st = PARK_STATES.get(d[50], f"?{d[50]}")
-    return (f"target {tgt:7s} reason {rsn:16s} model {st:9s} release {'ON ' if d[51] & 1 else 'off'} "
+    return (f"range {tgt:2s} reason {rsn:16s} model {st:9s} release {'ON ' if d[51] & 1 else 'off'} "
             f"hold {'ON ' if d[51] & 2 else 'off'} req {d[52] & 1} lock {d[52] >> 1 & 1} mon 0x{d[53]:02X}")
 
 
@@ -1284,11 +1292,14 @@ def lever_frames(code, ctr, bad_crc=False):
 
 
 class LeverSender(threading.Thread):
-    """Sends the shifter messages every 10 ms: 0x2EA on bus 1 and 0x210 on bus 2."""
+    """Sends the shifter messages every 10 ms: 0x2EA on bus 1 and 0x210 on bus 2; optionally
+    (park-check --sim-brake / --sim-engine) the FAKE 0x140 brake pressed and 0x108 engine speed
+    on bus 1, E2E-valid (e2e_frame)."""
     def __init__(self, b):
         super().__init__(daemon=True)
         self.b = b
         self.code, self.on_2ea, self.on_210, self.bad_crc = 1, False, False, False
+        self.brake, self.rpm = False, 0
         self.stop = threading.Event()
 
     def run(self):
@@ -1301,85 +1312,129 @@ class LeverSender(threading.Thread):
                     self.b.send(1, 0x2EA, d2ea)
                 if self.on_210:
                     self.b.send(2, 0x210, d210)
+                if self.brake:
+                    self.b.send(1, 0x140, e2e_frame([0x04, 0, 0, 0, 0, 0, 0, 0], ctr))
+                if self.rpm:
+                    r = self.rpm & 0x7FFF
+                    self.b.send(1, 0x108, e2e_frame([r >> 8, r & 0xFF, 0x1F, 0xFF, 0, 0, 0, 0], ctr))
             except Exception as e:                     # keep going; the step check will show it
                 print("  send error:", e)
             t += 0.010
             time.sleep(max(0.0, t - time.monotonic()))
 
 
+def fake_signal_banner(args):
+    """The loud banner for the FAKE safety signals (dry bench only)."""
+    if not (args.sim_brake or args.sim_engine):
+        return
+    print("!" * 78)
+    print("!! FAKE SAFETY SIGNALS - DRY BENCH ONLY. Never on a vehicle or an assembled transmission:")
+    if args.sim_brake:
+        print("!!   0x140 BRAKE PEDAL PRESSED (E2E-valid) - the brake interlock is defeated")
+    if args.sim_engine:
+        print(f"!!   0x108 ENGINE RUNNING at {args.sim_engine} rpm (E2E-valid)")
+        print("!!   while it runs: leave_allowed() REFUSES THE FLASH HAND-OVER (>= 50 rpm) and")
+        print("!!   bench_out refuses FE10/FE11. STOP THIS COMMAND (the sim stops with it) BEFORE")
+        print("!!   ANY INSTALL.")
+    print("!! The STOCK range chain is LIVE: with both, R/N/D RELEASE PARK (release 1.0 A + hold).")
+    print("!" * 78)
+
+
 def cmd_park_check(b, args):
-    """Bench check of the range/park logic (~/tcu_sweep/range_logic_port.md): sends the
-    Chrysler type-1 shifter frames (0x2EA on bus 1 with CRC-8 + counter, 0x210 on bus 2,
-    every 10 ms; the firmware's timeout is 50 ms), reads the lever decode, the park target /
-    stock reason, the timer model and the two park demands from the measurement table, and
-    compares them with the stock rule (0xA57DA mode 4 + 0xCFFDE / 0xE88FA):
-      P                         -> target 8 / 0x15, release off, hold off
-      R / N / D (stationary)    -> target 6 / 0x16, release ON, hold ON (model 2 -> 1 in 150 ms)
-      no valid lever, still     -> target 8 / 0x17 (Auto-P), both off
-      moving (output > 80 rpm)  -> target 6 / 0x16 whatever the lever but P
-    With --hw the demands are expected to reach the drivers (an image built with
-    DRV_GA_STAGE 1): release = bus-A ch 7 at 1.0 A (under the 30 s accumulated on-time limit,
-    then latched off until power-off), hold = TOE31. Without --hw only the logic is checked."""
+    """Bench check of the range/park path (2026-11-17, ~/tcu_sweep/range_chain_live_port.md):
+    sends the Chrysler type-1 shifter frames (0x2EA on bus 1 with CRC-8 + counter, 0x210 on
+    bus 2, every 10 ms; the firmware's timeout is 50 ms) and reads the lever decode, the range
+    (D6D6, the STOCK CYCLIC CHAIN's, live since 2026-11-17) and its reason D6D9, the timer
+    model and the two park demands from the measurement table, step by step.
+
+    THE STOCK RULE ON THIS BENCH (the host model test_rng_chain prints the same table):
+      no --sim-brake / --sim-engine -> range 8 (P) at EVERY step, both park outputs off:
+          the stock keeps P without a pressed brake (0x89434 filter, D607) and a running
+          engine (893E8); r03q..r03s showed it with the chain as a shadow;
+      --sim-brake --sim-engine 700 (FAKE, dry bench only) ->
+          P 8, R 7, N 6, D 5, code 0 after D 5, P 8, bad-CRC R 7, 0x210 N 6, 0x2EA D 5,
+          invalid code 7 -> D HELD (5: the stock keeps the last range when the lever is lost
+          and only U1267 + R reacts, 0xC76D8), both missing 5, P 8;
+          release + hold ON whenever the range is not 8 (~18 s of release budget at --settle 2).
+    Without --start-before-power the TCU has been up without lever frames, so U1267 is
+    confirmed in the chain; it heals 0.5 s into the first P step (keep --settle >= 1.0), or
+    R is refused once (8 / 0x33) and N / D (8 / 0x3C).
+    With --hw the demands are expected to reach the drivers (DRV_GA_STAGE 1): release = bus-A
+    ch 7 at 1.0 A (under the 30 s accumulated on-time limit), hold = TOE31."""
     b.start_drain()     # keep the Teensy ports drained (lever-sim gaps, 2026-11-17)
 
     addr = meas_table_addr(args.elf, 54)
-    if args.hw:
-        print("PARK OUTPUTS WILL BE DRIVEN (bus-A ch 7 1.0 A + TOE31) WHENEVER THE LEVER IS R/N/D")
-        print("dry bench, ammeter on; the release is limited to 30 s accumulated per power cycle")
+    release = bool(args.sim_brake) and (args.sim_engine or 0) > 430
+    fake_signal_banner(args)
+    if args.hw or release:
+        print("PARK OUTPUTS WILL BE DRIVEN (bus-A ch 7 1.0 A + TOE31) WHENEVER THE RANGE LEAVES P")
+        print("dry bench, ammeter on, supply limit 4 A; the release is limited to 30 s accumulated"
+              " per power cycle")
         if input("Mechatronic dry (no pump, no driveline), ammeter running? [yes/no] ").strip() != "yes":
             return 1
     P, R, N, D = 1, 2, 3, 4
     # (description, code, 0x2EA on, 0x210 on, bad CRC, lever expected or None, source expected,
-    #  kind: "P" engage by lever, "RND" lever R/N/D, "none" no valid lever)
+    #  range expected with the brake + engine sims)
     steps = [
-        ("no shifter frames",              P, False, False, False, None, 2, "none"),
-        ("P on both buses",                P, True,  True,  False, 8,    0, "P"),
-        ("R on both buses",                R, True,  True,  False, 7,    0, "RND"),
-        ("N on both buses",                N, True,  True,  False, 6,    0, "RND"),
-        ("D on both buses",                D, True,  True,  False, 5,    0, "RND"),
-        ("code 0 (no change) after D",     0, True,  True,  False, 5,    0, "RND"),
-        ("P on both buses",                P, True,  True,  False, 8,    0, "P"),
-        ("0x2EA bad CRC, 0x210 R",         R, True,  True,  True,  7,    1, "RND"),
-        ("0x2EA missing, 0x210 N",         N, False, True,  False, 6,    1, "RND"),
-        ("0x2EA D, 0x210 missing",         D, True,  False, False, 5,    0, "RND"),
-        ("invalid code 7 on both",         7, True,  True,  False, None, 2, "none"),
-        ("both missing again",             D, False, False, False, None, 2, "none"),
-        ("P on both buses",                P, True,  True,  False, 8,    0, "P"),
+        ("no shifter frames",              P, False, False, False, None, 2, 8),
+        ("P on both buses",                P, True,  True,  False, 8,    0, 8),
+        ("R on both buses",                R, True,  True,  False, 7,    0, 7),
+        ("N on both buses",                N, True,  True,  False, 6,    0, 6),
+        ("D on both buses",                D, True,  True,  False, 5,    0, 5),
+        ("code 0 (no change) after D",     0, True,  True,  False, 5,    0, 5),
+        ("P on both buses",                P, True,  True,  False, 8,    0, 8),
+        ("0x2EA bad CRC, 0x210 R",         R, True,  True,  True,  7,    1, 7),
+        ("0x2EA missing, 0x210 N",         N, False, True,  False, 6,    1, 6),
+        ("0x2EA D, 0x210 missing",         D, True,  False, False, 5,    0, 5),
+        ("invalid code 7 on both",         7, True,  True,  False, None, 2, 5),
+        ("both missing again",             D, False, False, False, None, 2, 5),
+        ("P on both buses",                P, True,  True,  False, 8,    0, 8),
     ]
     snd = LeverSender(b)
+    snd.brake = bool(args.sim_brake)
+    snd.rpm = int(args.sim_engine or 0)
+    if args.start_before_power:
+        print("TCU must be OFF now. Starting the frames on a dark bus (as the wake storm does).")
+        if input("TCU switched off? [yes/no] ").strip() != "yes":
+            return 1
+        snd.code, snd.on_2ea, snd.on_210 = P, True, True
     snd.start()
-    results, still = [], None
+    results = []
     srcs = {0: "CAN-C", 1: "shifter bus", 2: "none"}
-    print(f"measurement table at 0x{addr:08X}; {args.settle:.1f} s per step")
     try:
-        for desc, code, a, c, bad, lev, src, kind in steps:
+        if args.start_before_power:
+            input("frames running (lever P" + (", brake ON" if snd.brake else "")
+                  + (f", engine {snd.rpm} rpm" if snd.rpm else "")
+                  + ") - switch the TCU ON now, then press Enter ... ")
+            print("waiting 5 s for boot, mode 1 and the 0x9B228 one-shot")
+            time.sleep(5.0)
+        print(f"measurement table at 0x{addr:08X}; {args.settle:.1f} s per step; expected: "
+              + ("the stock releases on R/N/D (brake + engine sims)" if release
+                 else "the stock keeps P at every step (no brake / engine)"))
+        for desc, code, a, c, bad, lev, src, rng_sim in steps:
             snd.code, snd.on_2ea, snd.on_210, snd.bad_crc = code, a, c, bad
             time.sleep(args.settle)
             d = read_mem(b, args.bus, addr, 54)
-            if still is None:                          # first step: no lever -> Auto-P or moving
-                still = d[49] == 0x17
-                print(f"  output speed {'stationary' if still else 'MOVING (> 80 rpm)'} "
-                      f"(reason 0x{d[49]:02X}, output {int.from_bytes(d[32:34], 'big')} rpm)")
-            want_t, want_r = {"P": (8, 0x15), "RND": (6, 0x16),
-                              "none": (8, 0x17) if still else (6, 0x16)}[kind]
-            want_out = 3 if want_t == 6 else 0          # release + hold out of P, both off in P
-            ok = d[20] == src and (lev is None or d[19] == lev) and d[48] == want_t and d[49] == want_r
+            want_t = rng_sim if release else 8
+            want_out = 3 if want_t != 8 else 0          # release + hold out of P, both off in P
+            ok = d[20] == src and (lev is None or d[19] == lev) and d[48] == want_t and d[49] == 0
             ok = ok and (d[51] & 3) == want_out and d[53] == 0
             results.append(ok)
             print(f"  {'PASS' if ok else 'FAIL'}  {desc:30s} lever {d[19]} ({srcs.get(d[20], d[20])})  "
                   + park_line(d)
-                  + ("" if ok else f"   expected lever {lev} src {src} target {want_t} reason 0x{want_r:02X}"
+                  + ("" if ok else f"   expected lever {lev} src {src} range {want_t} reason 0x00"
                                    f" demands {want_out}"))
     finally:
         snd.stop.set()
         snd.join(1.0)
-    print("  (the demands are the logic's; whether the drivers apply them depends on DRV_GA_STAGE and"
+        print("all simulated frames stopped" + (" (lever, brake, engine)" if release else ""))
+    print("  (the demands are the path's; whether the drivers apply them depends on DRV_GA_STAGE and"
           " the 30 s release on-time limit — witness s_rq_rel_win, chip 3 8812/881A, TOE31 DTR)")
     print(f"{sum(results)}/{len(results)} steps passed")
     return 0 if all(results) else 1
 
 
-# ---------------------------------------------------------------- range shadow check
+# ---------------------------------------------------------------- range chain check (live since 2026-11-17)
 
 def e2e_frame(data, ctr):
     """CAN-C variant-1 protection as io/vehicle/profile_fca.c checks it (bsw/com/com.c):
@@ -1424,13 +1479,13 @@ class VehicleSim(threading.Thread):
             time.sleep(max(0.0, t - time.monotonic()))
 
 
-# rng_shadow_cells_t (firmware/app/rng_shadow.h) offsets, from offsetof() of the header (SH-2A
-# and host lay it out alike); checked against the symbol size below
-RS_SIZE = 0x1D4       # 2026-11-17: + fm_ms (+0x180) and the U1267 / P0850 fault-manager blocks
-RS_FM_MS, RS_FM109, RS_FM98 = 0x180, 0x184, 0x1AC   # rng_shadow_fm_t, 0x28 bytes each
-RS_D5E6, RS_D61A, RS_E530, RS_D6D4, RS_D6DE, RS_893E0 = 0x000, 0x026, 0x0A6, 0x0CE, 0x0D8, 0x0E4
-RS_O304C, RS_D60C0, RS_U_FAILED, RS_U_TESTED, RS_G109, RS_G98 = 0x130, 0x154, 0x15E, 0x15F, 0x160, 0x161
-RS_U_REP, RS_U_FAIL, RS_U_PASS, RS_SKIP = 0x170, 0x174, 0x178, 0x17C
+# the live range chain (firmware/app/rng_chain.h, 2026-11-17): its cells are the STOCK cells at
+# the stock addresses (read directly); the fault-manager model is ours, s_rc_m (rng_chain_model_t)
+RC_BLOCKS = {"d5e4": (0xFFF8D5E4, 0x30), "d61a": (0xFFF8D61A, 0x80), "d6ca": (0xFFF8D6CA, 0x16),
+             "e530": (0xFFF8E530, 0x1C), "893e0": (0xFFF893E0, 0x18), "304c": (0xFFF8304C, 0x18)}
+RCM_SIZE = 0x74       # rng_chain_model_t
+RCM_G109, RCM_G98, RCM_U_FAILED, RCM_U_TESTED = 0x02, 0x03, 0x00, 0x01
+RCM_U_FAIL, RCM_U_PASS, RCM_SKIP, RCM_FM_MS, RCM_FM109, RCM_FM98 = 0x14, 0x18, 0x1C, 0x20, 0x24, 0x4C
 
 
 def elf_sym(elf, name):
@@ -1444,62 +1499,70 @@ def elf_sym(elf, name):
     sys.exit(f"symbol {name} not found in {elf} - rebuild?")
 
 
-def shadow_line(c):
-    """Decode the range shadow cells (s_rs) read from RAM."""
-    g = lambda base, a, a0: c[base + a - a0]
-    d5 = lambda a: g(RS_D5E6, a, 0xD5E6)
-    d6 = lambda a: g(RS_D61A, a, 0xD61A)
-    u16 = lambda o: int.from_bytes(c[o:o + 2], "big")
-    u32 = lambda o: int.from_bytes(c[o:o + 4], "big")
-    return (f"SHADOW D6D6 {g(RS_D6D4, 0xD6D6, 0xD6D4)} rsn 0x{g(RS_D6D4, 0xD6D9, 0xD6D4):02X} "
-            f"D6DE {c[RS_D6DE]}/{c[RS_D6DE + 1]:02X} E545 {g(RS_E530, 0xE545, 0xE530)} "
-            f"304C {u32(RS_O304C)} | 893E8 {g(RS_893E0, 0x893E8, 0x893E0)} D607 {d5(0xD607)} "
-            f"D5FB {d5(0xD5FB)} D5F2 {d5(0xD5F2)} D672/3 {d6(0xD672)}/{d6(0xD673)} | "
-            f"brake D631 {d6(0xD631)} D64B {d6(0xD64B)} eng D63A {u16(RS_D61A + 0x20)} D63C {d6(0xD63C)} | "
-            f"U1267 g109 {c[RS_G109]} last f/t {c[RS_U_FAILED]}/{c[RS_U_TESTED]} D60C {u16(RS_D60C0)} "
-            f"fail/pass {u32(RS_U_FAIL)}/{u32(RS_U_PASS)} P0850 g98 {c[RS_G98]} | "
-            f"D660 {d6(0xD660)} D661 {d6(0xD661)} D664 {d6(0xD664)} D665 {d6(0xD665)} D666 {d6(0xD666)} "
-            f"skip {u32(RS_SKIP)}" + (
-            "" if len(c) < RS_SIZE else
-            f" | FM ms {u32(RS_FM_MS)} " + " ".join(
-                f"{nm}: st {u16(o):04X} t {u16(o + 2)} max {u16(o + 6)} in-masks {c[o + 10]} "
+class ChainCells:
+    """The range chain's cells read from RAM, indexed by stock address."""
+    def __init__(self, blocks, model):
+        self.blk, self.m = blocks, model
+
+    def c(self, a):
+        a |= 0xFFF80000
+        for base, data in self.blk.values():
+            if base <= a < base + len(data):
+                return data[a - base]
+        raise KeyError(hex(a))
+
+    def w(self, a):
+        return self.c(a) << 8 | self.c(a + 1)
+
+    def l(self, a):
+        return self.w(a) << 16 | self.w(a + 2)
+
+
+def chain_line(cc):
+    """Decode the live range chain (stock cells + our fault-manager model)."""
+    m = cc.m
+    u16 = lambda o: int.from_bytes(m[o:o + 2], "big")
+    u32 = lambda o: int.from_bytes(m[o:o + 4], "big")
+    return (f"CHAIN D6D6 {cc.c(0xD6D6)}/{cc.c(0xD6D7):02X} rsn 0x{cc.c(0xD6D9):02X} "
+            f"D6DE {cc.c(0xD6DE)}/{cc.c(0xD6DF):02X} E545 {cc.c(0xE545)} 304C {cc.l(0x304C)} | "
+            f"893E8 {cc.c(0x893E8)} D607 {cc.c(0xD607)} D5FB {cc.c(0xD5FB)} D5F2 {cc.c(0xD5F2)} "
+            f"D672/3 {cc.c(0xD672)}/{cc.c(0xD673)} | brake D631 {cc.c(0xD631)} D64B {cc.c(0xD64B)} "
+            f"eng D63A {cc.w(0xD63A)} D63C {cc.c(0xD63C)} | U1267 g109 {m[RCM_G109]} last f/t "
+            f"{m[RCM_U_FAILED]}/{m[RCM_U_TESTED]} D60C {cc.w(0xD60C)} fail/pass "
+            f"{u32(RCM_U_FAIL)}/{u32(RCM_U_PASS)} P0850 g98 {m[RCM_G98]} | D660 {cc.c(0xD660)} "
+            f"D661 {cc.c(0xD661)} D664 {cc.c(0xD664)} D665 {cc.c(0xD665)} D666 {cc.c(0xD666)} "
+            f"skip {u32(RCM_SKIP)} | FM ms {u32(RCM_FM_MS)} " + " ".join(
+                f"{nm}: st {u16(o):04X} t {u16(o + 2)} max {u16(o + 6)} in-masks {m[o + 10]} "
                 f"conf {u32(o + 0x14)}@{u32(o + 0x20)} heal {u32(o + 0x18)}@{u32(o + 0x24)}"
-                for nm, o in (("g109", RS_FM109), ("g98", RS_FM98)))))
+                for nm, o in (("g109", RCM_FM109), ("g98", RCM_FM98))))
 
 
-def cmd_shadow_check(b, args):
-    """The READ-ONLY range shadow (app/rng_shadow.c, ~/tcu_sweep/range_shadow_live_inputs.md)
-    against the live path, with the lever simulation and OPTIONAL fake brake / engine signals.
-    Sequence P, R, N, D, P (--settle s each); the lever is never dropped, because every 10 ms
-    pass without a valid lever source after the first 0.5 s of OS mode 1 fails U1267 in the
-    shadow, and that latches R/N/D to P (8 / 0x33, 0x3C) for the rest of the power cycle.
-    --start-before-power: the frames start BEFORE the TCU is switched on (the chain starts at
-    the mode-1 switch, ~0.67 s after power-on in our firmware; the stock's U1267 window is
-    0.5 s from there). Without it the TCU has been up without lever frames, U1267 is already
-    failed in the shadow, and the shadow stays 8 whatever the sims."""
+def cmd_range_check(b, args):
+    """The LIVE range chain (app/rng_chain.c; 2026-11-17, ~/tcu_sweep/range_chain_live_port.md;
+    the r03q..r03s shadow-check, alias shadow-check) with the lever simulation and OPTIONAL
+    fake brake / engine signals. Sequence P, R, N, D, P (--settle s each); reads the chain's
+    cells at their stock addresses and the park path from the measurement table.
+    Expected (the host model test_rng_chain): with --sim-brake and --sim-engine > 430 the
+    range follows the lever, P 8 R 7 N 6 D 5 P 8 (reasons 0) and the park outputs are ON out
+    of P; without them the range is 8 throughout and the outputs stay off. The lever is never
+    dropped. --start-before-power: the frames start BEFORE the TCU is switched on (U1267 is
+    never tested); without it U1267 is confirmed and heals 0.5 s into the first P step."""
     b.start_drain()     # keep the Teensy ports drained (lever-sim gaps, 2026-11-17)
 
     m_addr = meas_table_addr(args.elf, 54)
-    rs_addr, rs_size = elf_sym(args.elf, "_s_rs")
-    if rs_size != RS_SIZE:
-        sys.exit(f"_s_rs is {rs_size:#x} bytes, this tool expects {RS_SIZE:#x}: the struct changed")
-    sims = args.sim_brake or args.sim_engine
-    print("THE LIVE PATH DRIVES THE PARK OUTPUTS on R/N/D (release bus-A ch 7 1.0 A + hold TOE31):")
+    rcm_addr, rcm_size = elf_sym(args.elf, "_s_rc_m")
+    if rcm_size != RCM_SIZE:
+        sys.exit(f"_s_rc_m is {rcm_size:#x} bytes, this tool expects {RCM_SIZE:#x}: the struct changed")
+    d6ca_addr, _ = elf_sym(args.elf, "_rc_d6ca")
+    if d6ca_addr != 0xFFF8D6CA:
+        sys.exit(f"_rc_d6ca at {d6ca_addr:#x}: not the live-chain build (expected 0xFFF8D6CA)")
+    release = bool(args.sim_brake) and (args.sim_engine or 0) > 430
+    print("THE STOCK RANGE CHAIN IS LIVE: it drives the park outputs (release bus-A ch 7 1.0 A +"
+          " hold TOE31) whenever the range leaves P")
     print("  dry bench, ammeter on, bench supply limit 4 A (~3.0 A warm, out of P); ~6 s of the 30 s"
-          " release budget per run at --settle 2")
+          " release budget per run at --settle 2 with the sims")
     print("  both Teensy ports are used (0x210 on bus 2): the ammeter logger cannot run - watch the meter")
-    if sims:
-        print("!" * 78)
-        print("!! FAKE SAFETY SIGNALS - DRY BENCH ONLY. Never on a vehicle or an assembled transmission:")
-        if args.sim_brake:
-            print("!!   0x140 BRAKE PEDAL PRESSED (E2E-valid) - the brake interlock is defeated")
-        if args.sim_engine:
-            print(f"!!   0x108 ENGINE RUNNING at {args.sim_engine} rpm (E2E-valid)")
-            print("!!   while it runs: leave_allowed() REFUSES THE FLASH HAND-OVER (>= 50 rpm) and")
-            print("!!   bench_out refuses FE10/FE11. STOP THIS COMMAND (the sim stops with it) BEFORE")
-            print("!!   ANY INSTALL.")
-        print("!! The live path ignores both today; only the read-only shadow and those refusals read them.")
-        print("!" * 78)
+    fake_signal_banner(args)
     if input("Mechatronic dry (no pump, no driveline), ammeter running, supply limit 4 A? [yes/no] ").strip() != "yes":
         return 1
     sim = VehicleSim(b)
@@ -1511,6 +1574,7 @@ def cmd_shadow_check(b, args):
         if input("TCU switched off? [yes/no] ").strip() != "yes":
             return 1
     sim.start()
+    results = []
     try:
         if args.start_before_power:
             input("frames running (lever P" + (", brake ON" if sim.brake else "")
@@ -1537,31 +1601,30 @@ def cmd_shadow_check(b, args):
                     time.sleep(0.2)
         P, R, N, D = 1, 2, 3, 4
         steps = [("P", P, 8), ("R", R, 7), ("N", N, 6), ("D", D, 5), ("P", P, 8)]
-        release = bool(sim.brake) and sim.rpm > 430
-        results = []
-        print(f"measurement table at 0x{m_addr:08X}, shadow s_rs at 0x{rs_addr:08X}; "
+        print(f"measurement table at 0x{m_addr:08X}, chain model s_rc_m at 0x{rcm_addr:08X}; "
               f"{args.settle:.1f} s per step")
+        cc = None
         for name, code, lev in steps:
             sim.code = code
             time.sleep(args.settle)
             d = read_retry(m_addr, 54)
-            c = read_retry(rs_addr, RS_SIZE)
-            d6d6 = c[RS_D6D4 + 2]
-            g109 = c[RS_G109]
-            want = lev if (release and not g109) else 8
-            ok = d6d6 == want
+            cc = ChainCells({k: (a, read_retry(a, n)) for k, (a, n) in RC_BLOCKS.items()},
+                            read_retry(rcm_addr, RCM_SIZE))
+            want = lev if (release and not cc.m[RCM_G109]) else 8
+            ok = cc.c(0xD6D6) == want and d[48] == want and (d[51] & 3) == (3 if want != 8 else 0) \
+                and d[53] == 0
             results.append(ok)
-            print(f"  {'PASS' if ok else 'FAIL'} lever {name}: LIVE lever {d[19]} src {d[20]} "
+            print(f"  {'PASS' if ok else 'FAIL'} lever {name}: lever {d[19]} src {d[20]} "
                   f"eng {int.from_bytes(d[0:2], 'big')} brake {d[12]} | " + park_line(d))
-            print("       " + shadow_line(c) + ("" if ok else f"   expected shadow D6D6 {want}"))
-        if args.sim_brake and args.sim_engine and c[RS_G109]:
-            print("  U1267 is failed in the shadow (lever missing > 0.5 s into mode 1): R/N/D stay 8"
-                  " until power-off - rerun with --start-before-power after a power cycle")
+            print("       " + chain_line(cc) + ("" if ok else f"   expected D6D6 {want}"))
+        if release and cc is not None and cc.m[RCM_G109]:
+            print("  U1267 is confirmed in the chain (lever missing > 0.5 s into mode 1): R/N/D stay 8"
+                  " until it heals (0.5 s of valid lever) - rerun, or use --start-before-power")
     finally:
         sim.stop.set()
         sim.join(1.0)
         print("all simulated frames stopped (lever, brake, engine)")
-    print(f"{sum(results)}/{len(results)} steps match the shadow prediction "
+    print(f"{sum(results)}/{len(results)} steps match the stock chain's prediction "
           f"({'brake + engine > 430: the stock releases' if release else 'no brake/engine: the stock keeps P'})")
     return 0 if all(results) else 1
 
@@ -1600,16 +1663,20 @@ def main():
     p = sub.add_parser("park"); p.add_argument("--bus", type=int, default=1)
     p.add_argument("--elf", default="build/sh2a/tcu_app.elf"); p.add_argument("--period", type=float, default=1.0)
     p.add_argument("--count", type=int, default=0)
+    def sim_args(p):
+        p.add_argument("--sim-brake", action="store_true", help="FAKE: send 0x140 brake pressed (dry bench only)")
+        p.add_argument("--sim-engine", type=int, default=0, metavar="RPM",
+                       help="FAKE: send 0x108 engine speed RPM (dry bench only; stop before any install)")
+        p.add_argument("--start-before-power", action="store_true",
+                       help="start the frames with the TCU off, then ask for power-on (keeps U1267 untested)")
     p = sub.add_parser("park-check"); p.add_argument("--bus", type=int, default=1)
-    p.add_argument("--elf", default="build/sh2a/tcu_app.elf"); p.add_argument("--settle", type=float, default=1.0)
-    p.add_argument("--hw", action="store_true", help="the image drives the park outputs (DRV_GA_STAGE 1)")
-    p = sub.add_parser("shadow-check"); p.add_argument("--bus", type=int, default=1)
     p.add_argument("--elf", default="build/sh2a/tcu_app.elf"); p.add_argument("--settle", type=float, default=2.0)
-    p.add_argument("--sim-brake", action="store_true", help="FAKE: send 0x140 brake pressed (dry bench only)")
-    p.add_argument("--sim-engine", type=int, default=0, metavar="RPM",
-                   help="FAKE: send 0x108 engine speed RPM (dry bench only; stop before any install)")
-    p.add_argument("--start-before-power", action="store_true",
-                   help="start the frames with the TCU off, then ask for power-on (keeps U1267 untested)")
+    p.add_argument("--hw", action="store_true", help="the image drives the park outputs (DRV_GA_STAGE 1)")
+    sim_args(p)
+    for nm in ("range-check", "shadow-check"):
+        p = sub.add_parser(nm); p.add_argument("--bus", type=int, default=1)
+        p.add_argument("--elf", default="build/sh2a/tcu_app.elf"); p.add_argument("--settle", type=float, default=2.0)
+        sim_args(p)
     p = sub.add_parser("park-out"); p.add_argument("--bus", type=int, default=1)
     p.add_argument("--csv", default="m4b_park_out_results.csv")
     p = sub.add_parser("app-flash"); p.add_argument("image", nargs="?", default="build/sh2a/tcu_app_df.bin")
@@ -1655,7 +1722,7 @@ def main():
          "plant-probe34": cmd_plant_probe34, "plant-dump-session": cmd_plant_dump_session,
          "app-selftest": cmd_app_selftest, "sensors": cmd_sensors, "park": cmd_park,
          "park-check": cmd_park_check, "park-out": cmd_park_out,
-         "shadow-check": cmd_shadow_check}[args.cmd](b, args)
+         "range-check": cmd_range_check, "shadow-check": cmd_range_check}[args.cmd](b, args)
     finally:
         b.shutdown()
 

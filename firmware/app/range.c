@@ -16,7 +16,6 @@
  * ctest pksens_readonly_scan fails if this file names a sensor cell) */
 #define TCU_OUTPUT_PATH 1
 #include "app/range.h"
-#include "app/park_cells.h"
 
 /* the lever-object getters return 0 on a broken complement; the inputs here
  * are plain values (the object is not ported — app/park.c fills them) */
@@ -172,53 +171,3 @@ void range_arbitrate(const range_in_t *in, range_res_t *res)
     default: arb_mode4(in, res); break;
     }
 }
-
-/* ── 0xA548C ───────────────────────────────────────────────────────────── */
-void range_init(void)
-{
-    PCELL_ARB[0] = 0u;
-    PCELL_ARB[1] = 0u;
-    PCELL_ARB[2] = 0u;
-    /* RAM is cleared at boot in the stock; D6D6 = 0 until the first pass.
-     * Our readers treat a non-8/6/5 value as "engage" (range_target) */
-    PCELL_TGT = 0u;
-    PCELL_TGT_C = 0xFFu;
-}
-
-void range_update(const range_in_t *in)
-{
-    range_res_t r = { PCELL_ARB[0], PCELL_ARB[1], PCELL_ARB[2] };
-
-    range_arbitrate(in, &r);
-    PCELL_ARB[0] = r.flag;
-    PCELL_ARB[1] = r.target;
-    PCELL_ARB[2] = r.reason;
-    PCELL_TGT = r.target;
-    PCELL_TGT_C = (uint8_t)~r.target;
-    /* 0xC709C (the module output, after the store) is not ported */
-}
-
-bool range_integrity_ok(void)
-{
-    const uint8_t t = PCELL_TGT;
-
-    return t == (uint8_t)~PCELL_TGT_C &&
-           (t == (uint8_t)PARK_ENGAGE || t == (uint8_t)PARK_RELEASE || t == (uint8_t)PARK_DRIVE5);
-}
-
-park_target_t range_target(void)
-{
-    return range_integrity_ok() ? (park_target_t)PCELL_TGT : PARK_ENGAGE;
-}
-
-uint8_t range_reason(void)
-{
-    return PCELL_ARB[2];
-}
-
-#ifdef PARK_TEST_HOOKS
-void range_test_corrupt(void)
-{
-    PCELL_TGT_C ^= 0x01u;
-}
-#endif

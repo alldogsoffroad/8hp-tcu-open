@@ -1,5 +1,13 @@
-/* Park target arbiter — the stock's 0xA548C → 0xA557C, ported 1:1 from the
- * bytes (app/range.c; ~/tcu_sweep/range_logic_port.md §2, spec 14 §4.2).
+/* Park target arbiter — the stock's 0xA557C (0xA548C's body), ported 1:1
+ * from the bytes (app/range.c; ~/tcu_sweep/range_logic_port.md §2, spec 14
+ * §4.2). PURE: it writes only *res.
+ *
+ * THE STOCK RUNS IT ONCE PER POWER CYCLE (m5_reverse_range_decode.md §1:
+ * the only reference is pool 0x9B42C, loaded at 0x9B256 inside the
+ * 0x9B228 one-shot, gated by 0xFFF8D5E4 [O]). Since 2026-11-17 so do we:
+ * app/rng_chain.c calls it from rng_chain_init and stores E549 + D6D6;
+ * from the first OS-mode-1 pass the cyclic chain owns D6D6. (r03k..r03s
+ * ran it every 10 ms as the live range — the deviation this removed.)
  *
  *   0xA557C  the special cases (0xA54A4 rows 1–3, forced releases rows 5/6,
  *            the D-at-speed row 8), then the mode dispatch by cal +0x2C:
@@ -10,7 +18,6 @@
  * from the call at 0x9B254. Codes: target 8 engage P, 6 released, 5
  * released (drive special case); reasons 0x01..0x17 as the stock.
  *
- * Called every 10 ms (the stock's park module class [I]).
  */
 #ifndef TCU_RANGE_H
 #define TCU_RANGE_H
@@ -32,8 +39,9 @@
 #define RANGE_CAL_EN30      1u      /* +0x30: row 5 enable */
 #define RANGE_CAL_EN34      1u      /* +0x34: row 6 enable */
 
-/* target codes (0xFFF8D6D6) */
-typedef enum { PARK_DRIVE5 = 5, PARK_RELEASE = 6, PARK_ENGAGE = 8 } park_target_t;
+/* range codes (0xFFF8D6D6): the arbiter's 8 engage / 6 released / 5 drive
+ * special, and the cyclic chain's P 8 / R 7 / N 6 / D 5 (one code space) */
+typedef enum { PARK_DRIVE5 = 5, PARK_RELEASE = 6, PARK_R7 = 7, PARK_ENGAGE = 8 } park_target_t;
 
 /* the arbiter's inputs, each named by its stock source */
 typedef struct {
@@ -56,16 +64,5 @@ typedef struct {
  * (byte 2 cleared first; byte 0 only ever SET, by rows 5/6) */
 typedef struct { uint8_t flag, target, reason; } range_res_t;
 void range_arbitrate(const range_in_t *in, range_res_t *res);
-
-/* 0xA548C: arbitrate into 0xFFF8E549 and publish 0xFFF8D6D6 / D6D7 */
-void range_init(void);
-void range_update(const range_in_t *in);
-park_target_t range_target(void);   /* PARK_ENGAGE when the stored copy is corrupt  */
-uint8_t range_reason(void);         /* the stock reason code (0xFFF8E54B)           */
-bool range_integrity_ok(void);
-
-#ifdef PARK_TEST_HOOKS
-void range_test_corrupt(void);      /* break the inverted copy */
-#endif
 
 #endif

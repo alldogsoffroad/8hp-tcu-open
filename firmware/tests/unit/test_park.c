@@ -1,13 +1,13 @@
-/* Unit and closed-loop test: the stock range / park logic (M4,
- * ~/tcu_sweep/range_logic_port.md) — the arbiter 0xA557C (app/range.c), the
- * output law 0xCFFDE / 0xE88FA / 0xE8B56 / 0xE89DE / 0xE8888
- * (app/park_law.c), the cross-check (safety/park_mon.c), and the request
- * law's D-M4-7 on-time limit (drv_rq_window_step).
- *
- * The loop: CAN frames (0x2EA on bus 1 with the real CRC-8 and counter,
- * 0x210 on bus 2) -> FCA profile -> park_tick_10ms() -> the pinned cells and
- * the slot getters. sensors_in() is provided here (the output speed comes
- * from the scenario).
+/* Unit test: the park output path from the range (M4, 2026-11-17 —
+ * ~/tcu_sweep/range_chain_live_port.md, range_logic_port.md §3):
+ *   - app/park.c follows D6D6 (written here directly, standing in for the
+ *     chain app/rng_chain.c, which test_rng_chain runs end to end) through
+ *     the stock output law 0xB912C / 0xB97F8 → 0xCFFDE → 0xE88FA → 0xE89DE
+ *     → 0xE8888 (app/park_law.c) to the two park demands;
+ *   - the init arbiter 0xA557C (app/range.c, pure; the chain runs it once);
+ *   - safety/park_mon.c's independent checks (ours), each one violated on
+ *     purpose (mutations of the chain's output) — latch, both demands 0;
+ *   - the request law's D-M4-7 on-time limit (drv_rq_window_step).
  */
 #include "app/park.h"
 #include "app/park_cells.h"
@@ -16,7 +16,6 @@
 #include "bsw/drv/drv_park.h"
 #include "bsw/drv/drv_reqlaw.h"
 #include "io/vehicle/vehicle.h"
-#include "io/sensors/sensors.h"
 #include "tests/unit/stub_plat.h"
 
 #include <stdio.h>
@@ -28,20 +27,23 @@ static int fails;
 #define CHECKV(a, b) do { long _a = (long)(a), _b = (long)(b); if (_a != _b) { \
     printf("FAIL %s:%d %s = %ld, expected %ld\n", __FILE__, __LINE__, #a, _a, _b); fails++; } } while (0)
 
-/* ---------------------------------------------------------------- sensors stand-in */
+/* ---------------------------------------------------------------- the range, written as the chain would */
+#define D6D6_W (*(volatile uint8_t *)(uintptr_t)0xFFF8D6D6u)
+#define D6D7_W (*(volatile uint8_t *)(uintptr_t)0xFFF8D6D7u)
 
-static sensors_in_t s_z;
-
-const sensors_in_t *sensors_in(void)
+static void set_range(uint8_t v)
 {
-    return &s_z;
+    D6D6_W = v;
+    D6D7_W = (uint8_t)~v;
 }
 
 /* ---------------------------------------------------------------- scenario driver */
 
 static struct {
-    uint8_t lever_code;         /* 1 P, 2 R, 3 N, 4 D (0 no change, 7 invalid) */
-    bool    send_2ea, send_210, bad_crc;
+    uint8_t  lever_code;        /* 1 P, 2 R, 3 N, 4 D (0 no frame) */
+    bool     brake;             /* 0x140 pressed */
+    uint16_t engine;            /* 0x108 rpm (0 = no frame) */
+    uint16_t spd14b;            /* 0x14B raw (0 = no frame) */
 } sc;
 
 static uint8_t s_ctr[0x800];
@@ -56,39 +58,48 @@ static void send(can_bus_t bus, uint16_t id, uint8_t dlc, bool prot, const uint8
         s_ctr[id] = (uint8_t)((s_ctr[id] + 1u) & 0x0Fu);
         f.data[dlc - 2u] = (uint8_t)((f.data[dlc - 2u] & 0x0Fu) | (uint8_t)(s_ctr[id] << 4));
         f.data[dlc - 1u] = crc8_j1850(f.data, (uint8_t)(dlc - 1u));
-        if (sc.bad_crc && id == 0x2EAu) {
-            f.data[dlc - 1u] ^= 0x55u;
-        }
     }
     vehicle_rx(bus, &f);
-}
-
-static void set_speed(rpm_t rpm, quality_t q)
-{
-    s_z.output_speed = rpm;
-    s_z.q_output_speed = q;
 }
 
 static void reset_all(void)
 {
     memset(&sc, 0, sizeof sc);
-    memset(&s_z, 0, sizeof s_z);
-    set_speed(0, Q_OK);
+    memset(s_ctr, 0, sizeof s_ctr);
     s_bound_violations = 0u;
     CELL_TMP_BYTE = 67u;            /* 27 °C: the dump's 0x89C13 = 0x43 */
     vehicle_init();
     park_init();
+    set_range(8u);                  /* the init arbiter's Auto-P */
 }
 
 static void step(void)
 {
-    const uint8_t l[5] = { sc.lever_code, 0, 0, 0, 0 };
+    uint8_t d[8];
 
-    if (sc.send_2ea) {
+    if (sc.lever_code != 0u) {
+        const uint8_t l[5] = { sc.lever_code, 0, 0, 0, 0 };
         send(CAN_BUS1, 0x2EAu, 5u, true, l);
-    }
-    if (sc.send_210) {
         send(CAN_BUS2, 0x210u, 5u, false, l);
+    }
+    if (sc.brake) {
+        memset(d, 0, sizeof d);
+        d[0] = 0x04u;
+        send(CAN_BUS1, 0x140u, 8u, true, d);
+    }
+    if (sc.engine != 0u) {
+        memset(d, 0, sizeof d);
+        d[0] = (uint8_t)(sc.engine >> 8);
+        d[1] = (uint8_t)sc.engine;
+        d[2] = 0x1Fu;
+        d[3] = 0xFFu;
+        send(CAN_BUS1, 0x108u, 8u, true, d);
+    }
+    if (sc.spd14b != 0u) {
+        memset(d, 0, sizeof d);
+        d[0] = (uint8_t)(sc.spd14b >> 8);
+        d[1] = (uint8_t)sc.spd14b;
+        send(CAN_BUS1, 0x14Bu, 8u, true, d);
     }
     vehicle_update_10ms();
     park_tick_10ms();
@@ -107,22 +118,18 @@ static void run(unsigned n)
     }
 }
 
-static void lever(uint8_t code)
+/* the stock release preconditions as the bench sims give them */
+static void sims_on(uint8_t lever_code)
 {
-    sc.lever_code = code;
-    sc.send_2ea = sc.send_210 = true;
-}
-
-static void no_lever(void)
-{
-    sc.send_2ea = sc.send_210 = false;
+    sc.lever_code = lever_code;
+    sc.brake = true;
+    sc.engine = 700u;
 }
 
 #define REL() park_slot7_release()
 #define HOLD() park_slot11_hold()
 
 /* ---------------------------------------------------------------- tests */
-
 /* the u8 map 0xB6D6C on the stock maps 0x1B5044 / 0x1B5050 */
 static void test_maps(void)
 {
@@ -143,182 +150,224 @@ static void test_maps(void)
     CHECKV(park_law_window_ticks(255u), 20);
 }
 
-/* no lever frames: the stock's Auto-P — and the driving dump's cells */
-static void test_auto_p(void)
+/* park.c follows D6D6: P → off, R / N / D → release + hold ON the same
+ * pass (model 2 → 1 in 150 ms), back to P → both off (model 3 → 4 in
+ * 200 ms at 27 °C) — the stock law, from the bytes [O 0xB91C6 / 0xB9634 /
+ * 0xD0012..0xD003A / 0xE891A..0xE8986 / 0xE8888] */
+static void test_follow(void)
 {
+    static const uint8_t codes[3] = { 2u, 3u, 4u };     /* R N D */
+
     reset_all();
-    no_lever();
-    step();                                     /* tick 1: 0 → 3 (engaging) */
+    sims_on(1u);
+    run(30u);
     CHECKV(PCELL_TGT, 8);
-    CHECKV(PCELL_TGT_C, 0xF7);
-    CHECKV(range_reason(), 0x17);
-    CHECKV(PCELL_AE29, 1);
-    CHECKV(park_law_lock(), 1);
-    CHECKV(park_law_state(), 3);
+    CHECK(PCELL_RNG == 8u && PCELL_RNGD == 8u);
+    CHECK(PCELL_AE28 == 0u && PCELL_AE29 == 1u);
+    CHECK(park_law_lock() == 1u && park_law_state() == 4u);
     CHECK(REL() == 0u && HOLD() == 0u);
-    run(18u);                                   /* tick 19: timer 18 */
-    CHECKV(park_law_state(), 3);
-    step();                                     /* tick 20: timer 19 */
-    CHECKV(park_law_state(), 3);
-    step();                                     /* tick 21: timer 20 >= map(27 °C) */
-    CHECKV(park_law_state(), 4);
-    run(300u);
-    /* the stock driving dump, cell for cell */
-    CHECK(PCELL_ARB[0] == 0x00u && PCELL_ARB[1] == 0x08u && PCELL_ARB[2] == 0x17u);
-    CHECK(PCELL_OBJ[0] == 0x04u && PCELL_OBJ[1] == 0x01u && PCELL_OBJ[2] == 0xFFu &&
-          PCELL_OBJ[3] == 0x00u);
-    CHECK(PCELL_AE28 == 0x00u && PCELL_AE29 == 0x01u);
-    CHECK(PCELL_RNG == 0x08u && PCELL_RNGD == 0x08u);
-    for (uint8_t k = 0u; k < 5u; k++) {
-        CHECK(PCELL_OUT[k] == 0x00u && PCELL_OUT_C[k] == 0xFFu);
+    for (unsigned k = 0u; k < 3u; k++) {
+        const uint8_t r = (uint8_t)(9u - codes[k]);      /* R 7, N 6, D 5 */
+
+        sc.lever_code = codes[k];
+        step();                                         /* the lever valid this pass */
+        set_range(r);                                   /* the chain's answer */
+        step();
+        CHECKV(PCELL_TGT, r);
+        CHECK(PCELL_RNG == r && PCELL_RNGD == r);
+        CHECKV(PCELL_AE28, r == 7u ? 2 : r == 6u ? 0 : 1);   /* table 0x63445 */
+        CHECKV(PCELL_AE29, 0);
+        CHECKV(park_law_lock(), 0);
+        CHECK(REL() == DRV_PARK_ON_REQ && HOLD() == DRV_PARK_ON_REQ);
+        CHECKV(park_law_state(), 2);                    /* releasing */
+        run(15u);
+        CHECKV(park_law_state(), 1);                    /* released after 150 ms */
+        CHECK(REL() == DRV_PARK_ON_REQ && HOLD() == DRV_PARK_ON_REQ);
+        sc.lever_code = 1u;
+        set_range(8u);                                  /* back to P */
+        step();
+        CHECK(REL() == 0u && HOLD() == 0u);
+        CHECKV(park_law_state(), 3);                    /* engaging */
+        run(19u);
+        CHECKV(park_law_state(), 3);
+        step();
+        CHECKV(park_law_state(), 4);                    /* engaged after 200 ms */
     }
-    CHECK(REL() == 0u && HOLD() == 0u);
     CHECKV(park_mon_faults(), 0);
     CHECKV(s_bound_violations, 0);
-}
-
-/* P → R → N → D → P with the stock timings */
-static void test_lever_sequence(void)
-{
-    reset_all();
-    lever(1u);                                  /* P */
-    run(50u);
-    CHECKV(PCELL_TGT, 8);
-    CHECKV(range_reason(), 0x15);
-    CHECKV(park_law_state(), 4);
-    CHECK(REL() == 0u && HOLD() == 0u);
-
-    lever(2u);                                  /* R: release + hold in the same tick */
-    step();
-    CHECKV(PCELL_TGT, 6);
-    CHECKV(range_reason(), 0x16);
-    CHECKV(PCELL_AE28, 0);                      /* table 0x63445[6] = 0 */
-    CHECKV(PCELL_AE29, 0);
-    CHECKV(park_law_lock(), 0);
-    CHECKV(park_law_state(), 2);                /* releasing */
-    CHECK(REL() == DRV_PARK_ON_REQ && HOLD() == DRV_PARK_ON_REQ);
-    run(14u);                                   /* t0 + 14: timer 14 */
-    CHECKV(park_law_state(), 2);
-    step();                                     /* t0 + 15: 150 ms */
-    CHECKV(park_law_state(), 1);                /* released */
-
-    lever(3u);                                  /* N */
-    run(5u);
-    CHECKV(PCELL_TGT, 6);
-    CHECKV(park_law_state(), 1);
-    CHECK(REL() == DRV_PARK_ON_REQ && HOLD() == DRV_PARK_ON_REQ);
-
-    lever(4u);                                  /* D */
-    run(5u);
-    CHECKV(PCELL_TGT, 6);
-    CHECKV(range_reason(), 0x16);
-    CHECK(REL() == DRV_PARK_ON_REQ && HOLD() == DRV_PARK_ON_REQ);
-
-    lever(1u);                                  /* back to P: both drop in the same tick */
-    step();
-    CHECKV(PCELL_TGT, 8);
-    CHECKV(PCELL_AE29, 1);
-    CHECKV(park_law_lock(), 1);
-    CHECK(REL() == 0u && HOLD() == 0u);
-    CHECKV(park_law_state(), 3);                /* engaging */
-    run(19u);                                   /* t1 + 19: timer 19 */
-    CHECKV(park_law_state(), 3);
-    step();                                     /* t1 + 20: 200 ms at 27 °C */
-    CHECKV(park_law_state(), 4);
-
-    /* R then back to P while still releasing (state 2 → 3) */
-    lever(2u);
-    run(5u);
-    CHECKV(park_law_state(), 2);
-    lever(1u);
-    step();
-    CHECKV(park_law_state(), 3);
-    CHECK(REL() == 0u && HOLD() == 0u);
-    /* and P → R while engaging (state 3 → 2) */
-    lever(2u);
-    step();
-    CHECKV(park_law_state(), 2);
-    CHECK(REL() == DRV_PARK_ON_REQ && HOLD() == DRV_PARK_ON_REQ);
-    CHECKV(park_mon_faults(), 0);
-    CHECKV(s_bound_violations, 0);
-}
-
-/* the shifter sources: code 0 keeps, bad CRC falls back, timeouts → Auto-P */
-static void test_lever_sources(void)
-{
-    reset_all();
-    lever(2u);                                  /* R */
-    run(20u);
-    CHECK(REL() == DRV_PARK_ON_REQ);
-    lever(0u);                                  /* code 0 = no change */
-    run(5u);
-    CHECKV(PCELL_TGT, 6);
-    sc.lever_code = 1u;                         /* P on 0x210 only, 0x2EA bad CRC: the */
-    sc.bad_crc = true;                          /* last good 0x2EA (R) holds until its */
-    run(1u);                                    /* 50 ms timeout, then the fallback */
-    CHECKV(PCELL_TGT, 6);
-    run(6u);
-    CHECKV(vehicle_in()->lever_src, LEVER_SRC_FALLBACK);
-    CHECKV(PCELL_TGT, 8);
-    sc.bad_crc = false;
-    lever(2u);
-    run(5u);
-    CHECKV(PCELL_TGT, 6);
-    sc.lever_code = 7u;                         /* invalid code on both → no valid lever */
-    run(1u);
-    CHECKV(PCELL_TGT, 8);
-    CHECKV(range_reason(), 0x17);               /* Auto-P (stationary) */
-    CHECK(REL() == 0u && HOLD() == 0u);
-
-    /* lever lost by timeout while in R, stationary: Auto-P after > 50 ms */
-    lever(4u);
-    run(10u);
-    CHECK(REL() == DRV_PARK_ON_REQ);
-    no_lever();
     {
-        unsigned n = 0u;
-        while (PCELL_TGT != 8u && n < 20u) {
-            step();
-            n++;
-        }
-        CHECK(n >= 5u && n <= 7u);              /* the 50 ms profile timeout (spec 07 §3) */
-        printf("  lever timeout -> Auto-P after %u ticks\n", n);
+        const park_status_t *st = park_status();
+        CHECK(st->target == PARK_ENGAGE && st->lever == 8u && !st->release && !st->hold);
     }
-    CHECKV(range_reason(), 0x17);
-    CHECK(REL() == 0u && HOLD() == 0u);
-    CHECKV(s_bound_violations, 0);
 }
 
-/* the output speed: no validity term, unsigned > 80 = moving */
-static void test_speed_rule(void)
+/* safety/park_mon.c (ours): each check, violated on purpose by writing a
+ * wrong range where the chain would write its own — every violation
+ * latches until power-off (park_mon_init) and forces both demands to 0 */
+static void mon_case(const char *name, uint8_t lever_code, bool brake, uint16_t engine,
+                     uint16_t spd14b, uint8_t range, uint8_t range_c, uint8_t want)
 {
     reset_all();
-    no_lever();
-    set_speed(0, Q_INVALID);                    /* a sensorless bench: 0, whatever the quality */
-    run(3u);
-    CHECKV(PCELL_TGT, 8);
-    CHECKV(range_reason(), 0x17);
-    set_speed(80, Q_OK);                        /* 80 is still stationary */
-    run(1u);
-    CHECKV(range_reason(), 0x17);
-    set_speed(81, Q_OK);                        /* MOVING WITHOUT A LEVER RELEASES PARK (stock) */
-    run(1u);
-    CHECKV(PCELL_TGT, 6);
-    CHECKV(range_reason(), 0x16);
-    CHECK(REL() == DRV_PARK_ON_REQ && HOLD() == DRV_PARK_ON_REQ);
-    set_speed(-500, Q_OK);                      /* magnitude */
-    run(1u);
-    CHECKV(PCELL_TGT, 6);
-    set_speed(500, Q_INVALID);                  /* a stale nonzero value is used as is */
-    run(1u);
-    CHECKV(PCELL_TGT, 6);
-    set_speed(3000, Q_OK);
-    lever(1u);                                  /* P at speed: target 8, park request on */
-    run(1u);
-    CHECKV(PCELL_TGT, 8);
-    CHECKV(range_reason(), 0x15);
-    CHECK(REL() == 0u && HOLD() == 0u);         /* no interlock window open: lock at once */
+    sc.lever_code = 1u;
+    sc.brake = brake;
+    sc.engine = engine;
+    sc.spd14b = spd14b;
+    run(30u);
+    CHECK(park_mon_enable());
+    sc.lever_code = lever_code;
+    step();
+    D6D6_W = range;
+    D6D7_W = range_c;
+    step();
+    if (park_mon_faults() != want) {
+        printf("FAIL monitor case %s: faults 0x%02X, expected 0x%02X\n", name, park_mon_faults(), want);
+        fails++;
+    }
+    if (want != 0u) {
+        CHECK(!park_mon_enable() && REL() == 0u && HOLD() == 0u);
+        /* latched: a valid P and a valid release later change nothing */
+        sims_on(1u);
+        set_range(8u);
+        run(5u);
+        sc.lever_code = 2u;
+        step();
+        set_range(7u);
+        run(5u);
+        CHECK(!park_mon_enable() && REL() == 0u && HOLD() == 0u);
+        CHECKV(park_mon_faults() & want, want);
+    } else {
+        CHECK(park_mon_enable() && REL() == DRV_PARK_ON_REQ && HOLD() == DRV_PARK_ON_REQ);
+    }
+}
+
+static void test_monitor(void)
+{
+    /* the legal release: lever R valid, brake pressed, engine 700 rpm */
+    mon_case("legal R", 2u, true, 700u, 0u, 7u, 0xF8u, 0u);
+    mon_case("legal D", 4u, true, 700u, 0u, 5u, 0xFAu, 0u);
+    /* brake invalid but 0x14B speed raw/5 > 10 (the D607 fallback) */
+    mon_case("brake via 0x14B", 2u, false, 700u, 55u, 7u, 0xF8u, 0u);
+    mon_case("0x14B at the limit", 2u, false, 700u, 54u, 7u, 0xF8u, MON_F_BRAKE);
+    /* mutations of the chain's output */
+    mon_case("no lever frame", 0u, true, 700u, 0u, 7u, 0xF8u, MON_F_LEVER);
+    mon_case("lever P, range R", 1u, true, 700u, 0u, 7u, 0xF8u, MON_F_LEVER);
+    mon_case("lever R, range D", 2u, true, 700u, 0u, 5u, 0xFAu, MON_F_LEVER);
+    mon_case("lever invalid code 7", 7u, true, 700u, 0u, 7u, 0xF8u, MON_F_LEVER);
+    mon_case("no brake", 2u, false, 700u, 0u, 7u, 0xF8u, MON_F_BRAKE);
+    mon_case("no engine", 2u, true, 0u, 0u, 7u, 0xF8u, MON_F_ENGINE);
+    mon_case("engine 430 (not above)", 2u, true, 430u, 0u, 7u, 0xF8u, MON_F_ENGINE);
+    mon_case("nothing at all", 0u, false, 0u, 0u, 6u, 0xF9u, MON_F_LEVER | MON_F_BRAKE | MON_F_ENGINE);
+    mon_case("range 3", 2u, true, 700u, 0u, 3u, 0xFCu, MON_F_RANGE);
+    mon_case("range 9", 2u, true, 700u, 0u, 9u, 0xF6u, MON_F_RANGE);
+    mon_case("complement torn (in P)", 1u, true, 700u, 0u, 8u, 0xF6u, MON_F_RANGE);
+    mon_case("complement torn (R)", 2u, true, 700u, 0u, 7u, 0xF7u, MON_F_RANGE);
+
+    /* the engine hysteresis: on above 430, off after 25 passes <= 380 */
+    reset_all();
+    sc.lever_code = 1u;
+    sc.engine = 431u;
+    step();
+    CHECK(park_mon_engine_running());
+    sc.engine = 381u;                   /* between the limits: holds */
+    run(100u);
+    CHECK(park_mon_engine_running());
+    sc.engine = 380u;
+    run(24u);
+    CHECK(park_mon_engine_running());
+    step();
+    CHECK(!park_mon_engine_running());  /* the 25th pass at 380 */
+    sc.engine = 400u;                   /* above 380, below 430: stays off */
+    run(10u);
+    CHECK(!park_mon_engine_running());
+    sc.engine = 700u;
+    step();
+    CHECK(park_mon_engine_running());
+    sc.engine = 0u;                     /* the frame stops: 50 ms timeout, then invalid = 0 rpm */
+    run(20u);
+    CHECK(park_mon_engine_running());   /* < 25 passes since the timeout */
+    run(20u);
+    CHECK(!park_mon_engine_running());
+
+    /* moves between R / N / D (no P in between) are not checked, and a
+     * return to P is always allowed */
+    reset_all();
+    sims_on(2u);
+    run(30u);
+    set_range(7u);
+    step();
+    sc.lever_code = 3u;
+    set_range(6u);
+    step();
+    sc.brake = false;
+    sc.engine = 0u;
+    sc.lever_code = 4u;
+    set_range(5u);
+    run(30u);
+    set_range(8u);
+    run(5u);
     CHECKV(park_mon_faults(), 0);
+
+    /* the park law's own output pairs corrupted → MON_F_INTEGRITY */
+    reset_all();
+    sims_on(1u);
+    run(5u);
+    *(volatile uint8_t *)(uintptr_t)0xFFF851B1u ^= 0x01u;   /* complement of output flag 4 (not rewritten by the law) */
+    park_tick_10ms();
+    CHECK((park_mon_faults() & MON_F_INTEGRITY) != 0u && REL() == 0u && HOLD() == 0u);
+}
+
+/* D-M4-7: the request law's on-time limit with the release ON for 40 s */
+static void test_window(void)
+{
+    drv_rq_win_t w;
+
+    memset(&w, 0, sizeof w);
+    CHECK(drv_rq_window_step(&w, 100u, false, 10000u) == 0u && w.state == 0u);   /* before 'U' */
+    CHECK(drv_rq_window_step(&w, 600u, true, 0u) == 0u && w.state == 0u);        /* off */
+    CHECK(drv_rq_window_step(&w, 1000u, true, 10000u) == 10000u && w.state == 1u);   /* opens */
+    CHECK(drv_rq_window_step(&w, 11000u, true, 10000u) == 10000u);               /* 10 s */
+    CHECK(drv_rq_window_step(&w, 11005u, true, 0u) == 0u && w.state == 0u);      /* off: 10.005 s */
+    CHECKV(w.acc_ms, 10005u);
+    CHECK(drv_rq_window_step(&w, 50000u, true, 0u) == 0u && w.acc_ms == 10005u); /* off time not counted */
+    CHECK(drv_rq_window_step(&w, 60000u, true, 10000u) == 10000u);               /* reopens */
+    CHECK(drv_rq_window_step(&w, 79990u, true, 10000u) == 10000u);               /* 29.995 s */
+    CHECKV(w.acc_ms, 29995u);
+    CHECK(drv_rq_window_step(&w, 79995u, true, 10000u) == 0u && w.state == 2u);  /* 30 s: latched */
+    CHECK(drv_rq_window_step(&w, 90000u, true, 0u) == 0u && w.state == 2u);
+    CHECK(drv_rq_window_step(&w, 99000u, true, 10000u) == 0u && w.state == 2u);  /* stays off */
+    /* 'U' lost while on: off (counted up to that pass) */
+    memset(&w, 0, sizeof w);
+    CHECK(drv_rq_window_step(&w, 0xFFFFF000u, true, 10000u) == 10000u);          /* wrap */
+    CHECK(drv_rq_window_step(&w, 0xFFFFF000u + 5000u, false, 10000u) == 0u && w.state == 0u);
+    CHECKV(w.acc_ms, 5000u);
+
+    /* the closed loop: lever R (and the sims) held for 40 s, law passes every 5 ms */
+    reset_all();
+    sims_on(2u);
+    step();
+    set_range(7u);
+    memset(&w, 0, sizeof w);
+    {
+        uint32_t now = 0u, on_ms = 0u, first_off = 0u;
+        for (unsigned t = 0u; t < 4000u; t++) {             /* 10 ms park ticks */
+            step();
+            for (unsigned p = 0u; p < 2u; p++) {             /* two 5 ms law passes */
+                const uint16_t r = drv_rq_window_step(&w, now, true, park_slot7_release());
+                if (r != 0u) {
+                    on_ms += 5u;
+                } else if (first_off == 0u && now > 0u) {
+                    first_off = now;
+                }
+                now += 5u;
+            }
+        }
+        CHECK(park_slot7_release() == DRV_PARK_ON_REQ);    /* the logic still wants it */
+        CHECKV(w.state, 2u);
+        CHECK(first_off >= 30000u && first_off <= 30010u);
+        CHECK(on_ms >= 30000u && on_ms <= 30010u);
+        printf("  release on-time limit: off at %u ms after %u ms on\n",
+               (unsigned)first_off, (unsigned)on_ms);
+    }
 }
 
 /* the lock decision and the 0xE8B56 interlock, on park_law alone */
@@ -495,145 +544,10 @@ static void test_arbiter_rows(void)
     CHECK(r.target == 6u && r.reason == 0x16u);
 }
 
-/* the cross-check agrees with the arbiter everywhere; a forced
- * disagreement / corruption latches and removes both demands */
-static void test_monitor(void)
-{
-    static const uint8_t levers[] = { 0u, 1u, 4u, 5u, 6u, 7u, 8u, 9u };
-    static const uint16_t speeds[] = { 0u, 80u, 81u, 3000u, 0xFFFFu };
-    static const uint16_t sp2[] = { 0u, 319u, 320u, 321u, 1000u };
-    unsigned n = 0u, bad = 0u;
-
-    for (unsigned a = 0u; a < sizeof levers; a++) {
-        for (unsigned b = 0u; b < 5u; b++) {
-            for (unsigned c = 0u; c < 5u; c++) {
-                for (unsigned m = 0u; m < 64u; m++) {
-                    range_in_t in;
-                    range_res_t r = { 0u, 0u, 0u };
-                    park_mon_in_t mi;
-                    memset(&in, 0, sizeof in);
-                    in.lever = levers[a];
-                    in.d646 = speeds[b];
-                    in.d650 = sp2[c];
-                    in.lever2 = (m & 1u) ? 5u : 0u;
-                    in.status = (m & 2u) ? 1u : 0u;
-                    in.dir = (uint8_t)((m >> 2) & 3u);
-                    in.fast = (m & 16u) ? 1u : 0u;
-                    in.d5f8 = (m & 32u) ? 1u : 0u;
-                    range_arbitrate(&in, &r);
-                    mi.lever = in.lever;
-                    mi.lever2 = in.lever2;
-                    mi.dir = in.dir;
-                    mi.fast = in.fast;
-                    mi.status = in.status;
-                    mi.out_speed = in.d646;
-                    mi.speed2 = in.d650;
-                    mi.park_req = in.d5f8;
-                    mi.target = r.target;
-                    mi.app_integrity_ok = true;
-                    bad += park_mon_target(&mi) != r.target ? 1u : 0u;
-                    n++;
-                }
-            }
-        }
-    }
-    CHECKV(bad, 0u);
-    printf("  monitor recompute agrees with the arbiter on %u input sets\n", n);
-
-    /* in the loop: R → release; then corrupt the target copy → latched,
-     * both demands 0 at once and for good */
-    reset_all();
-    lever(2u);
-    run(10u);
-    CHECK(REL() == DRV_PARK_ON_REQ && HOLD() == DRV_PARK_ON_REQ);
-    range_test_corrupt();
-    park_mon_in_t mi;
-    memset(&mi, 0, sizeof mi);
-    mi.lever = 7u;
-    mi.target = 6u;
-    mi.app_integrity_ok = range_integrity_ok();
-    park_mon_step(&mi);
-    CHECK(!park_mon_enable() && (park_mon_faults() & MON_F_INTEGRITY) != 0u);
-    run(5u);
-    CHECK(REL() == 0u && HOLD() == 0u);
-    lever(1u);
-    run(5u);
-    lever(2u);
-    run(5u);
-    CHECK(REL() == 0u && HOLD() == 0u);         /* latched until power-off */
-
-    /* a persistent disagreement (> 2 cycles) latches MON_F_TARGET */
-    park_mon_init();
-    memset(&mi, 0, sizeof mi);
-    mi.lever = 8u;
-    mi.target = 6u;                             /* wrong on purpose */
-    mi.app_integrity_ok = true;
-    park_mon_step(&mi);
-    park_mon_step(&mi);
-    CHECK(park_mon_enable());                   /* 2 cycles tolerated */
-    park_mon_step(&mi);
-    CHECK(!park_mon_enable() && (park_mon_faults() & MON_F_TARGET) != 0u);
-}
-
-/* D-M4-7: the release on-time limit (accumulated, latched) */
-static void test_window(void)
-{
-    drv_rq_win_t w;
-
-    memset(&w, 0, sizeof w);
-    CHECK(drv_rq_window_step(&w, 100u, false, 10000u) == 0u && w.state == 0u);   /* before 'U' */
-    CHECK(drv_rq_window_step(&w, 600u, true, 0u) == 0u && w.state == 0u);        /* off */
-    CHECK(drv_rq_window_step(&w, 1000u, true, 10000u) == 10000u && w.state == 1u);   /* opens */
-    CHECK(drv_rq_window_step(&w, 11000u, true, 10000u) == 10000u);               /* 10 s */
-    CHECK(drv_rq_window_step(&w, 11005u, true, 0u) == 0u && w.state == 0u);      /* off: 10.005 s */
-    CHECKV(w.acc_ms, 10005u);
-    CHECK(drv_rq_window_step(&w, 50000u, true, 0u) == 0u && w.acc_ms == 10005u); /* off time not counted */
-    CHECK(drv_rq_window_step(&w, 60000u, true, 10000u) == 10000u);               /* reopens */
-    CHECK(drv_rq_window_step(&w, 79990u, true, 10000u) == 10000u);               /* 29.995 s */
-    CHECKV(w.acc_ms, 29995u);
-    CHECK(drv_rq_window_step(&w, 79995u, true, 10000u) == 0u && w.state == 2u);  /* 30 s: latched */
-    CHECK(drv_rq_window_step(&w, 90000u, true, 0u) == 0u && w.state == 2u);
-    CHECK(drv_rq_window_step(&w, 99000u, true, 10000u) == 0u && w.state == 2u);  /* stays off */
-    /* 'U' lost while on: off (counted up to that pass) */
-    memset(&w, 0, sizeof w);
-    CHECK(drv_rq_window_step(&w, 0xFFFFF000u, true, 10000u) == 10000u);          /* wrap */
-    CHECK(drv_rq_window_step(&w, 0xFFFFF000u + 5000u, false, 10000u) == 0u && w.state == 0u);
-    CHECKV(w.acc_ms, 5000u);
-
-    /* the closed loop: lever R held for 40 s, law passes every 5 ms */
-    reset_all();
-    lever(2u);
-    memset(&w, 0, sizeof w);
-    {
-        uint32_t now = 0u, on_ms = 0u, first_off = 0u;
-        for (unsigned t = 0u; t < 4000u; t++) {             /* 10 ms park ticks */
-            step();
-            for (unsigned p = 0u; p < 2u; p++) {             /* two 5 ms law passes */
-                const uint16_t r = drv_rq_window_step(&w, now, true, park_slot7_release());
-                if (r != 0u) {
-                    on_ms += 5u;
-                } else if (first_off == 0u && now > 0u) {
-                    first_off = now;
-                }
-                now += 5u;
-            }
-        }
-        CHECK(park_slot7_release() == DRV_PARK_ON_REQ);    /* the logic still wants it */
-        CHECKV(w.state, 2u);
-        CHECK(first_off >= 30000u && first_off <= 30010u);
-        CHECK(on_ms >= 30000u && on_ms <= 30010u);
-        printf("  release on-time limit: off at %u ms after %u ms on\n",
-               (unsigned)first_off, (unsigned)on_ms);
-    }
-}
-
 int main(void)
 {
     test_maps();
-    test_auto_p();
-    test_lever_sequence();
-    test_lever_sources();
-    test_speed_rule();
+    test_follow();
     test_lock_interlock();
     test_arbiter_rows();
     test_monitor();

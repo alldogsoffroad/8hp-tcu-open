@@ -30,14 +30,15 @@
  *  26     1    park contact bands (contact 0 in bits 3..0, contact 1 in bits 7..4)
  *  27     2    AN8 (fluid temperature node), mV
  *  28     2    AN1 (fluid temperature sense return), mV
- *  29     1    park target 0xFFF8D6D6 (8 engage, 6 released, 5 drive special; app/range.h)
- *  30     1    park target reason, the stock code (0x15 lever P, 0x16 R/N/D or moving,
- *              0x17 Auto-P; 0x01..0x14 the other rows / modes)
+ *  29     1    the range 0xFFF8D6D6 (P 8, R 7, N 6, D 5), the stock cyclic chain's
+ *              (app/rng_chain.c, live since 2026-11-17); 8 when torn
+ *  30     1    its reason 0xFFF8D6D9 (0 = the lever request went through; else the
+ *              0xC7390 candidate that set it, e.g. 0x33 / 0x3C U1267, 0x6F)
  *  31     1    park timer model 0xFFF8BC70[0] (1 released, 2 releasing, 3 engaging, 4 engaged)
  *  32     1    park demands as published to the drivers: bit0 release (ch 7), bit1 hold
  *              (TOE31) — what the slot getters return (DRV_GA_STAGE 1 drives them)
  *  33     1    bit0 park request 0xFFF8AE29, bit1 lock 0xFFF8BC70[1] (1 = hold off),
- *              bit2 the lever request the arbiter saw was valid (5..8)
+ *              bit2 a valid lever request (5..8)
  *  34     1    park monitor faults (MON_F_*)
  */
 #include "app/meas_table.h"

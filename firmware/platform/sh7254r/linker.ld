@@ -13,6 +13,11 @@ MEMORY
     APPTAIL(r)   : ORIGIN = 0x0017FB70, LENGTH = 0x8C
     APPEND (r)   : ORIGIN = 0x0017FBFC, LENGTH = 4
     RAM    (rwx) : ORIGIN = 0xFFF84100, LENGTH = 0xFFFA0000 - 0xFFF84100
+    /* the stock's published range object 0xFFF8304C (app/rng_chain.c,
+     * 0xC79B8): below the application RAM origin, in the boot service
+     * window 0xFFF82000-0xFFF83A5F that the stock application overwrites
+     * the same way every 10 ms (2026-11-17, range_chain_live_port.md) */
+    RNG304C (rw) : ORIGIN = 0xFFF8304C, LENGTH = 0x18
 }
 
 SECTIONS
@@ -170,15 +175,38 @@ SECTIONS
      * ~/tcu_sweep/range_logic_port.md): the stock cells of the park module,
      * cleared by park_init — 0x851A8 output flags + complements, 0x89C6C /
      * 0x89CDC the target as read / with the diag overrides, 0x8AE28 the
-     * direction + park request, 0x8BC70 the park object, 0x8D6D6 the target
-     * + complement, 0x8E549 the arbiter result object */
+     * direction + park request, 0x8BC70 the park object. (0x8D6D6 the range
+     * and 0x8E549 the init arbiter's result now lie in the range chain's
+     * .rng_d6ca / .rng_e530, 2026-11-17) */
     .park_out  0xFFF851A8 (NOLOAD) : { . += 0x0A; } > RAM   /* 0x851A8..0x851B1        */
     .park_rng  0xFFF89C6C (NOLOAD) : { . += 0x01; } > RAM   /* 0x89C6C                 */
     .park_rngd 0xFFF89CDC (NOLOAD) : { . += 0x01; } > RAM   /* 0x89CDC                 */
     .park_req  0xFFF8AE28 (NOLOAD) : { . += 0x02; } > RAM   /* 0x8AE28..0x8AE29        */
     .park_obj  0xFFF8BC70 (NOLOAD) : { . += 0x04; } > RAM   /* 0x8BC70..0x8BC73        */
-    .park_tgt  0xFFF8D6D6 (NOLOAD) : { . += 0x02; } > RAM   /* 0x8D6D6..0x8D6D7        */
-    .park_arb  0xFFF8E549 (NOLOAD) : { . += 0x03; } > RAM   /* 0x8E549..0x8E54B        */
+    /* THE RANGE CHAIN (app/rng_chain.c, rng_chain.h; ~/tcu_sweep/
+     * range_chain_live_port.md): the stock's cyclic 10 ms range chain, the
+     * live owner of D6D6 — its cells at the stock addresses, one object per
+     * section (cleared by rng_chain_init). The ASSERTs hold each object to
+     * its stock extent */
+    .rng_d5e4  0xFFF8D5E4 (NOLOAD) : { KEEP(*(.rng_d5e4)) } > RAM  /* 0x8D5E4..0x8D613 */
+    .rng_d61a  0xFFF8D61A (NOLOAD) : { KEEP(*(.rng_d61a)) } > RAM  /* 0x8D61A..0x8D699 */
+    .rng_d6ca  0xFFF8D6CA (NOLOAD) : { KEEP(*(.rng_d6ca)) } > RAM  /* 0x8D6CA..0x8D6DF (D6D6) */
+    .rng_e530  0xFFF8E530 (NOLOAD) : { KEEP(*(.rng_e530)) } > RAM  /* 0x8E530..0x8E54B (E549) */
+    .rng_e572  0xFFF8E572 (NOLOAD) : { KEEP(*(.rng_e572)) } > RAM  /* 0x8E572 */
+    .rng_e64b  0xFFF8E64B (NOLOAD) : { KEEP(*(.rng_e64b)) } > RAM  /* 0x8E64B..0x8E68F */
+    .rng_e912  0xFFF8E912 (NOLOAD) : { KEEP(*(.rng_e912)) } > RAM  /* 0x8E912..0x8E913 */
+    .rng_893e0 0xFFF893E0 (NOLOAD) : { KEEP(*(.rng_893e0)) } > RAM  /* 0x893E0..0x893F7 */
+    .rng_89418 0xFFF89418 (NOLOAD) : { KEEP(*(.rng_89418)) } > RAM  /* 0x89418..0x894BB */
+    .rng_85160 0xFFF85160 (NOLOAD) : { KEEP(*(.rng_85160)) } > RAM  /* 0x85160..0x85183 */
+    .rng_8975c 0xFFF8975C (NOLOAD) : { KEEP(*(.rng_8975c)) } > RAM  /* 0x8975C..0x8975F */
+    .rng_304c  0xFFF8304C (NOLOAD) : { KEEP(*(.rng_304c)) } > RNG304C /* 0x8304C..0x83063 */
+    ASSERT(SIZEOF(.rng_d5e4) == 0x30 && SIZEOF(.rng_d61a) == 0x80 && SIZEOF(.rng_d6ca) == 0x16 &&
+           SIZEOF(.rng_e530) == 0x1C && SIZEOF(.rng_e572) == 0x01 && SIZEOF(.rng_e64b) == 0x45 &&
+           SIZEOF(.rng_e912) == 0x02 && SIZEOF(.rng_893e0) == 0x18 && SIZEOF(.rng_89418) == 0xA4 &&
+           SIZEOF(.rng_85160) == 0x24 && SIZEOF(.rng_8975c) == 0x04 && SIZEOF(.rng_304c) == 0x18,
+           "a range-chain object is not its stock extent")
+    ASSERT(_rc_d6ca == 0xFFF8D6CA && _rc_e530 == 0xFFF8E530 && _rc_304c == 0xFFF8304C &&
+           _rc_d5e4 == 0xFFF8D5E4 && _rc_89418 == 0xFFF89418, "a range-chain object is off its stock address")
     /* park position sensor, READ-ONLY (2026-11-16; bsw/drv/drv_pksens.c,
      * safety/park_pair.c; ~/tcu_sweep/park_sensor_port.md): the stock cells
      * of the switch evaluator 0x8DF2E / monitor 0x88EF0 / copy 0x7B150 and
@@ -238,15 +266,14 @@ SECTIONS
     } > RAM
     ASSERT(__m5_wit_end <= 0xFFF84D80, ".m5_wit overflow")
 
-    /* the READ-ONLY range shadow (app/rng_shadow.c; ~/tcu_sweep/
-     * range_shadow_port.md): the stock's cyclic 10 ms range chain computed
-     * into its OWN block — not a stock cell window, nothing else is pinned
-     * in 0xFFF86A00..0xFFF88130; cleared by rng_shadow_init. Low RAM, so it
-     * does not cost the stack guard */
-    .rng_shadow 0xFFF87000 (NOLOAD) : {
-        __rng_shadow_start = .; *(.rng_shadow) . = ALIGN(4); __rng_shadow_end = .;
+    /* the range chain's recorder, witnesses and fault-manager model
+     * (app/rng_chain.c, ours — not stock cells; the r03q..r03s shadow block,
+     * 2026-11-17): free low RAM in 0xFFF86A00..0xFFF88130; cleared by
+     * rng_chain_init; it does not cost the stack guard */
+    .rng_wit 0xFFF87000 (NOLOAD) : {
+        __rng_wit_start = .; *(.rng_wit) . = ALIGN(4); __rng_wit_end = .;
     } > RAM
-    ASSERT(__rng_shadow_end <= 0xFFF87800, ".rng_shadow overflow")
+    ASSERT(__rng_wit_end <= 0xFFF87800, ".rng_wit overflow")
 
     /* our request-law witnesses and the refresh snapshot (not stock cells;
      * free low RAM like .sup_wit, so they do not cost the stack guard) */

@@ -18,6 +18,7 @@
 #include "app/park.h"
 #include "app/park_cells.h"
 #include "app/range.h"
+#include "app/rng_chain.h"
 #include "bsw/com/crc8.h"
 #include "bsw/drv/drv_park.h"
 #include "io/vehicle/vehicle.h"
@@ -380,16 +381,16 @@ static void park_snap(park_snap_t *p)
     for (int i = 0; i < 5; i++) { p->out[i] = PCELL_OUT[i]; p->out_c[i] = PCELL_OUT_C[i]; }
     p->rng = PCELL_RNG;
     p->rngd = PCELL_RNGD;
-    p->target = (uint8_t)range_target();
-    p->reason = range_reason();
+    p->target = (uint8_t)st->target;
+    p->reason = st->reason;
     p->state = st->state;
     p->request = st->request;
     p->lock = st->lock;
     p->mon = st->mon_faults;
 }
 
-/* the lever / speed schedule: P, none (Auto-P), D, R, N, P, invalid, D
- * moving, P; mode < 0 = no sensor at all, else the scenario index (6 =
+/* the lever / speed schedule: P, none, P, D, R, N, P, invalid, P, D (with
+ * the brake + engine sims, the live chain releases on D / R / N); mode < 0 = no sensor at all, else the scenario index (6 =
  * cycling through every state each tick) */
 static void park_run(int mode, park_snap_t *out)
 {
@@ -400,12 +401,15 @@ static void park_run(int mode, park_snap_t *out)
     CELL_TMP_BYTE = 67u;
     vehicle_init();
     park_init();
+    rng_chain_init();
     if (mode >= 0) {
         sens_reset();
     }
     for (uint32_t t = 0u; t < N_STEPS; t++) {
         const uint32_t seg = t / 60u;
-        static const uint8_t lever[10] = { 1, 0, 4, 2, 3, 1, 7, 4, 1, 0 };
+        /* 2026-11-17: P before each release (the stock chain's D5FB latch
+         * 0xA9144 needs a P after any loss of the lever source) */
+        static const uint8_t lever[10] = { 1, 0, 1, 4, 2, 3, 1, 7, 1, 4 };
         const uint8_t code = lever[seg];
         uint8_t l[5] = { code, 0, 0, 0, 0 };
 
@@ -420,7 +424,26 @@ static void park_run(int mode, park_snap_t *out)
             sens_pass();
             sens_pass();
         }
+        {   /* the bench sims: 0x140 brake pressed, 0x108 700 rpm (the chain
+             * releases P only with them) */
+            uint8_t d[8] = { 0x04u, 0, 0, 0, 0, 0, 0, 0 };
+            send(CAN_BUS1, 0x140u, 8u, true, d);
+            d[0] = 0x02u;
+            d[1] = 0xBCu;
+            d[2] = 0x1Fu;
+            d[3] = 0xFFu;
+            send(CAN_BUS1, 0x108u, 8u, true, d);
+        }
         vehicle_update_10ms();
+        {   /* the live range chain, with park_pair's group-98 verdict as
+             * main.c passes it (none without the sensor) */
+            park_pair_wit_t pw;
+            memset(&pw, 0, sizeof pw);
+            if (mode >= 0) {
+                park_pair_witness(&pw);
+            }
+            rng_chain_tick_10ms(1u, pw.failed, pw.tested);
+        }
         park_tick_10ms();
         if (mode >= 0) {
             park_pair_tick_10ms();
@@ -434,12 +457,18 @@ static void test_readonly(void)
     static park_snap_t ref[N_STEPS], run[N_STEPS];
     unsigned seen_rel = 0u, seen_tgt6 = 0u, seen_tgt8 = 0u;
 
+    /* 2026-11-17: the range is the live stock chain, which takes the
+     * group-98 (P0850) verdict as an input — in its stock role only (D660
+     * → 0xC77A0 can force P, never release it); the sims run so the
+     * schedule releases park; the outputs must still be identical in every
+     * sensor state */
     park_run(-1, ref);
     for (uint32_t t = 0u; t < N_STEPS; t++) {
         seen_rel += ref[t].rel != 0u;
-        seen_tgt6 += ref[t].tgt == 6u;
+        seen_tgt6 += ref[t].tgt != 8u;
         seen_tgt8 += ref[t].tgt == 8u;
     }
+    if (getenv("PKS_DBG")) { for (uint32_t t = 0u; t < N_STEPS; t += 10u) printf("%u:%u/%02X%c ", (unsigned)t, ref[t].tgt, ref[t].reason, ref[t].rel ? 'R' : '.'); printf("mon %02X\n", ref[N_STEPS-1u].mon); }
     CHECK(seen_rel > 0u && seen_tgt6 > 0u && seen_tgt8 > 0u);   /* the schedule exercises both */
     for (int m = 0; m <= 6; m++) {
         park_run(m, run);

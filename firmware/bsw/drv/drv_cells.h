@@ -13,10 +13,11 @@
 #ifndef TCU_DRV_CELLS_H
 #define TCU_DRV_CELLS_H
 
-/* READ-ONLY range shadow (app/rng_shadow.c): the shadow translation unit
- * defines TCU_RNG_SHADOW_TU and may not name a live cell */
-#if defined(TCU_RNG_SHADOW_TU)
-#error "the range shadow is read-only: it may not include a live cell header (drv_cells.h)"
+/* THE RANGE CHAIN IS ISOLATED (app/rng_chain.c, ours): its translation
+ * unit defines TCU_RNG_CHAIN_TU and may not include an output-side header —
+ * its only way to the outputs is the range D6D6, read by app/park.c */
+#if defined(TCU_RNG_CHAIN_TU)
+#error "the range chain is isolated: it may not include an output-side header (drv_cells.h)"
 #endif
 
 #include <stdint.h>

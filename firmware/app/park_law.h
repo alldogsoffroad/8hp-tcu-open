@@ -22,15 +22,16 @@
  *            cal 0x1FE8C6 = 15 ticks), 3 engaging (map 0x1B5044 at 0x89C13,
  *            ≈ 200 ms at 27 °C, only once the hold is off), 4 engaged
  *   0xE8888  the on/off demand: id 2 (release) / id 3 (hold) → 10000 or 0
- * Called every 10 ms after range_update().
+ * Called every 10 ms after the range chain (app/rng_chain.c) has written D6D6.
  */
 #ifndef TCU_PARK_LAW_H
 #define TCU_PARK_LAW_H
 
-/* READ-ONLY range shadow (app/rng_shadow.c): the shadow translation unit
- * defines TCU_RNG_SHADOW_TU and may not name a live cell */
-#if defined(TCU_RNG_SHADOW_TU)
-#error "the range shadow is read-only: it may not include a live cell header (park_law.h)"
+/* THE RANGE CHAIN IS ISOLATED (app/rng_chain.c, ours): its translation
+ * unit defines TCU_RNG_CHAIN_TU and may not include an output-side header —
+ * its only way to the outputs is the range D6D6, read by app/park.c */
+#if defined(TCU_RNG_CHAIN_TU)
+#error "the range chain is isolated: it may not include an output-side header (park_law.h)"
 #endif
 
 #include <stdint.h>

@@ -1,25 +1,30 @@
-/* SH-only compile check of the range shadow's read-only frame (CMakeLists:
- * rng_sh_guard_*): -fsyntax-only with __sh__. The control includes the
- * shadow header and reads its cells; with TCU_OUTPUT_PATH (as every output
- * translation unit defines) the shadow header must refuse; with
- * TCU_RNG_SHADOW_TU (as the shadow translation unit defines) a live cell
- * header must refuse. Also the fixture of both source scans: it names the
- * shadow API (output side) and a live cell header and macro (shadow side),
- * so each negative scan must fail on it. */
-#if defined(SH_GUARD_RNG_OUTPUT)
-#define TCU_OUTPUT_PATH 1
+/* SH-only compile check of the range chain's writer guard (CMakeLists:
+ * rng_sh_guard_*; 2026-11-17, ~/tcu_sweep/range_chain_live_port.md):
+ * -fsyntax-only with __sh__.
+ *   control                 reads the range through app/park_cells.h — compiles;
+ *   SH_GUARD_RNG_WRITE      writes PCELL_TGT outside the chain — must fail
+ *                           (the cell macros are const: "read-only");
+ *   SH_GUARD_RNG_ISOLATED   the chain's translation unit (TCU_RNG_CHAIN_TU)
+ *                           including an output-side header — must fail.
+ * Also the negative fixture of range_chain_writer_scan.py: it names the
+ * writer macros and the stock addresses, so the scan must fail on it. */
+#if defined(SH_GUARD_RNG_ISOLATED)
+#define TCU_RNG_CHAIN_TU 1
+#include "bsw/drv/drv_park.h"
 #endif
-#if defined(SH_GUARD_RNG_LIVE)
-#define TCU_RNG_SHADOW_TU 1
 #include "app/park_cells.h"
-#endif
-#include "app/rng_shadow.h"
 
 void sh_guard_rng_probe(void);
 void sh_guard_rng_probe(void)
 {
-    (void)rng_shadow_cells();           /* reading the shadow is the point */
+    volatile uint8_t sink = PCELL_TGT;              /* reading the range is fine */
+    (void)sink;
+#if defined(SH_GUARD_RNG_WRITE)
+    PCELL_TGT = 7u;                                 /* must not compile */
+#endif
 #if defined(RNG_SCAN_FIXTURE_NEVER_DEFINED)
-    PCELL_TGT = 8u;                     /* scan fixture only: never compiled */
+    PCELL_TGT_W = 7u;                               /* scan fixture only: never compiled */
+    *(volatile uint8_t *)0xFFF8D6D6u = 7u;
+    *(volatile uint32_t *)0xFFF8304Cu = 7u;
 #endif
 }
