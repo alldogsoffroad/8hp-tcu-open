@@ -73,12 +73,15 @@ static void sens_pass(void)
     drv_pksens_copy_tick();
 }
 
-/* 10 ms: two sensor passes, then the safety slice */
+/* 10 ms: two sensor passes, then the safety slice (the pair object), then
+ * the group-98 verdict — which the firmware runs in the 100 ms slot of modes
+ * 1..3; this unit test drives it every pass to test its logic */
 static void tick10(void)
 {
     sens_pass();
     sens_pass();
     park_pair_tick_10ms();
+    park_pair_g98_100ms();
 }
 
 static void sens_reset(void)
@@ -447,6 +450,7 @@ static void park_run(int mode, park_snap_t *out)
         park_tick_10ms();
         if (mode >= 0) {
             park_pair_tick_10ms();
+            park_pair_g98_100ms();
         }
         park_snap(&out[t]);
     }

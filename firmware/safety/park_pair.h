@@ -74,5 +74,9 @@ typedef struct {
     uint32_t fatal_t;       /* plat_frt_us() at it */
 } park_pair_wit_t;
 void park_pair_witness(park_pair_wit_t *w);
+/* 0x14F7EA → 0x141E06 (group 98), the stock's 100 ms slot of modes 1..3 */
+void park_pair_g98_100ms(void);
+/* 1 once after each park_pair_g98_100ms() call (consumed) */
+uint8_t park_pair_take_report(void);
 
 #endif /* TCU_PARK_PAIR_H */

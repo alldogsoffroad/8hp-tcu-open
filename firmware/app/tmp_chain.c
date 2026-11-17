@@ -4,6 +4,8 @@
 #include "app/tmp_chain.h"
 #include "safety/tmp_safe.h"
 
+extern void tmp_chain_hook_100ms(void) __attribute__((weak));
+
 #if defined(TCU_RAM_APP)
 /* not in the RAM application (no temperature acquisition there) */
 void tmp_chain_init(void) {}
@@ -86,6 +88,9 @@ void tmp_chain_task_slow(uint8_t os_mode)
     }
     if (s_ph100 == 0u) {
         tmp_safe_100ms();                   /* 100 ms: 0x4D9E4 entry 0 0x13204A */
+        if (tmp_chain_hook_100ms) {
+            tmp_chain_hook_100ms();         /* the rest of 0x14F7EA (main.c: 0x141E06) */
+        }
     }
     s_ph30 = (uint8_t)(s_ph30 + 1u >= 3u ? 0u : s_ph30 + 1u);
     s_ph100 = (uint8_t)(s_ph100 + 1u >= 10u ? 0u : s_ph100 + 1u);

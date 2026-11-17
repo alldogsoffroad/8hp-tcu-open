@@ -247,20 +247,30 @@ static void task_10ms(void)
         park_pair_wit_t pw;
 
         park_pair_witness(&pw);
-        rng_chain_tick_10ms(sup_mode(), pw.failed, pw.tested);
+        /* a group-98 report reaches the fault model only on the pass after the
+         * stock's 100 ms slot made one (0xFF = no report this pass) */
+        rng_chain_tick_10ms(sup_mode(), pw.failed,
+                            park_pair_take_report() ? pw.tested : 0xFFu);
     }
     park_tick_10ms();
     bench_tick_10ms();
     sol_tick_10ms();        /* builds the 45-frame cyclic, queues DRV_CYC */
     meas_table_update();
     meas_tick_10ms();
-    park_pair_tick_10ms();  /* park position sensor, READ-ONLY: the safety
-                             * layer's pair object + group 98 (10 ms is OUR
-                             * rate — the stock's is not decoded) */
+    park_pair_tick_10ms();  /* park position sensor: the gather + the pair
+                             * object 0x141B42, every 10 ms as the stock
+                             * (group 98 runs in the 100 ms slot below) */
     /* the 30 ms (0xB9646) and 100 ms (the safety slice 0x13204A: gather,
      * slew limit → 0xFFF8E9C8) tasks of modes 1..3, on this tick when due,
      * after the 10 ms task (lower priority) */
     tmp_chain_task_slow(sup_mode());
+}
+
+/* the stock's 100 ms safety slice 0x13204A → 0x14F7EA also runs the park
+ * sensor's group-98 verdict 0x141E06 (modes 1..3) */
+void tmp_chain_hook_100ms(void)
+{
+    park_pair_g98_100ms();
 }
 
 /* ── 100 ms: heartbeat ─────────────────────────────────────────────────── */

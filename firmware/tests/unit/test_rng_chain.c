@@ -470,6 +470,30 @@ static void test_mode_gate(void)
 }
 
 /* ── 6. decode §9: lever from power-on + brake ON + engine 700 rpm ──────── */
+/* 2026-11-17 (park_chain_loose_ends_decode Q1): the filter sub-object +0x34
+ * (0xC823E: 894B8 == 0, engine 893EE > 0x1920BE = 4000 rpm, 893EA != 2), now
+ * enabled by the stock's cal mask 0x1920B4 instead of the dump's enable byte,
+ * refuses P -> R/N/D at standstill with the engine above 4000 rpm: brake on,
+ * engine 4500, lever P then R -> P held, outputs off; at 700 rpm R is taken */
+static void test_high_rpm_lockout(void)
+{
+    static const uint8_t sch[3] = { 1u, 2u, 3u };    /* P R N */
+    static shad_t sh[3u * SEG];
+
+    s_sim = k_sim_none;
+    s_sim.brake = true;
+    s_sim.engine = 4500u;
+    s_sim.g98 = 1u;
+    run(sch, 3u, sh);
+    for (uint32_t t = 0u; t < 3u * SEG; t++) {
+        CHECKV(sh[t].d607, 1);
+        CHECKV(sh[t].s8, 1);
+        CHECKV(sh[t].d6, 8);                /* the lock-out holds P */
+        CHECKV(outs(&sh[t]), 0);
+        CHECKV(sh[t].mon, 0);
+    }
+}
+
 static void test_live_release(void)
 {
     static const uint8_t sch[6] = { 1u, 2u, 3u, 4u, 1u, 2u };   /* P R N D P R */
@@ -917,6 +941,7 @@ int main(void)
     test_rest();
     test_mode_gate();
     test_live_release();
+    test_high_rpm_lockout();
     test_live_nobrake();
     test_live_late_lever();
     test_gaps();

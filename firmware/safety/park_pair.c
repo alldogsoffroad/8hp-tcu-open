@@ -24,6 +24,8 @@
 #if defined(TCU_RAM_APP)
 void park_pair_init(void) {}
 void park_pair_tick_10ms(void) {}
+void park_pair_g98_100ms(void) {}
+uint8_t park_pair_take_report(void) { return 0u; }
 void park_pair_witness(park_pair_wit_t *w) { (void)w; }
 #else
 
@@ -279,7 +281,26 @@ void park_pair_tick_10ms(void)
     if (!step_141b42()) {
         return;                                    /* the stock hangs here */
     }
-    g98_141e06();                                  /* 0x14F7EA → 0x141E06 */
+    /* 0x141E06 is NOT here: the stock runs it in the 100 ms safety slice
+     * (0x13204A → 0x14F7EA, modes 1..3, never mode 0) —
+     * park_pair_g98_100ms(); ~/tcu_sweep/park_chain_loose_ends_decode.md §10 */
+}
+
+/* 0x14F7EA → 0x141E06, from the 100 ms slot of modes 1..3 (app/tmp_chain.c).
+ * Returns 1: a report was made this call (the range chain's fault model takes
+ * it on its next pass). */
+static volatile uint8_t s_g98_new;
+void park_pair_g98_100ms(void)
+{
+    g98_141e06();
+    s_g98_new = 1u;
+}
+
+uint8_t park_pair_take_report(void)
+{
+    const uint8_t n = s_g98_new;
+    s_g98_new = 0u;
+    return n;
 }
 
 /* ── init: 0x1327B2 (+0), 0x141B1C, the timer pair ──────────────────────── */

@@ -553,6 +553,27 @@ static int stock_checks(void)
     return fails == 0 ? 0 : 1;
 }
 
+/* 2026-11-17: the rest of the stock's 100 ms safety slice 0x14F7EA (main.c:
+ * the park sensor's group-98 verdict 0x141E06) hangs off the same slot —
+ * every 10th tick of modes 1..3, never in mode 0 */
+static unsigned s_hook100_n;
+void tmp_chain_hook_100ms(void) { s_hook100_n++; }
+
+static void test_hook_100ms(void)
+{
+    unsigned n0;
+    s_hook100_n = 0u;
+    for (unsigned t = 0u; t < 50u; t++) {
+        tmp_chain_task_slow(0u);              /* mode 0: never */
+    }
+    CHECK(s_hook100_n == 0u);
+    n0 = s_hook100_n;
+    for (unsigned t = 0u; t < 100u; t++) {
+        tmp_chain_task_slow(1u);
+    }
+    CHECK(s_hook100_n - n0 == 10u);           /* 100 ticks of mode 1: 10 calls */
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1 && strcmp(argv[1], "--stock") == 0) {
@@ -571,6 +592,7 @@ int main(int argc, char **argv)
     test_invalid();         /* 5 */
     test_sweep();           /* 6 */
     test_dump_wire();       /* 7 */
+    test_hook_100ms();      /* 8 */
     if (fails == 0) {
         printf("tmpchain: all checks passed\n");
     }

@@ -212,7 +212,6 @@ RC_WIT rng_chain_model_t s_rc_m;
  * reaches the coding-mask virtual call (0xC8650, not ported):
  * +0x58 0x89490, +0x40 0x89478, +0x4C 0x89484, +0x34 0x8946C, +0 0x89438,
  * +0x70 0x894A8, +0x64 0x8949C */
-static const uint8_t s_flt_en_dump[7] = { 0u, 0u, 0u, 0u, 1u, 0u, 0u };
 
 /* the whole gathered struct D61A..D699 as the dump holds it (the bytes not
  * named above are read by no ported function) */
@@ -1467,10 +1466,21 @@ static void c8578(void)                     /* 0x894B8 */
 /* an enable whose result the coding-mask virtual call (+8 object, method
  * +0x14) decides: not ported — the dump's enable is used and the reach
  * counted (when another gate already forces 0, the mask cannot matter) */
+/* 0xC8650's per-sub-object enable mask (~/tcu_sweep/park_chain_loose_ends_decode.md Q1,
+ * 2026-11-17): the "coding-mask virtual call" is each sub-object's method returning a fixed id
+ * bit; the sub-object is enabled iff that bit is CLEAR in the calibration mask 0x1920B4
+ * (= 0x00040000, used while E530 == 0) or 0x1920B8 (= 0, E530 == 1) [O, cal re-checked].
+ * Index k: +0x58, +0x40, +0x4C, +0x34, +0, +0x70, +0x64. Before 2026-11-17 this returned the
+ * dump's enable bytes, which are 0 because the OUTER conditions fail on the bench — so the
+ * stock's +0x34 lock-out (no P/N -> R/D above 4000 rpm) was missing. */
+static const uint32_t s_flt_id[7] = { 0x40u, 0x2u, 0x1u, 0x4u, 0x8u, 0x40000u, 0x20000u };
+#define CAL_FLT_MASK_E530_0 0x00040000u     /* 0x1920B4 */
+#define CAL_FLT_MASK_E530_1 0x00000000u     /* 0x1920B8 */
 static uint8_t mask_reach(uint8_t k)
 {
+    const uint32_t mask = (E5(0xE530u) == 1u) ? CAL_FLT_MASK_E530_1 : CAL_FLT_MASK_E530_0;
     s_rc_wit.mask_n[k]++;
-    return s_flt_en_dump[k];
+    return (uint8_t)((mask & s_flt_id[k]) == 0u);
 }
 
 static void c8650(void)
@@ -1496,8 +1506,10 @@ static void c8650(void)
         s_rc_wit.c5f14_n++;
     }
     FLT_EN(4) = (uint8_t)(RC_89418.b[0xA0] == 0u && G_D607 == 0u && SI_89444 == 0u);
-    /* 0xC8352 (+0x70): the mask first — not ported */
-    FLT_EN(5) = mask_reach(5u);
+    /* 0xC8352 (+0x70): the mask first (masked off on this coding, E530 == 0); its own
+     * condition is not ported — held 0 (counted) if the mask ever lets it through */
+    (void)mask_reach(5u);          /* 0 on this coding (masked); unported condition */
+    FLT_EN(5) = 0u;
     /* 0xC84E6 (+0x64): mask, then D703 == 1 */
     FLT_EN(6) = SI_D703 == 1u ? mask_reach(6u) : 0u;
 }
@@ -2557,9 +2569,11 @@ void rng_chain_tick_10ms(uint8_t os_mode, uint8_t g98_failed, uint8_t g98_tested
      * every mode): ours steps 10 ms per call [deviation: a stalled 10 ms
      * task stretches it] */
     M.fm_ms += 10u;
-    /* group 98 (P0850 / P07B2 / P07B8), reported by the park sensor safety slice's
-     * 0x141E06 every 10 ms from boot (its stock rate is not decoded) */
-    fm_report(&M.fm98, &s_fm_cfg98, g98_failed, g98_tested);
+    /* group 98 (P0850 / P07B2 / P07B8), reported by 0x141E06 in the stock's
+     * 100 ms safety slice (modes 1..3) — taken on the pass after it */
+    if (g98_tested != 0xFFu) {         /* 0xFF: no group-98 report this pass */
+        fm_report(&M.fm98, &s_fm_cfg98, g98_failed, g98_tested);
+    }
     if (M.fm98.react != 0u && M.g98 == 0u) {
         M.g98_ms = sched_now_ms();
     }
