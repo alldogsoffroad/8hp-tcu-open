@@ -1254,3 +1254,41 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
   - chip view 0x90958 tracked every switch (04 / 08 / 0C).
 - **Read-only held:** across ~70 sensor transitions the target (E549), D6D6 and the request-law modes never changed (the watch flags any output-side change; zero flagged). The ammeter was not on during the magnet watch (it uses the same port); before it, the current was flat.
 - **Open (unchanged):** which element is mechanically "Park". The sensor stays out of `range.c` until the real mechanism can be moved.
+
+**PARK SENSOR: LATCHING AND THE PARK-SOLENOID MOVE (2026-11-16 17:36–17:46, zero-flash watches on r03m, `/tmp/pksens_watch{,2,3,4}.log`)** [O; I where marked]:
+- **Both contacts held "active" with nothing held** from 17:36:25 (the end of the magnet test) through 17:41 (AN5) and 17:42 (AN6). Each dropped to inactive only on a touch with the magnet (48–51 s and 126–127 s of watch 3) and then stayed inactive.
+  - The same both-active hold was seen on 2026-11-14 (`/tmp/parksens_watch2.log`), after a magnet or steel test.
+  - [I strong] **The two Hall elements are latching switches:** one pole sets, the opposite pole resets, and the state holds in between. Which face of the magnet was used at each touch is the user's to confirm.
+  - Consequence [I]: the real target must present a pole to each element as the park selector moves; a magnet that merely comes and goes would leave the state stuck.
+- **Moving the park solenoid by hand** (valve body off the transmission, no magnet, clean both-inactive baseline): **no change on either contact.** Per FCA Fig. 50 the target is on the park selector shaft in the case, so it is absent with the valve body out. That matches the stock's own "both inactive / P0850" reading on this bench.
+- **Outputs unchanged throughout** (target, D6D6, request-law modes).
+- **Still open:** which element is mechanically "Park". It needs the valve body on the transmission and the selector moved.
+
+**PARK TARGET ON THE SELECTOR LEVER (2026-11-16, user photos + inspection)** [O user; I where marked]:
+- The target is a **magnet block with a curved face** on an arm of the park selector (detent) lever in the transmission case. It sweeps an arc around the selector shaft. Its face shows witness marks (a worn band down the middle, rubbing on two edges), so it rides at or near contact with the sensor housing.
+- **The user's reading:**
+  - lever OPEN (not Park), as in the photos: the block **covers** the Hall sensor;
+  - lever CLOSED (Park): the block is **not covering, or only partially covering** it.
+- **Reconciling with the stock code, which expects position 1 = A (AN5) alone in Park and position 0 = B (AN6) alone out of Park [I]:**
+  - The stock treats both inactive (nothing covered) and both active as faults, so in each valid position exactly one element must be active.
+  - **Park, partial cover:** the block's edge over element A only gives A alone = position 1 = Park, consistent with the stock.
+  - **Not Park, full cover:** the elements appear to latch (17:36–17:42 today). If the block carries two poles along its arc, full cover can set B and reset A, giving B alone = position 0 = Not Park.
+  - Under that reading, the user's mechanical description and the stock's mapping agree. Both "magnet at the sensor = out of Park" and "position 1 = Park" can hold.
+- **To check by hand (no power needed):**
+  1. Probe the block's face end to end with the hand magnet for a pole change (attract → repel).
+  2. With the valve body fitted, which element the block's edge sits over in Park.
+- **Still decided only on the assembled transmission.**
+
+**CORRECTION — THE PARK HALL ELEMENTS DO NOT LATCH (2026-11-16 18:01–18:02, zero-flash watch on r03m with a second magnet, `/tmp/pksens_watch5.log`)** [O]:
+- **The test:** a second magnet, placed and then pulled away each time, about 20 touches.
+- **Every element released on its own** when the magnet was removed, within ~0.1–0.5 s, back to both inactive (position 3, P0850 m0).
+  - AN5 alone → position 1; AN6 alone → position 0; both → position 2, then P0850 m1 after 1.0 s, exactly as on r03m's first magnet test.
+  - Sweeps pass through A → both → B (or the reverse), so **the two elements sit side by side** and one magnet covers one, then both, then the other.
+- **The "latching" inference above is withdrawn.** The earlier minutes-long both-active holds (17:36–17:42 today and 2026-11-14) came from something else: [I] the first magnet left close enough, or a steel part near the sensor magnetised by it.
+- **The user believes the lever's block is a single-pole magnet.** With side-by-side elements and a single-pole block, a valid reading needs the block over **one element only** in each end position. Full cover of both would be position 2 → a P0850 m1 fault.
+  - So in Park the block's edge must sit over one element, and out of Park it must have moved on to sit over the other.
+  - The stock code says the Park element is A (AN5) [I from code]. Which element the block reaches first from the Park end is what the assembled test must show.
+- Outputs unchanged throughout.
+- **The sensing face (user photo, 2026-11-16):** the sensor is one sealed housing with a grey rectangular face (pin on top), which the lever's block sweeps across.
+- **Face-mapping attempt (18:05–18:08, `/tmp/pksens_watch6.log`):** the second magnet on the left/right/top/bottom halves of the face, then held off the face, **always switched both elements together** (position 2 → P0850 m1). No placement isolated one element. So the halves cannot be mapped by hand with the magnets on the bench; the elements are too close together for them.
+- **Which element is Park stays open** until the real lever is tested on the assembled transmission. Single-element readings so far came only from partial placements beside the sensor (2026-11-14, and r03m's first magnet test).
