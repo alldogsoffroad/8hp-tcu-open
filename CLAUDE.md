@@ -1431,3 +1431,15 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
   - **Refutation:**
     - a B current below 8500 in any recorder entry → the record path differs on the target from the host;
     - guard count > 0 → a disagreement: stop.
+
+**r03o BENCH RESULT (2026-11-17 09:39 install, blocks 0x40000 `507e7e1974a4eb10` + 0x50000 `71cd5bcad9375c53`, all 21 verifies OK; power-on ≈ 09:44:00 under the ammeter "=== r03o boot (2)"; witnesses 09:45–09:46 `/tmp/witness_r03o.log`, `/tmp/witness_m5_r03o.log`, `/tmp/witness_m5rec_r03o.log`) — PREDICTION CONFIRMED: THE STOCK FILL MACHINERY RUNS ON THE TARGET, WIRE-IDENTICAL TO r03n** [O]:
+- **Wire and current as r03n:**
+  - RQLAW modes 03×7 01, letters '!'×7, currents `01F4 2134 2134 2134 2134 01F4 01F4 0000`, records +7 1A 1A 1A 12 15; cyclic `881A 881A 881A 8812 8815 | … | E854 ED89 ED88 E853 E800 | … | F588 F589 F054 F000 F000`; config readbacks A29A ×3 A292;
+  - bus A 8 101 cyclics, 0 slips, 0 errors/reaps; RSPI re-entries 0; job errors 0;
+  - 'c', J2 9020, mode 1, C7 / gate 1, FSM 'E'; Auto-P = the dump; boots = 1;
+  - current: ≈ −15 mA off, then **1.71 → 1.77 A** over 25–90 s after power-on (r03n 1.83 → 1.87 A on a warmer bench).
+- **The fill fields as predicted:** B +0x34 = **03**, +0x46 = **2710**, +0x4A = **01** (+0x58 = 01); A state 0, +0x46 0; 0xFFF8E384 = 00. B +0x36 (fill time) reads 0000 where the dump holds 009F — B was restored from the record, so no fill time was computed [I: consistent with the B-only restore branch; not a deviation from this boot's stock path].
+- **The recorder (passes 0–63, from the boot-state-1 pass):** every entry B state 3, +0x46 10000, A/C/D/E state 0, currents `500 8500 8500 8500 8500 500 500` — **B at 8500 from pass 0, no fill transient**, as the dump's ready record predicts.
+- **Producer cells = r03n's** (B 4E20 mode 1 prio 4, Sys 4E20 src 0x15, WK 0 src 0x16); **all M5 witnesses (guard, unported, faults 0x1C4/0x19F/0x19A) = 0**; `s_rq_ilock_n` 8 (the '3' full-on refusals, as since r03b).
+- An earlier ammeter run (09:41:10, 75 s) read a flat ~152 mA: the board had not been power-cycled after the install. Not an r03o reading.
+- **M5-1a done.** Next: M5-1b (`RQ_M5_STAGE_1B`, block-0 gear 1: A on, B off) — the first holder switch-on with a real fill on the wire. Host trace: A 8500 (boost), 5305 ×9, 4609, then 8500; B 500. Steady ≈ the P level (one 850 mA coil moves from B to A); the ~100 ms fill dip (≈ −0.23 A) is visible only in the recorder.
