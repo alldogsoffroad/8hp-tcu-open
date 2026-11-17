@@ -10,6 +10,12 @@
 #ifndef TCU_SUP_CELLS_H
 #define TCU_SUP_CELLS_H
 
+/* READ-ONLY range shadow (app/rng_shadow.c): the shadow translation unit
+ * defines TCU_RNG_SHADOW_TU and may not name a live cell */
+#if defined(TCU_RNG_SHADOW_TU)
+#error "the range shadow is read-only: it may not include a live cell header (sup_cells.h)"
+#endif
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>

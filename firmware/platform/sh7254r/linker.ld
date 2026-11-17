@@ -238,6 +238,16 @@ SECTIONS
     } > RAM
     ASSERT(__m5_wit_end <= 0xFFF84D80, ".m5_wit overflow")
 
+    /* the READ-ONLY range shadow (app/rng_shadow.c; ~/tcu_sweep/
+     * range_shadow_port.md): the stock's cyclic 10 ms range chain computed
+     * into its OWN block — not a stock cell window, nothing else is pinned
+     * in 0xFFF86A00..0xFFF88130; cleared by rng_shadow_init. Low RAM, so it
+     * does not cost the stack guard */
+    .rng_shadow 0xFFF87000 (NOLOAD) : {
+        __rng_shadow_start = .; *(.rng_shadow) . = ALIGN(4); __rng_shadow_end = .;
+    } > RAM
+    ASSERT(__rng_shadow_end <= 0xFFF87800, ".rng_shadow overflow")
+
     /* our request-law witnesses and the refresh snapshot (not stock cells;
      * free low RAM like .sup_wit, so they do not cost the stack guard) */
     .drv_wit 0xFFF84C40 (NOLOAD) : {

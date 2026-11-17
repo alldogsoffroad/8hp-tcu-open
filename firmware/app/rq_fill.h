@@ -14,6 +14,12 @@
 #ifndef TCU_APP_RQ_FILL_H
 #define TCU_APP_RQ_FILL_H
 
+/* READ-ONLY range shadow (app/rng_shadow.c): the shadow translation unit
+ * defines TCU_RNG_SHADOW_TU and may not name a live cell */
+#if defined(TCU_RNG_SHADOW_TU)
+#error "the range shadow is read-only: it may not include a live cell header (rq_fill.h)"
+#endif
+
 #include <stdint.h>
 #include <stdbool.h>
 

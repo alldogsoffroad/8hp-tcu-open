@@ -37,6 +37,7 @@ set(CORE_SOURCES
     app/range.c
     app/park_law.c
     app/park.c
+    app/rng_shadow.c
     app/rq_prod.c
     app/rq_fill.c
     app/rq_fill_cal.c
@@ -481,6 +482,56 @@ else()
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_PKS_OUTPUT ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard_pksens.c)
     set_tests_properties(pks_sh_guard_output PROPERTIES
         PASS_REGULAR_EXPRESSION "park position sensor is read-only")
+    # the READ-ONLY range shadow (2026-11-17, ~/tcu_sweep/range_shadow_port.md):
+    # the stock cyclic range chain 0x9B306/0x9B322/0x9B34A into its own block;
+    # the live path (and the whole stock cell window) bit-identical with and
+    # without it; the dump-stand-in answer; a host-hook positive control
+    add_executable(test_rng_shadow tests/unit/test_rng_shadow.c app/rng_shadow.c
+        app/range.c app/park_law.c app/park.c safety/park_mon.c bsw/sched/sched.c
+        io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_handlers.c
+        tests/unit/stub_plat.c)
+    target_compile_definitions(test_rng_shadow PRIVATE RNG_SHADOW_TEST_HOOKS=1)
+    add_test(NAME rng_shadow COMMAND test_rng_shadow)
+    # ... and its read-only frame, both directions: no output path names the
+    # shadow, the shadow names no live cell (source scans, each with a
+    # negative fixture), the shadow header refuses an output TU, the live
+    # cell headers refuse the shadow TU, the host hooks refuse SH
+    set(RNG_OUTPUT_PATHS ${PKS_OUTPUT_PATHS} ${CMAKE_SOURCE_DIR}/bsw/sup/sup_cells.h)
+    string(REPLACE ";" "," RNG_OUTPUT_PATHS_ARG "${RNG_OUTPUT_PATHS}")
+    add_test(NAME rng_shadow_scan_outputs
+        COMMAND ${CMAKE_COMMAND} "-DFILES=${RNG_OUTPUT_PATHS_ARG}" -DSIDE=output
+            -P ${CMAKE_SOURCE_DIR}/tests/unit/rng_shadow_scan.cmake)
+    add_test(NAME rng_shadow_scan_outputs_negative
+        COMMAND ${CMAKE_COMMAND} -DFILES=${CMAKE_SOURCE_DIR}/tests/unit/sh_guard_rng.c -DSIDE=output
+            -P ${CMAKE_SOURCE_DIR}/tests/unit/rng_shadow_scan.cmake)
+    set_tests_properties(rng_shadow_scan_outputs_negative PROPERTIES
+        PASS_REGULAR_EXPRESSION "range shadow read-only violation")
+    add_test(NAME rng_shadow_scan_shadow
+        COMMAND ${CMAKE_COMMAND} "-DFILES=${CMAKE_SOURCE_DIR}/app/rng_shadow.c,${CMAKE_SOURCE_DIR}/app/rng_shadow.h" -DSIDE=shadow
+            -P ${CMAKE_SOURCE_DIR}/tests/unit/rng_shadow_scan.cmake)
+    add_test(NAME rng_shadow_scan_shadow_negative
+        COMMAND ${CMAKE_COMMAND} -DFILES=${CMAKE_SOURCE_DIR}/tests/unit/sh_guard_rng.c -DSIDE=shadow
+            -P ${CMAKE_SOURCE_DIR}/tests/unit/rng_shadow_scan.cmake)
+    set_tests_properties(rng_shadow_scan_shadow_negative PROPERTIES
+        PASS_REGULAR_EXPRESSION "range shadow read-only violation")
+    set(RNG_SH_SRC ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard_rng.c)
+    add_test(NAME rng_sh_guard_control
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${RNG_SH_SRC})
+    add_test(NAME rng_sh_guard_shadow
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform/sh7254r/include ${CMAKE_SOURCE_DIR}/app/rng_shadow.c)
+    add_test(NAME rng_sh_guard_output
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_RNG_OUTPUT ${RNG_SH_SRC})
+    add_test(NAME rng_sh_guard_live_cell
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_RNG_LIVE ${RNG_SH_SRC})
+    add_test(NAME rng_sh_guard_hooks
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform/sh7254r/include -DRNG_SHADOW_TEST_HOOKS=1 ${CMAKE_SOURCE_DIR}/app/rng_shadow.c)
+    set_tests_properties(rng_sh_guard_output PROPERTIES
+        PASS_REGULAR_EXPRESSION "the range shadow is read-only: no output path")
+    set_tests_properties(rng_sh_guard_live_cell PROPERTIES
+        PASS_REGULAR_EXPRESSION "the range shadow is read-only: it may not include a live cell header")
+    set_tests_properties(rng_sh_guard_hooks PROPERTIES
+        PASS_REGULAR_EXPRESSION "RNG_SHADOW_TEST_HOOKS .input overrides. is host-only")
     add_executable(test_dump tests/unit/test_dump.c app/bench_dump.c tests/unit/stub_plat.c)
     add_executable(transcript tests/unit/transcript.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c

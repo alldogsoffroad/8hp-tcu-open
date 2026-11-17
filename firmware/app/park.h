@@ -14,6 +14,12 @@
 #ifndef TCU_PARK_H
 #define TCU_PARK_H
 
+/* READ-ONLY range shadow (app/rng_shadow.c): the shadow translation unit
+ * defines TCU_RNG_SHADOW_TU and may not name a live cell */
+#if defined(TCU_RNG_SHADOW_TU)
+#error "the range shadow is read-only: it may not include a live cell header (park.h)"
+#endif
+
 #include "app/range.h"
 #include "app/park_law.h"
 #include "safety/park_mon.h"
