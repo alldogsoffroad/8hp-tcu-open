@@ -246,7 +246,7 @@ else()
     add_executable(test_m5prod tests/unit/test_m5prod.c app/rq_prod.c app/rq_fill.c
         app/rq_fill_cal.c bsw/drv/drv_jobs.c
         bsw/drv/drv_reqlaw.c bsw/drv/drv_handlers.c tests/unit/stub_plat.c)
-    target_compile_definitions(test_m5prod PRIVATE DRV_RQ_USE_PRODUCER=1
+    target_compile_definitions(test_m5prod PRIVATE DRV_RQ_USE_PRODUCER=1 RQ_M5_STAGE=0x1A
         "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"" "TCU_STOCK_DUMP=\"${TCU_STOCK_DUMP}\"")
     add_test(NAME m5prod COMMAND test_m5prod)
     add_test(NAME m5_stock_bytes COMMAND test_m5prod --stock)
@@ -260,7 +260,7 @@ else()
     set(M5F_SOURCES tests/unit/test_m5fill.c app/rq_prod.c app/rq_fill.c app/rq_fill_cal.c
         bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_handlers.c tests/unit/stub_plat.c)
     add_executable(test_m5fill ${M5F_SOURCES})
-    target_compile_definitions(test_m5fill PRIVATE DRV_RQ_USE_PRODUCER=1
+    target_compile_definitions(test_m5fill PRIVATE DRV_RQ_USE_PRODUCER=1 RQ_M5_STAGE=0x1A
         "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"" "TCU_STOCK_DUMP=\"${TCU_STOCK_DUMP}\"")
     add_test(NAME m5fill_1a COMMAND test_m5fill)
     add_test(NAME m5_fill_bytes COMMAND test_m5fill --stock)
@@ -269,7 +269,7 @@ else()
     target_compile_definitions(test_m5fill_1b PRIVATE DRV_RQ_USE_PRODUCER=1 RQ_M5_STAGE=0x1B)
     add_test(NAME m5fill_1b COMMAND test_m5fill_1b)
     add_executable(test_m5fill_mut ${M5F_SOURCES})
-    target_compile_definitions(test_m5fill_mut PRIVATE DRV_RQ_USE_PRODUCER=1 DRV_RQ_FILL_MIN=499u)
+    target_compile_definitions(test_m5fill_mut PRIVATE DRV_RQ_USE_PRODUCER=1 RQ_M5_STAGE=0x1A DRV_RQ_FILL_MIN=499u)
     add_test(NAME m5fill_mut COMMAND test_m5fill_mut)
     set_tests_properties(m5fill_mut PROPERTIES WILL_FAIL TRUE)
     # M4 group A (2026-11-14, ~/tcu_sweep/groupA_park_port.md): the stock's
@@ -345,7 +345,7 @@ else()
     add_test(NAME m5_sh_guard_source
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DRQ_PROD_INPUT_SOURCE=1 ${M5_SH_SRC})
     add_test(NAME m5_sh_guard_gear
-        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DRQ_M5_GEAR=1 ${M5_SH_SRC})
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DRQ_M5_STAGE=0x1A -DRQ_M5_GEAR=1 ${M5_SH_SRC})
     add_test(NAME m5_sh_guard_pflow
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DRQ_M5_PFLOW=1 ${M5_SH_SRC})
     set_tests_properties(m5_sh_guard_runtime PROPERTIES

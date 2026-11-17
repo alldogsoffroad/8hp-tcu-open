@@ -38,7 +38,7 @@
 #define RQ_M5_STAGE_1A  0x1A
 #define RQ_M5_STAGE_1B  0x1B
 #ifndef RQ_M5_STAGE
-#  define RQ_M5_STAGE     RQ_M5_STAGE_1A
+#  define RQ_M5_STAGE     RQ_M5_STAGE_1B
 #endif
 #if (RQ_M5_STAGE != RQ_M5_STAGE_1A) && (RQ_M5_STAGE != RQ_M5_STAGE_1B)
 #  error "rq_prod: RQ_M5_STAGE is RQ_M5_STAGE_1A or RQ_M5_STAGE_1B, nothing else"

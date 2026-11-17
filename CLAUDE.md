@@ -1443,3 +1443,18 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
 - **Producer cells = r03n's** (B 4E20 mode 1 prio 4, Sys 4E20 src 0x15, WK 0 src 0x16); **all M5 witnesses (guard, unported, faults 0x1C4/0x19F/0x19A) = 0**; `s_rq_ilock_n` 8 (the '3' full-on refusals, as since r03b).
 - An earlier ammeter run (09:41:10, 75 s) read a flat ~152 mA: the board had not been power-cycled after the install. Not an r03o reading.
 - **M5-1a done.** Next: M5-1b (`RQ_M5_STAGE_1B`, block-0 gear 1: A on, B off) — the first holder switch-on with a real fill on the wire. Host trace: A 8500 (boost), 5305 ×9, 4609, then 8500; B 500. Steady ≈ the P level (one 850 mA coil moves from B to A); the ~100 ms fill dip (≈ −0.23 A) is visible only in the recorder.
+
+**r03p = M5-1b: BLOCK-0 GEAR 1 — A APPLIED, B RELEASED, THE FIRST REAL FILL ON THE WIRE (2026-11-17; built, NOT flashed, `build/r03p_IFla.bin`, app CRC `E00A3ED2`, app end 0x5AE48, blocks 0x40000 + 0x50000; NOT committed at time of writing)** — one variable vs r03o: `RQ_M5_STAGE` 1A → **1B** in `app/rq_prod.h` (gear code 3 → 1; table 0x505A4 block 0 row 2 = A only). Every other producer input is still the dump's compile-time constant. The host tests that check the dump's 1A state are now pinned to `RQ_M5_STAGE=0x1A` in CMakeLists (test_m5prod, test_m5fill, test_m5fill_mut, m5_sh_guard_gear), so they test what they tested before; host 82/82, sh2a clean. **RAM symbols identical to r03o** (nm diff of a rebuilt b1d2b79 ELF is empty), so the r03o witnesses apply: `/tmp/witness_r03o.py`, `/tmp/witness_m5_r03o.py`, `/tmp/witness_m5rec.py`. Install `/tmp/install_r03p.py` (sigs `/tmp/r03p_sigs.json`, both blocks None).
+- **Host trace (`test_m5fill_1b`, producer passes at 10 ms from boot state 1):**
+  - pass 0: A FSM 2, +2 20000, mode 0 → **A 8500** (boost); B released at once → **500**;
+  - passes 1–9: A +2 5015 → **5305** (E8 slot 0 EB74);
+  - pass 10: blend 3900 → **4609** (EB00);
+  - pass 11 on: A state 3, mode 1 → **8500** (ED88/89);
+  - B: FSM 5 (release ramp), +0x46 10000 → 0 by pass 79 (state 0); its record word counts down with it (RAM shadow only; no EEPROM write ported).
+- **PREDICTION (rule 1), r03p:**
+  - [high] **Steady state:** 0xFFF84B78 = `2134 2134 01F4 2134 2134 01F4 01F4 0000` (A 850, D 850, B 50, E 850, C 850, WK 50, Sys 50); RQLAW modes 03×7 01 and letters '!'×7 unchanged; cyclic E8 row **ED88/89 E853/54 ED88/89 E853/54 E800** (slots 0/1 swap vs r03o), F0 row unchanged; mode words 881A 881A 881A 8812 8815 unchanged; the chips read the setpoints back (C0 row A588 A053 …).
+  - [high] Fill cells: A +0x34 = 03, +0x46 = 2710, +0x4A = 01 (applied); B +0x34 = 00, +0x46 = 0 (ramp done); req A = 4E20 mode 1, req B = 0.
+  - [high] **Recorder** (passes 0–63): pass 0 A 8500 / B 500; passes 1–9 A 5305; pass 10 A 4609; pass 11 on A 8500; B 500 throughout, B frac falling 10000 → ~5000 by pass 39, as the host trace; D/E/C/WK/Sys as r03o every pass.
+  - [high] Supervisor, buses and park as r03o (letter 'c', J2 9020, mode 1, C7, bus A 0 slips, re-entries 0, Auto-P); M5 witnesses 0.
+  - **Current [D]:** steady ≈ r03o (one 850 mA coil moves from B to A, both type 0) → **≈ 1.70–1.85 A** depending on temperature. The fill (A at 530 mA for ~90 ms, ≈ −0.24 A) lies inside one 0.2 s bin at ~0.66 s and is at most a shallow dip; the recorder is the witness.
+  - **Stop conditions:** steady mean above ~2.3 A; any recorder current above 8500 or any channel other than A/B changing vs r03o; guard count > 0; restarts or 'U' lost.
