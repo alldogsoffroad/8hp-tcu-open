@@ -1458,3 +1458,17 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
   - [high] Supervisor, buses and park as r03o (letter 'c', J2 9020, mode 1, C7, bus A 0 slips, re-entries 0, Auto-P); M5 witnesses 0.
   - **Current [D]:** steady ≈ r03o (one 850 mA coil moves from B to A, both type 0) → **≈ 1.70–1.85 A** depending on temperature. The fill (A at 530 mA for ~90 ms, ≈ −0.24 A) lies inside one 0.2 s bin at ~0.66 s and is at most a shallow dip; the recorder is the witness.
   - **Stop conditions:** steady mean above ~2.3 A; any recorder current above 8500 or any channel other than A/B changing vs r03o; guard count > 0; restarts or 'U' lost.
+
+**r03p BENCH RESULT (2026-11-17 09:53 install, blocks 0x40000 `1fe8c9d774c10a9a` + 0x50000 `5b58acd2252d9c97`, all 21 verifies OK; power-on ≈ 10:09 under the ammeter "=== r03p boot"; witnesses 10:11 `/tmp/witness_r03p.log`, `/tmp/witness_m5_r03p.log`, `/tmp/witness_m5rec_r03p.log`) — PREDICTION CONFIRMED: THE FIRST STOCK ELEMENT FILL UNDER OPEN FIRMWARE, PASS FOR PASS THE HOST TRACE** [O]:
+- **The fill, recorder passes 0–63, identical to `test_m5fill_1b`:**
+  - pass 0: A FSM 2, **8500** (boost), B FSM 5, **500**;
+  - passes 1–9: A **5305**, ramp +0x46 934, 1869 … 8411;
+  - pass 10: A **4609** (ramp 9345);
+  - pass 11 on: A state 3, ramp 10000, **8500**;
+  - B's release ramp 10000 → 9874 … 2026 at pass 63, falling 126–127 per pass, as the host trace;
+  - D/E/C/WK/Sys 8500/8500/8500/500/500 on every pass.
+- **Fill cells:** A +0x34 = **03**, +0x36 = **006B** (fill time 107 ms — the stock driving dump's own A value), +0x46 = 2710; B +0x34/+0x46 = 0 (ramp done by the witness); 0xFFF8E384 = **01** (last element filled = A; not in the prediction, consistent with 0xE4214); req A 4E20 mode 1 prio 4, req B 0; input gear code 0xFFF89C2B = 01.
+- **Steady state as predicted:** 0xFFF84B78 = `2134 2134 01F4 2134 2134 01F4 01F4 0000`; RQLAW modes 03×7 01, letters '!'×7; cyclic E8 row **ED88 E853 ED88 E853 E800**, F0 row F589 F589 F054 F000 F000; mode words 881A 881A 881A 8812 8815; the chips read the setpoints back (A589 A054 A589 A054 / A588 A588 A053); config readbacks A29A ×3 A292.
+- **Current:** 0.8 s after power-on 1.58 A, then **1.71 A at 1.0 s**, 1.72 → 1.78 A over 15–90 s (r03o 1.71 → 1.77). The fill (~0.66–0.77 s) is not separable in the 0.1 s means (inrush/'U' ramp), as expected. Ripple peaks lower than r03o (2.24–2.36 vs 2.44–2.50 A) [I: the 850 mA coil is now on a different chip, so the chopping overlap changes].
+- **Everything else as r03o:** 'c', J2 9020, mode 1, C7 / gate 1, FSM 'E', boots = 1; bus A 9 496 cyclics, 0 slips, 0 errors; RSPI re-entries 0; job errors 0; Auto-P = the dump; all M5 witnesses 0; `s_rq_ilock_n` 8.
+- **M5-1b done:** the producer, the holder table, the fill machinery and the mode-0/mode-1 laws now drive a stock gear-state change on the wire exactly as the stock code computes it — still from compile-time inputs. Next steps toward M5: the remaining producer inputs as live sources (temperature 0xFFF94F9C into the fill, the gear/power-flow state from the range logic), block 1 (power flow ≠ 0, the shift matrix — needs the engine-running / garage-shift gates decoded first), and Sys/WK in drive.
