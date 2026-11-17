@@ -150,6 +150,9 @@ static void row1_7db70(void)
 /* M5-1: the request producer's boot pass (app/rq_prod.c); weak, so the
  * supervisor tests and the RAM application link without it */
 extern void rq_prod_boot_pass(void) __attribute__((weak));
+/* the temperature byte's boot pass (app/tmp_chain.c): row-1 entries 0
+ * (0x14F32C) and 6 (0xA2D88), before the producer's entry 17 */
+extern void tmp_chain_boot_pass(void) __attribute__((weak));
 
 void sup_mode_background(void)
 {
@@ -169,6 +172,9 @@ void sup_mode_background(void)
     if (CELL_OS_STATE == 1u) {
         /* M5-1: row-1 list entries 12 (0xA2DEE → 0xE5602) and 17 (0xA2E74 →
          * the request producer + actuators) run before entry 32 (0x7DB70) */
+        if (tmp_chain_boot_pass) {
+            tmp_chain_boot_pass();
+        }
         if (rq_prod_boot_pass) {
             rq_prod_boot_pass();
         }

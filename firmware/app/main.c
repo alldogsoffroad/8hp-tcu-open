@@ -34,6 +34,7 @@
 #include "app/meas_table.h"
 #include "app/park.h"
 #include "app/rng_chain.h"
+#include "app/tmp_chain.h"
 
 /* Shaft assignment of the speed channels (spec 02 section 4.1), the stock calibration's routing:
  * channel 0 = TIF12 -> stock signal B (0xFFF93048), channel 1 = TIF13 -> signal A (0xFFF93044).
@@ -225,6 +226,10 @@ static void task_10ms(void)
     /* M5-1: the stock 10 ms list (modes 1..3) runs the element tick and
      * update (entry 29) and the producer + actuators (entry 43) before
      * the bus-A cyclic below reads 0xFFF84B78 through the law */
+    /* the temperature byte (app/tmp_chain.c): mode 0 → the safety layer's
+     * ED20 re-initialisation (0x132DCE); modes 1..3 → 0xB986C, the latch of
+     * 0x89C13, entry 29 — before the producer (entry 43) reads it */
+    tmp_chain_task_10ms(sup_mode());
     if (rq_prod_task_10ms) {
         rq_prod_task_10ms(sup_mode());
     }
@@ -252,6 +257,10 @@ static void task_10ms(void)
     park_pair_tick_10ms();  /* park position sensor, READ-ONLY: the safety
                              * layer's pair object + group 98 (10 ms is OUR
                              * rate — the stock's is not decoded) */
+    /* the 30 ms (0xB9646) and 100 ms (the safety slice 0x13204A: gather,
+     * slew limit → 0xFFF8E9C8) tasks of modes 1..3, on this tick when due,
+     * after the 10 ms task (lower priority) */
+    tmp_chain_task_slow(sup_mode());
 }
 
 /* ── 100 ms: heartbeat ─────────────────────────────────────────────────── */
@@ -336,6 +345,8 @@ int main(void)
     sup_batch_init();                   /* serial_rx_init: request 0, J5 staged+queued */
     drv_jobs_init();
     drv_temp_init();                    /* M4: 0x88A50 (row-9 entry 0x7CB5C) */
+    tmp_chain_init();                   /* M5: the temperature byte's safety objects
+                                         * (startup 0x15A67C, row-9 0x132980) */
     drv_pksens_init();                  /* park sensor: 0x88EB0 (row-9 list's last) */
     drv_ga_init();                      /* M4: group-A law (0x9136E shadows) */
     sol_init();

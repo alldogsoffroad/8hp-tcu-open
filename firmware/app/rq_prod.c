@@ -65,7 +65,10 @@
 #define MIR_PFLOW   (*(volatile uint8_t  *)0xFFF89C30u)
 #define MIR_SYSMODE (*(volatile uint8_t  *)0xFFF89CF5u)
 #define MIR_LINEP   (*(volatile uint16_t *)0xFFF8BCB0u)
-#define MIR_TEMP    (*(volatile uint8_t  *)0xFFF89C13u)     /* M5-1 */
+/* the temperature byte, LIVE (2026-11-17, app/tmp_chain.c — 0xB986C owns
+ * 0x89C13, 0xB9646 owns 0x89CD2): read here, never written */
+#define LIVE_TEMP   (*(const volatile uint8_t *)0xFFF89C13u)
+#define LIVE_CD2    (*(const volatile uint8_t *)0xFFF89CD2u)
 #define MIR_ENGSTOP (*(volatile uint8_t  *)0xFFF89D10u)     /* M5-1 */
 
 typedef struct {
@@ -371,8 +374,10 @@ static void d9f70(const act_t *a, uint16_t i)
 /* ── interface ─────────────────────────────────────────────────────────── */
 /* ── M5-1: the fill inputs (compile-time on SH; rq_prod.h RQ_M5_*) ─────── */
 static const rqf_in_t M5_FILL_IN = {
-    .temp = RQ_M5_TEMP, .c1c = RQ_M5_C1C, .c0a = RQ_M5_C0A, .eng_stop = RQ_M5_ENGSTOP,
-    .c3d = RQ_M5_C3D, .cd2 = RQ_M5_CD2, .e5c2 = RQ_M5_B119, .b0fe = RQ_M5_B0FE,
+    .temp = 0u /* LIVE: 0x89C13, fill_in() */, .c1c = RQ_M5_C1C, .c0a = RQ_M5_C0A,
+    .eng_stop = RQ_M5_ENGSTOP,
+    .c3d = RQ_M5_C3D, .cd2 = 0u /* LIVE: 0x89CD2, fill_in() */, .e5c2 = RQ_M5_B119,
+    .b0fe = RQ_M5_B0FE,
     .e3ed = RQ_M5_E3ED, .ba79c = RQ_M5_BA79C, .e6a3 = RQ_M5_E6A3, .rec1fd = RQ_M5_REC1FD,
     .lp = RQ_M5_LINEP, .lp2 = RQ_M5_LP2,
     .adapt38 = { RQ_M5_AD38_A, RQ_M5_AD38_B, 0, 0, 0 },          /* dump C/D/E +0x38 = 0 */
@@ -383,6 +388,25 @@ static const rqf_in_t M5_FILL_IN = {
     .rec_frac = { RQ_M5_REC_A, RQ_M5_REC_B, RQ_M5_REC_C, RQ_M5_REC_D, RQ_M5_REC_E }, /* 0xFFF80EE8.. */
 };
 static const rqf_in_t *s_fill_in = &M5_FILL_IN;
+
+/* the fill inputs of this pass: the compile-time set with the two LIVE
+ * temperature cells (0x89C13, 0x89CD2) read in; the host's override set
+ * (rq_prod_host_fill_in) as given */
+#if defined(__sh__)
+static rqf_in_t s_fill_live __attribute__((section(".m5_rec")));    /* low RAM: the stack guard */
+#else
+static rqf_in_t s_fill_live;
+#endif
+static const rqf_in_t *fill_in(void)
+{
+    if (s_fill_in != &M5_FILL_IN) {
+        return s_fill_in;
+    }
+    s_fill_live = M5_FILL_IN;
+    s_fill_live.temp = LIVE_TEMP;
+    s_fill_live.cd2 = LIVE_CD2;
+    return &s_fill_live;
+}
 
 /* ── the fill recorder (ours, .m5_rec at 0xFFF86000: low RAM, not .bss —
  * the stack guard leaves .noinit 0x30 bytes): the first RQ_REC_N producer
@@ -459,7 +483,7 @@ void rq_prod_init(void)
     RQF_CELL_851A3 = 0u;
     RQF_CELL_851A5 = 0u;                /* [I] the stock's .bss start value */
     RQF_CELL_E384 = 0u;
-    rqf_bind(s_fill_in, &s_m5_unp_n, &s_m5_f19f_n);
+    rqf_bind(fill_in(), &s_m5_unp_n, &s_m5_f19f_n);
     for (uint8_t e = 1u; e <= 5u; e++) {
         rqf_construct(ELEM_OBJ[e], 0xFFF84D20u + 4u * (uint32_t)(e - 1u), e);
     }
@@ -482,7 +506,7 @@ void rq_prod_init(void)
 static void prod_pass(const rq_prod_in_t *in)
 {
     s_in = in;
-    rqf_bind(s_fill_in, &s_m5_unp_n, &s_m5_f19f_n);
+    rqf_bind(fill_in(), &s_m5_unp_n, &s_m5_f19f_n);
     dc4c4();
     for (uint32_t i = 0u; i < 12u; i++) {           /* 0xDA00E → 0xD9CF8 */
         U16(CUR_ARR, 2u * i) = 0u;
@@ -507,7 +531,7 @@ void rq_prod_host_fill_in(const rqf_in_t *in)
         s_fill_host = *in;
         s_fill_in = &s_fill_host;
     }
-    rqf_bind(s_fill_in, &s_m5_unp_n, &s_m5_f19f_n);
+    rqf_bind(fill_in(), &s_m5_unp_n, &s_m5_f19f_n);
 }
 #endif
 
@@ -518,7 +542,6 @@ static void mirrors(void)
     MIR_PFLOW = (uint8_t)RQ_M5_PFLOW;
     MIR_SYSMODE = (uint8_t)RQ_M5_SYSMODE;
     MIR_LINEP = (uint16_t)RQ_M5_LINEP;
-    MIR_TEMP = (uint8_t)RQ_M5_TEMP;
     MIR_ENGSTOP = (uint8_t)RQ_M5_ENGSTOP;
 }
 
@@ -537,7 +560,7 @@ void rq_prod_step(void)
  * (0xE5106 → 0xE4A4E ×5), entry 17 0xA2E74 → the producer + actuators */
 void rq_prod_boot_pass(void)
 {
-    rqf_bind(s_fill_in, &s_m5_unp_n, &s_m5_f19f_n);
+    rqf_bind(fill_in(), &s_m5_unp_n, &s_m5_f19f_n);
     rqf_e5602();
     rq_prod_step();
 }
@@ -556,7 +579,7 @@ void rq_prod_task_10ms(uint8_t os_mode)
     if (os_mode < 1u || os_mode > 3u || !s_started) {
         return;
     }
-    rqf_bind(s_fill_in, &s_m5_unp_n, &s_m5_f19f_n);
+    rqf_bind(fill_in(), &s_m5_unp_n, &s_m5_f19f_n);
     rqf_e5624();
     rqf_e566c();
     rq_prod_step();
@@ -567,7 +590,7 @@ void rq_prod_task_10ms(uint8_t os_mode)
 void rq_prod_step_in(const rq_prod_in_t *in)
 {
     static rqf_in_t f;
-    f = *s_fill_in;
+    f = *fill_in();
     f.lp = in->line_p;
     rqf_bind(&f, &s_m5_unp_n, &s_m5_f19f_n);
     rqf_e5624();

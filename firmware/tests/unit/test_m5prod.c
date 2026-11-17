@@ -40,6 +40,10 @@ static const uint16_t PSET[7] = { 500u, 8500u, 8500u, 8500u, 8500u, 500u, 500u }
 static void reset(void)
 {
     drv_jobs_init();                    /* → drv_rq_init → rq_prod_init */
+    /* the temperature byte is LIVE since 2026-11-17 (app/tmp_chain.c owns
+     * 0x89C13 / 0x89CD2; the producer only reads them): set the dump's */
+    U8(0xFFF89C13u) = RQ_M5_TEMP_DUMP;
+    U8(0xFFF89CD2u) = RQ_M5_TEMP_DUMP;
     CELL_SEQ2_STATE[0] = 0x11u;
     CELL_LAD_94114 = 0u;
     CELL_DIAG_94115 = 0u;
@@ -191,7 +195,7 @@ int main(int argc, char **argv)
     }
     CHECK(rq_prod_ch(7u) == RQ_PROD_INVALID);
     check_dump_cells();
-    /* the write-only input mirrors */
+    /* the write-only input mirrors (0x89C13: the live cell, set by reset()) */
     CHECK(*(volatile int8_t *)0xFFF89C2Bu == RQ_M5_GEAR && U8(0xFFF89C13u) == 0x43u && U8(0xFFF89D10u) == 0u && U8(0xFFF89C30u) == 0u &&
           U8(0xFFF89CF5u) == 1u && U16(0xFFF8BCB0u) == 20000u);
     CHECK(rq_prod_f19a_n() == 0u && rq_prod_f19f_n() == 0u && rq_prod_f1c4_n() == 0u &&

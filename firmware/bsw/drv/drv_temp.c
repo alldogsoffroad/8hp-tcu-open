@@ -11,8 +11,10 @@
  *
  * NOT PORTED (named stand-ins / deviations):
  *   0x72AE0 profiling; the 0x6BDFE / 0x6BDCA pair checks (fault 0x221 on a
- *   torn complement) whose values 0x887D8 discards; the fault-code tail
- *   (0x93AE8 / 0x93AEA = 0x1FC → 0x6F594 / 0x7BF8C) and 0x7BFF0(0x1FC);
+ *   torn complement) whose values 0x887D8 discards; the DTC report
+ *   0x7CA24 inside 0x7BF8C and the registration 0x7BFF0(0x1FC) (the
+ *   fault-code tail and 0x7BF8C's flags ARE ported, 2026-11-17; 0x6F594
+ *   fault memory ready = stand-in 1);
  *   0xA0FC4(0x65) (fault path 0x65 active → 0x94F9C from the substitute) —
  *   stand-in "not active" (the dump's 0x94F9C == 0x94F98);
  *   0x9393A / 0x940FC (the substitute temperature and its status) are not
@@ -218,6 +220,83 @@ static uint8_t temp_byte(int16_t t)                     /* (t + 8) >> 4 + 40, 0.
     return b >= 255 ? 255u : (uint8_t)b;
 }
 
+/* ── 0x7BF70: the fault word's bits → the published flag byte ─────────── */
+static uint8_t temp_7bf70(uint16_t w)
+{
+    uint8_t r = (uint8_t)((w >> 3) & 1u);               /* bld #3; movt */
+    if ((w & 0x0004u) != 0u) {                          /* bld #2 → bset #1 */
+        r = (uint8_t)(r | 0x02u);
+    }
+    if ((w & 0x0010u) != 0u) {                          /* bld #4 → bset #2 */
+        r = (uint8_t)(r | 0x04u);
+    }
+    if ((w & 0x01E0u) != 0u) {                          /* #120 << 2 → bset #7 */
+        r = (uint8_t)(r | 0x80u);
+    }
+    return r;
+}
+
+/* ── 0x7BF8C(mask, value): the fluid sensor's fault word 0x93914 and the
+ * flags 0x940E7 (tested) / 0x940E8 (failed). The DTC report 0x7CA24(2440,
+ * 0, mask, value) at its head is NOT ported (no fault memory). ───────── */
+static void temp_7bf8c(uint16_t mask, uint16_t value)
+{
+    uint16_t w = (uint16_t)((CELL_TMP_FWORD & (uint16_t)~mask) | (value & mask));
+    uint8_t mm;
+    uint8_t old;
+
+    CELL_TMP_FWORD = w;                                 /* 0x7BFBA (delay slot) */
+    mm = temp_7bf70(mask);
+    old = CELL_TMP_PUB_E8;
+    CELL_TMP_PUB_E7 = mm;                               /* 0x7BFC8 */
+    old = (uint8_t)(old & (uint8_t)~mm);
+    if ((mask & w) == 0u) {                             /* 0x7BFCC tst r12,r4 */
+        CELL_TMP_PUB_E8 = old;                          /* 0x7BFE8 */
+    } else {
+        CELL_TMP_PUB_E8 = (uint8_t)((temp_7bf70(w) & mm) | old);
+    }
+}
+
+/* ── 0x887D8's tail @0x8896A..0x88A10: the fault code from the 0x8D5BA
+ * plausibility bits, then (fault memory ready, 0x6F594 — stand-in 1, as
+ * sup_ladder.c S1) 0x7BF8C(0x1FC, code) ──────────────────────────────── */
+#define STANDIN_FAULTMEM_READY  1u                      /* 0x6F594 */
+/* the fault code / mask (0x887D8's own; inside .pks_eval 0x93AC4..0x93B03,
+ * cleared by drv_pksens_init, rewritten every pass) */
+#define CELL_TMP_FCODE      (*(volatile uint16_t *)0xFFF93AE8u)
+#define CELL_TMP_FMASK      (*(volatile uint16_t *)0xFFF93AEAu)
+static void temp_fault_tail(void)
+{
+    const uint16_t fl = CELL_TMP_FLAGS;                 /* 0x93A9E */
+    uint16_t code = 0u;                                 /* r12 = 0 (0x887E4) */
+    uint16_t m;
+
+    m = (uint16_t)(fl & 0x0809u);
+    if (m == 0x0808u) {
+        code = 0x04u;
+    } else if (m == 0x0801u) {
+        code = 0x08u;
+    } else if (m == 0x0809u) {
+        code = 0x10u;
+    } else if ((uint16_t)(fl & 0x0828u) == 0x0820u) {
+        code = 0x10u;
+    } else if ((uint16_t)(fl & 0x087Fu) == 0x0840u) {
+        code = 0x20u;
+    } else if ((uint16_t)(fl & 0x087Fu) == 0x0820u) {  /* unreachable (0x828 test above) — as the bytes */
+        code = 0x40u;
+    } else if ((fl & 0x0800u) != 0u && (fl & 0x007Fu) != 0u) {
+        code = 0x80u;
+    }
+    if (CELL_TMP_94155 != 0u) {                         /* 0x889D8 */
+        code = (uint16_t)(code | 0x0100u);
+    }
+    CELL_TMP_FMASK = 0x01FCu;                           /* #127 << 2 */
+    CELL_TMP_FCODE = code;
+    if (STANDIN_FAULTMEM_READY != 0u) {
+        temp_7bf8c(CELL_TMP_FMASK, CELL_TMP_FCODE);
+    }
+}
+
 /* ── 0x887D8 ─────────────────────────────────────────────────────────── */
 void drv_temp_tick(void)
 {
@@ -256,7 +335,16 @@ void drv_temp_tick(void)
     temp_8d4b4();
     CELL_TMP_BYTE_SEL = temp_byte(CELL_TMP_SEL);
     CELL_TMP_BYTE = temp_byte(CELL_TMP);
-    /* the fault code 0x93AE8 (0x93A9E & 0x809 ...) / 0x7BF8C: not ported */
+    temp_fault_tail();
+}
+
+/* ── 0x7C100 (the 0x7AB48 poll group, after 0x7B150): the published bytes
+ * the safety layer gathers (0x7BF40 / 0x7BF50 / 0x7BF60) ──────────────── */
+void drv_temp_pub_tick(void)
+{
+    CELL_TMP_PUB_E6 = (CELL_TMP_PUB_E8 != 0u) ? 0xFFu : CELL_TMP_BYTE_SEL;   /* 0x7C100..0x7C11E */
+    CELL_TMP_PUB_E0 = (CELL_TMP_PUB_E2 != 0u) ? 0xFFu : CELL_TMP_940FE;      /* 0x7C120..0x7C13E */
+    CELL_TMP_PUB_E3 = (CELL_TMP_PUB_E5 != 0u) ? 0xFFu : CELL_TMP_94101;      /* 0x7C140..0x7C158 */
 }
 
 /* ── 0x8F70C's ADC_A part (reply proc head) ──────────────────────────── */
@@ -274,7 +362,20 @@ void drv_temp_init(void)
     }
     CELL_TMP_9416E = 0u;
     CELL_TMP_9416F = 0u;
-    /* 0x7BFF0(0x1FC): fault manager, not ported */
+    /* 0x7BFF0(0x1FC): the DTC registration, not ported. The fault word and
+     * the published bytes start 0 (the stock's .bss) */
+    CELL_TMP_FWORD = 0u;
+    for (uint32_t a = 0xFFF940E0u; a <= 0xFFF940E8u; a++) {
+        *(volatile uint8_t *)(uintptr_t)a = 0u;
+    }
+    /* STAND-IN (ours): the second (0x94101, 0x88DA8 from 0x9393E) and third
+     * (0x940FE) temperature bytes are not produced by this firmware; their
+     * fault flags 0x940E5 / 0x940E2 are held nonzero ("faulted"), so 0x7C100
+     * publishes 0xFF for them and the safety layer's conditioning takes its
+     * own both-invalid substitute (cal 0x195DB8 = 0x82, 90 °C) if the fluid
+     * sensor fails — never a 0x00 (−40 °C) byte from an absent source */
+    CELL_TMP_PUB_E2 = TMP_STANDIN_SRC_FAULTED;
+    CELL_TMP_PUB_E5 = TMP_STANDIN_SRC_FAULTED;
     CELL_CNT_TMP_HOLD = CAL_TMP_HOLD;                   /* 0x8D57C */
     CELL_CNT_TMP_START = CAL_TMP_START;
     CELL_TMP_CODE = TMP_CODE_STANDIN;

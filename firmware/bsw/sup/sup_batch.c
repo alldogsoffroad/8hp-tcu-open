@@ -41,6 +41,7 @@ extern void drv_letter_refresh(void) __attribute__((weak));
  * the 10 ms list (entries 4/5, 70, 75, 76) [O task table 0x43430]. */
 extern void drv_temp_an_tick(void) __attribute__((weak));
 extern void drv_temp_tick(void) __attribute__((weak));
+extern void drv_temp_pub_tick(void) __attribute__((weak));
 extern void drv_ga_slots_tick(void) __attribute__((weak));
 extern void drv_ga_law_tick(void) __attribute__((weak));
 extern void drv_ga_fstage(void) __attribute__((weak));
@@ -303,6 +304,9 @@ void sup_batch_5ms(void)
         if (drv_pksens_copy_tick) {
             drv_pksens_copy_tick();     /* 9: 0x7AB48 → 0x7B150 (park sensor) */
         }
+        if (drv_temp_pub_tick) {
+            drv_temp_pub_tick();        /* 9: 0x7AB48 → 0x7C100 (temperature bytes) */
+        }
         sup_mode_request();             /* 14: 0x6F0B4 */
         if (drv_ga_slots_tick) {
             drv_ga_slots_tick();        /* 17: 0x7AB9C → 0x7B6D8 (M4) */
@@ -361,6 +365,9 @@ void sup_batch_5ms(void)
             }
             if (drv_pksens_copy_tick) {
                 drv_pksens_copy_tick(); /* 6: 0x7AB48 → 0x7B150 (park sensor) */
+            }
+            if (drv_temp_pub_tick) {
+                drv_temp_pub_tick();    /* 6: 0x7AB48 → 0x7C100 (temperature bytes) */
             }
             if (drv_ga_slots_tick) {
                 drv_ga_slots_tick();    /* 70: 0x7AB9C → 0x7B6D8 (M4) */

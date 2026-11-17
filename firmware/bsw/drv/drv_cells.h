@@ -149,4 +149,20 @@
 /* the AN table (0x8F70C; plat_adcmux.c): AN0..AN27 in mV */
 #define CELL_AN_MV(n)       (*(volatile uint16_t *)(uintptr_t)(0xFFF9018Cu + 2u * (uint32_t)(n)))
 
+/* ── M5 the temperature byte, live (2026-11-17; drv_temp.c, app/tmp_chain.c,
+ * safety/tmp_safe.c; ~/tcu_sweep/temp_byte_live_port.md): 0x887D8's fault
+ * tail → 0x7BF8C (the fault word and the published fault flags), 0x7C100
+ * the published bytes the safety layer gathers. Reservations: .tmp_93914,
+ * .tmp_940e0 (the fault code / mask cells are drv_temp.c's own). */
+#define CELL_TMP_FWORD      (*(volatile uint16_t *)0xFFF93914u) /* 0x7BF8C: the fault word */
+#define CELL_TMP_PUB_E0     (*(volatile uint8_t  *)0xFFF940E0u) /* 0x7C100: 0x940E2 ? 0xFF : 0x940FE */
+#define CELL_TMP_PUB_E2     (*(volatile uint8_t  *)0xFFF940E2u) /* that source's fault flags (not produced: stand-in) */
+#define CELL_TMP_PUB_E3     (*(volatile uint8_t  *)0xFFF940E3u) /* 0x7C100: 0x940E5 ? 0xFF : 0x94101 */
+#define CELL_TMP_PUB_E5     (*(volatile uint8_t  *)0xFFF940E5u) /* that source's fault flags (not produced: stand-in) */
+#define CELL_TMP_PUB_E6     (*(volatile uint8_t  *)0xFFF940E6u) /* 0x7C100: 0x940E8 ? 0xFF : 0x94102 — THE fluid byte */
+#define CELL_TMP_PUB_E7     (*(volatile uint8_t  *)0xFFF940E7u) /* 0x7BF8C: the tested mask (0x87) */
+#define CELL_TMP_PUB_E8     (*(volatile uint8_t  *)0xFFF940E8u) /* 0x7BF8C: the fluid sensor's fault flags */
+#define CELL_TMP_940FE      (*(volatile uint8_t  *)0xFFF940FEu) /* a third temperature byte (not produced) */
+#define CELL_TMP_94101      (*(volatile uint8_t  *)0xFFF94101u) /* the second temperature byte 0x88DA8 (not produced) */
+
 #endif /* TCU_DRV_CELLS_H */

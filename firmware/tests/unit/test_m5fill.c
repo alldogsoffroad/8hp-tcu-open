@@ -56,6 +56,10 @@ static const uint16_t *const STEADY = PSET;
 static void reset(void)
 {
     drv_jobs_init();                    /* → drv_rq_init → rq_prod_init */
+    /* the temperature byte is LIVE since 2026-11-17 (app/tmp_chain.c owns
+     * 0x89C13 / 0x89CD2; the producer only reads them): set the dump's */
+    U8(0xFFF89C13u) = RQ_M5_TEMP_DUMP;
+    U8(0xFFF89CD2u) = RQ_M5_TEMP_DUMP;
     CELL_SEQ2_STATE[0] = (uint8_t)'U';
     CELL_LAD_94114 = 0u;
     CELL_DIAG_94115 = 0u;
@@ -327,8 +331,8 @@ int main(int argc, char **argv)
 #if RQ_M5_STAGE != RQ_M5_STAGE_1B
     {
         rqf_in_t f = {
-            .temp = RQ_M5_TEMP, .c1c = RQ_M5_C1C, .c0a = RQ_M5_C0A, .eng_stop = 0, .c3d = 1,
-            .cd2 = RQ_M5_CD2, .e6a3 = RQ_M5_E6A3, .rec1fd = 0, .lp = 20000, .lp2 = 20000,
+            .temp = RQ_M5_TEMP_DUMP, .c1c = RQ_M5_C1C, .c0a = RQ_M5_C0A, .eng_stop = 0, .c3d = 1,
+            .cd2 = RQ_M5_TEMP_DUMP, .e6a3 = RQ_M5_E6A3, .rec1fd = 0, .lp = 20000, .lp2 = 20000,
             .adapt38 = { 4, 16, 0, 0, 0 }, .adapt42 = { 600, 482, 993, 838, 611 },
             .ba7dc = { 1, 1, 0, 0, 0 }, .k4b = { 3, 4, 6, 8, 9 },
             .rec_frac = { 0, 0x2710, 0, 0, 0 },
@@ -441,8 +445,8 @@ static int stock_checks(void)
         }
     }
     /* the inputs */
-    CHECK(ram[0x9C13] == RQ_M5_TEMP && ram[0x9C1C] == RQ_M5_C1C && ram[0x9C0A] == RQ_M5_C0A &&
-          ram[0x9D10] == RQ_M5_ENGSTOP && ram[0x9C3D] == RQ_M5_C3D && ram[0x9CD2] == RQ_M5_CD2 &&
+    CHECK(ram[0x9C13] == RQ_M5_TEMP_DUMP && ram[0x9C1C] == RQ_M5_C1C && ram[0x9C0A] == RQ_M5_C0A &&
+          ram[0x9D10] == RQ_M5_ENGSTOP && ram[0x9C3D] == RQ_M5_C3D && ram[0x9CD2] == RQ_M5_TEMP_DUMP &&
           ram[0xB119] == RQ_M5_B119 && ram[0xB0FE] == RQ_M5_B0FE && ram[0xE3ED] == RQ_M5_E3ED &&
           ram[0xE6A3] == RQ_M5_E6A3 && be16(&ram[0xBCC0]) == RQ_M5_LP2);
     CHECK(be16(&ram[0xE222]) == 10u && be16(&ram[0xE220]) == 1u);
@@ -510,8 +514,8 @@ static int stock_checks(void)
               ram[0xB7C8u + 0x58u] == 1u && be16(&ram[0xB7C8u + 0x36u]) == 0x6Bu);
         {
             static rqf_in_t f;
-            f = (rqf_in_t){ .temp = RQ_M5_TEMP, .c1c = RQ_M5_C1C, .c0a = RQ_M5_C0A, .c3d = 1,
-                            .cd2 = RQ_M5_CD2, .e6a3 = RQ_M5_E6A3, .rec1fd = 0, .lp = 20000,
+            f = (rqf_in_t){ .temp = RQ_M5_TEMP_DUMP, .c1c = RQ_M5_C1C, .c0a = RQ_M5_C0A, .c3d = 1,
+                            .cd2 = RQ_M5_TEMP_DUMP, .e6a3 = RQ_M5_E6A3, .rec1fd = 0, .lp = 20000,
                             .lp2 = 20000, .adapt38 = { 4, 16, 0, 0, 0 },
                             .adapt42 = { 600, 482, 993, 838, 611 }, .ba7dc = { 1, 1, 0, 0, 0 },
                             .k4b = { 3, 4, 6, 8, 9 }, .rec_frac = { 0, 0x2710, 0, 0, 0 } };

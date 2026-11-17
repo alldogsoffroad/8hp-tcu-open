@@ -18,6 +18,8 @@
  * the ones the stock reads directly (0x89C2B, 0x89C30, 0x89CF5, 0x8BCB0)
  * are written as WRITE-ONLY mirrors for the bench read (never read back).
  * The host has rq_prod_step_in() to exercise other rows of the table.
+ * (2026-11-17) The ONE live input is the temperature byte 0xFFF89C13 /
+ * 0xFFF89CD2 (app/tmp_chain.c), read, never written, by the producer.
  */
 #ifndef TCU_APP_RQ_PROD_H
 #define TCU_APP_RQ_PROD_H
@@ -100,18 +102,21 @@
 
 /* ── M5-1: the inputs of the element fill (rq_fill.h rqf_in_t) — the stock
  * driving dump's values [O dump], compile-time; not produced by our
- * firmware. Our live fluid temperature 0xFFF94F9C is NOT wired in (stated
- * deviation: the fill time / pressure stay the dump's). */
-#ifndef RQ_M5_TEMP
-#  define RQ_M5_TEMP      0x43  /* 0xFFF89C13 temperature (°C + 40 [I]: 27 °C) */
+ * firmware — EXCEPT the temperature byte: 0xFFF89C13 (and its source
+ * 0xFFF89CD2) are LIVE since 2026-11-17, produced by the stock chain
+ * 0x887D8 → 0x7C100 → the safety layer → 0xB9646 → 0xB986C (app/tmp_chain.c;
+ * ~/tcu_sweep/temp_byte_live_port.md) and read by the producer each pass.
+ * They are no compile-time inputs any more: */
+#if defined(RQ_M5_TEMP) || defined(RQ_M5_CD2)
+#  error "rq_prod: the temperature byte 0x89C13 / 0x89CD2 is live (app/tmp_chain.c); RQ_M5_TEMP / RQ_M5_CD2 are gone"
 #endif
+#define RQ_M5_TEMP_DUMP 0x43    /* 0xFFF89C13 / 0x89CD2 in the driving dump (tests only) */
 #ifndef RQ_M5_ENGSTOP
 #  define RQ_M5_ENGSTOP   0     /* 0xFFF89D10 engine stopped (1 freezes B's FSM) */
 #endif
 #define RQ_M5_C1C       0x22    /* 0xFFF89C1C */
 #define RQ_M5_C0A       0x00    /* 0xFFF89C0A */
 #define RQ_M5_C3D       1       /* 0xFFF89C3D */
-#define RQ_M5_CD2       0x43    /* 0xFFF89CD2 */
 #define RQ_M5_B119      0       /* 0xFFF8B119 (0xB803C) */
 #define RQ_M5_B0FE      0       /* 0xFFF8B0FE (0xB8054) */
 #define RQ_M5_E3ED      0       /* 0xFFF8E3ED (0xBA78C) */
@@ -205,8 +210,8 @@ _Static_assert(RQ_M5_GEAR_ENG == 3 && RQ_M5_C2F == 0 && RQ_M5_E28E == 0 && RQ_M5
                RQ_M5_SYSMODE == 1 && RQ_M5_LINEP == 20000 && RQ_M5_SHIFTSRC == 0 &&
                RQ_M5_CODING == 0,
                "rq_prod: every M5-0 input equals the stock driving dump");
-_Static_assert(RQ_M5_TEMP == 0x43 && RQ_M5_ENGSTOP == 0 && RQ_M5_C1C == 0x22 &&
-               RQ_M5_C0A == 0 && RQ_M5_C3D == 1 && RQ_M5_CD2 == 0x43 && RQ_M5_B119 == 0 &&
+_Static_assert(RQ_M5_ENGSTOP == 0 && RQ_M5_C1C == 0x22 &&
+               RQ_M5_C0A == 0 && RQ_M5_C3D == 1 && RQ_M5_B119 == 0 &&
                RQ_M5_B0FE == 0 && RQ_M5_E3ED == 0 && RQ_M5_E6A3 == 0x22 && RQ_M5_LP2 == 20000,
                "rq_prod: every M5-1 fill input equals the stock driving dump");
 _Static_assert(RQ_M5_AD38_A == 4 && RQ_M5_AD38_B == 16 && RQ_M5_AD42_A == 600 &&

@@ -114,6 +114,11 @@ static void run(const scen_t *sc, FILE *out, unsigned base)
     rng_chain_init();
 #endif
     drv_jobs_init();                    /* → drv_rq_init → rq_prod_init */
+    /* the temperature byte is LIVE since 2026-11-17 (app/tmp_chain.c, not
+     * linked here): the dump's 0x43 — r03s/r03t's compile-time value, so the
+     * golden trace stands unchanged */
+    *(volatile uint8_t *)0xFFF89C13u = 0x43u;
+    *(volatile uint8_t *)0xFFF89CD2u = 0x43u;
     drv_rq_prod_host_select(true);
     for (uint8_t ch = 0u; ch < 10u; ch++) {
         drv_rq_request_set(ch, 0u);

@@ -10,6 +10,10 @@
  *     0x8D4B4          0x94F9C = 0x94F98 unless fault path 0x65 is active
  *   0x8F70C (ADC_A part, platform: plat_adcmux_an_convert) at the head of
  *   the reply proc 0x8EE52 — the AN table from the 1 ms ADC_A sums.
+ *   (2026-11-17, ~/tcu_sweep/temp_byte_live_port.md) 0x887D8's fault tail
+ *     @0x8896A → 0x7BF8C (fault word 0x93914, flags 0x940E7 / 0x940E8), and
+ *   0x7C100 (the 0x7AB48 poll group): the published bytes 0x940E0 / 0x940E3
+ *     / 0x940E6 the safety layer gathers (safety/tmp_safe.c).
  */
 #ifndef TCU_DRV_TEMP_H
 #define TCU_DRV_TEMP_H
@@ -24,6 +28,14 @@ void drv_temp_an_tick(void);
 
 /* 0x887D8 (5 ms entry 0x7CB6E) */
 void drv_temp_tick(void);
+
+/* 0x7C100 (the 0x7AB48 poll group, right after 0x7B150: 5 ms in OS mode 0,
+ * 10 ms in modes 1..3) */
+void drv_temp_pub_tick(void);
+
+/* the stand-in of the two temperature sources this firmware does not
+ * produce (0x940E2 / 0x940E5 held nonzero = "faulted", drv_temp_init) */
+#define TMP_STANDIN_SRC_FAULTED 0x80u
 
 /* the unsigned curve 0x8ED20 → 0x8ED60 ({ n, x[n], y[n] }, round half up) */
 uint16_t drv_temp_curve_u16(const uint16_t *tbl, uint16_t x);

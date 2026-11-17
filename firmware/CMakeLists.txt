@@ -41,8 +41,10 @@ set(CORE_SOURCES
     app/rq_prod.c
     app/rq_fill.c
     app/rq_fill_cal.c
+    app/tmp_chain.c
     safety/park_mon.c
     safety/park_pair.c
+    safety/tmp_safe.c
     app/bench_dump.c
     app/flash_entry.c
     io/vehicle/profile_fca.c
@@ -272,6 +274,22 @@ else()
     target_compile_definitions(test_m5fill_mut PRIVATE DRV_RQ_USE_PRODUCER=1 RQ_M5_STAGE=0x1A DRV_RQ_FILL_MIN=499u)
     add_test(NAME m5fill_mut COMMAND test_m5fill_mut)
     set_tests_properties(m5fill_mut PROPERTIES WILL_FAIL TRUE)
+    # M5, the temperature byte LIVE (2026-11-17, ~/tcu_sweep/
+    # temp_byte_live_port.md): the stock chain 0x887D8 → 0x7C100 → the
+    # safety layer → 0xB9646 → 0xB986C, its schedule and invalid paths, the
+    # producer (M5-1b) over every byte 0..255 inside the guard, the dump's
+    # 0x43 reproduced from the dump's own gathered inputs (--stock)
+    add_executable(test_tmpchain tests/unit/test_tmpchain.c app/tmp_chain.c safety/tmp_safe.c
+        bsw/drv/drv_temp.c app/rq_prod.c app/rq_fill.c app/rq_fill_cal.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_handlers.c
+        bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
+        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c
+        bsw/sup/sup_token.c tests/unit/stub_plat.c)
+    target_compile_definitions(test_tmpchain PRIVATE DRV_RQ_USE_PRODUCER=1 RQ_M5_STAGE=0x1B
+        "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"" "TCU_STOCK_DUMP=\"${TCU_STOCK_DUMP}\"")
+    add_test(NAME tmpchain COMMAND test_tmpchain)
+    add_test(NAME tmpchain_stock COMMAND test_tmpchain --stock)
+    set_tests_properties(tmpchain_stock PROPERTIES SKIP_RETURN_CODE 77)
     # M4 group A (2026-11-14, ~/tcu_sweep/groupA_park_port.md): the stock's
     # switch-output law 0x849D4 → 0x8ADF4 → 0x91500 and the hold-law
     # temperature 0x887D8 — host runtime path, then the three compile-time
@@ -376,11 +394,21 @@ else()
     set_tests_properties(m5_sh_guard_fillin PROPERTIES
         PASS_REGULAR_EXPRESSION "no runtime producer input on SH builds")
     set_tests_properties(m5_sh_guard_temp PROPERTIES
-        PASS_REGULAR_EXPRESSION "every M5-1 fill input equals the stock driving dump")
+        PASS_REGULAR_EXPRESSION "the temperature byte 0x89C13 / 0x89CD2 is live")
     set_tests_properties(m5_sh_guard_stagex PROPERTIES
         PASS_REGULAR_EXPRESSION "RQ_M5_STAGE is RQ_M5_STAGE_1A or RQ_M5_STAGE_1B")
     set_tests_properties(m5_sh_guard_fillmax PROPERTIES
         PASS_REGULAR_EXPRESSION "fill range is the stock clamp")
+    # the temperature byte (2026-11-17): the chain compiles on SH; a revived
+    # compile-time temperature input (RQ_M5_TEMP / RQ_M5_CD2) does not
+    add_test(NAME m5_sh_guard_tmpchain
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${CMAKE_SOURCE_DIR}/app/tmp_chain.c)
+    add_test(NAME m5_sh_guard_tmpsafe
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${CMAKE_SOURCE_DIR}/safety/tmp_safe.c)
+    add_test(NAME m5_sh_guard_cd2
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DRQ_M5_CD2=0x43 ${M5_SH_SRC})
+    set_tests_properties(m5_sh_guard_cd2 PROPERTIES
+        PASS_REGULAR_EXPRESSION "the temperature byte 0x89C13 / 0x89CD2 is live")
     set_tests_properties(m5_sh_guard_pflow PROPERTIES
         PASS_REGULAR_EXPRESSION "M5-0 power-flow state is 0")
     # Timer E stage 0b (2026-11-13): the group-A duty setter (TOE31 park

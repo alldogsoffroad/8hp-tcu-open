@@ -257,6 +257,17 @@ SECTIONS
     .m5_e384 0xFFF8E384 (NOLOAD) : { . += 0x01; } > RAM   /* 0x8E384                 */
     .m5_in5  0xFFF89C13 (NOLOAD) : { . += 0x01; } > RAM   /* 0x89C13                 */
     .m5_in6  0xFFF89D10 (NOLOAD) : { . += 0x01; } > RAM   /* 0x89D10                 */
+    /* M5, the temperature byte live (2026-11-17; drv_temp.c, safety/
+     * tmp_safe.c, app/tmp_chain.c; ~/tcu_sweep/temp_byte_live_port.md):
+     * 0xB9646's two copies, the safety layer's objects 0xFFF8E998 (+0x2C..
+     * +0x35) and 0xFFF8ED20 (+0xB8..+0xD8), 0x7BF8C's fault word and the
+     * published bytes 0x940E0..0x940E8 (0x93AE8/EA lie in .pks_eval) */
+    .tmp_89c57 0xFFF89C57 (NOLOAD) : { . += 0x01; } > RAM  /* 0x89C57                 */
+    .tmp_89cd2 0xFFF89CD2 (NOLOAD) : { . += 0x01; } > RAM  /* 0x89CD2                 */
+    .tmp_e9c4  0xFFF8E9C4 (NOLOAD) : { . += 0x0A; } > RAM  /* 0x8E9C4..0x8E9CD        */
+    .tmp_edd8  0xFFF8EDD8 (NOLOAD) : { . += 0x21; } > RAM  /* 0x8EDD8..0x8EDF8        */
+    .tmp_93914 0xFFF93914 (NOLOAD) : { . += 0x02; } > RAM  /* 0x93914..0x93915        */
+    .tmp_940e0 0xFFF940E0 (NOLOAD) : { . += 0x09; } > RAM  /* 0x940E0..0x940E8        */
     .m5_rec  0xFFF86000 (NOLOAD) : {
         __m5_rec_start = .; *(.m5_rec) . = ALIGN(4); __m5_rec_end = .;
     } > RAM
@@ -274,6 +285,12 @@ SECTIONS
         __rng_wit_start = .; *(.rng_wit) . = ALIGN(4); __rng_wit_end = .;
     } > RAM
     ASSERT(__rng_wit_end <= 0xFFF87800, ".rng_wit overflow")
+    /* the temperature byte's task phases (app/tmp_chain.c, ours): free low
+     * RAM after .rng_wit; set by tmp_chain_init */
+    .tmp_wit 0xFFF87800 (NOLOAD) : {
+        __tmp_wit_start = .; *(.tmp_wit) . = ALIGN(4); __tmp_wit_end = .;
+    } > RAM
+    ASSERT(__tmp_wit_end <= 0xFFF87840, ".tmp_wit overflow")
 
     /* our request-law witnesses and the refresh snapshot (not stock cells;
      * free low RAM like .sup_wit, so they do not cost the stack guard) */
