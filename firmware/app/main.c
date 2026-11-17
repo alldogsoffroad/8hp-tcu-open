@@ -214,9 +214,19 @@ static void task_sup_monitor(void)
     sup_monitor_poll();
 }
 
+/* M5-1: the stock request producer's 10 ms chain (app/rq_prod.c): weak, so
+ * the RAM application (no producer) links without it */
+extern void rq_prod_task_10ms(uint8_t os_mode) __attribute__((weak));
+
 /* ── 10 ms: application tasks ──────────────────────────────────────────── */
 static void task_10ms(void)
 {
+    /* M5-1: the stock 10 ms list (modes 1..3) runs the element tick and
+     * update (entry 29) and the producer + actuators (entry 43) before
+     * the bus-A cyclic below reads 0xFFF84B78 through the law */
+    if (rq_prod_task_10ms) {
+        rq_prod_task_10ms(sup_mode());
+    }
     sensors_update_10ms();
     vehicle_update_10ms();
     park_tick_10ms();

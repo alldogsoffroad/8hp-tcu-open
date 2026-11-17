@@ -117,6 +117,22 @@ void drv_rq_prod_host_select(bool on);
  * 8500, WK 500, Sys 500 (SH: asserted equal to DRV_RQ_P0..P6) */
 #define DRV_RQ_R03F_TABLE { 500u, 8500u, 8500u, 8500u, 8500u, 500u, 500u }
 
+/* M5-1: the guard's fill range = the clamp of the stock mode-0 law
+ * (0x107D6A → 0xB7786: [i_min, i_max] = cal 0x1FEF6C / 0x1FEF6E) */
+#ifndef DRV_RQ_FILL_MIN
+#  define DRV_RQ_FILL_MIN   500u
+#endif
+#ifndef DRV_RQ_FILL_MAX
+#  define DRV_RQ_FILL_MAX   8500u
+#endif
+#if defined(__sh__)
+_Static_assert(DRV_RQ_FILL_MIN == 500u && DRV_RQ_FILL_MAX == 8500u,
+               "drv_reqlaw: the M5-1 fill range is the stock clamp [500, 8500], nothing else");
+#endif
+_Static_assert(DRV_RQ_FILL_MAX <= 8500u, "drv_reqlaw: no fill value above i_max 8500");
+/* true when v is a fill value the guard passes on channel ch (0..4) in FSM state st */
+bool drv_rq_fill_ok(uint8_t ch, uint8_t st, uint16_t v);
+
 /* M5-0 witness (ours, .m5_wit): producer values the guard replaced */
 uint32_t drv_rq_m5_guard_n(void);
 

@@ -14,6 +14,10 @@ uint16_t sh_guard_m5_probe(void)
     static const rq_prod_in_t in = { .gear = 1 };
     rq_prod_step_in(&in);                   /* the host-only input path */
 #endif
+#if defined(SH_GUARD_M5_FILLIN)
+    static const rqf_in_t fin = { .temp = 0x50 };
+    rq_prod_host_fill_in(&fin);             /* the host-only fill-input path */
+#endif
     rq_prod_step();
     return rq_prod_ch(2u);
 }

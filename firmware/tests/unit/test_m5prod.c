@@ -49,6 +49,25 @@ static void reset(void)
     CELL_OUT_MV[0] = 13360u;
 }
 
+/* M5-1: the producer runs at the stock cadence (boot pass, then the 10 ms
+ * task in mode 1), not from the law; settle() takes it past the boot fill
+ * of B to the steady state M5-0 asserted */
+static void settle(void)
+{
+    rq_prod_boot_pass();
+    for (unsigned k = 0u; k < 30u; k++) {
+        rq_prod_task_10ms(1u);
+    }
+}
+
+/* a 10 ms pass with a host input set, n times */
+static void step_n(const rq_prod_in_t *in, unsigned n)
+{
+    for (unsigned k = 0u; k < n; k++) {
+        rq_prod_step_in(in);
+    }
+}
+
 /* ── the producer's cells: the dump's values for the fields the port owns ─ */
 typedef struct { uint32_t a; uint8_t w; uint32_t v; } cellv_t;
 static const cellv_t DUMP_CELLS[] = {
@@ -132,6 +151,9 @@ static void scenario(bool prod, uint16_t rel, pass_t out[NPASS])
          * come from the producer */
         drv_rq_request_set(ch, ch < 7u ? (prod ? 0u : PSET[ch]) : (ch == 7u ? rel : 0u));
     }
+    if (prod) {
+        settle();
+    }
     for (unsigned k = 0u; k < NPASS; k++) {
         CELL_SEQ2_STATE[0] = S[k];
         CELL_LAD_94114 = (uint8_t)((k == 2u || k == 3u) ? 1u : 0u);     /* phase 0x10 test */
@@ -161,6 +183,7 @@ int main(int argc, char **argv)
     reset();
     drv_rq_prod_host_select(true);
     CELL_SEQ2_STATE[0] = (uint8_t)'U';
+    settle();
     drv_rq_law();
     for (uint8_t ch = 0u; ch < 7u; ch++) {
         CHECK(rq_prod_ch(ch) == PSET[ch]);
@@ -169,11 +192,12 @@ int main(int argc, char **argv)
     CHECK(rq_prod_ch(7u) == RQ_PROD_INVALID);
     check_dump_cells();
     /* the write-only input mirrors */
-    CHECK(*(volatile int8_t *)0xFFF89C2Bu == 3 && U8(0xFFF89C30u) == 0u &&
+    CHECK(*(volatile int8_t *)0xFFF89C2Bu == RQ_M5_GEAR && U8(0xFFF89C13u) == 0x43u && U8(0xFFF89D10u) == 0u && U8(0xFFF89C30u) == 0u &&
           U8(0xFFF89CF5u) == 1u && U16(0xFFF8BCB0u) == 20000u);
     CHECK(rq_prod_f19a_n() == 0u && rq_prod_f19f_n() == 0u && rq_prod_f1c4_n() == 0u &&
           rq_prod_unp_n() == 0u && drv_rq_m5_guard_n() == 0u);
-    /* a second pass: the same (no state carried in mode 1) */
+    /* a second pass: the same (steady state) */
+    rq_prod_task_10ms(1u);
     drv_rq_law();
     check_dump_cells();
     CHECK(drv_rq_m5_guard_n() == 0u);
@@ -207,6 +231,7 @@ int main(int argc, char **argv)
     reset();
     drv_rq_prod_host_select(true);
     CELL_SEQ2_STATE[0] = (uint8_t)'U';
+    settle();
     drv_rq_law();
     rq_prod_host_freeze(true);
     U16(0xFFF84B78u + 2u * 2u) = 9000u;                 /* B: not a mode-1 current */
@@ -223,6 +248,7 @@ int main(int argc, char **argv)
     drv_rq_law();
     CHECK(CELL_RQ_I[0] == 8500u && drv_rq_m5_guard_n() == 5u);   /* B and Sys again */
     rq_prod_host_freeze(false);
+    rq_prod_task_10ms(1u);
     drv_rq_law();
     CHECK(CELL_RQ_I[0] == 500u && CELL_RQ_I[2] == 8500u && drv_rq_m5_guard_n() == 5u);
 
@@ -250,43 +276,43 @@ int main(int argc, char **argv)
         for (size_t k = 0u; k < sizeof G / sizeof G[0]; k++) {
             in.gear = G[k].g;
             in.pflow = G[k].pf;
-            rq_prod_step_in(&in);
+            step_n(&in, 30u);
             CHECK(rq_prod_ch(0u) == G[k].a && rq_prod_ch(1u) == G[k].d && rq_prod_ch(2u) == G[k].b &&
                   rq_prod_ch(3u) == G[k].e && rq_prod_ch(4u) == G[k].c);
             CHECK(rq_prod_ch(5u) == 500u && rq_prod_ch(6u) == 500u);
         }
         /* neutral idle in 1st (block 1, 0xE298 = 3 → 0xD11EC 1): B (0x6312F[1] = 2) released */
         in.gear = 1; in.pflow = 1; in.gear_eng = 1; in.e298 = 3;
-        rq_prod_step_in(&in);
+        step_n(&in, 30u);
         CHECK(rq_prod_ch(0u) == 8500u && rq_prod_ch(2u) == 500u && rq_prod_ch(4u) == 500u);
         in.e298 = 2;                                        /* 0xD11EC 0: the table again */
-        rq_prod_step_in(&in);
+        step_n(&in, 30u);
         CHECK(rq_prod_ch(2u) == 8500u);
         /* the engagement overrides (0xD0C94): states 1..6 → all off, 8..10 → A only */
         in.e298 = 0; in.e28e = 3;
-        rq_prod_step_in(&in);
+        step_n(&in, 30u);
         CHECK(rq_prod_ch(0u) == 500u && rq_prod_ch(2u) == 500u && rq_prod_ch(4u) == 8500u &&
               rq_prod_ch(1u) == 8500u && rq_prod_ch(3u) == 8500u);
         in.e28e = 9;
-        rq_prod_step_in(&in);
+        step_n(&in, 30u);
         CHECK(rq_prod_ch(0u) == 8500u && rq_prod_ch(2u) == 500u && rq_prod_ch(4u) == 8500u);
         in.e28e = 7;                                        /* 0xD0C94 → 0: the table */
-        rq_prod_step_in(&in);
+        step_n(&in, 30u);
         CHECK(rq_prod_ch(4u) == 500u);
         /* park request + 0xE6C3 → 0x63128: all off (block 0) */
         in.e28e = 0; in.pflow = 0; in.gear = 3; in.e6c3 = 1;
-        rq_prod_step_in(&in);
+        step_n(&in, 30u);
         CHECK(rq_prod_ch(2u) == 500u && rq_prod_ch(0u) == 500u);
         in.e6c3 = 0;
         /* the i_min coding flag: 0 for ch 0..4, not for WK / Sys (0xD9CD4..0xD9CE0) */
         in.coding = 1;
-        rq_prod_step_in(&in);
+        step_n(&in, 30u);
         CHECK(rq_prod_ch(0u) == 0u && rq_prod_ch(5u) == 500u && rq_prod_ch(6u) == 500u &&
               rq_prod_ch(2u) == 8500u);
         in.coding = 0;
         /* line pressure below 20000: B's mode-1 law 0x107CFC still 8500 (p >= line) */
         in.line_p = 9000;
-        rq_prod_step_in(&in);
+        step_n(&in, 30u);
         CHECK(rq_prod_ch(2u) == 8500u && rq_prod_ch(6u) == 500u);
         CHECK(U16(0xFFF8B9AAu) == 9000u && U16(0xFFF8B82Cu) == 9000u);   /* +4 = min(+2, Sys) */
         CHECK(rq_prod_f1c4_n() == 0u && rq_prod_f19f_n() == 0u);
@@ -406,6 +432,7 @@ static int stock_checks(void)
     reset();
     drv_rq_prod_host_select(true);
     CELL_SEQ2_STATE[0] = (uint8_t)'U';
+    settle();
     drv_rq_law();
     for (size_t i = 0u; i < sizeof DUMP_CELLS / sizeof DUMP_CELLS[0]; i++) {
         const uint32_t o = DUMP_CELLS[i].a - 0xFFF80000u;

@@ -147,6 +147,10 @@ static void row1_7db70(void)
     CELL_MOD_ALL = all;
 }
 
+/* M5-1: the request producer's boot pass (app/rq_prod.c); weak, so the
+ * supervisor tests and the RAM application link without it */
+extern void rq_prod_boot_pass(void) __attribute__((weak));
+
 void sup_mode_background(void)
 {
     /* 0x67A7C: state 0 runs the mode-0 background list 0x42C0C
@@ -163,6 +167,11 @@ void sup_mode_background(void)
     /* 0x67AD4: state 1 runs the row-1 list 0x42C38 once → state 2; state 2
      * → 3 once 0x848CF != 0 */
     if (CELL_OS_STATE == 1u) {
+        /* M5-1: row-1 list entries 12 (0xA2DEE → 0xE5602) and 17 (0xA2E74 →
+         * the request producer + actuators) run before entry 32 (0x7DB70) */
+        if (rq_prod_boot_pass) {
+            rq_prod_boot_pass();
+        }
         row1_7db70();
         CELL_OS_STATE = 2u;
     } else if (CELL_OS_STATE == 2u) {

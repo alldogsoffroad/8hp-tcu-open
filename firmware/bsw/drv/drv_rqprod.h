@@ -14,6 +14,7 @@
 #define TCU_DRV_RQPROD_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #define RQ_PROD_NCH         7u          /* ch 0..6: A D B E C WK Sys */
 #define RQ_PROD_INVALID     0xFFFFu     /* complement mismatch (never a current) */
@@ -28,6 +29,32 @@ void rq_prod_step(void);
 
 /* 0xFFF84B78[ch] when it equals ~0xFFF84B90[ch], else RQ_PROD_INVALID */
 uint16_t rq_prod_ch(uint8_t ch);
+
+/* M5-1: the producer runs at the stock cadence, not from the law:
+ * rq_prod_boot_pass() at boot state 1 (sup_mode_row1_app), then
+ * rq_prod_task_10ms(mode) from the 10 ms task (OS modes 1..3 only).
+ * rq_prod_step() is one producer + actuator pass (no tick / update). */
+void rq_prod_boot_pass(void);
+void rq_prod_task_10ms(uint8_t os_mode);
+bool rq_prod_started(void);
+/* the element FSM state (+0x34) behind channel ch (0..4); 0xFF for 5/6 */
+uint8_t rq_prod_fill_state(uint8_t ch);
+
+/* the fill recorder (ours, .m5_rec 0xFFF86000): one entry per producer
+ * pass, the first RQ_REC_N passes after boot (re-armed once by a change of
+ * the applied element set) */
+#define RQ_REC_N    64u
+typedef struct {
+    uint16_t pass;          /* producer pass since boot (0 = the boot pass) */
+    uint8_t  st[5];         /* FSM +0x34, A..E */
+    uint8_t  set;           /* elements requested (bit e-1) */
+    uint16_t frac[5];       /* +0x46, A..E */
+    uint16_t cur[7];        /* 0xFFF84B78[ch], ch 0..6 (A D B E C WK Sys) */
+} rq_rec_t;
+_Static_assert(sizeof(rq_rec_t) == 32u, "rq_rec_t is 32 bytes");
+uint32_t rq_prod_rec_n(void);
+uint32_t rq_prod_pass_n(void);
+const volatile rq_rec_t *rq_prod_rec(uint32_t i);
 
 /* our witnesses (.m5_wit, 0xFFF84D40; not stock cells) */
 uint32_t rq_prod_f19a_n(void);     /* 0xE53DA / 0xE54A4 internal fault 0x19A */

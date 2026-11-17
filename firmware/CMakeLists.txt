@@ -38,6 +38,8 @@ set(CORE_SOURCES
     app/park_law.c
     app/park.c
     app/rq_prod.c
+    app/rq_fill.c
+    app/rq_fill_cal.c
     safety/park_mon.c
     safety/park_pair.c
     app/bench_dump.c
@@ -241,13 +243,35 @@ else()
         "the pristine stock flash image (M5-0 byte checks)")
     set(TCU_STOCK_DUMP "${CMAKE_SOURCE_DIR}/../stockram_driving_20261104.bin" CACHE FILEPATH
         "the stock driving RAM dump (M5-0 cell checks)")
-    add_executable(test_m5prod tests/unit/test_m5prod.c app/rq_prod.c bsw/drv/drv_jobs.c
+    add_executable(test_m5prod tests/unit/test_m5prod.c app/rq_prod.c app/rq_fill.c
+        app/rq_fill_cal.c bsw/drv/drv_jobs.c
         bsw/drv/drv_reqlaw.c bsw/drv/drv_handlers.c tests/unit/stub_plat.c)
     target_compile_definitions(test_m5prod PRIVATE DRV_RQ_USE_PRODUCER=1
         "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"" "TCU_STOCK_DUMP=\"${TCU_STOCK_DUMP}\"")
     add_test(NAME m5prod COMMAND test_m5prod)
     add_test(NAME m5_stock_bytes COMMAND test_m5prod --stock)
     set_tests_properties(m5_stock_bytes PROPERTIES SKIP_RETURN_CODE 77)
+    # M5-1 (2026-11-16, ~/tcu_sweep/m5_1_fill_port.md): the element fill
+    # (app/rq_fill.c) at the stock cadence — M5-1a (the boot fill of B, then
+    # the r03n wire) and M5-1b (A's fill, B released) pass by pass, the
+    # widened guard on both sides of each bound; --stock: the cal copies
+    # against the image, the fill cells / fill times against the dump.
+    # m5fill_mut: the guard's lower bound mutated to 499 must FAIL the test.
+    set(M5F_SOURCES tests/unit/test_m5fill.c app/rq_prod.c app/rq_fill.c app/rq_fill_cal.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_handlers.c tests/unit/stub_plat.c)
+    add_executable(test_m5fill ${M5F_SOURCES})
+    target_compile_definitions(test_m5fill PRIVATE DRV_RQ_USE_PRODUCER=1
+        "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"" "TCU_STOCK_DUMP=\"${TCU_STOCK_DUMP}\"")
+    add_test(NAME m5fill_1a COMMAND test_m5fill)
+    add_test(NAME m5_fill_bytes COMMAND test_m5fill --stock)
+    set_tests_properties(m5_fill_bytes PROPERTIES SKIP_RETURN_CODE 77)
+    add_executable(test_m5fill_1b ${M5F_SOURCES})
+    target_compile_definitions(test_m5fill_1b PRIVATE DRV_RQ_USE_PRODUCER=1 RQ_M5_STAGE=0x1B)
+    add_test(NAME m5fill_1b COMMAND test_m5fill_1b)
+    add_executable(test_m5fill_mut ${M5F_SOURCES})
+    target_compile_definitions(test_m5fill_mut PRIVATE DRV_RQ_USE_PRODUCER=1 DRV_RQ_FILL_MIN=499u)
+    add_test(NAME m5fill_mut COMMAND test_m5fill_mut)
+    set_tests_properties(m5fill_mut PROPERTIES WILL_FAIL TRUE)
     # M4 group A (2026-11-14, ~/tcu_sweep/groupA_park_port.md): the stock's
     # switch-output law 0x849D4 → 0x8ADF4 → 0x91500 and the hold-law
     # temperature 0x887D8 — host runtime path, then the three compile-time
@@ -329,7 +353,34 @@ else()
     set_tests_properties(m5_sh_guard_source PROPERTIES
         PASS_REGULAR_EXPRESSION "runtime producer input source is refused on SH builds")
     set_tests_properties(m5_sh_guard_gear PROPERTIES
-        PASS_REGULAR_EXPRESSION "M5-0 gear code is 3")
+        PASS_REGULAR_EXPRESSION "M5-1 gear code follows RQ_M5_STAGE alone")
+    # M5-1: stage 1b compiles (the one-line switch); the fill files compile on
+    # SH; a host fill-input path, a fill input other than the dump's, an
+    # unknown stage or a guard fill bound above 8500 does not
+    add_test(NAME m5_sh_guard_stage1b
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DRQ_M5_STAGE=0x1B ${M5_SH_SRC})
+    add_test(NAME m5_sh_guard_fill
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${CMAKE_SOURCE_DIR}/app/rq_fill.c)
+    add_test(NAME m5_sh_guard_fillin
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_M5_FILLIN ${M5_SH_SRC})
+    add_test(NAME m5_sh_guard_temp
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DRQ_M5_TEMP=0x50 ${M5_SH_SRC})
+    add_test(NAME m5_sh_guard_stagex
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DRQ_M5_STAGE=0x1C ${M5_SH_SRC})
+    add_test(NAME m5_sh_guard_fillmax
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DDRV_RQ_FILL_MAX=8501u ${M5_SH_SRC})
+    add_test(NAME m5_sh_guard_record
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DRQ_M5_REC_STATE=0u ${M5_SH_SRC})
+    set_tests_properties(m5_sh_guard_record PROPERTIES
+        PASS_REGULAR_EXPRESSION "parameter record 0x1FD is the dump")
+    set_tests_properties(m5_sh_guard_fillin PROPERTIES
+        PASS_REGULAR_EXPRESSION "no runtime producer input on SH builds")
+    set_tests_properties(m5_sh_guard_temp PROPERTIES
+        PASS_REGULAR_EXPRESSION "every M5-1 fill input equals the stock driving dump")
+    set_tests_properties(m5_sh_guard_stagex PROPERTIES
+        PASS_REGULAR_EXPRESSION "RQ_M5_STAGE is RQ_M5_STAGE_1A or RQ_M5_STAGE_1B")
+    set_tests_properties(m5_sh_guard_fillmax PROPERTIES
+        PASS_REGULAR_EXPRESSION "fill range is the stock clamp")
     set_tests_properties(m5_sh_guard_pflow PROPERTIES
         PASS_REGULAR_EXPRESSION "M5-0 power-flow state is 0")
     # Timer E stage 0b (2026-11-13): the group-A duty setter (TOE31 park
@@ -413,6 +464,7 @@ else()
         ${CMAKE_SOURCE_DIR}/bsw/drv/drv_groupa.c ${CMAKE_SOURCE_DIR}/bsw/drv/drv_groupa.h
         ${CMAKE_SOURCE_DIR}/bsw/drv/drv_cells.h
         ${CMAKE_SOURCE_DIR}/app/rq_prod.c ${CMAKE_SOURCE_DIR}/app/rq_prod.h
+        ${CMAKE_SOURCE_DIR}/app/rq_fill.c ${CMAKE_SOURCE_DIR}/app/rq_fill.h
         ${CMAKE_SOURCE_DIR}/bsw/drv/drv_rqprod.h)
     string(REPLACE ";" "," PKS_OUTPUT_PATHS_ARG "${PKS_OUTPUT_PATHS}")
     add_test(NAME pksens_readonly_scan

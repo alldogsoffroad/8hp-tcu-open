@@ -221,6 +221,18 @@ SECTIONS
     .m5_in3  0xFFF89CF5 (NOLOAD) : { . += 0x01; } > RAM   /* 0x89CF5                 */
     .m5_in4  0xFFF8BCB0 (NOLOAD) : { . += 0x02; } > RAM   /* 0x8BCB0..0x8BCB1        */
     /* our M5-0 witnesses (guard, faults, unported branches; not stock cells) */
+    /* M5-1 (2026-11-16, ~/tcu_sweep/m5_1_fill_port.md): the element fill's
+     * stock cells (0x851A2/3 fill bits, 0x851A5, 0xFFF8E384), the input
+     * mirrors 0x89C13 / 0x89D10, and OUR fill recorder (2 KB of stock RAM
+     * our firmware does not use; .noinit has no room under the stack guard) */
+    .m5_fl   0xFFF851A2 (NOLOAD) : { . += 0x04; } > RAM   /* 0x851A2..0x851A5        */
+    .m5_e384 0xFFF8E384 (NOLOAD) : { . += 0x01; } > RAM   /* 0x8E384                 */
+    .m5_in5  0xFFF89C13 (NOLOAD) : { . += 0x01; } > RAM   /* 0x89C13                 */
+    .m5_in6  0xFFF89D10 (NOLOAD) : { . += 0x01; } > RAM   /* 0x89D10                 */
+    .m5_rec  0xFFF86000 (NOLOAD) : {
+        __m5_rec_start = .; *(.m5_rec) . = ALIGN(4); __m5_rec_end = .;
+    } > RAM
+    ASSERT(__m5_rec_end <= 0xFFF86A00, ".m5_rec overflow")
     .m5_wit 0xFFF84D40 (NOLOAD) : {
         __m5_wit_start = .; *(.m5_wit) . = ALIGN(4); __m5_wit_end = .;
     } > RAM

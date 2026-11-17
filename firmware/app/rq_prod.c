@@ -1,4 +1,4 @@
-/* rq_prod.c — M5-0: the stock's solenoid request PRODUCER for channels 0–6,
+/* rq_prod.c — M5-0 / M5-1: the stock's solenoid request PRODUCER for channels 0–6,
  * ported from the bytes of the pristine image (sh-elf-objdump -b binary
  * -m sh2a -EB; flash address = file offset) and checked against the stock
  * driving RAM dump stockram_driving_20261104.bin. app/rq_prod.h for the
@@ -10,12 +10,18 @@
  *   0xDCE40  head (lockup permitted?) — the lockup branch 0xDCD38.. NOT
  *   0xDCE9A, 0xDC1E2, 0xDC1C4, 0xD0C94, 0xD11EC, 0xD0C90 (B6BA8)
  *   0xE53DA  setter (checks, stores; fault 0x19A counted)
- *   0xE4E5C  element method up to 0xE4ED2 (+0x59 clear, mode-1 check,
- *            +2 / +4) and 0xE4490 (+0x53); 0xE54A4 Sys / WK method
+ *   0xE4E5C  element method — M5-1: the WHOLE method incl. the fill FSM
+ *            0xE3836 and 0xE40DA (mode +7 = 0 until +0x46 = 10000) lives in
+ *            app/rq_fill.c (~/tcu_sweep/m5_1_fill_port.md); 0xE54A4 Sys / WK
  *   0xE5548  the +6 clear (elements 1..5, 9, 10)
- *   0x107BD2 element actuator (0x107D90 state-0 entry, 0x107CFC, 0x107D8E)
+ *   0x107BD2 element actuator (0x107D90 state-0 entry, 0x107CFC, 0x107D8E;
+ *            M5-1: mode 0 → 0x107C3E in rq_fill.c)
  *   0x107FB8 Sys / WK actuator (0x10809C, 0x10812E)
- *   0xD9CBC / 0xD9CEE i_min / i_max, 0xD9F70, 0xD9CF8 (array init)
+ *   0xD9CBC / 0xD9CEE i_min / i_max, 0xD9F70, 0xD9CF8 (at init AND at the
+ *            start of every actuator pass, 0xDA00E)
+ *   M5-1 cadence: the boot pass at boot state 1 (row-1 list entries 12 / 17)
+ *            and the 10 ms task in OS modes 1..3 (tick 0xE5624, update
+ *            0xE566C, then the producer) — no longer from the request law
  *
  * NOT PORTED (stand-ins; m5_0_port.md §3) — each unreachable with the
  * M5-0 inputs; where reachable on the host the branch counts in
@@ -23,16 +29,8 @@
  *   0xBABEE  line-pressure update (input: 0xBAA58 = RQ_M5_LINEP)
  *   0xDC51C..0xDCBFA  shift-phase sources ids 1..0x11 (input: none)
  *   0xDCD38.. the lockup (WK) branch of 0xDCE40; the 0xFFF8E6BF[0] store
- *   0xE4ED6.. the rest of 0xE4E5C (0xE4424, the priority / application
- *            state machine 0xE4EF6..0xE5030 incl. 0xE40DA, which writes
- *            +7 = 0) and 0xE4522 (called by 0xE4490 on a +0x53 change):
- *            the only +2 / +4 rewrite in that tail (0xE4FDA / 0xE4FDE)
- *            needs +0x59 == 1, set only at 0xE4F36 under mode == 0 — never
- *            in mode 1; 0xE40DA needs 0xE4DBA() == 0 (+0x46 != 10000) with
- *            +0x53 set — the dump holds B's +0x46 = 0x2710 (see §3: the
- *            stock's transient after an element first activates is open)
  *   0xE56F0 / 0xE5706  the source log 0xFFF8E374 (no reader here)
- *   0x107D90 fill FSM beyond its state-0 entry; 0x107C3E / 0x107FE0 curves
+ *   0x107D90 actuator fill FSM beyond its state-0 entry; 0x107FE0 (Sys / WK curve)
  *   0xD9C7C's diagnostic override 0xBB13E / 0xBB100 (none on our firmware)
  */
 /* READ-ONLY park position sensor: this translation unit is an output path */
@@ -49,25 +47,7 @@
 #define U16(a, o)   (*(volatile uint16_t *)(uintptr_t)((uint32_t)(a) + (o)))
 #define U32(a, o)   (*(volatile uint32_t *)(uintptr_t)((uint32_t)(a) + (o)))
 
-/* request objects (0x507D8 table; 0x60 bytes for A..E, 0x10 for Sys / WK) */
-#define RQ_OBJ_A    0xFFF8B7C8u     /* element 1 */
-#define RQ_OBJ_B    0xFFF8B828u     /* element 2 */
-#define RQ_OBJ_C    0xFFF8B888u     /* element 3 */
-#define RQ_OBJ_D    0xFFF8B8E8u     /* element 4 */
-#define RQ_OBJ_E    0xFFF8B948u     /* element 5 */
-#define RQ_OBJ_SYS  0xFFF8B9A8u     /* element 9 */
-#define RQ_OBJ_WK   0xFFF8B9B8u     /* element 10 */
-#define RO_P        0x00u           /* u16 requested pressure (mbar) */
-#define RO_RES      0x02u           /* u16 result */
-#define RO_LIM      0x04u           /* u16 min(result, Sys result) */
-#define RO_SET      0x06u           /* u8 set this cycle */
-#define RO_MODE     0x07u           /* u8 */
-#define RO_SRC      0x08u           /* u8 source id */
-#define RO_PRIO     0x09u           /* u8 */
-#define RO_ACTIVE   0x53u           /* u8 0xE4490 (elements) */
-#define RO_59       0x59u           /* u8 0xE4E5C clears at entry (elements) */
-#define RO_5A       0x5Au           /* u8 fill request (0xE4424; never set by M5-0) */
-#define SYS_RES     U16(RQ_OBJ_SYS, RO_RES)     /* 0xFFF8B9AA */
+/* request objects and their fields: app/rq_fill.h (RQ_OBJ_*, RO_*) */
 
 /* actuator objects (constructed by 0x15BF2C: 0x107B80 elements 0x28 bytes,
  * 0x107F6E Sys / WK 0x10 bytes) */
@@ -85,6 +65,8 @@
 #define MIR_PFLOW   (*(volatile uint8_t  *)0xFFF89C30u)
 #define MIR_SYSMODE (*(volatile uint8_t  *)0xFFF89CF5u)
 #define MIR_LINEP   (*(volatile uint16_t *)0xFFF8BCB0u)
+#define MIR_TEMP    (*(volatile uint8_t  *)0xFFF89C13u)     /* M5-1 */
+#define MIR_ENGSTOP (*(volatile uint8_t  *)0xFFF89D10u)     /* M5-1 */
 
 typedef struct {
     uint32_t addr;          /* the stock's object address */
@@ -244,29 +226,8 @@ static void e54a4(uint32_t o)
     }
 }
 
-/* ── 0xE4E5C: the element request method (head, to 0xE4ED2) ──────────── */
-static void e4e5c(uint32_t o)
-{
-    U8(o, RO_59) = 0u;                              /* 0xE4E6A */
-    if (U8(o, RO_MODE) != 0u) {
-        const uint16_t p = U16(o, RO_P);
-        uint16_t r;
-        if (p >= 20000u || p == 0u) {               /* 0xE4E82 / 0xE4E88: mode 1 is binary */
-            r = p;
-        } else {
-            s_m5_f19f_n++;                          /* 0xE4EA8: fault 0x19F */
-            r = lp();                               /* 0xE4EB6: replaced by the line pressure */
-        }
-        U16(o, RO_RES) = r;                         /* 0xE4EC0 */
-        U16(o, RO_LIM) = r;                         /* 0xE4EC4 */
-        if (r > SYS_RES) {                          /* 0xE4ECC: zero-extended, signed cmp */
-            U16(o, RO_LIM) = SYS_RES;
-        }
-    }
-    /* 0xE4490: +0x53 = !(p == 0 && mode != 0); 0xE4522 on a change NOT ported */
-    U8(o, RO_ACTIVE) = (U16(o, RO_P) == 0u && U8(o, RO_MODE) != 0u) ? (uint8_t)0u : (uint8_t)1u;
-    /* 0xE4424 and the tail 0xE4EF6.. NOT ported (file header) */
-}
+/* ── 0xE4E5C: the element request method — app/rq_fill.c rqf_e4e5c (M5-1:
+ * the whole method incl. the fill FSM) ──────────────────────────────── */
 
 /* ── 0xE53DA: the request setter ──────────────────────────────────────── */
 static void e53da(uint32_t o, uint16_t p, uint8_t mode, uint8_t prio, uint8_t src)
@@ -287,7 +248,7 @@ static void e53da(uint32_t o, uint16_t p, uint8_t mode, uint8_t prio, uint8_t sr
     if (o == RQ_OBJ_SYS || o == RQ_OBJ_WK) {        /* vtable 0x4A0A4 +0x14 */
         e54a4(o);
     } else {                                        /* vtable 0x4A008 +0x14 */
-        e4e5c(o);
+        rqf_e4e5c(o);
     }
     /* 0xE56F0(0xFFF8E374, src, +2): the source log, NOT ported */
 }
@@ -389,13 +350,13 @@ static uint16_t act_current(const act_t *a)
         /* 0x107D90(act, p == 0), state-0 entry only (0x107E10..0x107E1E) */
         if (U8(a->addr, AO_FILL) != 0u ||
             (p == 0u && U8(r, RO_5A) == 1u)) {
-            s_m5_unp_n++;                           /* the fill FSM: NOT ported */
+            s_m5_unp_n++;                           /* the actuator fill FSM: NOT ported */
             return 0u;
         }
         return law_mode1(a, p);                     /* 0x107CFC; 0x107D8E identity */
     }
-    s_m5_unp_n++;                                   /* 0x107C3E curve: NOT ported */
-    return 0u;
+    /* M5-1: mode 0 — the curve law 0x107C3E (rq_fill.c), clamp 0x107D6A */
+    return rqf_107c3e(a->id, a->type, p, d9cbc(a), d9cee(a));
 }
 
 /* 0xD9F70 */
@@ -408,6 +369,66 @@ static void d9f70(const act_t *a, uint16_t i)
 }
 
 /* ── interface ─────────────────────────────────────────────────────────── */
+/* ── M5-1: the fill inputs (compile-time on SH; rq_prod.h RQ_M5_*) ─────── */
+static const rqf_in_t M5_FILL_IN = {
+    .temp = RQ_M5_TEMP, .c1c = RQ_M5_C1C, .c0a = RQ_M5_C0A, .eng_stop = RQ_M5_ENGSTOP,
+    .c3d = RQ_M5_C3D, .cd2 = RQ_M5_CD2, .e5c2 = RQ_M5_B119, .b0fe = RQ_M5_B0FE,
+    .e3ed = RQ_M5_E3ED, .ba79c = RQ_M5_BA79C, .e6a3 = RQ_M5_E6A3, .rec1fd = RQ_M5_REC1FD,
+    .lp = RQ_M5_LINEP, .lp2 = RQ_M5_LP2,
+    .adapt38 = { RQ_M5_AD38_A, RQ_M5_AD38_B, 0, 0, 0 },          /* dump C/D/E +0x38 = 0 */
+    .adapt42 = { RQ_M5_AD42_A, RQ_M5_AD42_B, RQ_M5_AD42_C, RQ_M5_AD42_D, RQ_M5_AD42_E },
+    .ba7dc = { RQ_M5_BA7DC_AB, RQ_M5_BA7DC_AB, 0, 0, 0 },        /* C/D/E: open (never filled here) */
+    .v10cadc = { 0u, 0u, 0u, 0u, 0u },                          /* dump +0x5C = 0 (A..E) */
+    .k4b = { 3u, 4u, 6u, 8u, 9u },                              /* dump +0x4B (A..E) */
+    .rec_frac = { RQ_M5_REC_A, RQ_M5_REC_B, RQ_M5_REC_C, RQ_M5_REC_D, RQ_M5_REC_E }, /* 0xFFF80EE8.. */
+};
+static const rqf_in_t *s_fill_in = &M5_FILL_IN;
+
+/* ── the fill recorder (ours, .m5_rec at 0xFFF86000: low RAM, not .bss —
+ * the stack guard leaves .noinit 0x30 bytes): the first RQ_REC_N producer
+ * passes after boot, and again from the first pass whose element request
+ * set differs from the previous pass (one re-arm) ───────────────────────── */
+#if defined(__sh__)
+#define REC __attribute__((section(".m5_rec")))
+#else
+#define REC
+#endif
+static volatile rq_rec_t s_m5_rec[RQ_REC_N] REC;
+static volatile uint32_t s_m5_rec_n REC;          /* entries written */
+static volatile uint32_t s_m5_pass REC;           /* producer passes since boot */
+static volatile uint32_t s_m5_rec_rearm REC;      /* 0 armed, 1 re-armed once */
+static volatile uint8_t  s_m5_rec_set REC;        /* last pass's applied set (bit e-1) */
+static bool s_started;                            /* the producer has run (boot pass) */
+
+static void rec_pass(void)
+{
+    uint8_t set = 0u;
+    for (uint8_t e = 1u; e <= 5u; e++) {
+        if (U16(ELEM_OBJ[e], RO_P) != 0u) {
+            set = (uint8_t)(set | (1u << (e - 1u)));
+        }
+    }
+    if (s_m5_pass > 0u && set != s_m5_rec_set && s_m5_rec_n >= RQ_REC_N && s_m5_rec_rearm == 0u) {
+        s_m5_rec_rearm = 1u;            /* a later change: record it from here */
+        s_m5_rec_n = 0u;
+    }
+    s_m5_rec_set = set;
+    if (s_m5_rec_n < RQ_REC_N) {
+        volatile rq_rec_t *r = &s_m5_rec[s_m5_rec_n];
+        r->pass = (uint16_t)s_m5_pass;
+        for (uint8_t e = 1u; e <= 5u; e++) {
+            r->st[e - 1u] = U8(ELEM_OBJ[e], RO_ST);
+            r->frac[e - 1u] = U16(ELEM_OBJ[e], RO_FRAC);
+        }
+        r->set = set;
+        for (uint8_t ch = 0u; ch < RQ_PROD_NCH; ch++) {
+            r->cur[ch] = U16(CUR_ARR, 2u * ch);
+        }
+        s_m5_rec_n++;
+    }
+    s_m5_pass++;
+}
+
 void rq_prod_init(void)
 {
     /* 0xD9CF8: currents 0, complements 0xFFFF (12 each) */
@@ -432,22 +453,74 @@ void rq_prod_init(void)
     s_m5_f19f_n = 0u;
     s_m5_f1c4_n = 0u;
     s_m5_unp_n = 0u;
+    /* M5-1: the request objects A..E as 0x15BF2C constructs them (0xE3710
+     * with the cal cells 0xFFF84D20 + 4·(e − 1)); the fill cells */
+    RQF_CELL_851A2 = 0u;
+    RQF_CELL_851A3 = 0u;
+    RQF_CELL_851A5 = 0u;                /* [I] the stock's .bss start value */
+    RQF_CELL_E384 = 0u;
+    rqf_bind(s_fill_in, &s_m5_unp_n, &s_m5_f19f_n);
+    for (uint8_t e = 1u; e <= 5u; e++) {
+        rqf_construct(ELEM_OBJ[e], 0xFFF84D20u + 4u * (uint32_t)(e - 1u), e);
+    }
+    /* the recorder */
+    for (uint32_t i = 0u; i < RQ_REC_N; i++) {
+        volatile uint8_t *b = (volatile uint8_t *)&s_m5_rec[i];
+        for (uint32_t j = 0u; j < sizeof(rq_rec_t); j++) {
+            b[j] = 0u;
+        }
+    }
+    s_m5_rec_n = 0u;
+    s_m5_pass = 0u;
+    s_m5_rec_rearm = 0u;
+    s_m5_rec_set = 0u;
+    s_started = false;
 }
 
+/* one producer pass: 0xDC4C4, then the actuator pass 0xDA00C (0xD9CF8
+ * clear, then 0xD9C7C per actuator: method → 0xD9F70) */
 static void prod_pass(const rq_prod_in_t *in)
 {
     s_in = in;
+    rqf_bind(s_fill_in, &s_m5_unp_n, &s_m5_f19f_n);
     dc4c4();
-    /* 0xD9C7C per actuator (override 0xBB13E: none) → method → 0xD9F70 */
+    for (uint32_t i = 0u; i < 12u; i++) {           /* 0xDA00E → 0xD9CF8 */
+        U16(CUR_ARR, 2u * i) = 0u;
+        U16(CUR_INV, 2u * i) = 0xFFFFu;
+    }
     for (uint8_t k = 0u; k < RQ_PROD_NCH; k++) {
         d9f70(&ACT[k], act_current(&ACT[k]));
     }
+    s_started = true;
+    rec_pass();
 }
 
 #if !defined(__sh__)
 static bool s_host_frozen;
 void rq_prod_host_freeze(bool frozen) { s_host_frozen = frozen; }
+static rqf_in_t s_fill_host;
+void rq_prod_host_fill_in(const rqf_in_t *in)
+{
+    if (in == 0) {
+        s_fill_in = &M5_FILL_IN;
+    } else {
+        s_fill_host = *in;
+        s_fill_in = &s_fill_host;
+    }
+    rqf_bind(s_fill_in, &s_m5_unp_n, &s_m5_f19f_n);
+}
 #endif
+
+static void mirrors(void)
+{
+    /* the stock cells of the compile-time inputs: WRITE-ONLY mirrors */
+    MIR_GEAR = (int8_t)RQ_M5_GEAR;
+    MIR_PFLOW = (uint8_t)RQ_M5_PFLOW;
+    MIR_SYSMODE = (uint8_t)RQ_M5_SYSMODE;
+    MIR_LINEP = (uint16_t)RQ_M5_LINEP;
+    MIR_TEMP = (uint8_t)RQ_M5_TEMP;
+    MIR_ENGSTOP = (uint8_t)RQ_M5_ENGSTOP;
+}
 
 void rq_prod_step(void)
 {
@@ -456,20 +529,82 @@ void rq_prod_step(void)
         return;                         /* host: lets a test corrupt 0x84B78 */
     }
 #endif
-    /* the stock cells of the compile-time inputs: WRITE-ONLY mirrors */
-    MIR_GEAR = (int8_t)RQ_M5_GEAR;
-    MIR_PFLOW = (uint8_t)RQ_M5_PFLOW;
-    MIR_SYSMODE = (uint8_t)RQ_M5_SYSMODE;
-    MIR_LINEP = (uint16_t)RQ_M5_LINEP;
+    mirrors();
     prod_pass(&M5_IN);
 }
 
+/* boot state 1 (0x67AD4, row-1 list 0x4D7B0): entry 12 0xA2DEE → 0xE5602
+ * (0xE5106 → 0xE4A4E ×5), entry 17 0xA2E74 → the producer + actuators */
+void rq_prod_boot_pass(void)
+{
+    rqf_bind(s_fill_in, &s_m5_unp_n, &s_m5_f19f_n);
+    rqf_e5602();
+    rq_prod_step();
+}
+
+/* the 10 ms task in OS modes 1..3 (lists 0x4D834 / 0x4DA2C / 0x4DC24):
+ * entry 29 0xA2EE0 → 0xE5624 (tick) then 0xE566C (update), entry 43
+ * 0xA30E2 → the producer + actuators. Not in mode 0 (no mode-0 list holds
+ * them) nor before the boot pass. */
+void rq_prod_task_10ms(uint8_t os_mode)
+{
 #if !defined(__sh__)
+    if (s_host_frozen) {
+        return;
+    }
+#endif
+    if (os_mode < 1u || os_mode > 3u || !s_started) {
+        return;
+    }
+    rqf_bind(s_fill_in, &s_m5_unp_n, &s_m5_f19f_n);
+    rqf_e5624();
+    rqf_e566c();
+    rq_prod_step();
+}
+
+#if !defined(__sh__)
+/* host only: one full 10 ms pass (tick, update, producer) with an input set */
 void rq_prod_step_in(const rq_prod_in_t *in)
 {
-    prod_pass(in);
+    static rqf_in_t f;
+    f = *s_fill_in;
+    f.lp = in->line_p;
+    rqf_bind(&f, &s_m5_unp_n, &s_m5_f19f_n);
+    rqf_e5624();
+    rqf_e566c();
+    {
+        const rqf_in_t *keep = s_fill_in;
+        s_fill_in = &f;
+        prod_pass(in);
+        s_fill_in = keep;
+    }
 }
 #endif
+
+bool rq_prod_started(void)
+{
+    return s_started;
+}
+
+uint8_t rq_prod_fill_state(uint8_t ch)
+{
+    if (ch >= 5u) {
+        return 0xFFu;                   /* WK / Sys: no element FSM */
+    }
+    for (uint8_t k = 0u; k < RQ_PROD_NCH; k++) {
+        if (ACT[k].id == ch) {          /* ACT[] is in construction order */
+            return U8(ACT[k].req, RO_ST);
+        }
+    }
+    return 0xFFu;
+}
+
+uint32_t rq_prod_rec_n(void) { return s_m5_rec_n; }
+uint32_t rq_prod_pass_n(void) { return s_m5_pass; }
+const volatile rq_rec_t *rq_prod_rec(uint32_t i)
+{
+    return (i < RQ_REC_N) ? &s_m5_rec[i] : 0;
+}
 
 uint16_t rq_prod_ch(uint8_t ch)
 {

@@ -129,15 +129,34 @@ void drv_rq_prod_host_select(bool on) { s_rq_prod_host = on; }
 #define rq_prod_on() s_rq_prod_host
 #endif
 
-/* M5-0: the producer's channel 0..6 current through OUR GUARD (not stock):
- * only the two mode-1 currents pass; anything else (a value outside
- * {500, 8500}, or a complement mismatch, RQ_PROD_INVALID) is replaced by
- * the r03f value of that channel and counted */
+/* M5-0 / M5-1: the producer's channel 0..6 current through OUR GUARD (not
+ * stock). Passes: (a) the two mode-1 currents 500 / 8500 with a good
+ * complement; (b) M5-1, channels 0..4 only: a value in the stock fill
+ * range [DRV_RQ_FILL_MIN, DRV_RQ_FILL_MAX] while that element's FSM is in a
+ * fill state (1 quick fill, 2 ramp) — the mode-0 law 0x107C3E ends in the
+ * clamp 0x107D6A → 0xB7786 to [i_min 500, i_max 8500]. Anything else (a
+ * complement mismatch, RQ_PROD_INVALID, a fill value outside a fill state,
+ * any non-mode-1 value on WK / Sys) is replaced by the r03f value of that
+ * channel and counted. Before the producer's first pass (the boot pass at
+ * boot state 1) the r03f values are used, uncounted (ours: r03n's wire). */
+bool drv_rq_fill_ok(uint8_t ch, uint8_t st, uint16_t v)
+{
+    return ch < 5u && (st == 1u || st == 2u) &&
+           v >= DRV_RQ_FILL_MIN && v <= DRV_RQ_FILL_MAX;
+}
+
 static uint16_t rq_prod_guarded(uint8_t ch)
 {
     static const uint16_t R03F[RQ_PROD_NCH] = DRV_RQ_R03F_TABLE;
-    const uint16_t v = rq_prod_ch(ch);
+    uint16_t v;
+    if (!rq_prod_started()) {
+        return R03F[ch];
+    }
+    v = rq_prod_ch(ch);
     if (v == 500u || v == 8500u) {
+        return v;
+    }
+    if (v != RQ_PROD_INVALID && drv_rq_fill_ok(ch, rq_prod_fill_state(ch), v)) {
         return v;
     }
     s_m5_guard_n++;
@@ -283,14 +302,9 @@ static void rq_letters(uint8_t ch)
 /* ── 0x83DB0: the per-channel gates ───────────────────────────────────── */
 void drv_rq_law(void)
 {
-#if DRV_RQ_USE_PRODUCER
-    /* M5-0: one producer pass (0xDC4C4, the actuator methods → 0xFFF84B78)
-     * before the law reads its requests (ours: the stock runs it in its
-     * own application task; constant inputs make the cadence immaterial) */
-    if (rq_prod_on()) {
-        rq_prod_step();
-    }
-#endif
+    /* M5-1: the producer no longer runs here — it runs at the stock cadence
+     * (boot state 1, then the 10 ms task in modes 1..3: drv_rqprod.h); the
+     * law reads its last 0xFFF84B78 through the guard */
     uint16_t full_mask = 0u;                    /* @(4,r15) → 0x9397C */
     uint16_t fault_mask = 0u;                   /* @(8,r15) → 0x9397A */
 
