@@ -1292,3 +1292,37 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
 - **The sensing face (user photo, 2026-11-16):** the sensor is one sealed housing with a grey rectangular face (pin on top), which the lever's block sweeps across.
 - **Face-mapping attempt (18:05–18:08, `/tmp/pksens_watch6.log`):** the second magnet on the left/right/top/bottom halves of the face, then held off the face, **always switched both elements together** (position 2 → P0850 m1). No placement isolated one element. So the halves cannot be mapped by hand with the magnets on the bench; the elements are too close together for them.
 - **Which element is Park stays open** until the real lever is tested on the assembled transmission. Single-element readings so far came only from partial placements beside the sensor (2026-11-14, and r03m's first magnet test).
+
+**M5 DECODE — THE REQUEST PRODUCER AND THE STOCK SHIFT MATRIX (2026-11-16, read-only subagent, `~/tcu_sweep/m5_request_producer_decode.md`; key claims re-checked this session)** [O unless marked]:
+- **The producer:** 0xDC4C4 is the only caller of the setter 0xE53DA(req, p, mode, prio, source). It sends:
+  - Sys (source 0x15), WK (source 0x16), the shift-phase sources (ids 1–0x11);
+  - then a **holder** loop: every element A–E that no other source set that cycle gets **0 or 20000 mbar, mode 1 (on/off), priority 4, source 0**, chosen by 0xDC1E2 from **table 0x505A4** (pool 0xDC410 = 0x000505A4, re-checked).
+  - Mode 1 values strictly between 0 and 20000 raise fault 0x19F (0xE4E5C).
+- **Current law in mode 1:** the curve and temperature correction are skipped (0x107CFC). The current is **8500** for an applied normally-closed or a released normally-open element, else **500** (cal 0x1FEF6C/6E = 500 / 8500, re-checked). Partly re-checked: 0x107D00 branches on pressure == 0 → constant by type byte; nonzero → threshold compare (0xBAA58, 12750).
+- **Table 0x505A4** (2 blocks × 10 rows R, N, 1–8 × 6 bytes; byte 0 unused, then A B C D E; re-checked):
+  - **block 1 = the full shift matrix:** 1 = A B C, 2 = A B E, 3 = B C E, 4 = B D E, 5 = B C D, 6 = C D E, 7 = A C D, 8 = A D E, R = A B D, N = none (the known ZF 8HP matrix);
+  - **block 0** (power-flow state 0x89C30 = 0, no power flow) = one brake: R/1/2/7/8 → A, 3/4/5 → B, N/6 → none.
+- **The dump's P set reproduced:**
+  - inputs (re-checked): 0x89C2B = 03, 0x89C30 = 00, so block 0 / gear 3 → B only;
+  - Sys forced to 20000 (reason 0x01) and WK 0; request 0x8B828 = 4E20 with +7..+9 = 01 00 04;
+  - result A 500, D/B/E/C 8500, WK 500, Sys 500 — the r03f constants.
+- **Correction:** 0xFFF89C30 is the **power-flow state** (0 none / 1 forward / 2 reverse; writers 0xCFE56/0xCFDDE), not a park inhibit. The park law's stand-in 0 remains correct for the bench (P).
+- **Garage shifts [O structure; timings/thresholds open]:**
+  - lever range → direction request AE28 (D → 1, N/P → 0, R → 2; table 0x63445);
+  - power-flow state from table 0x6354C, so R↔D passes through 0;
+  - gated by engine running (state 3 of 0xFFF8E6A8; engine speed > 430 rpm, cal 0x1FEE94/96);
+  - the engagement machine 0xE28E overrides the holder (states 1–6 all off, 8–0x11 A only);
+  - the neutral-idle machine 0xE298 releases the slip element (B in 1st).
+- **Limp:** no separate substitute-gear table found. **With the rail off, C, D and E are normally open and pressurised → 6th gear at maximum line pressure [D]**: the hydraulic default gear.
+- **Inputs:** CAN already receives engine speed, torques, pedal and brake. Missing: the stock's input conditioning (0xB912C/0xB986C), the engine-state machine 0xFFF8E6A8, the line-pressure strategy (Sys in drive), and WK in drive.
+- **Proposed stages** (each 850 mA coil ≈ +0.38 A, r03e; on the dry bench these verify currents and the bus-A words, not hydraulics):
+
+  | Stage | Change | Expected current |
+  |---|---|---|
+  | M5-0 | Port the holder + table + mode-1 law, with the dump's inputs as compile-time constants | wire identical to r03f |
+  | M5-1 | Block-0 gear 1 | A instead of B, ≈ 0 change |
+  | M5-2 | Block-1 1st (A B C) | ≈ 0 |
+  | M5-3 | R (A B D) | ≈ 0 |
+  | M5-4 | N | −0.38 A |
+  | M5-5 | Sys below 20 bar | ≈ +0.2 A |
+  | M5-6 | Runtime lever / engine logic | needs the brake/speed/engine interlocks decoded first, and the transmission for any meaning |
