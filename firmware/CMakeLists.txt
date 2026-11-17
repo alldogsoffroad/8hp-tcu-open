@@ -497,7 +497,10 @@ else()
     # shadow, the shadow names no live cell (source scans, each with a
     # negative fixture), the shadow header refuses an output TU, the live
     # cell headers refuse the shadow TU, the host hooks refuse SH
-    set(RNG_OUTPUT_PATHS ${PKS_OUTPUT_PATHS} ${CMAKE_SOURCE_DIR}/bsw/sup/sup_cells.h)
+    # + the park sensor's safety slice (2026-11-17): the shadow takes its
+    # group-98 verdict as a value from main.c; park_pair must never name the shadow
+    set(RNG_OUTPUT_PATHS ${PKS_OUTPUT_PATHS} ${CMAKE_SOURCE_DIR}/bsw/sup/sup_cells.h
+        ${CMAKE_SOURCE_DIR}/safety/park_pair.c ${CMAKE_SOURCE_DIR}/safety/park_pair.h)
     string(REPLACE ";" "," RNG_OUTPUT_PATHS_ARG "${RNG_OUTPUT_PATHS}")
     add_test(NAME rng_shadow_scan_outputs
         COMMAND ${CMAKE_COMMAND} "-DFILES=${RNG_OUTPUT_PATHS_ARG}" -DSIDE=output

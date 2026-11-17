@@ -18,8 +18,15 @@
  *     app/park_law.h, app/park.h) #error under it — the shadow cannot
  *     name a live cell;
  *   - the ctest rng_shadow_readonly_scan greps both sides.
- * Inputs: the CAN lever evaluation (io/vehicle, the value app/park.c feeds
- * the live arbiter) for D672 / D673; every other input is a compile-time
+ * Inputs (2026-11-17 live-inputs extension, ~/tcu_sweep/
+ * range_shadow_live_inputs.md): from the CAN evaluation (io/vehicle,
+ * read-only) the lever D672 / D673, the brake D631 / D64B (0x140), the
+ * engine speed D63A / D63C (0x108) and the 0x14B speed D64C / D64E, each
+ * with the stock conditioning's status encoding (absent = the dump's
+ * bytes); the fault-manager reaction bits D660 / D661 / D664 / D665 / D666
+ * computed from the shadow's own port of the U1267 monitor (group 109,
+ * 0xA6A3E / 0xA6AB0) and the group-98 (P0850) report of safety/park_pair.c,
+ * which main.c passes in as a value. Every other input is a compile-time
  * constant equal to the stock driving dump (rng_shadow.c).
  */
 #ifndef TCU_RNG_SHADOW_H
@@ -33,8 +40,16 @@
 
 /* 0x9B228 one-shot (the init list) + the shadow's own clear */
 void rng_shadow_init(void);
-/* one stock 10 ms pass: 0x9B306, 0x9B322, 0x9B34A in list order */
-void rng_shadow_tick_10ms(void);
+/* one stock 10 ms pass: 0x9B306, 0x9B322, 0x9B34A in list order, plus the
+ * U1267 verdict 0xA6AB0 of the stock 20 ms list (every second pass).
+ *   os_mode    the OS mode 0x93B33 (main.c passes it): the stock runs the chain only in
+ *              modes 1..3 (10 ms lists 0x4D834 / 0x4DA2C / 0x4DC24 carry
+ *              0x9B306..0x9B34A; the mode-0 10 ms list 0x4D7A0 does not) —
+ *              outside them the pass is skipped (counted);
+ *   g98_fail   1 when safety/park_pair.c's last group-98 report was
+ *              failed AND tested (the P0850 / P07B2 / P07B8 record), else 0
+ *              — a value, so the shadow never names the safety layer */
+void rng_shadow_tick_10ms(uint8_t os_mode, uint8_t g98_fail);
 
 /* the shadow cells, at the stock offsets of each object (names = stock
  * addresses; nm: s_rs) */
@@ -78,6 +93,24 @@ typedef struct {
     uint8_t  p8517e;            /* 0xFFF8517E previous D6D6 (0xC360A) */
     uint8_t  d5e4;              /* 0xFFF8D5E4 the init one-shot flag */
     uint32_t f8975c;            /* 0xFFF8975C 0xA8F5C first-pass flag */
+    /* ── appended 2026-11-17 (live inputs; the offsets above unchanged) ── */
+    /* 0xFFF8D60C object (0xA6A3E): +0 u16 count while latch 0x85160 is set,
+     * +2 its "just saturated" flag, +4 u16 count while D5F2 == 1, +6 flag */
+    uint16_t d60c_0, d60c_4;
+    uint8_t  d60c_2, d60c_6;
+    uint8_t  p85160;            /* 0xFFF85160 latch (ROM init 00: DTBL 0x415B0 → ROM 0x66270) */
+    uint8_t  pad_e;
+    uint16_t e912;              /* 0xFFF8E912 as 0x13BF66 leaves it (held when 0x108 invalid and EF0C != 0) */
+    /* our fault-manager model (0xA0E70 → 0x9BE50 → records → 0xAAD76 masks
+     * → 0xA031C): a group whose report was failed AND tested is latched
+     * failed for the rest of the power cycle — healing is not decoded [I] */
+    uint8_t  u_failed, u_tested;    /* the last 0xA6AB0 report (r6 / r7) */
+    uint8_t  g109, g98;             /* latched: U1267, P0850 (group 98) */
+    uint8_t  ph20;                  /* 20 ms phase: the verdict runs when 0 */
+    uint8_t  pad_l[3];
+    uint32_t g109_ms, g98_ms;       /* sched_now_ms() at the latch (0 = none) */
+    uint32_t u_rep_n, u_fail_n, u_pass_n;   /* 0xA6AB0 reports: all / failed+tested / tested only */
+    uint32_t skip_mode_n;           /* passes skipped: OS mode outside 1..3 */
 } rng_shadow_cells_t;
 
 /* witnesses: reaches of what is NOT ported (each one a reason to distrust
@@ -101,7 +134,11 @@ typedef struct {
     uint8_t  d672, d673, d5fb, e531;
     uint8_t  e53c, x8941a, x894b6, d6ce;
     uint8_t  e545, d6de, d6df, d6d6;
-    uint8_t  d6d9, x893e8, pad0, pad1;
+    uint8_t  d6d9, x893e8;
+    uint8_t  d607;              /* the brake interlock (0xA90A0) */
+    uint8_t  flags;             /* bit 0 D660, 1 D661, 2 D664, 3 D665, 4 D666,
+                                 * 5 D631 == 0 (brake valid), 6 D64B (brake on),
+                                 * 7 D63C == 0 (engine speed valid) */
 } rng_shadow_rec_t;
 #define RNG_SHADOW_REC_N 16u
 

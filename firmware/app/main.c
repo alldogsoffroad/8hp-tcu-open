@@ -230,12 +230,19 @@ static void task_10ms(void)
     }
     sensors_update_10ms();
     vehicle_update_10ms();
-    rng_shadow_tick_10ms(); /* READ-ONLY range shadow: the stock's cyclic chain
-                             * 0x9B306/0x9B322/0x9B34A, which the stock list
-                             * 0x4D834 runs before 0xA2EBC (0xB912C, our
-                             * park_tick); after vehicle_update so it sees the
-                             * lever park.c sees this pass. Writes only
-                             * .rng_shadow */
+    {
+        /* READ-ONLY range shadow: the stock's cyclic chain 0x9B306/0x9B322/
+         * 0x9B34A, which the stock list 0x4D834 runs before 0xA2EBC
+         * (0xB912C, our park_tick); after vehicle_update so it sees the
+         * lever, brake and engine speed park.c sees this pass. Writes only
+         * .rng_shadow. It runs in OS modes 1..3 (as the stock's lists) and
+         * takes the group-98 verdict of the park sensor (park_pair, the
+         * previous pass's report) as a value. */
+        park_pair_wit_t pw;
+
+        park_pair_witness(&pw);
+        rng_shadow_tick_10ms(sup_mode(), (uint8_t)(pw.failed != 0u && pw.tested != 0u));
+    }
     park_tick_10ms();
     bench_tick_10ms();
     sol_tick_10ms();        /* builds the 45-frame cyclic, queues DRV_CYC */

@@ -10,7 +10,7 @@
  *   0x9B322  0x9B2AC [cal-variant select on D61A[0] change: D61A[0] is a
  *            constant 0 here, the variant is the dump's]; D5E5 path [D5E5
  *            dump 0]; 0xA591C [object 0xFFF81C38, no chain cell];
- *            0xA5944: 0xA6A2C(D60C) [no chain reader], 0xC36FC(893E0),
+ *            0xA5944: 0xA6A2C(D60C) [0xA6A3E ported; 0xA6B06 not], 0xC36FC(893E0),
  *            0xA8EFE(D5E6), 0xC6E38(E51C) [read only by 0xC7EF8, not
  *            ported]; 0xA525A(E549) [+0x10 only]
  *   0x9B34A  0xA5A4C: 0xC4F90(E531), 0xC5550(893F8) [no chain reader];
@@ -24,6 +24,23 @@
  *
  * The shadow writes ONLY its own block (.rng_shadow). It cannot name a
  * live cell: TCU_RNG_SHADOW_TU makes every live cell header #error.
+ *
+ * LIVE INPUTS (2026-11-17, ~/tcu_sweep/range_shadow_live_inputs.md):
+ *   - the chain runs only in OS modes 1..3: the 10 ms lists of modes 1..3
+ *     (0x4D834 / 0x4DA2C / 0x4DC24) carry 0x9B306..0x9B34A, the mode-0 one
+ *     (0x4D7A0: 0x1320B0, 0xA0E2E, 0x1534EE) does not [O]; the 0x9B228
+ *     one-shot is in the mode-0 row-1 list 0x4D7B0 (0x9B302 → bra 0x9B228);
+ *   - 0xA6A2C (in 0xA5944, 10 ms) → 0xA6A3E: the D60C counters behind the
+ *     U1267 monitor; 0xA6AB0 (via 0xA6A3A in 0x9B39E, the 20 ms lists
+ *     0x4D910 / 0x4DB08 / 0x4DD00 of modes 1..3) → the report
+ *     0xA0E70(group 109, 1, failed = (D673 == 2), tested = (D60C > 50 &&
+ *     D65A > 7000)) — the argument order is 0x9BE50's (r6 failed, r7
+ *     tested: its pass path 0x9BF20 runs on r6 == 0 && r7 != 0, and the
+ *     group-98 call site 0x141F92 passes r6 = failed, r7 = tested) [O bytes,
+ *     I names]; the decode had tested/failed the other way round;
+ *   - the gather's brake (0x135DC6), engine-speed (0x13BF66) and 0x14B
+ *     (0x13608C, filter 0x154918 = identity at cal 01/00, then / 5)
+ *     conditioning, mapped from the vehicle evaluation; absent = the dump.
  */
 #define TCU_RNG_SHADOW_TU 1
 #include "app/rng_shadow.h"
@@ -36,7 +53,7 @@
 #if defined(TCU_RAM_APP)
 /* the RAM application does not carry the shadow (its 64 KB limit) */
 void rng_shadow_init(void) {}
-void rng_shadow_tick_10ms(void) {}
+void rng_shadow_tick_10ms(uint8_t os_mode, uint8_t g98_fail) { (void)os_mode; (void)g98_fail; }
 #else
 
 #define RS_SECT __attribute__((section(".rng_shadow")))
@@ -77,6 +94,7 @@ RS_SECT rng_shadow_rec_t   s_rs_rec[RNG_SHADOW_REC_N];
 #define SI_D652 0x02u  /* D61A+0x38 qualifier (0xA9126, 0xC7258, 0xC733A) */
 #define SI_D653 0x20u  /* D61A+0x39 (0xC74F4) */
 #define SI_D654 0x00u  /* D61A+0x3A → D5F9 (0xA908E) */
+#define SI_D656 0x01u  /* D61A+0x3C ← 0xFFF9582E (0x1420B0): clears the U1267 latch at 0 (0xA6A4C) */
 #define SI_D65A 0x32u  /* D61A+0x40 word hi (0xC3BE4) */
 #define SI_D65B 0x8Bu  /* D61A+0x41 word lo */
 #define SI_D65C 0x00u  /* D61A+0x42 (0xA9538, 0xA9594, 0xA9616) */
@@ -121,7 +139,7 @@ static const uint8_t s_d61a_dump[0x80] = {
     SI_D63A, SI_D63B, SI_D63C, 0x00u, SI_D63E, SI_D63F, SI_D640, SI_D641,
     SI_D642, SI_D643, SI_D644, 0x00u, 0x00u, 0x00u, SI_D648, SI_D649,
     SI_D64A, SI_D64B, SI_D64C, SI_D64D, SI_D64E, 0x00u, SI_D650, SI_D651,
-    SI_D652, SI_D653, SI_D654, 0x00u, 0x01u, 0x00u, 0x32u, 0x66u,
+    SI_D652, SI_D653, SI_D654, 0x00u, SI_D656, 0x00u, 0x32u, 0x66u,
     SI_D65A, SI_D65B, SI_D65C, 0x00u, 0x00u, SI_D65F, SI_D660, SI_D661,
     0x00u, 0x01u, SI_D664, SI_D665, SI_D666, 0x01u, 0x00u, SI_D669,
     0x01u, 0x00u, 0x01u, 0x01u, 0x00u, 0x00u, 0x00u, SI_D671,
@@ -136,8 +154,22 @@ _Static_assert(SI_D641 == 0x02u && SI_D660 == 0x01u && SI_D664 == 0x01u &&
                SI_D665 == 0x00u && SI_D666 == 0x01u && SI_D62F == 0x00u &&
                SI_D65F == 0x00u && SI_D61B == 0x00u && SI_D650 == 0x00u &&
                SI_D651 == 0x00u && SI_D654 == 0x00u && SI_D63C == 0x02u &&
-               SI_D640 == 0x00u && SI_D661 == 0x01u && SI_D681 == 0x00u,
+               SI_D640 == 0x00u && SI_D661 == 0x01u && SI_D681 == 0x00u &&
+               SI_D656 == 0x01u && SI_D65A == 0x32u && SI_D65B == 0x8Bu,
                "range shadow stand-ins are the stock driving dump's bytes");
+/* the live inputs reproduce these bytes exactly when their signal is absent
+ * (rs_live_inputs): brake invalid → 02 / 00, 0x108 invalid → E912 = EF0A
+ * (D63E, 0000; EF0C = D640 = 00) / 02, 0x14B invalid → 0000 / 02 */
+_Static_assert(SI_D631 == 0x02u && SI_D64B == 0x00u && SI_D63A == 0x00u &&
+               SI_D63B == 0x00u && SI_D63C == 0x02u && SI_D63E == 0x00u &&
+               SI_D63F == 0x00u && SI_D64C == 0x00u && SI_D64D == 0x00u &&
+               SI_D64E == 0x02u,
+               "absent CAN inputs map to the dump's gathered bytes");
+/* the dump's reaction bits are what the U1267 + P0850 model gives on this
+ * bench (U1267 failed, P0850 failed): D660 = D661 = D664 = D666 = 1, D665 0 */
+_Static_assert(SI_D660 == 1u && SI_D661 == 1u && SI_D664 == 1u && SI_D665 == 0u &&
+               SI_D666 == 1u, "reaction bits: the dump = U1267 + P0850 failed");
+
 
 /* ══ calibration: the normal variant (0x9B2AC → 0xA70AA; dump: every cal
  * pointer cell holds a 0x4Exxx/0x4Fxxx struct), values read from the image
@@ -226,6 +258,16 @@ static const uint8_t s_cal_af8_34[10] = { 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u
 #define CAL_B14_48E    0x0080u  /* +72 [E530 = 0] → 0x19614C */
 #define CAL_B14_50E    0x0140u  /* +80 [E530 = 0] → 0x196150 */
 #define CAL_AE0_0E     0x00FAu  /* *0xFFF84AE0 +0 [E530 = 0] → 0x19606C (0xC829E) */
+/* *0xFFF84AE4 (0x4F010) the U1267 monitor 0xA6AB0 */
+#define CAL_U1267_N    0x0032u  /* +0 → 0x192088: D60C+0 must exceed 50 (10 ms passes) */
+#define CAL_U1267_MV   0x1B58u  /* +8 → 0x19208C: supply D65A must exceed 7000 mV */
+#define U1267_GROUP    109u     /* *0x4B8D4 = 0x6324E → 0x6D */
+#define U1267_SOURCE   1u       /* *0x4B924 = 0x632E7 → 0x01 */
+/* the 0x14B speed object 0xFFF8E8B0: 0x154918(raw, prev, *0x195D74, *0x195D75)
+ * = (raw * w1 + prev * w2 [+ w2]) / (w1 + w2) — the identity at 01 / 00 */
+#define CAL_14B_W1     0x01u    /* 0x195D74 (cal pointer 0x642A8 +0) */
+#define CAL_14B_W2     0x00u    /* 0x195D75 (cal pointer 0x642A8 +4) */
+_Static_assert(CAL_14B_W1 == 1u && CAL_14B_W2 == 0u, "0x154918 is the identity at this calibration");
 
 /* 0x15BB28: the filter tables, written as constants at init (GBR =
  * 0xFFF8E64C; the dump holds the same bytes). [row = D6D6 8/7/6/5]
@@ -341,7 +383,75 @@ void rng_shadow_test_clear(void)
 }
 #endif
 
-/* 0xA7C9C (stand-in): the gathered struct = the dump, the lever live */
+/* the vehicle evaluation → the gathered CAN-side bytes, with the stock
+ * conditioning's status encoding (0 = valid, 2 = invalid); "valid" = our
+ * receive layer's Q_OK (CRC, counter, 50 ms timeout, range) standing in for
+ * the stock's raw status byte == 0 [I: the stock's raw-status producers are
+ * not decoded] */
+static void rs_live_inputs(void)
+{
+    const vehicle_in_t *v = vehicle_in();
+    uint16_t w;
+
+    /* 0x135DC6, brake object 0xFFF8E898 (+4 raw, +10 raw status): status 0
+     * and raw < 2 → E8A4 = 0, E8A5 = (raw == 1); otherwise E8A4 = 2,
+     * E8A5 = 0 (0x135E3A..0x135E92, and 0x135F54 writes the same) [O].
+     * Getters 0x135D64 (E8A4 → D631), 0x135D6C (E8A5 → D64B) [O decode]. */
+    if (v->q_brake == Q_OK) {           /* received and raw (byte 0 bits 3..2) <= 1 */
+        D6(0xD631u) = 0u;
+        D6(0xD64Bu) = (uint8_t)(v->brake == BRAKE_ON ? 1u : 0u);
+    } else {
+        D6(0xD631u) = 2u;
+        D6(0xD64Bu) = 0u;
+    }
+    /* 0x13BF66, engine object 0xFFF8E904 (+4 raw word, +8 raw status):
+     * status 0 and raw != 0xFFFF → E910 = 0, E90E = raw; else E910 = 2.
+     * E912 = E90E when E910 != 2; when E910 == 2, E912 = EF0A if EF0C == 0,
+     * else E912 is held; E916 = E910 (0x13BF72..0x13BFB8) [O]. Getters
+     * 0x13BF32 (E912 → D63A), 0x13BF3E (E916 → D63C). Our Q_OK also refuses
+     * raw 0x8000..0xFFFE, which the stock would pass [deviation, I: never
+     * seen]. EF0A / EF0C are the gathered D63E / D640 (dump stand-ins). */
+    if (v->q_engine_speed == Q_OK) {
+        R.e912 = (uint16_t)v->engine_speed;
+        D6(0xD63Cu) = 0u;
+    } else {
+        if (D6(0xD640u) == 0u) {
+            R.e912 = w61a(0xD63Eu);
+        }
+        D6(0xD63Cu) = 2u;
+    }
+    D6(0xD63Au) = (uint8_t)(R.e912 >> 8);
+    D6(0xD63Bu) = (uint8_t)R.e912;
+    /* 0x13608C, the 0x14B object 0xFFF8E8B0 (+4 raw word, +8 raw status):
+     * status 0 and raw != 0x7FF → E8BE = 0, +18 = 0x154918(raw, +18, 01,
+     * 00) = raw, E8BA = +18 / 5 (divs); else E8BE = 2, E8BA = 0 [O].
+     * Getters 0x13603C (E8BA → D64C), 0x136048 (E8BE → D64E). */
+    if (v->q_park_speed == Q_OK) {      /* received and raw != 0x7FF */
+        w = (uint16_t)(v->park_speed_raw / 5u);
+        D6(0xD64Eu) = 0u;
+    } else {
+        w = 0u;
+        D6(0xD64Eu) = 2u;
+    }
+    D6(0xD64Cu) = (uint8_t)(w >> 8);
+    D6(0xD64Du) = (uint8_t)w;
+    /* 0xA031C(id) over the masks rebuilt from the stored groups (0xAAD76):
+     * group 109 (U1267) carries ids 6, 9, 12, 16, 36, 53, 59, 61, 63, group
+     * 98 (P0850) ids 36, 53 [O config 0x19331C / 0x193190]; the dump's other
+     * stored groups (28: 9, 40; 136: 13, 23, 34, 36, 49, 50, 62, 63) carry
+     * none of 16 / 53 / 59 / 60 / 61, and 897D4 / DC / E0 / E4 / 89810 / 14
+     * are 0 [O dump] — so on this bench these five bytes are exactly: */
+    D6(0xD660u) = (uint8_t)(R.g109 != 0u || R.g98 != 0u);   /* id 53 (*0x4B8F0 = 0x35) */
+    D6(0xD661u) = R.g109;                                   /* id 16 (*0x4B8CC = 0x16) */
+    D6(0xD664u) = R.g109;                                   /* id 59 (*0x4B8FC = 0x3B) */
+    D6(0xD665u) = 0u;                                       /* id 60: no group here */
+    D6(0xD666u) = R.g109;                                   /* id 61 (*0x4B904 = 0x3D) */
+    /* D65F (D61A+0x45) = group 113 (P1B14) status via 0xA0FA0: not ported,
+     * the dump's 00 stays */
+}
+
+/* 0xA7C9C: the gathered struct = the dump, the lever and the CAN-side
+ * inputs live, the reaction bits from the shadow's fault model */
 static void rs_gather(void)
 {
     uint8_t lev, src;
@@ -350,6 +460,7 @@ static void rs_gather(void)
     rs_lever(&lev, &src);
     D6(0xD672u) = lev;
     D6(0xD673u) = src;
+    rs_live_inputs();
 #if defined(RNG_SHADOW_TEST_HOOKS)
     for (uint8_t k = 0u; k < 0x80u; k++) {
         if (s_ovr_on[k] != 0u) {
@@ -395,6 +506,73 @@ static void a8f5c(void)
     D5(0xD5F4u) = (uint8_t)(r0 == 1u && R.e572 == 0u);
     D5(0xD5F5u) = (uint8_t)(r0 == 0u && R.e572 == 1u);
     R.e572 = r0;
+}
+
+/* ══ U1267 (group 109): 0xA6A3E (10 ms, via 0xA6A2C(D60C) in 0xA5944) ═══ */
+static void a6a3e(void)                     /* 0xA6A3E..0xA6AAE */
+{
+    if (G_D5F2 == 1u) {                     /* 0xA6A40: D5E6+12 */
+        R.p85160 = 1u;
+    }
+    if (D6(0xD656u) == 0u) {                /* 0xA6A4C */
+        R.p85160 = 0u;
+    }
+    if (R.p85160 != 0u) {                   /* 0xA6A5A */
+        if (R.d60c_0 == 0xFFFFu) {
+            R.d60c_2 = 0u;                  /* bt.s with mov #0, stored at 0xA6A7E */
+        } else {
+            R.d60c_0++;
+            R.d60c_2 = (uint8_t)(R.d60c_0 == 0xFFFFu);
+        }
+    } else {
+        R.d60c_0 = 0u;                      /* 0xA6A80 (+2 not written) */
+    }
+    if (G_D5F2 == 1u) {                     /* 0xA6A84 */
+        if (R.d60c_4 == 0xFFFFu) {
+            R.d60c_6 = 0u;
+        } else {
+            R.d60c_4++;
+            R.d60c_6 = (uint8_t)(R.d60c_4 == 0xFFFFu);
+        }
+    } else {
+        R.d60c_4 = 0u;                      /* 0xA6AA6 (+6 not written) */
+    }
+}
+
+/* our stand-in for the fault manager 0xA0E70 → 0x9BE50 → the record's
+ * status bit 4 → 0xAAD76: failed AND tested latches the group for the rest
+ * of the power cycle (no debounce, no healing — neither decoded) [I] */
+static void fm_report_109(uint8_t failed, uint8_t tested)
+{
+    R.u_failed = failed;
+    R.u_tested = tested;
+    R.u_rep_n++;
+    if (failed != 0u && tested != 0u) {
+        R.u_fail_n++;
+        if (R.g109 == 0u) {
+            R.g109 = 1u;
+            R.g109_ms = sched_now_ms();
+        }
+    } else if (tested != 0u) {
+        R.u_pass_n++;                       /* 0x9BF20's pass path: healing undecoded */
+    }
+}
+
+/* 0xA6AB0 (20 ms, via 0xA6A3A in 0x9B39E): 0xA6AB0..0xA6B04 */
+static void a6ab0(void)
+{
+    /* mov.w (sign-extending) loads, cmp/hs (unsigned) compares [O] */
+    const uint32_t n = (uint32_t)(int32_t)(int16_t)CAL_U1267_N;
+    const uint32_t c = (uint32_t)(int32_t)(int16_t)R.d60c_0;
+    const uint32_t mv = (uint32_t)(int32_t)(int16_t)CAL_U1267_MV;
+    const uint32_t sup = (uint32_t)(int32_t)(int16_t)w61a(0xD65Au);
+    const uint8_t failed = (uint8_t)(G_D673 == 2u);      /* 0xA6AC2: getter 0xA7848 */
+    uint8_t tested;
+
+    tested = (uint8_t)(!(n >= c) && !(mv >= sup));       /* 0xA6ACE / 0xA6ADE */
+    (void)U1267_GROUP;
+    (void)U1267_SOURCE;
+    fm_report_109(failed, tested);          /* jmp *0x4B888 = 0xA0E70(109, 1, r6, r7) */
 }
 
 /* ══ 0x893E0 FSM: 0xC36FC (0xC3716, 0xC39D4, 0xC37BE, 0xC3832, 0xC3900) ═ */
@@ -1932,6 +2110,11 @@ static void rs_record(void)
     e.d6d6 = D6D6;
     e.d6d9 = G_D6D9;
     e.x893e8 = G_893E8;
+    e.d607 = G_D607;
+    e.flags = (uint8_t)((D6(0xD660u) != 0u ? 0x01u : 0u) | (D6(0xD661u) != 0u ? 0x02u : 0u) |
+                        (D6(0xD664u) != 0u ? 0x04u : 0u) | (D6(0xD665u) != 0u ? 0x08u : 0u) |
+                        (D6(0xD666u) != 0u ? 0x10u : 0u) | (D6(0xD631u) == 0u ? 0x20u : 0u) |
+                        (D6(0xD64Bu) != 0u ? 0x40u : 0u) | (D6(0xD63Cu) == 0u ? 0x80u : 0u));
     if (s_rs_wit.rec_n != 0u) {
         last = &s_rs_rec[(uint8_t)(s_rs_wit.rec_head + RNG_SHADOW_REC_N - 1u) % RNG_SHADOW_REC_N];
         if (memcmp(&last->d672, &e.d672, sizeof e - sizeof e.now_ms) == 0) {
@@ -1996,17 +2179,29 @@ void rng_shadow_init(void)
     R.d5e4 = 1u;                                    /* 0xA5864 */
 }
 
-void rng_shadow_tick_10ms(void)
+void rng_shadow_tick_10ms(uint8_t os_mode, uint8_t g98_fail)
 {
     if (R.d5e4 == 0u) {
         rng_shadow_init();
+    }
+    /* group 98 (P0850 / P07B2 / P07B8), reported by safety/park_pair.c's
+     * 0x141E06 every 10 ms: latched by our fault model like group 109 */
+    if (g98_fail != 0u && R.g98 == 0u) {
+        R.g98 = 1u;
+        R.g98_ms = sched_now_ms();
+    }
+    /* the chain is in the 10 ms lists of modes 1..3 only */
+    if (os_mode < 1u || os_mode > 3u) {
+        R.skip_mode_n++;
+        return;
     }
     s_rs_wit.passes++;
     /* 0x9B306 */
     rs_gather();
     E5(0xE530u) = a5884();
     a8f5c();
-    /* 0x9B322 → 0xA5944 */
+    /* 0x9B322 → 0xA5944: 0xA6A2C(D60C) → 0xA6A3E, then 0xC36FC */
+    a6a3e();
     c36fc();
     a8efe();
     a52a2();
@@ -2022,6 +2217,13 @@ void rng_shadow_tick_10ms(void)
     c28dc();
     c360a();
     c70ce();
+    /* the 20 ms list (0x9B39E → 0xA6A3A → 0xA6AB0), modes 1..3: on the
+     * first chain pass and every second one after [I: the 20 ms task's
+     * phase and its order against the 10 ms task are not decoded] */
+    if (R.ph20 == 0u) {
+        a6ab0();
+    }
+    R.ph20 = (uint8_t)(R.ph20 ^ 1u);
     rs_record();
 }
 
