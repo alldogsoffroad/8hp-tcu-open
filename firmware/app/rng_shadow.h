@@ -46,10 +46,40 @@ void rng_shadow_init(void);
  *              modes 1..3 (10 ms lists 0x4D834 / 0x4DA2C / 0x4DC24 carry
  *              0x9B306..0x9B34A; the mode-0 10 ms list 0x4D7A0 does not) —
  *              outside them the pass is skipped (counted);
- *   g98_fail   1 when safety/park_pair.c's last group-98 report was
- *              failed AND tested (the P0850 / P07B2 / P07B8 record), else 0
- *              — a value, so the shadow never names the safety layer */
-void rng_shadow_tick_10ms(uint8_t os_mode, uint8_t g98_fail);
+ *   g98_failed / g98_tested   safety/park_pair.c's last group-98 report
+ *              (the 0xA0E70(98, src, failed, tested) arguments of 0x141E06)
+ *              — values, so the shadow never names the safety layer; the
+ *              shadow's fault model debounces them (fail 2500 ms, heal
+ *              100 ms, the reaction sticky for the power cycle) */
+void rng_shadow_tick_10ms(uint8_t os_mode, uint8_t g98_failed, uint8_t g98_tested);
+
+/* one fault-manager group as 0x9BE50 keeps it (the per-group arrays are
+ * indexed g - 1) — the part the reaction bits need [O bytes 0x9BE50..
+ * 0x9D01A, 0xAAC0E, 0xABDFA]:
+ *   st     0xFFF8DBA6 status: b0 tested (last report), b1 failed (last
+ *          report), b2 the up/down timer runs, b3 confirmed, b4 / b7 / b13
+ *          set at confirmation (0x2098), b10 (0x400) set by a failed report;
+ *          b9 / b11 / b12 (0x9C1C6 test-time bits, the 0x800 toggle) are not
+ *          modelled
+ *   d714   0xFFF8D714 the up/down timer (ms): a failed report adds the time
+ *          since d89a, clamped to the fail time cfg+2; a passed report
+ *          subtracts it (after clamping to the heal time cfg+4)
+ *   d89a   0xFFF8D89A the time base at the group's last timer step (low 16)
+ *   dd2c   0xFFF8DD2C the timer's maximum (dump: 500 / 2500 = the fail time)
+ *   rec    the stored record's +4 word (0xFFF81D62 + 0x38 i): b3 active,
+ *          b4 its reaction words are in the masks; ours: 0x8000 = it exists */
+typedef struct {
+    uint16_t st, d714, d89a, dd2c, rec;
+    uint8_t  react;                 /* the group's words are in 0xFFF897D0 / D8 */
+    uint8_t  pad;
+    uint32_t rep_n;                 /* reports processed (tested or not) */
+    uint32_t start_n;               /* timer starts from 0: c0b2(g, 1) fail, c0b2(g, 0) heal */
+    uint32_t confirm_n;             /* confirmations (the reaction words OR-ed into the masks) */
+    uint32_t heal_n;                /* a passed report took the timer to 0 (0x9C608: a heal
+                                     * when confirmed, else the debounce just ends) */
+    uint32_t untest_reset_n;        /* 0x9C342: an untested report stopped a running timer */
+    uint32_t confirm_ms, heal_ms;   /* fm_ms at the last confirmation / heal */
+} rng_shadow_fm_t;
 
 /* the shadow cells, at the stock offsets of each object (names = stock
  * addresses; nm: s_rs) */
@@ -101,16 +131,22 @@ typedef struct {
     uint8_t  p85160;            /* 0xFFF85160 latch (ROM init 00: DTBL 0x415B0 → ROM 0x66270) */
     uint8_t  pad_e;
     uint16_t e912;              /* 0xFFF8E912 as 0x13BF66 leaves it (held when 0x108 invalid and EF0C != 0) */
-    /* our fault-manager model (0xA0E70 → 0x9BE50 → records → 0xAAD76 masks
-     * → 0xA031C): a group whose report was failed AND tested is latched
-     * failed for the rest of the power cycle — healing is not decoded [I] */
+    /* the fault-manager model (0xA0E70 → 0x9BE50 → records → masks
+     * 0xFFF897D0 / D8 → 0xA031C): the debounce / healing below (fm109 /
+     * fm98); g109 / g98 = the group's reaction words in the masks */
     uint8_t  u_failed, u_tested;    /* the last 0xA6AB0 report (r6 / r7) */
-    uint8_t  g109, g98;             /* latched: U1267, P0850 (group 98) */
+    uint8_t  g109, g98;             /* in the masks: U1267, P0850 (group 98) */
     uint8_t  ph20;                  /* 20 ms phase: the verdict runs when 0 */
     uint8_t  pad_l[3];
-    uint32_t g109_ms, g98_ms;       /* sched_now_ms() at the latch (0 = none) */
+    uint32_t g109_ms, g98_ms;       /* sched_now_ms() at the last confirmation (0 = none) */
     uint32_t u_rep_n, u_fail_n, u_pass_n;   /* 0xA6AB0 reports: all / failed+tested / tested only */
     uint32_t skip_mode_n;           /* passes skipped: OS mode outside 1..3 */
+    /* ── appended 2026-11-17 (the fault manager's debounce/healing for groups
+     * 109 and 98, ~/tcu_sweep/u1267_debounce_decode.md; the offsets above
+     * are unchanged — g109 / g98 now mean "the group's reaction words are
+     * in the masks 0xFFF897D0 / D8", which is what the gather reads) ── */
+    uint32_t fm_ms;                 /* our 0xFFF89898 (ms, refreshed each 10 ms task): +10 per call */
+    rng_shadow_fm_t fm109, fm98;    /* group 109 (U1267), group 98 (P0850 / P07B2 / P07B8) */
 } rng_shadow_cells_t;
 
 /* witnesses: reaches of what is NOT ported (each one a reason to distrust

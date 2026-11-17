@@ -41,6 +41,13 @@
  *   - the gather's brake (0x135DC6), engine-speed (0x13BF66) and 0x14B
  *     (0x13608C, filter 0x154918 = identity at cal 01/00, then / 5)
  *     conditioning, mapped from the vehicle evaluation; absent = the dump.
+ * FAULT MANAGER (2026-11-17, ~/tcu_sweep/u1267_debounce_decode.md): the
+ *   groups 109 (U1267) and 98 (P0850) as 0x9BE50 debounces them — one
+ *   up/down timer per group (fail time cfg+2, heal time cfg+4, ms), the
+ *   reaction words OR-ed in on confirmation and rebuilt (0xAAC0E) on every
+ *   heal; group 109 leaves the masks when healed, group 98 stays for the
+ *   power cycle (cfg+0x1C bit 8). Replaces the "first failed report
+ *   latches" stand-in.
  */
 #define TCU_RNG_SHADOW_TU 1
 #include "app/rng_shadow.h"
@@ -53,7 +60,7 @@
 #if defined(TCU_RAM_APP)
 /* the RAM application does not carry the shadow (its 64 KB limit) */
 void rng_shadow_init(void) {}
-void rng_shadow_tick_10ms(uint8_t os_mode, uint8_t g98_fail) { (void)os_mode; (void)g98_fail; }
+void rng_shadow_tick_10ms(uint8_t os_mode, uint8_t g98_failed, uint8_t g98_tested) { (void)os_mode; (void)g98_failed; (void)g98_tested; }
 #else
 
 #define RS_SECT __attribute__((section(".rng_shadow")))
@@ -539,9 +546,229 @@ static void a6a3e(void)                     /* 0xA6A3E..0xA6AAE */
     }
 }
 
-/* our stand-in for the fault manager 0xA0E70 → 0x9BE50 → the record's
- * status bit 4 → 0xAAD76: failed AND tested latches the group for the rest
- * of the power cycle (no debounce, no healing — neither decoded) [I] */
+/* ══ the fault manager, groups 109 and 98 (0xA0E70 → 0x9BE50), as far as
+ * the reaction bits need it [O bytes, ~/tcu_sweep/u1267_debounce_decode.md]
+ *
+ * The per-group config record (*0x4F1D0[g - 1], 36 bytes) fields used:
+ *   +0x00 word  flags (bit 11: an untested report stops a running timer
+ *               after a FAILED report — 0x9C3C6)
+ *   +0x02 word  fail time, ms (0x9C9A4 / 0x9CA00: confirm when the up/down
+ *               timer reaches it; 0x9C704: 0 = confirm at once)
+ *   +0x04 word  heal time, ms (0x9C59C: the timer's ceiling on a pass;
+ *               0x9C4BE: the heal countdown's start; 0 = heal at once)
+ *   +0x08/+0x0C reaction words → 0xFFF897D0 / D8 (0x9CF9E on confirmation;
+ *               0xAAC0E rebuilds them on every heal)
+ *   +0x14/+0x18 pending-reaction words → 0xFFF897E0 / E4 while the timer
+ *               runs (0xAB102 / 0xAB1A6) — 0 for group 109; group 98 has
+ *               id 50 only (none the shadow gathers)
+ *   +0x1C word  rebuild rule 0xABDFA: mode 2 (runtime, 0xAAC0E) drops a
+ *               record when bit 8 is set and the record is not active;
+ *               mode 1 (boot, 0xAACE4) drops it when bit 4 is set (and
+ *               bits 5..7 clear) — so neither group's reaction survives a
+ *               power cycle
+ *   +0x20 byte  & 0xFFF8E579 must be 0 (0x9BF7C) [stand-in: dump E579 0x10]
+ *   +0x21 byte  bit 0 enable (0x9BF4A); bit 1 dependency rule (0x9BFA6:
+ *               no dependency list for either group, 0x1955A8 rows are 0);
+ *               bit 2: an untested report stops a running timer after a
+ *               PASSED report (0x9C3D8)
+ *   +0x22 word  operating-condition mask: (0xFFF898D6 & m) == m, else the
+ *               report counts as untested (0x9BFB6) [stand-in: dump 898D6
+ *               0x17; writer not found]
+ * 0xFFF8E57D must read 0xA5 (0x9BE5A / 0x9BF08: 0 drops, 0xAA / 0x55 only
+ * toggle) [stand-in: dump A5, writer not located]; 0xFFF8DEE6 mask bit
+ * g - 1 must be 0 (0x9BF60) [stand-in: dump 0]. */
+typedef struct {
+    uint16_t cfg0, fail_t, heal_t, cfg1c, cfg22;
+    uint8_t  cfg21;
+} rs_fm_cfg_t;
+/* *0x4F1D0[108] = 0x19331C: 1AE0 01F4 01F4 0328 00011240 A8200010 00FF 0000
+ * 00000000 00000000 0111 0000 01 05 0010 [O image] */
+static const rs_fm_cfg_t s_fm_cfg109 = { 0x1AE0u, 500u, 500u, 0x0111u, 0x0010u, 0x05u };
+/* *0x4F1D0[97] = 0x193190: 1AD0 09C4 0064 0D28 00000000 00200010 00FF 0190
+ * 00000000 00040000 0011 0000 01 05 0000 [O image] */
+static const rs_fm_cfg_t s_fm_cfg98 = { 0x1AD0u, 2500u, 100u, 0x0011u, 0x0000u, 0x05u };
+#define SI_898D6  0x17u   /* 0xFFF898D6 (dump): the operating-condition word */
+
+#define FM_ST_TESTED  0x0001u
+#define FM_ST_FAILED  0x0002u
+#define FM_ST_TIMER   0x0004u
+#define FM_ST_CONF    0x0008u
+#define FM_ST_CONF13  0x2000u
+#define FM_REC_EXISTS 0x8000u   /* ours */
+#define FM_REC_ACTIVE 0x0008u
+#define FM_REC_MASK   0x0010u
+
+/* 0xAAC0E (mode 2 rule of 0xABDFA): which records stay in the masks */
+static uint8_t fm_kept(const rng_shadow_fm_t *f, const rs_fm_cfg_t *c)
+{
+    if ((f->rec & FM_REC_EXISTS) == 0u || (f->rec & FM_REC_MASK) == 0u) {
+        return 0u;
+    }
+    /* mode 2: local = cfg1C & 0x100; uVar4 = 1: an active record → 0;
+     * bits 0x200 / 0x400 are clear for both groups */
+    if ((c->cfg1c & 0x0100u) == 0u || (f->rec & FM_REC_ACTIVE) != 0u) {
+        return 1u;
+    }
+    return 0u;
+}
+
+/* a heal in any group calls 0xAAC0E, which rebuilds the masks from every
+ * record (only the two groups the gather reads are modelled) */
+static void fm_rebuild(void)
+{
+    R.fm109.react = fm_kept(&R.fm109, &s_fm_cfg109);
+    if (R.fm109.react == 0u) {
+        R.fm109.rec = (uint16_t)(R.fm109.rec & ~FM_REC_MASK);   /* 0xAACD0: bclr #4 */
+    }
+    R.fm98.react = fm_kept(&R.fm98, &s_fm_cfg98);
+    if (R.fm98.react == 0u) {
+        R.fm98.rec = (uint16_t)(R.fm98.rec & ~FM_REC_MASK);
+    }
+}
+
+/* c0b2(g, fail): the timer starts — 1 on a failure, the heal time on a pass */
+static void fm_start(rng_shadow_fm_t *f, uint16_t v, uint8_t fail, uint16_t now)
+{
+    f->d714 = v;
+    if (fail != 0u && f->dd2c < 1u) {
+        f->dd2c = 1u;                           /* 0x9C0D8 cmp/hs */
+    }
+    f->st = (uint16_t)(f->st | FM_ST_TIMER);
+    f->d89a = now;
+    f->start_n++;
+}
+
+/* c110: the timer stops */
+static void fm_stop(rng_shadow_fm_t *f)
+{
+    f->d714 = 0u;
+    f->st = (uint16_t)(f->st & ~FM_ST_TIMER);
+}
+
+/* confirmation (0x9CA70 / 0x9C720): the record is created or updated
+ * (0x9CE52: +4 |= 0x4F, b4 when the reaction words are nonzero), 0x9CF9E
+ * ORs the reaction words into the masks, st |= 0x2098, the timer stops */
+static void fm_confirm(rng_shadow_fm_t *f)
+{
+    f->rec = (uint16_t)(f->rec | FM_REC_EXISTS | 0x004Fu | FM_REC_MASK);
+    f->react = 1u;
+    f->st = (uint16_t)(f->st | 0x2098u);
+    fm_stop(f);
+    f->confirm_n++;
+    f->confirm_ms = R.fm_ms;
+}
+
+/* heal (0x9C608..0x9C63C): the record's active bits clear (0x9CF88), the
+ * masks are rebuilt (0xAAC0E), st b3 clears */
+static void fm_heal(rng_shadow_fm_t *f)
+{
+    if ((f->rec & FM_REC_EXISTS) != 0u) {
+        f->rec = (uint16_t)((f->rec & 0xFFF5u) | 0x0001u);
+        fm_rebuild();
+    }
+    fm_stop(f);
+    f->st = (uint16_t)(f->st & ~FM_ST_CONF);
+    f->heal_n++;
+    f->heal_ms = R.fm_ms;
+}
+
+/* 0x9BE50 for one report; now = the low 16 bits of the time base */
+static void fm_report(rng_shadow_fm_t *f, const rs_fm_cfg_t *c, uint8_t failed, uint8_t tested)
+{
+    const uint16_t now = (uint16_t)R.fm_ms;
+    uint16_t el;
+
+    f->rep_n++;
+    /* 0x9BFB6: the operating-condition mask */
+    if (tested != 0u && (uint16_t)(SI_898D6 & c->cfg22) != c->cfg22) {
+        tested = 0u;
+    }
+    if (tested == 0u) {
+        /* 0x9C342: the time base is re-stamped (untested time never counts);
+         * a running timer stops per cfg+0 bit 11 (after a failure) or
+         * cfg+0x21 bit 2 (after a pass) */
+        f->d89a = now;
+        if (f->d714 != 0u &&
+            (((f->st & FM_ST_FAILED) != 0u) ? ((c->cfg0 & 0x0800u) != 0u)
+                                            : ((c->cfg21 & 0x04u) != 0u))) {
+            fm_stop(f);
+            f->untest_reset_n++;
+        }
+        f->st = (uint16_t)(f->st & ~FM_ST_TESTED);
+        return;
+    }
+    if (failed != 0u) {
+        if (f->d714 == 0u) {
+            /* 0x9C6A8 */
+            if ((f->rec & FM_REC_EXISTS) != 0u) {
+                f->rec = (uint16_t)(f->rec | 0x0003u);
+            }
+            if ((f->rec & FM_REC_EXISTS) == 0u ||
+                (f->st & FM_ST_CONF) == 0u || (f->st & FM_ST_CONF13) == 0u) {
+                if (c->fail_t > 0u) {
+                    fm_start(f, 1u, 1u, now);
+                } else {
+                    fm_confirm(f);
+                }
+            }
+        } else {
+            /* 0x9C98A → 0x9C124: + the time since d89a, clamped */
+            el = (uint16_t)(now - f->d89a);
+            f->d89a = now;
+            if ((int32_t)(0xFFFFu - (uint32_t)el) < (int32_t)f->d714) {
+                f->d714 = 0xFFFFu;
+            } else {
+                f->d714 = (uint16_t)(f->d714 + el);
+            }
+            if (f->d714 > c->fail_t) {
+                f->d714 = c->fail_t;
+            }
+            if (f->d714 > f->dd2c) {
+                f->dd2c = f->d714;
+            }
+            if (f->d714 >= c->fail_t) {         /* 0x9CA04 cmp/ge */
+                fm_confirm(f);
+            } else if ((f->rec & FM_REC_EXISTS) != 0u) {
+                f->rec = (uint16_t)(f->rec | 0x0003u);
+            }
+        }
+        f->st = (uint16_t)(f->st | FM_ST_FAILED | 0x0400u);
+    } else {
+        if (f->d714 != 0u) {
+            /* 0x9C58C → 0x9CC54: clamp to the heal time, else − the time
+             * since d89a (floor 0) */
+            if (f->d714 > c->heal_t) {
+                f->d714 = c->heal_t;
+            } else {
+                el = (uint16_t)(now - f->d89a);
+                f->d89a = now;
+                f->d714 = (f->d714 > el) ? (uint16_t)(f->d714 - el) : 0u;
+            }
+            if (f->d714 == 0u) {
+                fm_heal(f);
+            } else if ((f->rec & FM_REC_EXISTS) != 0u) {
+                f->rec = (uint16_t)((f->rec | 0x0001u) & ~0x0002u);
+            }
+        } else {
+            /* 0x9C43C */
+            if ((f->rec & FM_REC_EXISTS) == 0u) {
+                f->st = (uint16_t)(f->st & ~FM_ST_CONF);
+            } else {
+                f->rec = (uint16_t)((f->rec | 0x0001u) & ~0x0002u);
+                if ((f->rec & FM_REC_ACTIVE) != 0u) {
+                    if (c->heal_t > 0u) {
+                        fm_start(f, c->heal_t, 0u, now);   /* c0b2(g, 0) */
+                    } else {
+                        fm_heal(f);
+                    }
+                }
+            }
+        }
+        f->st = (uint16_t)(f->st & ~FM_ST_FAILED);
+    }
+    f->st = (uint16_t)(f->st | FM_ST_TESTED);
+}
+
 static void fm_report_109(uint8_t failed, uint8_t tested)
 {
     R.u_failed = failed;
@@ -549,13 +776,15 @@ static void fm_report_109(uint8_t failed, uint8_t tested)
     R.u_rep_n++;
     if (failed != 0u && tested != 0u) {
         R.u_fail_n++;
-        if (R.g109 == 0u) {
-            R.g109 = 1u;
-            R.g109_ms = sched_now_ms();
-        }
     } else if (tested != 0u) {
-        R.u_pass_n++;                       /* 0x9BF20's pass path: healing undecoded */
+        R.u_pass_n++;
     }
+    fm_report(&R.fm109, &s_fm_cfg109, failed, tested);
+    if (R.fm109.react != 0u && R.g109 == 0u) {
+        R.g109_ms = sched_now_ms();
+    }
+    R.g109 = R.fm109.react;
+    R.g98 = R.fm98.react;           /* a 109 heal rebuilds the masks */
 }
 
 /* 0xA6AB0 (20 ms, via 0xA6A3A in 0x9B39E): 0xA6AB0..0xA6B04 */
@@ -2179,17 +2408,24 @@ void rng_shadow_init(void)
     R.d5e4 = 1u;                                    /* 0xA5864 */
 }
 
-void rng_shadow_tick_10ms(uint8_t os_mode, uint8_t g98_fail)
+void rng_shadow_tick_10ms(uint8_t os_mode, uint8_t g98_failed, uint8_t g98_tested)
 {
     if (R.d5e4 == 0u) {
         rng_shadow_init();
     }
+    /* the fault manager's time base 0xFFF89898 (ms; 0xADE6E copies the ms
+     * counter *0x4CE64 = 0x7A90C at the 10 ms task's 0xA0E2E / 0xA0E44, in
+     * every mode): ours steps 10 ms per call [deviation: a stalled 10 ms
+     * task stretches it] */
+    R.fm_ms += 10u;
     /* group 98 (P0850 / P07B2 / P07B8), reported by safety/park_pair.c's
-     * 0x141E06 every 10 ms: latched by our fault model like group 109 */
-    if (g98_fail != 0u && R.g98 == 0u) {
-        R.g98 = 1u;
+     * 0x141E06 every 10 ms from boot (its stock rate is not decoded) */
+    fm_report(&R.fm98, &s_fm_cfg98, g98_failed, g98_tested);
+    if (R.fm98.react != 0u && R.g98 == 0u) {
         R.g98_ms = sched_now_ms();
     }
+    R.g98 = R.fm98.react;
+    R.g109 = R.fm109.react;         /* a 98 heal rebuilds the masks */
     /* the chain is in the 10 ms lists of modes 1..3 only */
     if (os_mode < 1u || os_mode > 3u) {
         R.skip_mode_n++;

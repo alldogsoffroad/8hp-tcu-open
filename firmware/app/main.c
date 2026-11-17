@@ -241,7 +241,7 @@ static void task_10ms(void)
         park_pair_wit_t pw;
 
         park_pair_witness(&pw);
-        rng_shadow_tick_10ms(sup_mode(), (uint8_t)(pw.failed != 0u && pw.tested != 0u));
+        rng_shadow_tick_10ms(sup_mode(), pw.failed, pw.tested);
     }
     park_tick_10ms();
     bench_tick_10ms();

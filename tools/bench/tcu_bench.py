@@ -1426,7 +1426,8 @@ class VehicleSim(threading.Thread):
 
 # rng_shadow_cells_t (firmware/app/rng_shadow.h) offsets, from offsetof() of the header (SH-2A
 # and host lay it out alike); checked against the symbol size below
-RS_SIZE = 0x180
+RS_SIZE = 0x1D4       # 2026-11-17: + fm_ms (+0x180) and the U1267 / P0850 fault-manager blocks
+RS_FM_MS, RS_FM109, RS_FM98 = 0x180, 0x184, 0x1AC   # rng_shadow_fm_t, 0x28 bytes each
 RS_D5E6, RS_D61A, RS_E530, RS_D6D4, RS_D6DE, RS_893E0 = 0x000, 0x026, 0x0A6, 0x0CE, 0x0D8, 0x0E4
 RS_O304C, RS_D60C0, RS_U_FAILED, RS_U_TESTED, RS_G109, RS_G98 = 0x130, 0x154, 0x15E, 0x15F, 0x160, 0x161
 RS_U_REP, RS_U_FAIL, RS_U_PASS, RS_SKIP = 0x170, 0x174, 0x178, 0x17C
@@ -1458,7 +1459,12 @@ def shadow_line(c):
             f"U1267 g109 {c[RS_G109]} last f/t {c[RS_U_FAILED]}/{c[RS_U_TESTED]} D60C {u16(RS_D60C0)} "
             f"fail/pass {u32(RS_U_FAIL)}/{u32(RS_U_PASS)} P0850 g98 {c[RS_G98]} | "
             f"D660 {d6(0xD660)} D661 {d6(0xD661)} D664 {d6(0xD664)} D665 {d6(0xD665)} D666 {d6(0xD666)} "
-            f"skip {u32(RS_SKIP)}")
+            f"skip {u32(RS_SKIP)}" + (
+            "" if len(c) < RS_SIZE else
+            f" | FM ms {u32(RS_FM_MS)} " + " ".join(
+                f"{nm}: st {u16(o):04X} t {u16(o + 2)} max {u16(o + 6)} in-masks {c[o + 10]} "
+                f"conf {u32(o + 0x14)}@{u32(o + 0x20)} heal {u32(o + 0x18)}@{u32(o + 0x24)}"
+                for nm, o in (("g109", RS_FM109), ("g98", RS_FM98)))))
 
 
 def cmd_shadow_check(b, args):

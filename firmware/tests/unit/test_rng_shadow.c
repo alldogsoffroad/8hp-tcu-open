@@ -28,6 +28,14 @@
  *    D664 = D666 = 0, P 8, R 7, N 6, D 5, P 8 (reason 0); no brake: 8
  *    throughout; lever late: U1267 → R 8/0x33, N and D 8/0x3C. The read-only
  *    comparison (1) also runs with the brake / engine sims and a late lever.
+ * 8-9 (2026-11-17, the fault manager's debounce, ~/tcu_sweep/
+ *    u1267_debounce_decode.md): U1267 needs 26 failed 20 ms verdicts
+ *    (500 ms) to confirm and heals 500 ms after the first passed one;
+ *    P0850 needs 2.5 s. A lever late by 0.1 s, any gap of 1..25 failed
+ *    verdicts and the ~70 ms gap of r03r never set a reaction byte; a lever
+ *    late by 1.1 s refuses R once (8/0x33) and releases N / D after the
+ *    heal; a 2 s gap in R confirms U1267 → 0xC76D8 6/0x6F, healed 500 ms
+ *    after the frames return, D5FB holding until P.
  */
 #include "app/rng_shadow.h"
 #include "app/park.h"
@@ -130,8 +138,8 @@ static void live_snap(live_t *p)
 typedef struct {
     uint8_t d672, d673, d5fb, e531, e53c, a, b6, ce, e545, de, df, d6, d9, s8;
     uint32_t c304;
-    uint8_t d607, d631, d64b, d63c, d660, d661, d664, d665, d666, g109;
-    uint16_t d63a, d60c;
+    uint8_t d607, d631, d64b, d63c, d660, d661, d664, d665, d666, g109, g98;
+    uint16_t d63a, d60c, t109;
 } shad_t;
 
 static void shad_snap(shad_t *s)
@@ -164,7 +172,9 @@ static void shad_snap(shad_t *s)
     s->d665 = c->d61a[0xD665u - 0xD61Au];
     s->d666 = c->d61a[0xD666u - 0xD61Au];
     s->g109 = c->g109;
+    s->g98 = c->g98;
     s->d60c = c->d60c_0;
+    s->t109 = c->fm109.d714;
 }
 
 /* the simulated vehicle frames besides the lever (the bench tool's
@@ -175,9 +185,11 @@ typedef struct {
     uint16_t engine;        /* send 0x108 with bytes 0-1 = engine (0 = no frame) */
     uint32_t lever_from;    /* first tick that carries lever frames */
     uint8_t  os_mode;       /* passed to the shadow (the stock runs it in 1..3) */
-    uint8_t  g98;           /* the park_pair group-98 verdict passed in */
+    uint8_t  g98;           /* the park_pair group-98 verdict passed in (failed; tested = 1) */
+    uint32_t gap_from;      /* lever frames withheld for gap_len ticks from here */
+    uint32_t gap_len;
 } sim_t;
-static const sim_t k_sim_none = { false, false, 0u, 0u, 1u, 0u };
+static const sim_t k_sim_none = { false, false, 0u, 0u, 1u, 0u, 0u, 0u };
 static sim_t s_sim;
 
 static void sim_frames(void)
@@ -214,7 +226,8 @@ static void run(const uint8_t *sched, uint32_t nseg, bool shadow, live_t *lv, sh
         rng_shadow_init();
     }
     for (uint32_t t = 0u; t < nseg * SEG; t++) {
-        if (t >= s_sim.lever_from) {
+        if (t >= s_sim.lever_from &&
+            !(t >= s_sim.gap_from && t < s_sim.gap_from + s_sim.gap_len)) {
             lever_frame(sched[t / SEG]);
         }
         sim_frames();
@@ -222,7 +235,7 @@ static void run(const uint8_t *sched, uint32_t nseg, bool shadow, live_t *lv, sh
         s_z.q_output_speed = Q_OK;
         vehicle_update_10ms();
         if (shadow) {
-            rng_shadow_tick_10ms(s_sim.os_mode, s_sim.g98);
+            rng_shadow_tick_10ms(s_sim.os_mode, s_sim.g98, 1u);
         }
         park_tick_10ms();
         if (lv != NULL) {
@@ -328,13 +341,16 @@ static void test_shadow_dump(void)
         CHECKV(sh[t].d63a, 0);
         CHECKV(sh[t].d607, 0);
         /* U1267: tested from pass 50 (D60C = 51 > 50), failed once D673 = 2
-         * (the lever times out at tick 154, an even pass = a 20 ms verdict);
-         * the reaction bytes follow on the next gather; D665 never */
-        CHECKV(sh[t].g109, t >= 154u ? 1 : 0);
-        CHECKV(sh[t].d664, t >= 155u ? 1 : 0);
-        CHECKV(sh[t].d666, t >= 155u ? 1 : 0);
-        CHECKV(sh[t].d661, t >= 155u ? 1 : 0);
-        CHECKV(sh[t].d660, t >= 155u ? 1 : 0);     /* g98 = 0 in this run */
+         * (the lever times out at tick 154, an even pass = a 20 ms verdict):
+         * the fault manager's up/down timer starts at 1 ms and adds 20 ms
+         * per failed verdict — 26 verdicts (500 ms) are needed, the run
+         * ends after 13, so no reaction byte is ever set */
+        CHECKV(sh[t].t109, t < 154u ? 0 : 1u + 20u * ((t - 154u) / 2u));
+        CHECKV(sh[t].g109, 0);
+        CHECKV(sh[t].d664, 0);
+        CHECKV(sh[t].d666, 0);
+        CHECKV(sh[t].d661, 0);
+        CHECKV(sh[t].d660, 0);                     /* g98 = 0 in this run */
         CHECKV(sh[t].d665, 0);
         CHECKV(sh[t].d60c, t + 1u);
         prev_lev = lev;
@@ -434,34 +450,45 @@ static void test_positive_control(void)
  *    U1267 has failed, D6D6 8 throughout (the r03q trace) ─────────────── */
 static void test_rest(void)
 {
-    static const uint8_t sch[4] = { 0u, 0u, 0u, 0u };
-    static shad_t sh[4u * SEG];
+    static const uint8_t sch[10] = { 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u };
+    static shad_t sh[10u * SEG];
     const rng_shadow_cells_t *c = rng_shadow_cells();
 
     s_sim = k_sim_none;
     s_sim.g98 = 1u;
-    run(sch, 4u, true, NULL, sh);
-    for (uint32_t t = 0u; t < 4u * SEG; t++) {
+    run(sch, 10u, true, NULL, sh);
+    for (uint32_t t = 0u; t < 10u * SEG; t++) {
         CHECKV(sh[t].d6, 8);
         CHECKV(sh[t].d9, 0);
         CHECKV(sh[t].de, 8);
         CHECKV(sh[t].e545, 8);
         CHECKV(sh[t].s8, 0);
-        CHECKV(sh[t].d660, 1);                  /* g98 latched before pass 0's gather */
-        CHECKV(sh[t].g109, t >= 50u ? 1 : 0);   /* the first verdict with D60C > 50 */
-        CHECKV(sh[t].d664, t >= 51u ? 1 : 0);
-        CHECKV(sh[t].d666, t >= 51u ? 1 : 0);
-        CHECKV(sh[t].d661, t >= 51u ? 1 : 0);
+        /* U1267: the first failed verdict at pass 50 starts the timer at
+         * 1 ms; +20 ms per verdict; 1 + 25 * 20 >= 500 at pass 100 */
+        CHECKV(sh[t].g109, t >= 100u ? 1 : 0);
+        CHECKV(sh[t].d664, t >= 101u ? 1 : 0);
+        CHECKV(sh[t].d666, t >= 101u ? 1 : 0);
+        CHECKV(sh[t].d661, t >= 101u ? 1 : 0);
+        /* P0850 (group 98, failed every 10 ms from tick 0): 1 + 10 k >=
+         * 2500 at k = 250 (the dump: confirmed at 2690 ms, DD2C 2500) */
+        CHECKV(sh[t].g98, t >= 250u ? 1 : 0);
+        CHECKV(sh[t].d660, t >= 101u ? 1 : 0);
     }
+    CHECKV(c->fm109.confirm_n, 1);
+    CHECKV(c->fm109.heal_n, 0);
+    CHECKV(c->fm109.dd2c, 500);                /* the dump's 0xFFF8DD2C[108] */
+    CHECKV(c->fm109.st & 0x200Fu, 0x200Bu);    /* tested, failed, confirmed (dump 0x36BB) */
+    CHECKV(c->fm98.dd2c, 2500);                /* the dump's 0xFFF8DD2C[97] */
+    CHECKV(c->fm98.confirm_n, 1);
     /* from pass 51 the gathered struct carries the dump's reaction bytes */
     CHECKV(c->d61a[0xD660u - 0xD61Au], 1);
     CHECKV(c->d61a[0xD661u - 0xD61Au], 1);
     CHECKV(c->d61a[0xD664u - 0xD61Au], 1);
     CHECKV(c->d61a[0xD665u - 0xD61Au], 0);
     CHECKV(c->d61a[0xD666u - 0xD61Au], 1);
-    CHECKV(c->u_fail_n, 4u * SEG / 2u - 25u);  /* verdicts 50, 52, .., 118 */
+    CHECKV(c->u_fail_n, (10u * SEG - 50u) / 2u);  /* verdicts 50, 52, .., 298 */
     CHECKV(c->u_pass_n, 0);
-    CHECKV(c->d60c_4, 4u * SEG);               /* D5F2 = 1 every pass */
+    CHECKV(c->d60c_4, 10u * SEG);              /* D5F2 = 1 every pass */
     CHECKV(c->p85160, 1);
     s_sim = k_sim_none;
 }
@@ -513,7 +540,7 @@ static void test_live_release(void)
         CHECKV(sh[t].d664, 0);
         CHECKV(sh[t].d666, 0);
         CHECKV(sh[t].d661, 0);
-        CHECKV(sh[t].d660, 1);              /* P0850 only (g98) */
+        CHECKV(sh[t].d660, 0);              /* P0850 needs 2.5 s of failure (run: 1.8 s) */
         CHECKV(sh[t].d5fb, 0);
         CHECKV(sh[t].d6, want);
         CHECKV(sh[t].d9, 0);
@@ -561,13 +588,19 @@ static void test_live_nobrake(void)
     s_sim = k_sim_none;
 }
 
-/* ── 8. lever frames late (> 0.5 s of chain passes): U1267 fails at the
- *    pass-50 verdict; R / N / D then stay in P for the power cycle ───── */
+/* ── 8. lever frames late. 8a: by 0.1 s (first frame on chain pass 60):
+ *    five failed verdicts (50..58) take the up/down timer to 81 ms, the
+ *    passes from 60 take it back to 0 at 68 — never confirmed, so the
+ *    release goes through. 8b: by 1.1 s (pass 110): U1267 is confirmed at
+ *    the pass-100 verdict (26 failed verdicts), heals 500 ms after the
+ *    first passed one (verdict 160): R at 150 meets D666 = 1 → 8 / 0x33,
+ *    N at 180 → 6, D at 210 → 5, P → 8 ─────────────────────────────────── */
 static void test_live_late_lever(void)
 {
     static const uint8_t sch[7] = { 1u, 1u, 1u, 2u, 3u, 4u, 1u };   /* (none none) P R N D P */
-    static shad_t sh[7u * SEG];
-    uint8_t rsn[3] = { 0u, 0u, 0u };
+    static shad_t sh[9u * SEG];
+    static const uint8_t sch_b[9] = { 1u, 1u, 1u, 1u, 1u, 2u, 3u, 4u, 1u };
+    const rng_shadow_cells_t *c = rng_shadow_cells();
 
     s_sim = k_sim_none;
     s_sim.brake = true;
@@ -575,36 +608,168 @@ static void test_live_late_lever(void)
     s_sim.g98 = 1u;
     s_sim.lever_from = 60u;                 /* first lever frame on chain pass 60 */
     run(sch, 7u, true, NULL, sh);
-    CHECKV(sh[49].g109, 0);
-    CHECKV(sh[50].g109, 1);                 /* D60C 51 > 50 and D673 = 2 at the pass-50 verdict */
-    CHECKV(sh[50].d664, 0);
-    CHECKV(sh[51].d664, 1);                 /* read by the next gather */
-    CHECKV(sh[51].d666, 1);
-    CHECKV(sh[51].d661, 1);
-    for (uint32_t t = 60u; t < 7u * SEG; t++) {
-        CHECKV(sh[t].d6, 8);                /* P kept */
-        CHECKV(sh[t].g109, 1);              /* latched (healing not decoded) */
-        CHECKV(sh[t].s8, 1);
-        CHECKV(sh[t].d607, 1);
-        if (t % SEG == SEG - 1u && t / SEG >= 3u) {
-            /* the candidate's answer is a one-pass event: by the end of
-             * the step D6DE / E545 are back at 8 and the reason at 0 */
-            CHECKV(sh[t].de, 8);
-            CHECKV(sh[t].e545, 8);
-            CHECKV(sh[t].d9, 0);
-        }
-        if (t % SEG == 0u && t / SEG >= 3u && t / SEG <= 5u) {
-            rsn[t / SEG - 3u] = sh[t].d9;
-            printf("  late lever: lever %u -> D6DE %u/%02X, D6D6 %u reason 0x%02X\n",
-                   (unsigned)sch[t / SEG], sh[t].de, sh[t].df, sh[t].d6, sh[t].d9);
+    CHECKV(sh[49].t109, 0);
+    CHECKV(sh[50].t109, 1);                 /* D60C 51 > 50, D673 = 2: the timer starts */
+    CHECKV(sh[58].t109, 81);
+    CHECKV(sh[60].t109, 61);                /* the first passed verdict: − 20 ms */
+    CHECKV(sh[66].t109, 1);
+    CHECKV(sh[68].t109, 0);
+    CHECKV(c->fm109.confirm_n, 0);
+    CHECKV(c->fm109.heal_n, 1);             /* the timer reaching 0 (nothing to heal) */
+    for (uint32_t t = 0u; t < 7u * SEG; t++) {
+        CHECKV(sh[t].g109, 0);
+        CHECKV(sh[t].d664, 0);
+        CHECKV(sh[t].d666, 0);
+        if (t >= 3u * SEG) {
+            const uint8_t seg = sch[t / SEG];
+            CHECKV(sh[t].d6, seg == 1u ? 8 : seg == 2u ? 7 : seg == 3u ? 6 : 5);
         }
     }
-    /* from the bytes (0xC7390's candidate order C77FE, C7444, C747C, C767C,
-     * C7756, ..): R → 0xC767C (D6DE 7, D666 = 1) 8 / 0x33; N and D →
-     * 0xC7756 (D664 = 1) 8 / 0x3C. (The decode §9 had R → 0x3C.) */
-    CHECKV(rsn[0], 0x33);
-    CHECKV(rsn[1], 0x3C);
-    CHECKV(rsn[2], 0x3C);
+
+    s_sim.lever_from = 110u;
+    run(sch_b, 9u, true, NULL, sh);
+    CHECKV(sh[99].g109, 0);
+    CHECKV(sh[100].g109, 1);                /* 1 + 25 x 20 >= 500 at the pass-100 verdict */
+    CHECKV(sh[100].d664, 0);
+    CHECKV(sh[101].d664, 1);
+    CHECKV(sh[101].d666, 1);
+    CHECKV(sh[101].d661, 1);
+    CHECKV(sh[110].t109, 500);              /* the first passed verdict starts the heal timer */
+    CHECKV(sh[158].t109, 20);
+    CHECKV(sh[159].g109, 1);
+    CHECKV(sh[160].g109, 0);                /* healed: 0xAAC0E drops group 109 (cfg+0x1C bit 8) */
+    CHECKV(sh[160].d664, 1);
+    CHECKV(sh[161].d664, 0);
+    CHECKV(sh[161].d666, 0);
+    CHECKV(sh[161].d661, 0);
+    /* R arrives at 150 with D666 = 1: 0xC767C → 8 / 0x33 (one pass) */
+    CHECKV(sh[150].de, 7);
+    CHECKV(sh[150].d6, 8);
+    CHECKV(sh[150].d9, 0x33);
+    for (uint32_t t = 150u; t < 180u; t++) {
+        CHECKV(sh[t].d6, 8);                /* no new lever change: R stays refused */
+    }
+    for (uint32_t t = 180u; t < 9u * SEG; t++) {
+        const uint8_t seg = sch_b[t / SEG];
+        CHECKV(sh[t].d6, seg == 1u ? 8 : seg == 3u ? 6 : 5);   /* healed: N 6, D 5, P 8 */
+    }
+    CHECKV(c->fm109.confirm_n, 1);
+    CHECKV(c->fm109.heal_n, 1);
+    CHECKV(c->fm109.rec & 0x0018u, 0);      /* record inactive, out of the masks */
+    s_sim = k_sim_none;
+}
+
+/* ── 9. lever-frame gaps mid-test (brake + engine sims, lever from power-on:
+ *    P, then R held). A gap of n ticks withholds the frames; the receive
+ *    layer's 50 ms timeout then sets D673 = 2. ─────────────────────────── */
+#define GAP_SEG 16u
+static const uint8_t k_gap_sch[GAP_SEG] = { 1u, 1u, 1u, 1u, 2u, 2u, 2u, 2u, 2u, 2u, 2u, 2u,
+                                            2u, 2u, 2u, 1u };
+static shad_t s_gsh[GAP_SEG * SEG];
+
+static void gap_run(uint32_t from, uint32_t len)
+{
+    s_sim = k_sim_none;
+    s_sim.brake = true;
+    s_sim.engine = 700u;
+    s_sim.gap_from = from;
+    s_sim.gap_len = len;
+    run(k_gap_sch, GAP_SEG, true, NULL, s_gsh);
+}
+
+/* print-only: the 2 s gap with N or D held (the prediction table) */
+static void gap_print_held(uint8_t code)
+{
+    static uint8_t sch[GAP_SEG];
+    const rng_shadow_cells_t *c = rng_shadow_cells();
+
+    for (uint32_t i = 0u; i < GAP_SEG; i++) {
+        sch[i] = (uint8_t)(i < 4u ? 1u : (i == GAP_SEG - 1u ? 1u : code));
+    }
+    s_sim = k_sim_none;
+    s_sim.brake = true;
+    s_sim.engine = 700u;
+    s_sim.gap_from = 140u;
+    s_sim.gap_len = 200u;
+    run(sch, GAP_SEG, true, NULL, s_gsh);
+    printf("  gap 2 s, lever code %u held: confirm %u heal %u;", code,
+           (unsigned)c->fm109.confirm_n, (unsigned)c->fm109.heal_n);
+    for (uint32_t t = 121u; t < GAP_SEG * SEG; t++) {
+        if (s_gsh[t].d6 != s_gsh[t - 1u].d6 || s_gsh[t].d9 != 0u) {
+            printf(" t%u:%u/%02X", (unsigned)t, s_gsh[t].d6, s_gsh[t].d9);
+        }
+    }
+    printf("\n");
+    s_sim = k_sim_none;
+}
+
+static void test_gaps(void)
+{
+    const rng_shadow_cells_t *c = rng_shadow_cells();
+    uint32_t fails_seen[8] = { 0 };
+
+    /* short gaps (1..25 failed verdicts): never confirmed, the timer back
+     * at 0 and the reaction bytes 0 throughout */
+    for (uint32_t len = 1u; len <= 54u; len++) {
+        gap_run(150u, len);
+        CHECKV(c->fm109.confirm_n, 0);
+        CHECKV(c->fm109.d714, 0);
+        if (c->u_fail_n < 8u) {
+            fails_seen[c->u_fail_n] = len;
+        }
+        for (uint32_t t = 0u; t < GAP_SEG * SEG; t++) {
+            CHECKV(s_gsh[t].d664, 0);
+            CHECKV(s_gsh[t].d666, 0);
+        }
+    }
+    for (uint32_t k = 1u; k <= 7u; k++) {
+        CHECK(fails_seen[k] != 0u);         /* every count 1..7 was exercised */
+    }
+    /* the ~70 ms gap (r03r +16.26 s): R released before it (7), and after */
+    gap_run(150u, 7u);
+    printf("  gap 70 ms: failed verdicts %u, timer max %u, D6D6 before %u, during/after:",
+           (unsigned)c->u_fail_n, (unsigned)c->fm109.dd2c, s_gsh[149].d6);
+    for (uint32_t t = 150u; t < 175u; t++) {
+        /* '*' D673 = 2, 'L' D5FB = 1 */
+        printf(" %u%s", s_gsh[t].d6, s_gsh[t].d673 == 2u ? "*" : (s_gsh[t].d5fb != 0u ? "L" : ""));
+    }
+    printf(" .. end %u (D5FB %u, reason 0x%02X)\n", s_gsh[GAP_SEG * SEG - 1u].d6,
+           s_gsh[GAP_SEG * SEG - 1u].d5fb, s_gsh[GAP_SEG * SEG - 1u].d9);
+    CHECKV(s_gsh[149].d6, 7);
+    CHECKV(c->fm109.confirm_n, 0);
+    /* 2 s without frames: confirmed after 26 failed verdicts, healed 500 ms
+     * after the frames return */
+    gap_run(140u, 200u);
+    {
+        uint32_t t_conf = 0u, t_heal = 0u;
+
+        for (uint32_t t = 1u; t < GAP_SEG * SEG; t++) {
+            if (s_gsh[t].g109 != 0u && s_gsh[t - 1u].g109 == 0u) {
+                t_conf = t;
+            }
+            if (s_gsh[t].g109 == 0u && s_gsh[t - 1u].g109 != 0u) {
+                t_heal = t;
+            }
+        }
+        printf("  gap 2 s (ticks 140..339): first D673=2 tick %u, confirmed at %u, healed at %u;"
+               " D6D6 at 339 %u, end %u (D5FB %u)\n",
+               (unsigned)({ uint32_t f = 0u; for (uint32_t t = 140u; t < 340u; t++) { if (s_gsh[t].d673 == 2u) { f = t; break; } } f; }),
+               (unsigned)t_conf, (unsigned)t_heal, s_gsh[339].d6,
+               s_gsh[GAP_SEG * SEG - 1u].d6, s_gsh[GAP_SEG * SEG - 1u].d5fb);
+        CHECK(t_conf != 0u && t_heal > t_conf);
+        CHECKV(c->fm109.confirm_n, 1);
+        CHECKV(c->fm109.heal_n, 1);
+        /* heal 26 verdicts (500 ms) after the first passed verdict */
+        CHECK(t_heal >= 340u + 50u && t_heal <= 340u + 54u);
+        for (uint32_t t = 120u; t < GAP_SEG * SEG; t++) {
+            if (s_gsh[t].d6 != s_gsh[t - 1u].d6 || s_gsh[t].d5fb != s_gsh[t - 1u].d5fb ||
+                s_gsh[t].d9 != 0u || s_gsh[t].g109 != s_gsh[t - 1u].g109) {
+                printf("    t=%u lever-seg %u D673 %u D5FB %u g109 %u D6DE %u/%02X D6D6 %u reason 0x%02X\n",
+                       (unsigned)t, k_gap_sch[t / SEG], s_gsh[t].d673, s_gsh[t].d5fb, s_gsh[t].g109,
+                       s_gsh[t].de, s_gsh[t].df, s_gsh[t].d6, s_gsh[t].d9);
+            }
+        }
+    }
     s_sim = k_sim_none;
 }
 
@@ -620,6 +785,9 @@ int main(void)
     test_live_release();
     test_live_nobrake();
     test_live_late_lever();
+    test_gaps();
+    gap_print_held(3u);
+    gap_print_held(4u);
     if (fails != 0) {
         printf("%d failure(s)\n", fails);
         return 1;
