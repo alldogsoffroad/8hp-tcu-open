@@ -521,6 +521,29 @@ int main(void)
         CHECK(drv_rq_window_step(&q, 0xFFFFF000u, true, 10000u) == 10000u);
         CHECK(drv_rq_window_step(&q, 0xFFFFF000u + 30000u, true, 10000u) == 0u);
     }
+    /* 2026-11-17: the window survives MCU resets (.noinit), cleared at power-on */
+    {
+        drv_rq_win_t r = { 0xA5u, 0x12345678u, 0xDEADBEEFu, 0x0u, 0x0u };   /* garbage */
+        drv_rq_window_boot(&r, true);                                        /* power-on */
+        CHECK(r.acc_ms == 0u && r.state == 0u && r.magic == DRV_RQ_WIN_MAGIC);
+        CHECK(drv_rq_window_step(&r, 600u, true, 10000u) == 10000u);
+        CHECK(drv_rq_window_step(&r, 600u + 12000u, true, 10000u) == 10000u);   /* 12 s on */
+        drv_rq_window_boot(&r, false);                                       /* warm reset */
+        CHECK(r.acc_ms == 12000u && r.state == 0u);                          /* carried */
+        CHECK(drv_rq_window_step(&r, 600u, true, 10000u) == 10000u);         /* reopens */
+        CHECK(drv_rq_window_step(&r, 600u + 17999u, true, 10000u) == 10000u);
+        CHECK(drv_rq_window_step(&r, 600u + 18000u, true, 10000u) == 0u);   /* 30 s total */
+        drv_rq_window_boot(&r, false);                                       /* warm reset */
+        CHECK(r.state == 2u);                                                /* stays latched */
+        CHECK(drv_rq_window_step(&r, 600u, true, 10000u) == 0u);
+        r.acc_ms = 5000u;                                                    /* corrupt */
+        drv_rq_window_boot(&r, false);                                       /* warm, bad guard */
+        CHECK(r.acc_ms == DRV_RQ_REL_WINDOW_MS && r.state == 2u);            /* fails safe */
+        CHECK(drv_rq_window_step(&r, 600u, true, 10000u) == 0u);
+        drv_rq_win_t c = r; c.acc_ms = 30000u; c.acc_inv = ~30000u;
+        drv_rq_window_boot(&c, true);                                        /* power-on */
+        CHECK(c.acc_ms == 0u && c.state == 0u);
+    }
     printf("test_reqlaw: %s (%d failures)\n", fails ? "FAIL" : "ok", fails);
     return fails ? 1 : 0;
 }

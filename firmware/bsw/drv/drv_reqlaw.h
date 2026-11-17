@@ -155,8 +155,23 @@ uint32_t drv_rq_m5_guard_n(void);
  * function so the host can test it.
  * state: 0 off (not on now), 1 on (counting), 2 latched off. */
 #define DRV_RQ_REL_WINDOW_MS 30000u
-typedef struct { uint8_t state; uint32_t t_last_ms; uint32_t acc_ms; } drv_rq_win_t;
+/* 2026-11-17 (r03q lever test: two supply-limit resets re-armed the .bss
+ * window): on SH the window lives in .noinit, so the accumulated time
+ * SURVIVES an MCU reset and is cleared only at power-on (a cold boot of the
+ * S11 reset record, boots == 1). On a warm reset with a broken
+ * magic/complement guard it FAILS SAFE: the budget counts as spent.
+ * drv_rq_window_boot() applies that at every boot: a carried acc_ms at or
+ * above the limit starts latched off (state 2). */
+#define DRV_RQ_WIN_MAGIC 0x52574E31u    /* "RWN1" */
+typedef struct {
+    uint8_t  state;
+    uint32_t t_last_ms;
+    uint32_t acc_ms;
+    uint32_t magic;                     /* DRV_RQ_WIN_MAGIC once initialised */
+    uint32_t acc_inv;                   /* ~acc_ms */
+} drv_rq_win_t;
 uint16_t drv_rq_window_step(drv_rq_win_t *w, uint32_t now_ms, bool at_u, uint16_t req);
+void drv_rq_window_boot(drv_rq_win_t *w, bool cold);
 
 /* 0x90010's part: letters '2', rounding offset cal 0x1918BB, the config
  * bytes; clears the law's own NOLOAD ranges (call after sup_cells_init) */

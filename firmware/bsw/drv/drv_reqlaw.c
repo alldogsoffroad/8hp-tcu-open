@@ -92,6 +92,7 @@ uint16_t drv_rq_window_step(drv_rq_win_t *w, uint32_t now_ms, bool at_u, uint16_
     if (w->state == 1u) {
         /* the release was on since the previous pass: count that time */
         w->acc_ms += (uint32_t)(now_ms - w->t_last_ms);
+        w->acc_inv = ~w->acc_ms;
         w->t_last_ms = now_ms;
         if (w->acc_ms >= DRV_RQ_REL_WINDOW_MS) {
             w->state = 2u;
@@ -111,9 +112,24 @@ uint16_t drv_rq_window_step(drv_rq_win_t *w, uint32_t now_ms, bool at_u, uint16_
     return 0u;
 }
 
+void drv_rq_window_boot(drv_rq_win_t *w, bool cold)
+{
+    if (cold) {
+        w->acc_ms = 0u;                         /* power-on: a fresh budget */
+    } else if (w->magic != DRV_RQ_WIN_MAGIC || w->acc_inv != ~w->acc_ms) {
+        w->acc_ms = DRV_RQ_REL_WINDOW_MS;       /* warm reset, broken guard: fail safe, latched */
+    }
+    w->magic = DRV_RQ_WIN_MAGIC;
+    w->acc_inv = ~w->acc_ms;
+    w->t_last_ms = 0u;                          /* the ms clock restarts at boot */
+    w->state = (w->acc_ms >= DRV_RQ_REL_WINDOW_MS) ? 2u : 0u;
+}
+
 #if defined(__sh__) && defined(DRV_RQ_PSET)
 #include "bsw/sched/sched.h"
-static drv_rq_win_t s_rq_rel_win;               /* .bss: cleared at boot */
+#include "platform/platform.h"
+/* .noinit: survives MCU resets, cleared at power-on by drv_rq_window_boot */
+static drv_rq_win_t s_rq_rel_win __attribute__((section(".noinit")));
 #endif
 
 #if DRV_RQ_USE_PRODUCER
@@ -549,6 +565,9 @@ void drv_rq_compose(void)
 /* ── init (0x90010's part) ────────────────────────────────────────────── */
 void drv_rq_init(void)
 {
+#if defined(__sh__) && defined(DRV_RQ_PSET)
+    drv_rq_window_boot(&s_rq_rel_win, plat_boot_index() <= 1u);
+#endif
     /* our own NOLOAD ranges (linker.ld .drv_rq1 .. .drv_rq6) */
     memset((void *)(uintptr_t)0xFFF90230u, 0, 0x28u);   /* 0x90230 / 0x90244 */
     memset((void *)(uintptr_t)0xFFF90320u, 0, 0x14u);   /* 0x90320 dither */
