@@ -341,15 +341,152 @@ static void cnt_5ms(void)            /* the 0x7C7E4 countdown service (sup_ladde
     }
 }
 
+/* the law's output of one output tick, as the stand-in (od_838b0_standin)
+ * and the next hook see it: mode 0x94FD8 / current 0x94ED4 of the PREVIOUS
+ * law pass (the law runs after the hook) */
+static uint8_t s_law_mode[10];
+static int16_t s_law_i[10];
+
+static void cold_inputs(uint32_t ms)
+{
+    for (uint8_t ch = 0u; ch < 10u; ch++) {
+        const uint8_t m = s_law_mode[ch];
+        s_in.mode[ch] = m;
+        s_in.i_req[ch] = s_law_i[ch];
+        s_in.si_cls[ch] = (uint8_t)(((m == 3u || m == 4u) && s_law_i[ch] != 0) ? 0x10u : 0x21u);
+    }
+    s_in.os_mode = (uint8_t)((ms < 670u) ? 0u : 1u);
+    s_in.seq2 = (uint8_t)((ms <= 620u) ? 0x11u : 0x55u);
+    s_in.f114 = (uint8_t)((ms == 540u) ? 1u : 0u);      /* set by phase 0x10 at 535, cleared at 540 */
+    s_in.phase = (uint16_t)((ms <= 535u) ? 0x0008u : ((ms <= 545u) ? 0x0010u : 0x0100u));
+    s_in.f115 = 0u;
+}
+
+/* the law pass of the tick (after the hook): mode / current, and the chips'
+ * feedback from the cyclic it stages (this tick's F stage) [I the chips'
+ * feedback while FULL ON with the rail open: held low] */
+static void cold_law(uint32_t ms, const uint32_t *low_u, const int16_t *i_p)
+{
+    if (ms == 535u) {                                   /* phase 0x10: the full-on tick */
+        for (uint8_t ch = 0u; ch < 8u; ch++) {
+            s_law_mode[ch] = 4u;
+            s_law_i[ch] = 0;
+            fbm_set_static(tf_of(ch), false);
+        }
+    } else if (ms == 540u) {                            /* phase 0x10 passes: off again */
+        for (uint8_t ch = 0u; ch < 8u; ch++) {
+            s_law_mode[ch] = 0u;
+            fbm_set_static(tf_of(ch), true);
+        }
+    } else if (ms == 615u) {                            /* 'U': the P set (r04b duties) */
+        for (uint8_t ch = 0u; ch < 7u; ch++) {
+            s_law_mode[ch] = 3u;
+            s_law_i[ch] = i_p[ch];
+            fbm_set_pwm(tf_of(ch), 4000u, low_u[ch], 37u * ch);
+        }
+        s_law_mode[7] = 1u;
+    }
+}
+
+#if !defined(FBS_NEG_COLDSEED)
+/* the recorder after a cold boot: every disagreement must lie in a window
+ * the host model expects (boot before the first decided capture, the
+ * phase-0x10 full-on tick, the rail-on transient at 'U'), none on ch 8 / 9,
+ * none after U + 100 ms */
+static int cold_rec_check(void)
+{
+    const volatile fbr_t *r = fb_shadow_rec();
+    unsigned n_boot = 0u, n_full = 0u, n_u = 0u, n_bad = 0u;
+    unsigned per_ch[10] = { 0u };
+    const unsigned show = (r->n_rec < FBR_N) ? r->n_rec : FBR_N;
+    int bad = 0;
+
+    printf("(5) the disagreement recorder after the cold boot: %u events, %u recorded (cap %u)\n",
+           (unsigned)r->n_dis, (unsigned)r->n_rec, (unsigned)r->cap);
+    for (unsigned k = 0u; k < show; k++) {
+        const volatile fbr_ent_t *e = &r->e[k];
+        const uint32_t ms = e->t_us / 1000u;
+        const char *w;
+        if (ms < 100u) {
+            n_boot++;
+            w = "boot";
+        } else if (ms >= 540u && ms <= 600u && e->ch < 8u) {
+            n_full++;
+            w = "full-on";
+        } else if (ms >= 620u && ms <= 720u && e->ch < 7u) {
+            n_u++;
+            w = "rail-on";
+        } else {
+            n_bad++;
+            w = "UNEXPECTED";
+        }
+        per_ch[e->ch]++;
+        if (k < 12u || w[0] == 'U') {
+            printf("    %-10s t %6u ms pass %4u ch %u real %02X/%4u si %02X mode %u I %5d phase %04X seq2 %02X f114 %u os %u\n",
+                   w, (unsigned)ms, (unsigned)e->pass, (unsigned)e->ch, e->real, (unsigned)e->duty, e->si,
+                   (unsigned)e->mode, (int)e->i_req, (unsigned)e->phase, e->seq2, (unsigned)e->f114,
+                   (unsigned)e->os_mode);
+        }
+    }
+    printf("    by window: boot %u, full-on %u, rail-on %u, unexpected %u; per channel:", n_boot, n_full, n_u, n_bad);
+    for (uint8_t ch = 0u; ch < 10u; ch++) {
+        printf(" %u", per_ch[ch]);
+    }
+    printf("\n    spans (first..last pass):");
+    for (uint8_t ch = 0u; ch < 10u; ch++) {
+        if (per_ch[ch] != 0u) {
+            printf(" ch%u %u..%u", ch, (unsigned)r->span[ch].first_pass, (unsigned)r->span[ch].last_pass);
+        }
+    }
+    printf("\n    histogram (real x stand-in, disagreements only):");
+    for (uint8_t ch = 0u; ch < 10u; ch++) {
+        for (uint8_t a = 0u; a < FBR_RIDX; a++) {
+            for (uint8_t b = 0u; b < FBR_SIDX; b++) {
+                if (r->hist[ch][a][b] != 0u) {
+                    static const uint8_t RC[FBR_RIDX] = { 0x00u, 0x10u, 0x20u, 0x21u, 0x31u, 0xFFu };
+                    static const uint8_t SC[FBR_SIDX] = { 0x10u, 0x21u, 0xFFu };
+                    printf(" ch%u:%02X/%02X=%u", ch, RC[a], SC[b], (unsigned)r->hist[ch][a][b]);
+                }
+            }
+        }
+    }
+    printf("\n");
+    CHECK(r->n_dis <= r->n_rec, "(5) the recorder overflowed (%u events > %u kept)", (unsigned)r->n_dis,
+          (unsigned)r->n_rec);
+    CHECK(n_bad == 0u, "(5) %u disagreements outside the expected windows", n_bad);
+    CHECK(per_ch[8] == 0u && per_ch[9] == 0u, "(5) ch 8 / 9 disagree");
+    CHECK(n_u > 0u, "(5) no rail-on transient recorded (the recorder is not running)");
+    {
+        unsigned hsum = 0u;
+        for (uint8_t ch = 0u; ch < 10u; ch++) {
+            for (uint8_t a = 0u; a < FBR_RIDX; a++) {
+                for (uint8_t b = 0u; b < FBR_SIDX; b++) {
+                    hsum += r->hist[ch][a][b];
+                }
+            }
+        }
+        CHECK(hsum == r->n_dis, "(5) histogram sum %u != events %u", hsum, (unsigned)r->n_dis);
+        for (uint8_t ch = 0u; ch < 10u; ch++) {
+            const volatile fbs_t *f = fb_shadow_state();
+            CHECK(f->cmp[ch].dis_n == per_ch[ch], "(5) ch %u: dis_n %u != recorded %u", ch,
+                  (unsigned)f->cmp[ch].dis_n, per_ch[ch]);
+        }
+    }
+    bad += (n_bad != 0u) ? 1 : 0;
+    return bad;
+}
+#endif
+
 static int test_cold(void)
 {
     static const uint32_t LOW_U[7] = { 1776u, 1804u, 276u, 1836u, 1812u, 272u, 276u };   /* r04b ‰ × 4 */
     static const int16_t I_P[7] = { 8500, 8500, 500, 8500, 8500, 500, 500 };   /* the gear-1 P set */
     const volatile fbs_t *s;
     int bad = 0;
-    bool up = false;
     uint32_t ms = 0u;
     memset((void *)(uintptr_t)0xFFF80000u, 0, 0x16000u);
+    memset(s_law_mode, 0, sizeof s_law_mode);
+    memset(s_law_i, 0, sizeof s_law_i);
     s_t = 0u;
     boot();
     drv_temp_init();
@@ -367,19 +504,14 @@ static int test_cold(void)
             CELL_AN_MV(1) = 170u;
         }
         drv_temp_tick();                                   /* 0x887D8 (entry 7, before 0x7CBA8) */
-        if (!up && ms >= 620u) {                           /* 'U': the P set */
-            up = true;
-            for (uint8_t ch = 0u; ch < 7u; ch++) {
-                s_in.i_req[ch] = I_P[ch];
-                fbm_set_pwm(tf_of(ch), 4000u, LOW_U[ch], 37u * ch);
-            }
-        }
+        cold_inputs(ms);
         s_in.n5 = (uint8_t)(step / 5u);
         s_in.t_fluid = CELL_TMP;
         s_in.t_st = CELL_TMP_ST;
         s_t = ms * 1000u;
         fbm_advance_to(s_t);
         fb_shadow_tick(&s_in);
+        cold_law(ms, LOW_U, I_P);                          /* the law + F stage, after the hook */
         if (ms == 60670u) {
             const int amb_err = (int)s->amb - (int)s->tfl * 8;
             printf("(4) cold boot, 60 s: fluid %d (%.1f C, status %u), amb %d (%.1f C), seed waited %u passes\n",
@@ -399,6 +531,9 @@ static int test_cold(void)
     }
     printf("(4) cold boot, 75.6 s: amb %d (%.1f C) — r04b read 12001 (93.8 C)\n", s->amb, s->amb / 128.0);
     CHECK(bad == 0, "(4) cold boot: %d checks out of band", bad);
+#if !defined(FBS_NEG_COLDSEED)
+    bad += cold_rec_check();
+#endif
     return bad;
 }
 

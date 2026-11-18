@@ -57,6 +57,14 @@ typedef struct {
     uint16_t si_duty[10];   /* 0x9340C */
     uint16_t si_est[10];    /* 0x93394 */
     uint16_t si_res[10];    /* 0x933A8 */
+    /* the disagreement recorder's context (ours, 2026-11-18, r04d; by value
+     * from app/fb_hook.c — witness only, nothing reads it back) */
+    uint8_t  mode[10];      /* 0x94FD8 the law's mode (the pass the stand-in reads) */
+    uint8_t  seq2;          /* 0x94FD0[0] seq2 state, channel 0 */
+    uint8_t  os_mode;       /* 0x93B33 */
+    uint16_t phase;         /* 0x94FE2 ladder phase word */
+    uint8_t  f114;          /* 0x94114 the phase-0x10 full-on flag */
+    uint8_t  f115;          /* 0x94115 the '3' diagnosis full-on flag */
 } fbs_in_t;
 
 /* the capture state 0x90334 + 12·ch */
@@ -82,6 +90,55 @@ typedef struct {
     uint8_t  pad;
 } fbs_cmp_t;
 _Static_assert(sizeof(fbs_cmp_t) == 20u, "fbs_cmp_t is 20 bytes (tools/bench witness_fbshadow.py)");
+
+/* THE DISAGREEMENT RECORDER (ours, 2026-11-18, r04d; witness only, section
+ * .fb_rec at 0xFFF85400 — stock RAM the stock dump shows unused and our
+ * firmware never touched): the FIRST FBR_N (pass, channel) events in which
+ * the shadow's class differs from the stand-in's, with the context the
+ * hook hands over by value; plus, per channel, a histogram of every
+ * disagreeing (real, stand-in) class pair (saturating at 0xFFFF). */
+#define FBR_N 128u
+typedef struct {
+    uint32_t t_us;          /* +0  TCNTA (1 µs FRT) at the pass */
+    uint16_t pass;          /* +4  the shadow's task-pass number (tick_n, low 16) */
+    uint8_t  ch;            /* +6  */
+    uint8_t  real;          /* +7  the shadow's class 0x93A2E */
+    uint8_t  si;            /* +8  the stand-in's class */
+    uint8_t  mode;          /* +9  0x94FD8[ch] */
+    uint16_t duty;          /* +10 the shadow's duty 0x9340C (‰) */
+    int16_t  i_req;         /* +12 0x94ED4[ch] (0.1 mA) */
+    uint16_t phase;         /* +14 0x94FE2 */
+    uint8_t  seq2;          /* +16 0x94FD0[0] */
+    uint8_t  f114;          /* +17 0x94114 */
+    uint8_t  f115;          /* +18 0x94115 */
+    uint8_t  os_mode;       /* +19 0x93B33 */
+} fbr_ent_t;
+_Static_assert(sizeof(fbr_ent_t) == 20u, "fbr_ent_t is 20 bytes (witness_fbshadow.py)");
+
+/* class → histogram index: real 0x00 / 0x10 / 0x20 / 0x21 / 0x31 / other,
+ * stand-in 0x10 / 0x21 / other */
+#define FBR_RIDX 6u
+#define FBR_SIDX 3u
+typedef struct {
+    uint32_t n_dis;         /* +0x000 every disagreeing (pass, channel) event */
+    uint16_t n_rec;         /* +0x004 entries written (≤ FBR_N; the first ones) */
+    uint16_t cap;           /* +0x006 FBR_N */
+    uint16_t hist[10][FBR_RIDX][FBR_SIDX];   /* +0x008 */
+    fbr_ent_t e[FBR_N];     /* +0x170 */
+    /* +0xB70 per channel: the span of ALL its disagreements (the entries
+     * above fill within the first ~20 passes when several channels
+     * disagree on every pass) */
+    struct {
+        uint32_t first_us;  /* TCNTA of the first / last disagreeing pass */
+        uint32_t last_us;
+        uint16_t first_pass;
+        uint16_t last_pass;
+    } span[10];
+} fbr_t;
+_Static_assert(offsetof(fbr_t, hist) == 0x008u, "fbr_t layout (witness_fbshadow.py)");
+_Static_assert(offsetof(fbr_t, e) == 0x170u, "fbr_t layout (witness_fbshadow.py)");
+_Static_assert(offsetof(fbr_t, span) == 0xB70u, "fbr_t layout (witness_fbshadow.py)");
+_Static_assert(sizeof(fbr_t) == 0xBE8u, "fbr_t is 0xBE8 bytes (.fb_rec, witness_fbshadow.py)");
 
 typedef struct {
     /* 0x000 the window sampler, group 0 (0x9020C..0x90217) */
@@ -158,6 +215,7 @@ void fb_shadow_isr(void);           /* vector 216 body (0x90A72) */
 void fb_shadow_tick(const fbs_in_t *in);   /* 0x904FA capture part, 0x83A1C, 0x838B0 */
 
 const volatile fbs_t *fb_shadow_state(void);
+const volatile fbr_t *fb_shadow_rec(void);    /* the disagreement recorder */
 
 #if !defined(__sh__)
 /* host only (tests/unit/test_fb_shadow.c) */

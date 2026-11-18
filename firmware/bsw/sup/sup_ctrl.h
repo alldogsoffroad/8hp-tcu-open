@@ -11,6 +11,12 @@
 #ifndef TCU_SUP_CTRL_H
 #define TCU_SUP_CTRL_H
 
+/* THE PA7 SHADOW IS READ-ONLY (app/pa7_shadow.c defines TCU_PA7_SHADOW_TU):
+ * it may not include a live header */
+#if defined(TCU_PA7_SHADOW_TU)
+#error "the PA7 shadow is read-only: it may not include a live header (sup_ctrl.h)"
+#endif
+
 #include <stdint.h>
 #include <stdbool.h>
 

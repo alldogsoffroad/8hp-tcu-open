@@ -3,6 +3,12 @@
 #ifndef TCU_PLATFORM_H
 #define TCU_PLATFORM_H
 
+/* THE PA7 SHADOW IS READ-ONLY (app/pa7_shadow.c defines TCU_PA7_SHADOW_TU):
+ * it may not include a live header */
+#if defined(TCU_PA7_SHADOW_TU)
+#error "the PA7 shadow is read-only: it may not include a live header (platform.h)"
+#endif
+
 #include "tcu/units.h"
 
 typedef enum { CAN_BUS1 = 0, CAN_BUS2 = 1, CAN_BUS_COUNT } can_bus_t;

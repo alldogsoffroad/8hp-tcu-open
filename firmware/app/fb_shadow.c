@@ -25,6 +25,7 @@ void fb_shadow_start(void) {}
 void fb_shadow_isr(void) {}
 void fb_shadow_tick(const fbs_in_t *in) { (void)in; }
 const volatile fbs_t *fb_shadow_state(void) { return 0; }
+const volatile fbr_t *fb_shadow_rec(void) { return 0; }
 #else
 
 #if defined(__sh__)
@@ -34,6 +35,15 @@ const volatile fbs_t *fb_shadow_state(void) { return 0; }
 #endif
 
 static fbs_t s FBS_RAM;
+
+/* the disagreement recorder (ours, r04d): its own section .fb_rec (linker.ld,
+ * 0xFFF85400; ASSERT-bounded), so no .fb_shadow / .bss symbol moves */
+#if defined(__sh__)
+#define FBR_RAM __attribute__((section(".fb_rec")))
+#else
+#define FBR_RAM
+#endif
+static fbr_t s_rec FBR_RAM;
 
 /* ── stand-ins [S] (the dump's values; writers not ported) ─────────────── */
 #define FBS_9393A       0x0215          /* 0x9393A second temperature (°C·16) = 33.3 °C */
@@ -673,6 +683,61 @@ static void cap_904fa(void)
 
 static uint16_t absdiff(uint16_t a, uint16_t b) { return (uint16_t)(a > b ? a - b : b - a); }
 
+/* the recorder (ours, witness only): one disagreeing (pass, channel) */
+static uint8_t fbr_ridx(uint8_t c)
+{
+    switch (c) {
+    case 0x00u: return 0u;
+    case 0x10u: return 1u;
+    case 0x20u: return 2u;
+    case 0x21u: return 3u;
+    case 0x31u: return 4u;
+    default:    return 5u;
+    }
+}
+
+static uint8_t fbr_sidx(uint8_t c)
+{
+    return (c == 0x10u) ? 0u : ((c == 0x21u) ? 1u : 2u);
+}
+
+static void fbr_record(uint8_t ch, const fbs_in_t *in)
+{
+    uint16_t *h = &s_rec.hist[ch][fbr_ridx(s.cls[ch])][fbr_sidx(in->si_cls[ch])];
+    if (*h != 0xFFFFu) {
+        (*h)++;
+    }
+    if (s_rec.n_dis != 0xFFFFFFFFu) {
+        s_rec.n_dis++;
+    }
+    {
+        const uint32_t t = fbhw_frt_us();
+        if (s.cmp[ch].dis_n == 1u) {            /* (dis_n is already counted) */
+            s_rec.span[ch].first_us = t;
+            s_rec.span[ch].first_pass = (uint16_t)s.tick_n;
+        }
+        s_rec.span[ch].last_us = t;
+        s_rec.span[ch].last_pass = (uint16_t)s.tick_n;
+    }
+    if (s_rec.n_rec < FBR_N) {
+        fbr_ent_t *e = &s_rec.e[s_rec.n_rec];
+        e->t_us = fbhw_frt_us();
+        e->pass = (uint16_t)s.tick_n;
+        e->ch = ch;
+        e->real = s.cls[ch];
+        e->si = in->si_cls[ch];
+        e->mode = in->mode[ch];
+        e->duty = s.duty[ch];
+        e->i_req = in->i_req[ch];
+        e->phase = in->phase;
+        e->seq2 = in->seq2;
+        e->f114 = in->f114;
+        e->f115 = in->f115;
+        e->os_mode = in->os_mode;
+        s_rec.n_rec++;
+    }
+}
+
 void fb_shadow_tick(const fbs_in_t *in)
 {
     s.tick_n++;
@@ -699,6 +764,7 @@ void fb_shadow_tick(const fbs_in_t *in)
             c->dis_n++;
             c->dis_real = s.cls[ch];
             c->dis_si = in->si_cls[ch];
+            fbr_record(ch, in);
         }
     }
 }
@@ -709,6 +775,11 @@ void fb_shadow_init(void)
     for (uint32_t k = 0u; k < sizeof s; k++) {
         p[k] = 0u;
     }
+    p = (uint8_t *)(void *)&s_rec;
+    for (uint32_t k = 0u; k < sizeof s_rec; k++) {
+        p[k] = 0u;
+    }
+    s_rec.cap = (uint16_t)FBR_N;
     s.reload = 1u;                              /* the first state 1 loads the intervals */
     s.m9090b = FBS_9090B;
     s.c84a21 = FB_DTBL_84A21[0];                /* the initialised-data image: 01 */
@@ -727,6 +798,7 @@ void fb_shadow_start(void)
 }
 
 const volatile fbs_t *fb_shadow_state(void) { return &s; }
+const volatile fbr_t *fb_shadow_rec(void) { return &s_rec; }
 
 #if !defined(__sh__)
 volatile fbs_t *fb_shadow_host_state(void) { return &s; }

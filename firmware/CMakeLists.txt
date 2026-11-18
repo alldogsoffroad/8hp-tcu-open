@@ -44,6 +44,7 @@ set(CORE_SOURCES
     app/tmp_chain.c
     app/gs_shadow.c app/gs_fill.c app/gs_cal.c
     app/fb_shadow.c app/fb_cal.c app/fb_hook.c
+    app/pa7_shadow.c app/pa7_hook.c
     safety/park_mon.c
     safety/park_pair.c
     safety/kl15.c
@@ -770,6 +771,87 @@ else()
         PASS_REGULAR_EXPRESSION "the feedback shadow is read-only: it may not include a live output header")
     set_tests_properties(fb_sh_guard_cal PROPERTIES
         PASS_REGULAR_EXPRESSION "the feedback shadow is read-only: an output path may not include fb_cal.h")
+    # THE PA7 SHADOW (2026-11-18, ~/tcu_sweep/r04d_recorder_pa7_shadow.md):
+    # READ-ONLY. (1) the plain P boot reproduces the stock driving dump's PA7
+    # cells; (2) / (3) the park-check lever sequence without and with the
+    # brake + engine sims through the real range chain; (4) the range part
+    # and the law on direct inputs (invalid range → state 3, the sensor's P
+    # → state 2, D713); (5) the AN7 line checks; the calibration against the
+    # stock image; the broken-law negative must FAIL; the live identity
+    # (test_odiag with the PA7 hooks at their slots, and a PA7-leak negative);
+    # the source scans and the SH compile checks of the read-only frame.
+    set(PA7_TEST_SOURCES tests/unit/test_pa7_shadow.c app/pa7_shadow.c app/pa7_hook.c ${RNG_TEST_SOURCES})
+    add_executable(test_pa7_shadow ${PA7_TEST_SOURCES})
+    target_compile_definitions(test_pa7_shadow PRIVATE "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"")
+    add_test(NAME pa7_shadow COMMAND test_pa7_shadow)
+    add_test(NAME pa7_cal_bytes COMMAND test_pa7_shadow --cal)
+    set_tests_properties(pa7_cal_bytes PROPERTIES SKIP_RETURN_CODE 77)
+    add_executable(test_pa7_shadow_neg_LAW ${PA7_TEST_SOURCES})
+    target_compile_definitions(test_pa7_shadow_neg_LAW PRIVATE PA7_NEG_LAW=1
+        "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"")
+    add_test(NAME pa7_shadow_neg_LAW COMMAND test_pa7_shadow_neg_LAW)
+    set_tests_properties(pa7_shadow_neg_LAW PROPERTIES WILL_FAIL TRUE)
+    set(ODIAG_PA7_SOURCES tests/unit/test_odiag.c
+        app/rq_prod.c app/rq_fill.c app/rq_fill_cal.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
+        app/fb_shadow.c app/fb_cal.c app/fb_hook.c tests/unit/fb_model.c
+        app/pa7_shadow.c app/pa7_hook.c
+        tests/unit/stub_plat.c)
+    add_executable(test_odiag_pa7 ${ODIAG_PA7_SOURCES})
+    target_compile_definitions(test_odiag_pa7 PRIVATE DRV_RQ_USE_PRODUCER=1 TEST_ODIAG_FBS=1 TEST_ODIAG_PA7=1)
+    add_test(NAME pa7_shadow_identity
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fb_identity.py
+            $<TARGET_FILE:test_odiag> $<TARGET_FILE:test_odiag_pa7> --pa7)
+    add_executable(test_odiag_pa7_neg ${ODIAG_PA7_SOURCES})
+    target_compile_definitions(test_odiag_pa7_neg PRIVATE DRV_RQ_USE_PRODUCER=1 TEST_ODIAG_FBS=1
+        TEST_ODIAG_PA7=1 TEST_ODIAG_PA7_NEG=1)
+    add_test(NAME pa7_shadow_identity_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fb_identity.py
+            $<TARGET_FILE:test_odiag> $<TARGET_FILE:test_odiag_pa7_neg> --pa7)
+    set_tests_properties(pa7_shadow_identity_negative PROPERTIES WILL_FAIL TRUE)
+    set(PA7_OUTPUT_PATHS ${FB_OUTPUT_PATHS}
+        ${CMAKE_SOURCE_DIR}/bsw/sup/sup_ctrl.c ${CMAKE_SOURCE_DIR}/bsw/sup/sup_ctrl.h
+        ${CMAKE_SOURCE_DIR}/bsw/sup/sup_handlers.c ${CMAKE_SOURCE_DIR}/bsw/sup/sup_jobs.c
+        ${CMAKE_SOURCE_DIR}/platform/sh7254r/plat_sh7254r.c)
+    add_test(NAME pa7_shadow_scan_outputs
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/pa7_shadow_scan.py outputs ${PA7_OUTPUT_PATHS})
+    add_test(NAME pa7_shadow_scan_outputs_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/pa7_shadow_scan.py outputs
+            ${CMAKE_SOURCE_DIR}/tests/unit/pa7_scan_fixture_output.c)
+    set_tests_properties(pa7_shadow_scan_outputs_negative PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME pa7_shadow_scan_shadow
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/pa7_shadow_scan.py shadow
+            ${CMAKE_SOURCE_DIR}/app/pa7_shadow.c ${CMAKE_SOURCE_DIR}/app/pa7_shadow.h)
+    add_test(NAME pa7_shadow_scan_shadow_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/pa7_shadow_scan.py shadow
+            ${CMAKE_SOURCE_DIR}/tests/unit/pa7_scan_fixture_shadow.c)
+    set_tests_properties(pa7_shadow_scan_shadow_negative PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME pa7_shadow_scan_hook
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/pa7_shadow_scan.py hook
+            ${CMAKE_SOURCE_DIR}/app/pa7_hook.c)
+    add_test(NAME pa7_shadow_scan_hook_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/pa7_shadow_scan.py hook
+            ${CMAKE_SOURCE_DIR}/tests/unit/pa7_scan_fixture_hook.c)
+    set_tests_properties(pa7_shadow_scan_hook_negative PROPERTIES WILL_FAIL TRUE)
+    set(PA7_SH_SRC ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard_pa7.c)
+    add_test(NAME pa7_sh_guard_control COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${PA7_SH_SRC})
+    add_test(NAME pa7_sh_guard_shadow
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/pa7_shadow.c)
+    add_test(NAME pa7_sh_guard_hook
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/pa7_hook.c)
+    add_test(NAME pa7_sh_guard_ctrl
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform ${CMAKE_SOURCE_DIR}/bsw/sup/sup_ctrl.c)
+    add_test(NAME pa7_sh_guard_output COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_PA7_OUTPUT ${PA7_SH_SRC})
+    add_test(NAME pa7_sh_guard_ctrlinc COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform
+        -DSH_GUARD_PA7_CTRL ${PA7_SH_SRC})
+    foreach(hdr CELLS CTRL RNG PARK PLAT)
+        add_test(NAME pa7_sh_guard_live_${hdr}
+            COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform -DSH_GUARD_PA7_LIVE_${hdr} ${PA7_SH_SRC})
+        set_tests_properties(pa7_sh_guard_live_${hdr} PROPERTIES
+            PASS_REGULAR_EXPRESSION "the PA7 shadow is read-only: it may not include a live header")
+    endforeach()
+    set_tests_properties(pa7_sh_guard_output pa7_sh_guard_ctrlinc PROPERTIES
+        PASS_REGULAR_EXPRESSION "the PA7 shadow is read-only: an output path may not include pa7_shadow.h")
     add_executable(test_dump tests/unit/test_dump.c app/bench_dump.c tests/unit/stub_plat.c)
     add_executable(transcript tests/unit/transcript.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c

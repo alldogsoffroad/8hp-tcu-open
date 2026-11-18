@@ -23,6 +23,12 @@
 #ifndef TCU_PARK_CELLS_H
 #define TCU_PARK_CELLS_H
 
+/* THE PA7 SHADOW IS READ-ONLY (app/pa7_shadow.c defines TCU_PA7_SHADOW_TU):
+ * it may not include a live header */
+#if defined(TCU_PA7_SHADOW_TU)
+#error "the PA7 shadow is read-only: it may not include a live header (park_cells.h)"
+#endif
+
 /* THE GARAGE SHADOW IS READ-ONLY (app/gs_shadow.c defines TCU_GS_SHADOW_TU):
  * it may not include a live output header */
 #if defined(TCU_GS_SHADOW_TU)

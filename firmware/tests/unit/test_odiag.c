@@ -98,6 +98,15 @@ static void fbs_ms(void)
     fbm_advance_to(stub.frt_us);
 }
 #endif
+#if defined(TEST_ODIAG_PA7)
+/* THE PA7 SHADOW'S LIVE-PATH IDENTITY (2026-11-18, r04d): its hooks at
+ * their firmware slots — the range part in the 10 ms task (mode 1), the
+ * pin-cut part right after the law (sup_batch.c: 0x7CC1E, then 0x7CC32) —
+ * reading this test's live cells by value; ctest pa7_shadow_identity
+ * requires the stdout byte-identical with test_odiag's */
+#include "app/pa7_shadow.h"
+void app_pin_cut_hook(void);
+#endif
 
 extern struct { uint8_t bus; uint8_t job; uint16_t word; uint32_t t_us; } stub_log[32768];
 extern unsigned stub_log_n;
@@ -317,6 +326,10 @@ static void boot(void)
 #if defined(TEST_ODIAG_FBS)
     fbs_boot();
 #endif
+#if defined(TEST_ODIAG_PA7)
+    pa7_shadow_init();
+    pa7_hook_range_init();
+#endif
 }
 
 /* one output tick: the stock's slots (sup_batch.c) — or, -DOD_OLD (the
@@ -342,6 +355,19 @@ static void out_tick(void)
 #endif
 #endif
     drv_out_law();                      /* 0x7CC1E */
+#if defined(TEST_ODIAG_PA7)
+    app_pin_cut_hook();                 /* 0x7CC32 → 0x86B0C (the PA7 shadow, sup_batch.c's slot) */
+#if defined(TEST_ODIAG_PA7_NEG)
+    /* NEGATIVE CONTROL (ctest pa7_shadow_identity_negative): the shadow's
+     * cells leak into the live ones — PA7 → 0xFFF90920, the C9 bit-7
+     * request → 0xFFF9095A, its 0x9095B model → 0xFFF9095B (this test has no
+     * range set up: the shadow sits in state 3 with PA7 = C9b7 = 0, so the
+     * 0x0F of 0x9095B is the leak the hash must see) */
+    *(volatile uint8_t *)(uintptr_t)0xFFF90920u = pa7_shadow_state()->pa7;
+    *(volatile uint8_t *)(uintptr_t)0xFFF9095Au = pa7_shadow_state()->c9b7;
+    *(volatile uint8_t *)(uintptr_t)0xFFF9095Bu = pa7_shadow_state()->s9095b;
+#endif
+#endif
     drv_f_stage();                      /* 0x8EE30: compose, cyclic + config queued */
     drv_id_kick();                      /* 0x8EE82 → 0x921A0 */
     drain();
@@ -389,6 +415,9 @@ static void step_ms(uint32_t t)
     }
     if (t % 10u == 5u) {                /* the 10 ms task */
         rq_prod_task_10ms(1u);
+#if defined(TEST_ODIAG_PA7)
+        pa7_hook_range(1u);
+#endif
 #if defined(OD_OLD)
         drv_cyclic_periodic();
         drain();
@@ -676,6 +705,9 @@ static void step_ms_main(uint32_t t, uint32_t t_sup, bool trace)
     if (t % 10u == 1u) {                /* task_10ms, phase 1 */
         drv_rq_request_set(7u, s_p4_req7);      /* park_tick: the release demand */
         rq_prod_task_10ms(1u);
+#if defined(TEST_ODIAG_PA7)
+        pa7_hook_range(1u);
+#endif
         /* (sol_tick: no bus A since the output-cadence port) */
     }
     if (t % 10u == 2u) {                /* task_sup_batch, phase 2, the 10 ms part (mode 1) */
@@ -788,10 +820,18 @@ int main(int argc, char **argv)
             for (uint8_t ch = 0u; ch < 10u; ch++) {
                 cls_ok += (s->cmp[ch].agree_n != 0u) ? 1u : 0u;
             }
-            fprintf(stderr, "fbs isr %u windows %u/%u ticks %u r_upd %u pair_bad %u channels-compared %u\n",
+            fprintf(stderr, "fbs isr %u windows %u/%u ticks %u r_upd %u pair_bad %u channels-compared %u"
+                    " recorder %u/%u\n",
                     (unsigned)s->isr_n, (unsigned)s->win_n[0], (unsigned)s->win_n[1],
-                    (unsigned)s->tick_n, (unsigned)s->r_upd_n, (unsigned)s->pair_bad_n, cls_ok);
+                    (unsigned)s->tick_n, (unsigned)s->r_upd_n, (unsigned)s->pair_bad_n, cls_ok,
+                    (unsigned)fb_shadow_rec()->n_rec, (unsigned)fb_shadow_rec()->n_dis);
         }
+#endif
+#if defined(TEST_ODIAG_PA7)
+        fprintf(stderr, "pa7 rng %u pin %u law %u hi %u c9b7 %u\n",
+                (unsigned)pa7_shadow_state()->rng_n, (unsigned)pa7_shadow_state()->pin_n,
+                (unsigned)pa7_shadow_state()->law_n, (unsigned)pa7_shadow_state()->hi_n,
+                (unsigned)pa7_shadow_state()->c9b7_n);
 #endif
         printf("%s (%d failures)\n", fails == 0 ? "PASS" : "FAIL", fails);
         return fails == 0 ? 0 : 1;

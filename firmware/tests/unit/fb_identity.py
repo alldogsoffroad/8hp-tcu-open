@@ -2,7 +2,10 @@
 """fb_identity.py - THE FEEDBACK SHADOW LEAVES THE LIVE PATH BIT-IDENTICAL
 (ours, 2026-11-18, ~/tcu_sweep/feedback_shadow_port.md).
 
-  fb_identity.py <test_odiag> <test_odiag_fbs>
+  fb_identity.py <test_odiag> <test_odiag_fbs> [--pa7]
+
+(--pa7, 2026-11-18 r04d: the second build also carries the PA7 shadow's
+hooks; its stderr must show the range part, the pin-cut part and the law ran.)
 
 Runs both with --full (tests/unit/test_odiag.c: parts 1-4, an exact hash of
 the whole cell window + every bus-A word + the cadence witnesses per output
@@ -36,6 +39,11 @@ def main():
     if not m or int(m.group(1)) == 0 or int(m.group(4)) == 0 or int(m.group(7)) != 10:
         print("FAIL: the shadow did not run (%s)" % b.stderr.strip())
         ok = False
+    if "--pa7" in sys.argv[3:]:
+        mp = re.search(r"pa7 rng (\d+) pin (\d+) law (\d+)", b.stderr)
+        if not mp or int(mp.group(2)) == 0 or int(mp.group(3)) == 0 or int(mp.group(1)) == 0:
+            print("FAIL: the PA7 shadow did not run (%s)" % b.stderr.strip())
+            ok = False
     print("feedback shadow identity: %d output ticks, %d lines, %s; %s" %
           (ticks, len(la), "identical" if not bad and len(la) == len(lb) else "DIFFERENT",
            b.stderr.strip()))

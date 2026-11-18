@@ -49,6 +49,12 @@
 #ifndef TCU_RNG_CHAIN_H
 #define TCU_RNG_CHAIN_H
 
+/* THE PA7 SHADOW IS READ-ONLY (app/pa7_shadow.c defines TCU_PA7_SHADOW_TU):
+ * it may not include a live header */
+#if defined(TCU_PA7_SHADOW_TU)
+#error "the PA7 shadow is read-only: it may not include a live header (rng_chain.h)"
+#endif
+
 #include <stdint.h>
 
 /* 0x9B228 one-shot (the init list): the init arbiter, the filter tables

@@ -39,6 +39,7 @@
 #include "app/tmp_chain.h"
 #include "app/gs_shadow.h"
 #include "app/fb_shadow.h"
+#include "app/pa7_shadow.h"
 #include "app/park_law.h"
 
 /* Shaft assignment of the speed channels (spec 02 section 4.1), the stock calibration's routing:
@@ -273,6 +274,12 @@ static void task_10ms(void)
          * stock's 100 ms slot made one (0xFF = no report this pass) */
         rng_chain_tick_10ms(sup_mode(), pw.failed,
                             park_pair_take_report() ? pw.tested : 0xFFu);
+#if !defined(TCU_RAM_APP)
+        /* THE PA7 SHADOW's range part (app/pa7_hook.c, read-only): the
+         * stock's 0x9B34A calls 0xA6CF8 (E567 → D713 → D712) after the D6D6
+         * chain, modes 1..3 */
+        pa7_hook_range(sup_mode());
+#endif
     }
     park_set_os_mode(sup_mode());   /* 0x89C3C for the fault-reaction park request */
     park_tick_10ms();
@@ -419,6 +426,11 @@ int main(void)
      * level 6) — the stock arms it in its init batch (0x90010) */
     fb_shadow_init();
     fb_shadow_start();
+    /* the read-only PA7 shadow (app/pa7_shadow.c, its own RAM): cleared as
+     * 0x90D12 leaves PA7 (0), then the 0x9B228 one-shot's 0xA6CF8 on the
+     * init arbiter's range */
+    pa7_shadow_init();
+    pa7_hook_range_init();
 #endif
     park_pair_init();                   /* park sensor: 0x141B1C (safety layer) */
     sensors_init(&s_sensors_cfg);

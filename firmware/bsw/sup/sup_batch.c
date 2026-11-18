@@ -49,6 +49,10 @@ extern void drv_out_report(void) __attribute__((weak));
  * tests link without it), absent from the RAM application (zero margin) */
 #if !defined(TCU_RAM_APP)
 extern void app_out_head_hook(void) __attribute__((weak));
+/* the PA7 shadow (app/pa7_hook.c, read-only) at the pin-cut entry 0x7CC32:
+ * the stock's 0x86B0C is its 6th call, after 0x849D4; weak, so the
+ * supervisor tests link without it (2026-11-18, r04d) */
+extern void app_pin_cut_hook(void) __attribute__((weak));
 #endif
 /* M4 group A (drv_groupa.c / drv_temp.c; ~/tcu_sweep/groupA_park_port.md):
  * the stock's list entries, weak so the supervisor tests link without them —
@@ -353,6 +357,11 @@ void sup_batch_5ms(void)
         if (drv_ga_law_tick) {
             drv_ga_law_tick();          /* 0x44D18: 0x7CC32 → 0x849D4 (M4) */
         }
+#if !defined(TCU_RAM_APP)
+        if (app_pin_cut_hook) {
+            app_pin_cut_hook();         /* 0x44D18: 0x7CC32 → 0x86B0C (the PA7 shadow, read-only) */
+        }
+#endif
         sup_j2_stage();                 /* 0x44D1C: 0x8EDF6 → 0x91804 */
         if (drv_f_stage) {
             drv_f_stage();              /* 0x44D20: 0x8EE30 → 0x901A0 (cyclic, config) */
@@ -426,6 +435,11 @@ void sup_batch_5ms(void)
             if (drv_ga_law_tick) {
                 drv_ga_law_tick();      /* 0x44E64: 0x7CC32 → 0x849D4 (M4) */
             }
+#if !defined(TCU_RAM_APP)
+            if (app_pin_cut_hook) {
+                app_pin_cut_hook();     /* 0x44E64: 0x7CC32 → 0x86B0C (the PA7 shadow, read-only) */
+            }
+#endif
             if (drv_f_stage) {
                 drv_f_stage();          /* 0x44E68: 0x8EE30 → 0x901A0 (cyclic, config) */
             }

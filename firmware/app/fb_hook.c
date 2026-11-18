@@ -31,7 +31,14 @@ void fb_shadow_gather_tick(void)
         in.si_duty[ch] = LIVE_U16(0xFFF9340Cu + 2u * ch);
         in.si_est[ch] = LIVE_U16(0xFFF93394u + 2u * ch);
         in.si_res[ch] = LIVE_U16(0xFFF933A8u + 2u * ch);
+        in.mode[ch] = LIVE_U8(0xFFF94FD8u + ch);               /* 0x94FD8 (recorder) */
     }
+    /* the disagreement recorder's context (witness only) */
+    in.seq2 = LIVE_U8(0xFFF94FD0u);                             /* 0x94FD0[0] */
+    in.os_mode = LIVE_U8(0xFFF93B33u);                          /* 0x93B33 */
+    in.phase = LIVE_U16(0xFFF94FE2u);                           /* 0x94FE2 */
+    in.f114 = LIVE_U8(0xFFF94114u);                             /* 0x94114 */
+    in.f115 = LIVE_U8(0xFFF94115u);                             /* 0x94115 */
     fb_shadow_tick(&in);
 }
 

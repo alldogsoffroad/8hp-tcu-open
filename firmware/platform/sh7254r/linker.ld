@@ -391,6 +391,31 @@ SECTIONS
     ASSERT(__fb_shadow_end <= ADDR(.rng_wit), ".fb_shadow runs into .rng_wit")
     ASSERT(__fb_shadow_start == 0xFFF86A00 && SIZEOF(.fb_shadow) == 0x34C, ".fb_shadow: fbs_t is off 0xFFF86A00 (witness_fbshadow.py)")
 
+    /* THE FEEDBACK DISAGREEMENT RECORDER (app/fb_shadow.c, ours — not a
+     * stock cell; 2026-11-18, ~/tcu_sweep/r04d_recorder_pa7_shadow.md):
+     * struct fbr_t (0xBE8) in 0xFFF85400..0xFFF86000 — stock RAM that the
+     * stock driving dump shows all zero (0xFFF85400..0xFFF88100) and that
+     * no section of ours uses (.park_out ends 0xFFF851B2, .m5_rec starts
+     * 0xFFF86000). Cleared by fb_shadow_init; costs no stack guard. */
+    .fb_rec 0xFFF85400 (NOLOAD) : {
+        __fb_rec_start = .; *(.fb_rec) . = ALIGN(4); __fb_rec_end = .;
+    } > RAM
+    ASSERT(__fb_rec_start >= ADDR(.park_out) + SIZEOF(.park_out), ".fb_rec overlaps .park_out")
+    ASSERT(__fb_rec_end <= ADDR(.m5_rec), ".fb_rec runs into .m5_rec")
+    ASSERT(__fb_rec_start == 0xFFF85400 && SIZEOF(.fb_rec) == 0xBE8, ".fb_rec: fbr_t is off 0xFFF85400 (witness_fbshadow.py)")
+
+    /* THE PA7 SHADOW (app/pa7_shadow.c, ours — not stock cells; 2026-11-18,
+     * ~/tcu_sweep/r04d_recorder_pa7_shadow.md): struct pa7s_t (0x124) in the
+     * free low RAM 0xFFF87880..0xFFF87A00 between .kl15_wit (ASSERTed
+     * <= 0xFFF87880) and .od_wit (0xFFF87A00). Cleared by pa7_shadow_init. */
+    .pa7_shadow 0xFFF87880 (NOLOAD) : {
+        __pa7_shadow_start = .; *(.pa7_shadow) *pa7_shadow.c.obj(.bss .bss.* COMMON)
+        . = ALIGN(4); __pa7_shadow_end = .;
+    } > RAM
+    ASSERT(__pa7_shadow_start >= __kl15_wit_end, ".pa7_shadow overlaps .kl15_wit")
+    ASSERT(__pa7_shadow_end <= __od_wit_start, ".pa7_shadow runs into .od_wit")
+    ASSERT(__pa7_shadow_start == 0xFFF87880 && SIZEOF(.pa7_shadow) == 0x124, ".pa7_shadow: pa7s_t is off 0xFFF87880 (witness_pa7.py)")
+
     /* our request-law witnesses and the refresh snapshot (not stock cells;
      * free low RAM like .sup_wit, so they do not cost the stack guard) */
     .drv_wit 0xFFF84C40 (NOLOAD) : {

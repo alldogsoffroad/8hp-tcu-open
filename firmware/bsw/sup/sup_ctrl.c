@@ -18,6 +18,9 @@
  * routes to the WDT (interval mode) ONLY when the echo confirms — no echo
  * bit 0 means no WDT switch (the A-law, design §5.6).
  */
+/* the C9 word (bit 7 = the 0x9095A request) is composed here: an OUTPUT
+ * path — it may not name the read-only PA7 shadow (app/pa7_shadow.h) */
+#define TCU_OUTPUT_PATH 1
 #include "bsw/sup/sup_ctrl.h"
 #include "bsw/sup/sup_jobs.h"
 #include "bsw/sup/sup_cells.h"
