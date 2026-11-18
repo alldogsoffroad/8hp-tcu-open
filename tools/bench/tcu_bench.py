@@ -54,6 +54,9 @@ Commands:
   range-check [--sim-brake] [--sim-engine RPM] [--start-before-power] [--settle S]
                           (alias shadow-check) PROJECT firmware: lever P R N D P, the live range
                           chain's cells (at the stock addresses) and the park path per step
+  keyoff-check [--off-code C] [--sim-brake] [--sim-engine RPM] [--settle S]
+                          PROJECT firmware: KEY-OFF TEST - sends 0x112 (ignition status) 4, then
+                          the OFF code C (the only command that may send a code other than 4/5)
   canstat [--send]        Teensy adapter error counters per bus (slcan only); --send first
                           transmits a tester-present frame on each bus to provoke ACK errors
 """
@@ -1487,7 +1490,8 @@ class VehicleSim(threading.Thread):
 # the stock addresses (read directly); the fault-manager model is ours, s_rc_m (rng_chain_model_t)
 RC_BLOCKS = {"d5e4": (0xFFF8D5E4, 0x30), "d61a": (0xFFF8D61A, 0x80), "d6ca": (0xFFF8D6CA, 0x16),
              "e530": (0xFFF8E530, 0x1C), "893e0": (0xFFF893E0, 0x18), "304c": (0xFFF8304C, 0x18)}
-RCM_SIZE = 0x74       # rng_chain_model_t
+RCM_SIZE = 0x80       # rng_chain_model_t (0x74 until 2026-11-17: + the DSM operating cycle)
+RCM_DSM, RCM_RECYCLE = 0x74, 0x78     # 0xAE890's state, terminal re-cycles (keyoff_autop_port.md)
 RCM_G109, RCM_G98, RCM_U_FAILED, RCM_U_TESTED = 0x02, 0x03, 0x00, 0x01
 RCM_U_FAIL, RCM_U_PASS, RCM_SKIP, RCM_FM_MS, RCM_FM109, RCM_FM98 = 0x14, 0x18, 0x1C, 0x20, 0x24, 0x4C
 
@@ -1535,7 +1539,8 @@ def chain_line(cc):
             f"{m[RCM_U_FAILED]}/{m[RCM_U_TESTED]} D60C {cc.w(0xD60C)} fail/pass "
             f"{u32(RCM_U_FAIL)}/{u32(RCM_U_PASS)} P0850 g98 {m[RCM_G98]} | D660 {cc.c(0xD660)} "
             f"D661 {cc.c(0xD661)} D664 {cc.c(0xD664)} D665 {cc.c(0xD665)} D666 {cc.c(0xD666)} "
-            f"skip {u32(RCM_SKIP)} | FM ms {u32(RCM_FM_MS)} " + " ".join(
+            f"skip {u32(RCM_SKIP)} | KL15 D641 {cc.c(0xD641)} D642 {cc.c(0xD642)} D643 {cc.c(0xD643)} "
+            f"cycle {m[RCM_DSM]} re-cycles {u32(RCM_RECYCLE)} | FM ms {u32(RCM_FM_MS)} " + " ".join(
                 f"{nm}: st {u16(o):04X} t {u16(o + 2)} max {u16(o + 6)} in-masks {m[o + 10]} "
                 f"conf {u32(o + 0x14)}@{u32(o + 0x20)} heal {u32(o + 0x18)}@{u32(o + 0x24)}"
                 for nm, o in (("g109", RCM_FM109), ("g98", RCM_FM98))))
@@ -1633,6 +1638,145 @@ def cmd_range_check(b, args):
     return 0 if all(results) else 1
 
 
+# ---------------------------------------------------------------- key-off auto-P (2026-11-17)
+# 0x112 IS THE IGNITION STATUS (~/tcu_sweep/can_inputs_decode.md, keyoff_autop_port.md): byte 0
+# bits 2..0, 4 / 5 = on, 7 = not available; ANY OTHER VALID CODE TURNS THE IGNITION LOGICALLY OFF
+# (the terminal-15 state E9FF -> 3 -> 4: the range chain forces P (0xC286C, 8 / 0x50); on the STOCK
+# firmware also the OS mode drops to 1 and [I] the power-down path starts). This tool never sends
+# 0x112 except from IgnitionSender, and IgnitionSender refuses a code other than 4 / 5 unless it was
+# built with allow_off=True - which only cmd_keyoff_check does, after its banner and a yes.
+KL15_OBJ, KL15_LEN = 0xFFF8E9D4, 0x31         # safety/kl15.c: the stock object 0x140B80
+
+
+def ign_frame(code, allow_off=False):
+    """0x112 data (dlc 2, no E2E: com.c M_112) for ignition code `code`."""
+    if code not in (4, 5) and not allow_off:
+        raise ValueError(f"0x112 code {code} would turn the ignition OFF - refused "
+                         "(only keyoff-check may send it)")
+    if not 0 <= code <= 7:
+        raise ValueError(f"0x112 code {code} out of range")
+    return bytes([code & 0x07, 0])
+
+
+class IgnitionSender(threading.Thread):
+    """0x112 on bus 1 every 10 ms (the firmware's timeout is 50 ms); self.code = None stops
+    sending (0x112 lost -> the voltage path). A code other than 4 / 5 needs allow_off."""
+    def __init__(self, b, allow_off=False):
+        super().__init__(daemon=True)
+        self.b, self.allow_off = b, allow_off
+        self.code = 4
+        self.stop = threading.Event()
+
+    def run(self):
+        t = time.monotonic()
+        while not self.stop.is_set():
+            code = self.code
+            if code is not None:
+                try:
+                    self.b.send(1, 0x112, ign_frame(code, self.allow_off))
+                except ValueError:
+                    raise
+                except Exception as e:                 # keep going; the step check will show it
+                    print("  send error:", e)
+            t += 0.010
+            time.sleep(max(0.0, t - time.monotonic()))
+
+
+def cmd_keyoff_check(b, args):
+    """KEY-OFF AUTO-P TEST (project firmware with safety/kl15.c, 2026-11-17): drives 0x112 (the
+    ignition status) with the lever / brake / engine sims, and reads the terminal-15 object
+    (0xFFF8E9D4: E9FF, quality, agreement), the chain's D641 / D642 and the park path per step.
+    Expected (host model test_keyoff):
+      ign 4 + P            -> E9FF 2, quality 0 (CAN path), range 8, outputs off
+      ign 4 + D (sims)     -> range 5, release + hold ON
+      ign OFF (--off-code) -> E9FF 4 two passes later; range 8 in the same pass (D6DE 8 / 0x50,
+                              0xC286C), both outputs off; mon 0x00
+      ign 4 again, lever D -> range stays 8 (the lever latch D5FB), outputs off
+      lever P, then D      -> range 5, outputs ON again; mon 0x00
+      0x112 stopped (lost) -> the voltage path: E9FF stays 2 while the supply is >= 4 V; after the
+                              key-off with the supply on the unit has learned "disagree" (+0x21 =
+                              2, after 0.5 s) -> quality 2; with the engine sim running (893E8 >= 1)
+                              D5F2 stays 1 and D is KEPT (released); without an engine it would be
+                              key-off (RAM only in our firmware - a power cycle restores 1; THE
+                              STOCK FIRMWARE WOULD STORE IT IN EEPROM)
+    Without --sim-brake / --sim-engine > 430 every step keeps P (the key-off is then only seen in
+    E9FF / D641)."""
+    b.start_drain()
+    if args.off_code in (4, 5) or not 0 <= args.off_code <= 6:
+        sys.exit("--off-code must be an 'off' code: 0, 1, 2, 3 or 6")
+    m_addr = meas_table_addr(args.elf, 54)
+    rcm_addr, rcm_size = elf_sym(args.elf, "_s_rc_m")
+    if rcm_size != RCM_SIZE:
+        sys.exit(f"_s_rc_m is {rcm_size:#x} bytes, this tool expects {RCM_SIZE:#x}: the struct changed")
+    release = bool(args.sim_brake) and (args.sim_engine or 0) > 430
+    print("!" * 78)
+    print(f"!! KEY-OFF TEST: this command sends 0x112 (IGNITION STATUS) with the OFF code {args.off_code}.")
+    print("!! Project firmware only. NEVER on the stock firmware (it would start its power-down path and")
+    print("!! learn the CAN / voltage disagreement into EEPROM), never on a vehicle.")
+    print("!! The STOCK range chain is LIVE: with the sims, D releases park (release 1.0 A + hold).")
+    print("!" * 78)
+    fake_signal_banner(args)
+    if input("Project firmware, mechatronic dry, ammeter running, supply limit 4 A? [yes/no] ").strip() != "yes":
+        return 1
+    lev = LeverSender(b)
+    lev.code, lev.on_2ea, lev.on_210 = 1, True, True
+    lev.brake = bool(args.sim_brake)
+    lev.rpm = int(args.sim_engine or 0)
+    ign = IgnitionSender(b, allow_off=True)
+    ign.code = 4
+    results = []
+    try:
+        lev.start()
+        ign.start()
+        for _ in range(10):
+            if meas(b, args.bus, [0x02], timeout=1.5):
+                break
+            time.sleep(0.4)
+
+        def read_retry(addr, n):
+            for k in range(5):
+                try:
+                    return read_mem(b, args.bus, addr, n)
+                except RuntimeError:
+                    if k == 4:
+                        raise
+                    time.sleep(0.2)
+        P, D = 1, 4
+        rel = 5 if release else 8
+        # (description, lever, 0x112 code or None, expected E9FF, expected quality, expected range)
+        steps = [("ign 4, lever P",              P, 4,             2, 0, 8),
+                 ("ign 4, lever D",              D, 4,             2, 0, rel),
+                 (f"ign OFF ({args.off_code}), lever D", D, args.off_code, 4, 0, 8),
+                 ("ign 4 again, lever D",        D, 4,             2, 0, 8),
+                 ("ign 4, lever P",              P, 4,             2, 0, 8),
+                 ("ign 4, lever D",              D, 4,             2, 0, rel),
+                 ("0x112 stopped, lever D",      D, None,          2, 2, rel),
+                 ("0x112 stopped, lever P",      P, None,          2, 2, 8)]
+        for desc, lv, code, w_ff, w_q, w_rng in steps:
+            lev.code, ign.code = lv, code
+            time.sleep(args.settle)
+            d = read_retry(m_addr, 54)
+            o = read_retry(KL15_OBJ, KL15_LEN)
+            g = read_retry(0xFFF8D641, 3)
+            ok = o[0x2B] == w_ff and o[0x2D] == w_q and d[48] == w_rng and d[53] == 0
+            ok = ok and (d[51] & 3) == (3 if w_rng != 8 else 0)
+            results.append(ok)
+            print(f"  {'PASS' if ok else 'FAIL'}  {desc:30s} E9FF {o[0x2B]} q {o[0x2D]} agree {o[0x21]} "
+                  f"CANinv {o[0x20]} code {o[0x26]} V {int.from_bytes(o[0x24:0x26], 'big')} mV | "
+                  f"D641/2/3 {g[0]}/{g[1]}/{g[2]} | " + park_line(d)
+                  + ("" if ok else f"   expected E9FF {w_ff} q {w_q} range {w_rng}"))
+    finally:
+        ign.code = None
+        ign.stop.set()
+        lev.stop.set()
+        ign.join(1.0)
+        lev.join(1.0)
+        print("all simulated frames stopped (0x112, lever, brake, engine); power-cycle the TCU to"
+              " restore the agreement flag")
+    print(f"{sum(results)}/{len(results)} steps passed")
+    return 0 if all(results) else 1
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--iface", default="slcan", help="slcan (Teensy, default) or socketcan")
@@ -1681,6 +1825,10 @@ def main():
         p = sub.add_parser(nm); p.add_argument("--bus", type=int, default=1)
         p.add_argument("--elf", default="build/sh2a/tcu_app.elf"); p.add_argument("--settle", type=float, default=2.0)
         sim_args(p)
+    p = sub.add_parser("keyoff-check"); p.add_argument("--bus", type=int, default=1)
+    p.add_argument("--elf", default="build/sh2a/tcu_app.elf"); p.add_argument("--settle", type=float, default=1.0)
+    p.add_argument("--off-code", type=int, default=0, help="the 0x112 OFF code sent (0, 1, 2, 3 or 6)")
+    sim_args(p)
     p = sub.add_parser("park-out"); p.add_argument("--bus", type=int, default=1)
     p.add_argument("--csv", default="m4b_park_out_results.csv")
     p = sub.add_parser("app-flash"); p.add_argument("image", nargs="?", default="build/sh2a/tcu_app_df.bin")
@@ -1726,7 +1874,8 @@ def main():
          "plant-probe34": cmd_plant_probe34, "plant-dump-session": cmd_plant_dump_session,
          "app-selftest": cmd_app_selftest, "sensors": cmd_sensors, "park": cmd_park,
          "park-check": cmd_park_check, "park-out": cmd_park_out,
-         "range-check": cmd_range_check, "shadow-check": cmd_range_check}[args.cmd](b, args)
+         "range-check": cmd_range_check, "shadow-check": cmd_range_check,
+         "keyoff-check": cmd_keyoff_check}[args.cmd](b, args)
     finally:
         b.shutdown()
 

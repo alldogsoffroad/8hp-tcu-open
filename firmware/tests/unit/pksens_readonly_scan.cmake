@@ -10,7 +10,7 @@
 set(PATTERNS
     "drv_pksens" "park_pair" "CELL_PKS_" "CELL_PKP_" "PKP_"
     # the sensor's stock cells (case-insensitive below)
-    "FFF907E8" "FFF900B[0-7]" "FFF93942" "FFF934[C-E][0-9A-F]"
+    "FFF907E8" "FFF900B[0-7]" "FFF93942" "FFF934C[4-9A-F]" "FFF934D[0-9A-F]" "FFF934E[0-7]"
     "FFF93A[C-F][0-9A-F]" "FFF93B0[0-3]" "FFF9415F" "FFF9416[0-9A-D]"
     "FFF9417[0-3]" "FFF94F8[89A-F]" "FFF94F9[0-3]" "FFF94E0[0-9A-B]"
     "FFF9411D" "FFF9477E" "FFF92FE[4-9A-F]" "FFF847F[4-9A-F]" "FFF8480[0-3]"

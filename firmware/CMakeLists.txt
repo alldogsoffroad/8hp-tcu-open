@@ -18,7 +18,7 @@ set(CORE_SOURCES
     bsw/sup/sup_letters.c
     bsw/sup/sup_ladder.c bsw/sup/sup_mode.c
     bsw/sup/sup_token.c
-    bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c
+    bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c
     bsw/drv/drv_handlers.c
     bsw/drv/drv_groupa.c bsw/drv/drv_temp.c
     bsw/drv/drv_pksens.c
@@ -44,6 +44,7 @@ set(CORE_SOURCES
     app/tmp_chain.c
     safety/park_mon.c
     safety/park_pair.c
+    safety/kl15.c
     safety/tmp_safe.c
     app/bench_dump.c
     app/flash_entry.c
@@ -199,7 +200,7 @@ else()
     add_executable(test_meas tests/unit/test_meas.c bsw/meas/meas.c tests/unit/stub_plat.c)
     add_test(NAME meas COMMAND test_meas)
     add_executable(test_com_tx tests/unit/test_com_tx.c bsw/com/com_tx.c bsw/com/sigpack.c
-        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c
     bsw/drv/drv_handlers.c
     bsw/com/crc8.c io/vehicle/fca_tx.c tests/unit/stub_plat.c)
     add_test(NAME com_tx COMMAND test_com_tx)
@@ -212,7 +213,7 @@ else()
     add_test(NAME sol COMMAND test_sol)
     add_executable(test_bench tests/unit/test_bench.c app/bench_out.c io/actuators/sol_ctl.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
-        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c bsw/sup/sup_token.c bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_handlers.c
+        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c bsw/sup/sup_token.c bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
         bsw/diag/uds.c bsw/diag/isotp.c bsw/diag/boot_record.c
         io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
         tests/unit/stub_plat.c)
@@ -224,7 +225,7 @@ else()
     # getters into the request law's on-time limit
     add_executable(test_park tests/unit/test_park.c app/range.c app/park_law.c app/park.c
         safety/park_mon.c io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c
-        bsw/com/crc8.c bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_handlers.c
+        bsw/com/crc8.c bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
         tests/unit/stub_plat.c)
     add_test(NAME park COMMAND test_park)
     # r03b: the stock's solenoid request law (drv_reqlaw.c) — the driving
@@ -232,7 +233,7 @@ else()
     # tests and our interlock, the undervoltage / minimum-current laws, the
     # 'U' gate, the same-tick refresh. Nonzero requests exist ONLY here.
     add_executable(test_reqlaw tests/unit/test_reqlaw.c bsw/drv/drv_jobs.c
-        bsw/drv/drv_reqlaw.c bsw/drv/drv_handlers.c tests/unit/stub_plat.c)
+        bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c tests/unit/stub_plat.c)
     add_test(NAME reqlaw COMMAND test_reqlaw)
     # M5-0 (2026-11-16, ~/tcu_sweep/m5_0_port.md): the stock request
     # producer (app/rq_prod.c) in front of the law, built as the target
@@ -247,7 +248,7 @@ else()
         "the stock driving RAM dump (M5-0 cell checks)")
     add_executable(test_m5prod tests/unit/test_m5prod.c app/rq_prod.c app/rq_fill.c
         app/rq_fill_cal.c bsw/drv/drv_jobs.c
-        bsw/drv/drv_reqlaw.c bsw/drv/drv_handlers.c tests/unit/stub_plat.c)
+        bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c tests/unit/stub_plat.c)
     target_compile_definitions(test_m5prod PRIVATE DRV_RQ_USE_PRODUCER=1 RQ_M5_STAGE=0x1A
         "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"" "TCU_STOCK_DUMP=\"${TCU_STOCK_DUMP}\"")
     add_test(NAME m5prod COMMAND test_m5prod)
@@ -260,7 +261,7 @@ else()
     # against the image, the fill cells / fill times against the dump.
     # m5fill_mut: the guard's lower bound mutated to 499 must FAIL the test.
     set(M5F_SOURCES tests/unit/test_m5fill.c app/rq_prod.c app/rq_fill.c app/rq_fill_cal.c
-        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_handlers.c tests/unit/stub_plat.c)
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c tests/unit/stub_plat.c)
     add_executable(test_m5fill ${M5F_SOURCES})
     target_compile_definitions(test_m5fill PRIVATE DRV_RQ_USE_PRODUCER=1 RQ_M5_STAGE=0x1A
         "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"" "TCU_STOCK_DUMP=\"${TCU_STOCK_DUMP}\"")
@@ -281,7 +282,7 @@ else()
     # 0x43 reproduced from the dump's own gathered inputs (--stock)
     add_executable(test_tmpchain tests/unit/test_tmpchain.c app/tmp_chain.c safety/tmp_safe.c
         bsw/drv/drv_temp.c app/rq_prod.c app/rq_fill.c app/rq_fill_cal.c
-        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_handlers.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
         bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c
         bsw/sup/sup_token.c tests/unit/stub_plat.c)
@@ -295,7 +296,7 @@ else()
     # temperature 0x887D8 — host runtime path, then the three compile-time
     # stage configurations exactly as the target builds them
     set(GA_TEST_SOURCES tests/unit/test_groupa.c bsw/drv/drv_groupa.c bsw/drv/drv_temp.c
-        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_handlers.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
         bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c
         bsw/sup/sup_token.c tests/unit/stub_plat.c)
@@ -473,9 +474,9 @@ else()
     # bit-identical with the sensor in every state
     add_executable(test_pksens tests/unit/test_pksens.c bsw/drv/drv_pksens.c
         safety/park_pair.c app/range.c app/park_law.c app/park.c safety/park_mon.c
-        app/rng_chain.c bsw/sched/sched.c
+        app/rng_chain.c safety/kl15.c bsw/sched/sched.c
         io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
-        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_handlers.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
         tests/unit/stub_plat.c)
     add_test(NAME pksens COMMAND test_pksens)
     # ... and its read-only frame: no output path names the sensor (source
@@ -490,6 +491,7 @@ else()
         ${CMAKE_SOURCE_DIR}/safety/park_mon.c ${CMAKE_SOURCE_DIR}/safety/park_mon.h
         ${CMAKE_SOURCE_DIR}/bsw/drv/drv_park.h
         ${CMAKE_SOURCE_DIR}/bsw/drv/drv_reqlaw.c ${CMAKE_SOURCE_DIR}/bsw/drv/drv_reqlaw.h
+        ${CMAKE_SOURCE_DIR}/bsw/drv/drv_odiag.c ${CMAKE_SOURCE_DIR}/bsw/drv/drv_odiag.h
         ${CMAKE_SOURCE_DIR}/bsw/drv/drv_jobs.c ${CMAKE_SOURCE_DIR}/bsw/drv/drv_jobs.h
         ${CMAKE_SOURCE_DIR}/bsw/drv/drv_groupa.c ${CMAKE_SOURCE_DIR}/bsw/drv/drv_groupa.h
         ${CMAKE_SOURCE_DIR}/bsw/drv/drv_cells.h
@@ -517,29 +519,52 @@ else()
     # → the park law → the two park demands; the dump-stand-in answer, the
     # brake + engine release, the U1267 debounce and gaps; park_mon's
     # independent checks with mutations of the chain's output
-    set(RNG_TEST_SOURCES app/rng_chain.c
+    set(RNG_TEST_SOURCES app/rng_chain.c safety/kl15.c
         app/range.c app/park_law.c app/park.c safety/park_mon.c bsw/sched/sched.c
         io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
-        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_handlers.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
         tests/unit/stub_plat.c)
     add_executable(test_rng_chain tests/unit/test_rng_chain.c ${RNG_TEST_SOURCES})
     target_compile_definitions(test_rng_chain PRIVATE RNG_CHAIN_TEST_HOOKS=1)
     add_test(NAME rng_chain COMMAND test_rng_chain)
+    # KEY-OFF AUTO-P (2026-11-17, ~/tcu_sweep/keyoff_autop_port.md): the
+    # terminal-15 object 0x140B80 (safety/kl15.c) feeding D641 / D642 / D643,
+    # the chain's 0xC286C at key-off, the voltage path, the fault-reaction
+    # park request 0x89CF2 and the DSM terminal re-cycle; park_mon silent
+    add_executable(test_keyoff tests/unit/test_keyoff.c ${RNG_TEST_SOURCES})
+    add_test(NAME keyoff COMMAND test_keyoff)
     # ... "the only output effect is the park demands": the whole 10 ms
     # output path (request producer + fill → request law → bus-A cyclic /
     # config words, group-A slots) traced over the r03s scenarios and
     # compared, masked at the park-release / park-hold positions only, with
     # the trace of HEAD 91cc956 (r03s, the shadow; the golden file was
     # produced by this same program built against that tree)
-    add_executable(test_rng_wire tests/unit/test_rng_wire.c app/rng_chain.c
+    add_executable(test_rng_wire tests/unit/test_rng_wire.c app/rng_chain.c safety/kl15.c
         app/range.c app/park_law.c app/park.c safety/park_mon.c bsw/sched/sched.c
         io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
         app/rq_prod.c app/rq_fill.c app/rq_fill_cal.c
-        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_handlers.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
         tests/unit/stub_plat.c)
     target_compile_definitions(test_rng_wire PRIVATE DRV_RQ_USE_PRODUCER=1)
+    # THE OUTPUT DIAGNOSIS (2026-11-17, bsw/drv/drv_odiag.c; ~/tcu_sweep/
+    # output_diag_port.md): the bench timeline at the healthy chips' replies
+    # vs the trace of HEAD a6ec870 (r03v, no diagnosis; the golden file was
+    # produced by this same program built against that tree with -DOD_HEAD),
+    # then injected chip faults and the witness-only fatal checks
+    add_executable(test_odiag tests/unit/test_odiag.c
+        app/rq_prod.c app/rq_fill.c app/rq_fill_cal.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
+        tests/unit/stub_plat.c)
+    target_compile_definitions(test_odiag PRIVATE DRV_RQ_USE_PRODUCER=1)
+    add_test(NAME odiag_vs_r03v
+        COMMAND test_odiag ${CMAKE_SOURCE_DIR}/tests/unit/golden/odiag_head_a6ec870.txt)
     add_test(NAME rng_wire_vs_r03s
         COMMAND test_rng_wire ${CMAKE_SOURCE_DIR}/tests/unit/golden/rng_wire_r03s.txt)
+    # ... and the WHOLE trace (park demands included) byte for byte against
+    # HEAD 1087992 — the bench case is unchanged by the terminal-15 object
+    # (2026-11-17, ~/tcu_sweep/keyoff_autop_port.md)
+    add_test(NAME rng_wire_vs_head
+        COMMAND test_rng_wire --exact ${CMAKE_SOURCE_DIR}/tests/unit/golden/rng_wire_head_1087992.txt)
     # ... the writer guard (ours): nothing but app/rng_chain.c writes D6D6 /
     # D6D7 / D6D9, E549..E54B or 0xFFF8304C (source scan of every firmware
     # source, comments stripped; a negative fixture), the read-only cell

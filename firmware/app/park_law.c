@@ -188,6 +188,9 @@ void park_law_init(void)
     PCELL_AE29 = 0u;
     PCELL_RNG = 0u;
     PCELL_RNGD = 0u;
+    for (uint8_t i = 0u; i < 4u; i++) {
+        PCELL_AUX[i] = 0u;              /* 0x89CF0..0x89CF3 */
+    }
 }
 
 void park_law_step(uint8_t target, const park_law_in_t *in)
@@ -281,4 +284,19 @@ bool park_law_integrity_ok(void)
         }
     }
     return true;
+}
+
+/* ── 0xB986C +0xB4 (0xB9B52..0xB9BCE): the fault-reaction park request ── */
+uint8_t park_law_aux(const park_aux_in_t *in)
+{
+    uint8_t v = 1u;
+
+    if (in->c3c == 0u && in->c42 != 6u && in->c42 != 8u &&
+        in->ced != 1u && in->ced != 7u && in->b7be == 0u) {
+        v = 0u;
+    }
+    PCELL_AUX[0] = v;                   /* 0x89CF0 (+0xB4) */
+    PCELL_AUX[2] = v;                   /* 0x89CF2 (+0xB6) */
+    PCELL_AUX[3] = v;                   /* 0x89CF3 (+0xB7) */
+    return PCELL_AUX[2];
 }

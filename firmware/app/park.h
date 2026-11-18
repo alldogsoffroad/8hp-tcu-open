@@ -34,6 +34,10 @@ typedef struct {
 void park_init(void);
 /* Call every 10 ms after vehicle_update_10ms() and rng_chain_tick_10ms(). */
 void park_tick_10ms(void);
+/* the OS mode (sup_mode) for the fault-reaction park request 0x89CF2
+ * (its input 0x89C3C = the mode-3 flag); 1 after park_init — call before
+ * park_tick_10ms */
+void park_set_os_mode(uint8_t mode);
 const park_status_t *park_status(void);
 
 #endif

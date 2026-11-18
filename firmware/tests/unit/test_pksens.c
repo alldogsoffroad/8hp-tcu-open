@@ -19,6 +19,7 @@
 #include "app/park_cells.h"
 #include "app/range.h"
 #include "app/rng_chain.h"
+#include "safety/kl15.h"
 #include "bsw/com/crc8.h"
 #include "bsw/drv/drv_park.h"
 #include "io/vehicle/vehicle.h"
@@ -405,6 +406,8 @@ static void park_run(int mode, park_snap_t *out)
     vehicle_init();
     park_init();
     rng_chain_init();
+    kl15_init();
+    *(volatile uint16_t *)(uintptr_t)KL15_SRC_CELL = 13206u;   /* the bench supply, mux 14 (dump 0x94F9E = 0x3396) */
     if (mode >= 0) {
         sens_reset();
     }
@@ -438,6 +441,7 @@ static void park_run(int mode, park_snap_t *out)
             send(CAN_BUS1, 0x108u, 8u, true, d);
         }
         vehicle_update_10ms();
+        kl15_tick_10ms();
         {   /* the live range chain, with park_pair's group-98 verdict as
              * main.c passes it (none without the sensor) */
             park_pair_wit_t pw;

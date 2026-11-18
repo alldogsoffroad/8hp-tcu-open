@@ -45,6 +45,7 @@ extern volatile uint8_t g_park_cells[32];
 #define PC_OFF_OUT   16u
 #define PC_OFF_OUTC  21u
 #define PC_OFF_RSN   3u                 /* the RAM app has no chain: reason stays 0 */
+#define PC_OFF_AUX   26u                /* 0x89CF0..0x89CF3 */
 #define PCELL_ARB    ((const volatile uint8_t *)PARK_CELL_PTR(PC_OFF_ARB))
 #define PCELL_TGT    (*(const volatile uint8_t *)PARK_CELL_PTR(PC_OFF_TGT))
 #define PCELL_TGT_C  (*(const volatile uint8_t *)PARK_CELL_PTR(PC_OFF_TGT + 1u))
@@ -61,6 +62,7 @@ extern volatile uint8_t g_park_cells[32];
 #define PCELL_OBJ    PARK_CELL_PTR(PC_OFF_OBJ)
 #define PCELL_OUT    PARK_CELL_PTR(PC_OFF_OUT)
 #define PCELL_OUT_C  PARK_CELL_PTR(PC_OFF_OUTC)
+#define PCELL_AUX    PARK_CELL_PTR(PC_OFF_AUX)
 #else
 #define PCELL_ARB    ((const volatile uint8_t *)0xFFF8E549u)    /* [3] read-only */
 #define PCELL_TGT    (*(const volatile uint8_t *)0xFFF8D6D6u)   /* read-only */
@@ -78,6 +80,7 @@ extern volatile uint8_t g_park_cells[32];
 #define PCELL_OBJ    ((volatile uint8_t *)0xFFF8BC70u)          /* [4] */
 #define PCELL_OUT    ((volatile uint8_t *)0xFFF851A8u)          /* [5] */
 #define PCELL_OUT_C  ((volatile uint8_t *)0xFFF851ADu)          /* [5] */
+#define PCELL_AUX    ((volatile uint8_t *)0xFFF89CF0u)          /* [4]: +0xB4, (+0xB5), +0xB6 = 0x89CF2, +0xB7 */
 #endif
 
 /* the park object 0xFFF8BC70 */

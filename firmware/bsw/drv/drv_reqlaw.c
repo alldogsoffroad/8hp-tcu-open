@@ -5,14 +5,16 @@
  * calibration through the 0x66xxx pointer tables at index 0x90AB8 = 0.
  * ~/tcu_sweep/request_law_port.md.
  *
- * NOT PORTED (diagnostics with no write to any cell this law outputs —
- * named stand-ins / deviations, request_law_port.md §3):
- *   0x8422E  rail filter → 0x93100 (no reader in this law)
- *   0x89F5C  per-channel diagnosis (from pass 2, 0x84A22)
- *   0x7BA76  fault class (0x93004 / 0x84890) — stand-in 1 (no fault)
- *   0x93A42  channel fault class — stand-in 0 (no fault)
- *   0x897AC, 0x8A788, 0x84644, 0x84392, 0x8493A — fault monitors
- *   0x6865C  fault reports 0x226 (complement checks) / 0x238 (counted only)
+ * THE OUTPUT DIAGNOSIS (2026-11-17, drv_odiag.c; output_diag_port.md):
+ * 0x8422E, 0x89F5C, 0x7BA76 (the fault class), 0x93A42 (the channel
+ * class), 0x897AC, 0x8A788, 0x84392 run in the stock order inside the
+ * DIAGNOSTIC pass of the law (drv_rq_law_diag, the 5 ms refresh tick);
+ * 0x84644 / 0x8493A and this function's own inline 0x226 checks are
+ * WITNESS ONLY (counted, never a reset). The plain drv_rq_law (the 10 ms
+ * rebuild) reads the same fault / channel classes and runs no monitor.
+ *
+ * NOT PORTED (named stand-ins / deviations, request_law_port.md §3):
+ *   0x6865C  fault 0x238 (counted only)
  *   0x837E0  adaptive correction — stand-in 0 (host: injectable)
  *   0x89648  dither demand → 0x90320 stays 0 (dump: 0)
  *   0x921E0  chip-ID harvest into the records → 0x9091B stays 0
@@ -25,6 +27,7 @@
 #include "bsw/drv/drv_reqlaw.h"
 #include "bsw/drv/drv_cells.h"
 #include "bsw/drv/drv_jobs.h"
+#include "bsw/drv/drv_odiag.h"
 #include "bsw/sup/sup_cells.h"
 #include <string.h>
 
@@ -262,12 +265,13 @@ static bool rq_chip_enabled(uint8_t ch)
     return chip < 5u && ((CAL_CHIP_EN >> chip) & 1u) != 0u;
 }
 
-/* 0x7BA76 stand-in: 1 (0x93004[ch] == 0 → 1; the stock returns 2 only with
- * 0x93004[ch] != 0 and the request copy 0x84890[ch] == 0) */
-static uint8_t rq_fault_class(uint8_t ch) { (void)ch; return 1u; }
+/* 0x7BA76: 2 only with a fault word 0x93004[ch] != 0 AND the request copy
+ * 0x84890[ch] == 0 (an unrequested channel), else 1 (drv_odiag.c) */
+static uint8_t rq_fault_class(uint8_t ch) { return drv_od_7ba76(ch); }
 
-/* 0x93A42[ch] stand-in: 0 (dump: 00 ×10) */
-static uint8_t rq_chan_class(uint8_t ch) { (void)ch; return 0u; }
+/* 0x93A42[ch]: the channel class of the off-state test machine 0x8E8E4
+ * (drv_odiag.c; 0 at rest — dump 00 ×10) */
+static uint8_t rq_chan_class(uint8_t ch) { return drv_od_chan_class(ch); }
 
 /* ── 0x89540: the letter law, one channel ─────────────────────────────── */
 static void rq_letters(uint8_t ch)
@@ -316,18 +320,43 @@ static void rq_letters(uint8_t ch)
 }
 
 /* ── 0x83DB0: the per-channel gates ───────────────────────────────────── */
-void drv_rq_law(void)
+/* diag: the stock's full pass with its monitors (drv_odiag.c), run once per
+ * 5 ms tick from the refresh; !diag: the same law for the 10 ms rebuild,
+ * reading the classes the last diagnostic pass left (no monitor runs, so
+ * no debounce or edge detector is stepped twice in one tick) */
+#if defined(TCU_RAM_APP)
+#define RQ_DIAG(d) false        /* the RAM application carries no diagnosis (64 KB) */
+#else
+#define RQ_DIAG(d) (d)
+#endif
+
+static void rq_law_run(bool diag_req)
 {
+    const bool diag = RQ_DIAG(diag_req);
+    (void)diag_req;
     /* M5-1: the producer no longer runs here — it runs at the stock cadence
      * (boot state 1, then the 10 ms task in modes 1..3: drv_rqprod.h); the
      * law reads its last 0xFFF84B78 through the guard */
     uint16_t full_mask = 0u;                    /* @(4,r15) → 0x9397C */
     uint16_t fault_mask = 0u;                   /* @(8,r15) → 0x9397A */
+    uint16_t req_all[DRV_RQ_NCH];
+    uint8_t loops = 0u;
 
-    /* 0x8422E (rail filter → 0x93100): not ported, no reader here */
+    /* 0x7B6D8 (before the law): the request of every channel this pass —
+     * the stock's 0x84890 slot array / 0x94D60 complement (0x94EE8 itself
+     * is never written on SH: the safety frame) */
+    for (uint8_t ch = 0u; ch < DRV_RQ_NCH; ch++) {
+        req_all[ch] = rq_request(ch);
+    }
+    if (diag) {
+        drv_od_requests(req_all);
+        drv_od_8422e();                         /* 0x8422E */
+    }
     for (uint8_t ch = 0u; ch < DRV_RQ_NCH; ch++) {
         const uint16_t bit = (uint16_t)(1u << ch);
+        bool ilock = false;
 
+        loops++;
         if (!rq_chip_enabled(ch) || (CAL_CH_MASK & bit) == 0u) {
             /* 0x84156: the channel is not driven */
             CELL_RQ_I2[ch] = 0u;
@@ -335,42 +364,53 @@ void drv_rq_law(void)
             CELL_RQ_MODE[ch] = 0u;
             CELL_RQ_CUR[ch] = 0u;
             CELL_RQ_LETTER[ch] = (uint8_t)'2';
-            continue;                           /* → 0x84644/0x84392/0x8493A (not ported) */
-        }
-        {
+        } else {
             const uint16_t rail = CELL_OUT_MV[0];           /* 0x94ED0, read per channel */
             const uint8_t s = CELL_SEQ2_STATE[0];           /* 0x85DC4(0) */
+            const uint8_t s_b = CELL_SEQ2_STATE[0];         /* 0x85DC4(0), the second read */
             const bool t15 = (CELL_DIAG_94115 & 1u) != 0u;  /* 0x83E42 */
             const bool t14 = (CELL_LAD_94114 & 1u) != 0u;   /* 0x83E4A */
-            const uint8_t fc = rq_fault_class(ch);          /* 0x7BA76 */
-            const uint16_t req = rq_request(ch);
+            uint8_t fc;
+            const uint16_t req = req_all[ch];
             const bool test_state = s == 0x11u || s == 0x16u || s == (uint8_t)'3';
             uint8_t mode = 1u;                              /* r12 */
+            uint8_t inv_m = 0xFEu;                          /* bVar18: ~mode */
+            uint16_t inv_i = 0xFFFFu;                       /* puVar13: ~I */
             bool fault = false;
             uint16_t i = 0u;                                /* r11 */
             uint8_t cls;
 
+            if (diag && drv_od_enabled()) {
+                drv_od_89f5c(ch);                           /* 0x89F5C (from pass 2) */
+            }
+            fc = rq_fault_class(ch);                        /* 0x7BA76 */
             if (fc != 0u && fc != 1u) {                     /* 0x83E7E..0x83EA0 */
                 mode = 0u;
+                inv_m = 0xFFu;
                 fault = true;
                 fault_mask |= bit;
             }
             CELL_RQ_ACTIVE[ch] = (req != 0u && !fault) ? 1u : 0u;   /* 0x83EA6 */
             if (s == (uint8_t)'U' && !fault) {              /* 0x83ECE: THE 'U' GATE */
                 i = req;
+                inv_i = (uint16_t)~req;
             }
             if (i > I_CLAMP) {                              /* 0x83EDE */
                 i = I_CLAMP;
+                inv_i = (uint16_t)~I_CLAMP;
             }
             cls = rq_chan_class(ch);                        /* 0x93A42 */
             if (cls == 2u) {
                 mode = 2u;
+                inv_m = 0xFDu;
             } else if (cls == 1u || cls == 0u) {
                 if (i != 0u) {
                     mode = 3u;                              /* current control */
+                    inv_m = 0xFCu;
                 }
             } else {
                 mode = 0u;
+                inv_m = 0xFFu;
             }
             if (test_state) {                               /* 0x83F1C */
                 const bool full =
@@ -378,10 +418,13 @@ void drv_rq_law(void)
                     (t14 && (s == 0x11u || s == 0x16u) && (CAL_FULL14 & bit) != 0u);
                 if (full) {
                     mode = 4u;                              /* 0x83F72: FULL ON */
+                    inv_m = 0xFBu;
                     full_mask |= bit;
                 } else {
                     i = 0u;                                 /* 0x83F84 */
+                    inv_i = 0xFFFFu;
                     mode = 0u;
+                    inv_m = 0xFFu;
                 }
             }
             /* the rail-undervoltage law (0x83F90..0x84082) */
@@ -394,42 +437,72 @@ void drv_rq_law(void)
                         CELL_RQ_UVFLAGS = (uint16_t)(CELL_RQ_UVFLAGS & (uint16_t)~bit);
                         if ((CAL_UV_FLAGS & 2u) != 0u) {    /* 0x8406E (cal: never) */
                             i = I_CLAMP;
+                            inv_i = (uint16_t)~I_CLAMP;
                             mode = 4u;
+                            inv_m = 0xFBu;
                         }
                     } else if ((CAL_UV_FLAGS & 1u) != 0u) { /* 0x84002 */
                         CELL_RQ_UVFLAGS = (uint16_t)(CELL_RQ_UVFLAGS | bit);
                         i = 0u;
+                        inv_i = 0xFFFFu;
                         mode = 0u;
+                        inv_m = 0xFFu;
                     }
                 }
             }
             /* the minimum-current law (0x84084) */
             if (i < CAL_IMIN && i != 0u && CAL_TYPE == 1u) {
                 i = 0u;
+                inv_i = 0xFFFFu;
                 mode = 0u;
+                inv_m = 0xFFu;
             }
             /* OUR INTERLOCK (not stock): no full-on while the rail word or
              * a supervisor request is up — the stock gets this from its
              * same-tick ordering; our bus-A cyclic is not on that tick */
             if (mode == 4u && !drv_rq_rail_quiet()) {
                 mode = 0u;
+                inv_m = 0xFFu;
                 i = 0u;
+                inv_i = 0xFFFFu;
                 full_mask = (uint16_t)(full_mask & (uint16_t)~bit);
                 s_rq_ilock_n++;
+                ilock = true;
             }
             CELL_RQ_I[ch] = i;                              /* 0x840C4 */
             CELL_RQ_MODE[ch] = mode;                        /* 0x840C8 */
             CELL_RQ_FULLMASK = full_mask;                   /* 0x840D2 */
             CELL_RQ_FAULTMASK = fault_mask;                 /* 0x840DE */
-            /* 0x897AC (fault monitor): not ported */
+            if (diag) {
+                drv_od_897ac(ch);                           /* 0x897AC */
+            }
             CELL_RQ_I2[ch] = i;                             /* 0x840E6 */
             rq_letters(ch);                                 /* 0x89540 */
-            /* 0x8A788, then the 0x226 complement checks: not ported */
+            if (diag) {
+                drv_od_8a788(ch);                           /* 0x8A788 */
+                /* the inline 0x226 checks (WITNESS ONLY) */
+                if (i != (uint16_t)~inv_i) {
+                    drv_od_fatal_226(0u, ch);
+                }
+                if (mode != (uint8_t)~inv_m) {
+                    drv_od_fatal_226(1u, ch);
+                }
+                if (s != s_b) {
+                    drv_od_fatal_226(2u, ch);
+                }
+            }
         }
-        /* 0x84644 / 0x84392 / 0x8493A: not ported */
+        if (diag) {
+            drv_od_ch_tail(ch, ilock);                      /* 0x84644 / 0x84392 / 0x8493A */
+        }
     }
-    /* 0x841D6: 0x84A22 = 1 / 0x84A23 = 0xFE (the 0x89F5C enable): not ported */
+    if (diag) {
+        drv_od_pass_end(loops);                     /* 0x841D6: 0x84A22 = 1 / 0x84A23 = 0xFE */
+    }
 }
+
+void drv_rq_law(void)      { rq_law_run(false); }
+void drv_rq_law_diag(void) { rq_law_run(true); }
 
 /* ── 0x90118: one channel's setpoint ──────────────────────────────────── */
 static uint16_t rq_setpoint(uint8_t ch, uint8_t letter)
@@ -599,6 +672,7 @@ void drv_rq_init(void)
     s_rq_cguard_n = 0u;
     s_rq_f238_n = 0u;
     s_m5_guard_n = 0u;
+    drv_od_init();                      /* the output diagnosis' cells */
 #if DRV_RQ_USE_PRODUCER
     rq_prod_init();                     /* M5-0: 0xD9CF8 + the objects */
 #endif

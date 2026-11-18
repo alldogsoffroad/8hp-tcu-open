@@ -81,4 +81,25 @@ uint8_t park_law_lock(void);        /* 0xFFF8BC70[1] */
 uint8_t park_law_request(void);     /* 0xFFF8AE29 */
 bool park_law_integrity_ok(void);   /* the 0xFFF851A8 / 0xFFF851AD pairs */
 
+/* THE FAULT-REACTION PARK REQUEST 0x89CF2 (2026-11-17, ~/tcu_sweep/
+ * keyoff_autop_port.md §3) — 0xB986C 0xB9B52..0xB9BCE [O bytes]: with
+ * r13 = 0xFFF89C3C (GBR block),
+ *   +0xB4 (0x89CF0) = 1 unless 0x89C3C == 0 && 0x89C42 ∉ {6, 8} &&
+ *                     0x89CED ∉ {1, 7} && 0xB81CE(0xFFF8E5C4) == 0;
+ *   +0xB6 (0x89CF2) = +0xB7 (0x89CF3) = +0xB4 (0xB9BC6..0xB9BCE).
+ * 0xB81CE ignores its argument: 0xE358C(0xFFF8B7BC) = byte 0xFFF8B7BE (set by
+ * 0xE32FE, a data-set identity check at start-up, fault 0x1B1 [I name]).
+ * 0x89CED = 0xDD118(E6C6, 0x89C44): 0/1/2/7 pass, 6 → 0, else 1 + event
+ * 0x49C; 0x89C44 = 0x14E0B6(0xFFF95838) +0x11 = 1 while fault reaction 56
+ * (0x632DE = 0x38, the OS-mode-3 reaction) is active, 2 while reaction 57
+ * (0x632DF) is, else 0 [O 0x14E0FC]. */
+typedef struct {
+    uint8_t c3c;            /* 0x89C3C the one-hot OS mode-3 flag (slot 26) */
+    uint8_t c42;            /* 0x89C42 the safety substitute-gear code (← 0x89C41) */
+    uint8_t ced;            /* 0x89CED the second safety code (reactions 56 / 57) */
+    uint8_t b7be;           /* 0xFFF8B7BE the start-up data-set mismatch flag */
+} park_aux_in_t;
+/* computes 0x89CF0 / 0x89CF2 / 0x89CF3 and returns 0x89CF2 */
+uint8_t park_law_aux(const park_aux_in_t *in);
+
 #endif

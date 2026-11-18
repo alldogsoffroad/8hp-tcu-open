@@ -55,6 +55,8 @@ typedef struct {
     uint16_t te_crld[5];
     unsigned te_writes, te_cycle_writes, te_bad_sc;
     unsigned an_converts;       /* plat_adcmux_an_convert() calls */
+    /* ---- the output diagnosis (drv_odiag.c, 2026-11-17) ---- */
+    uint16_t (*drv_reply_fn)(uint16_t tx, uint8_t chip);   /* bus-A chip model (NULL: A2|scripted) */
 } stub_plat_t;
 
 extern stub_plat_t stub;

@@ -161,8 +161,41 @@ SECTIONS
     .drv_rq2 0xFFF90320 (NOLOAD) : { . += 0x14; } > RAM   /* 0x90320..0x90333        */
     .drv_rec 0xFFF91108 (NOLOAD) : { . += 0x8C; } > RAM   /* 0x91108..0x91193        */
     .drv_rq3 0xFFF9337C (NOLOAD) : { . += 0x14; } > RAM   /* 0x9337C..0x9338F        */
-    .drv_rq4 0xFFF93978 (NOLOAD) : { . += 0x06; } > RAM   /* 0x93978..0x9397D        */
+    .drv_rq4 0xFFF93978 (NOLOAD) : { . += 0x08; } > RAM   /* 0x93978..0x9397F (+0x9397E: 0x84392) */
     .drv_rq5 0xFFF93A12 (NOLOAD) : { . += 0x02; } > RAM   /* 0x93A12..0x93A13        */
+    /* THE OUTPUT DIAGNOSIS (2026-11-17, bsw/drv/drv_odiag.c; ~/tcu_sweep/
+     * output_diag_port.md): the stock cells of 0x904FA (0x9030C chip status),
+     * 0x92298 (0x9062C), 0x7B6D8 (0x84890 request slots), 0x83DB0's enable
+     * 0x84A22/23, 0x897AC (0x84A2D), 0x7BA2A (0x93004 / 0x93018), 0x8422E
+     * (0x930F8 / 0x93100), 0x89F5C (0x93104, 0x93394.., 0x93980..0x939A9,
+     * 0x93A..), 0x8A788 (0x93484.., 0x934E8..), 0x94930 / 0x94944 — the rest
+     * lie in .sup_cells / .sup_l1c / .sup_l1f / .sup_l1g / .sup_cnt / .sup_os2
+     * / .drv_rq4 / .drv_rec; cleared by drv_od_init. .od_93a04 and .od_93a14
+     * frame .drv_rq5 (0x93A12); .od_93484 and .od_934e8 frame .pks_rat. */
+    .od_9030c 0xFFF9030C (NOLOAD) : { . += 0x14; } > RAM   /* 0x9030C..0x9031F        */
+    .od_9062c 0xFFF9062C (NOLOAD) : { . += 0x04; } > RAM   /* 0x9062C..0x9062F        */
+    .od_84890 0xFFF84890 (NOLOAD) : { . += 0x14; } > RAM   /* 0x84890..0x848A3        */
+    .od_84a22 0xFFF84A22 (NOLOAD) : { . += 0x02; } > RAM   /* 0x84A22..0x84A23        */
+    .od_84a2c 0xFFF84A2C (NOLOAD) : { . += 0x04; } > RAM   /* 0x84A2C..0x84A2F        */
+    .od_93004 0xFFF93004 (NOLOAD) : { . += 0x28; } > RAM   /* 0x93004..0x9302B        */
+    .od_930f8 0xFFF930F8 (NOLOAD) : { . += 0x20; } > RAM   /* 0x930F8..0x93117        */
+    .od_93374 0xFFF93374 (NOLOAD) : { . += 0x08; } > RAM   /* 0x93374..0x9337B        */
+    .od_93394 0xFFF93394 (NOLOAD) : { . += 0xA0; } > RAM   /* 0x93394..0x93433        */
+    .od_93484 0xFFF93484 (NOLOAD) : { . += 0x3C; } > RAM   /* 0x93484..0x934BF        */
+    .od_934e8 0xFFF934E8 (NOLOAD) : { . += 0x50; } > RAM   /* 0x934E8..0x93537        */
+    .od_93980 0xFFF93980 (NOLOAD) : { . += 0x2A; } > RAM   /* 0x93980..0x939A9        */
+    .od_93a04 0xFFF93A04 (NOLOAD) : { . += 0x0E; } > RAM   /* 0x93A04..0x93A11        */
+    .od_93a14 0xFFF93A14 (NOLOAD) : { . += 0x52; } > RAM   /* 0x93A14..0x93A65        */
+    .od_93b0c 0xFFF93B0C (NOLOAD) : { . += 0x16; } > RAM   /* 0x93B0C..0x93B21        */
+    .od_94930 0xFFF94930 (NOLOAD) : { . += 0x28; } > RAM   /* 0x94930..0x94957        */
+    /* its witnesses (ours, not stock cells: DSM groups 1–20, the would-be
+     * resets, reporter counts): free low RAM 0xFFF87A00..0xFFF87E00 (after
+     * .tmp_wit / .kl15_wit). ld does not refuse overlapping NOLOAD output
+     * sections, hence the explicit bounds */
+    .od_wit 0xFFF87A00 (NOLOAD) : {
+        __od_wit_start = .; *(.od_wit) . = ALIGN(4); __od_wit_end = .;
+    } > RAM
+    ASSERT(__od_wit_start >= 0xFFF87880 && __od_wit_end <= 0xFFF87E00, ".od_wit overflow")
     /* M4 group A (drv_groupa.c / drv_temp.c; ~/tcu_sweep/groupA_park_port.md):
      * the stock cells outside .sup_value / .sup_cells / .sup_cnt / .sup_l1f,
      * cleared by drv_ga_init / drv_temp_init — 0x93A66 the switch-output law's
@@ -183,6 +216,15 @@ SECTIONS
     .park_rngd 0xFFF89CDC (NOLOAD) : { . += 0x01; } > RAM   /* 0x89CDC                 */
     .park_req  0xFFF8AE28 (NOLOAD) : { . += 0x02; } > RAM   /* 0x8AE28..0x8AE29        */
     .park_obj  0xFFF8BC70 (NOLOAD) : { . += 0x04; } > RAM   /* 0x8BC70..0x8BC73        */
+    /* the fault-reaction park request (app/park_law.c park_law_aux, 0xB986C
+     * +0xB4): 0x89CF0 = +0xB4, 0x89CF2 / 0x89CF3 its copies (+0xB6 / +0xB7;
+     * 0x89CF1 = +0xB5 is not computed, left 0) — 2026-11-17 */
+    .park_aux  0xFFF89CF0 (NOLOAD) : { . += 0x04; } > RAM   /* 0x89CF0..0x89CF3        */
+    /* THE TERMINAL-15 OBJECT (safety/kl15.c; ~/tcu_sweep/keyoff_autop_port.md):
+     * 0xFFF8E9D4..0xFFF8EA04 (0x140B80's object, cleared by kl15_init) and
+     * the voltage copy 0xFFF938B4 (0x7A7E8's cell) */
+    .kl15_obj  0xFFF8E9D4 (NOLOAD) : { . += 0x31; } > RAM   /* 0x8E9D4..0x8EA04        */
+    .kl15_v    0xFFF938B4 (NOLOAD) : { . += 0x02; } > RAM   /* 0x938B4..0x938B5        */
     /* THE RANGE CHAIN (app/rng_chain.c, rng_chain.h; ~/tcu_sweep/
      * range_chain_live_port.md): the stock's cyclic 10 ms range chain, the
      * live owner of D6D6 — its cells at the stock addresses, one object per
@@ -291,6 +333,12 @@ SECTIONS
         __tmp_wit_start = .; *(.tmp_wit) . = ALIGN(4); __tmp_wit_end = .;
     } > RAM
     ASSERT(__tmp_wit_end <= 0xFFF87840, ".tmp_wit overflow")
+    /* the terminal-15 witnesses and the agreement shadow (safety/kl15.c,
+     * ours): free low RAM after .tmp_wit */
+    .kl15_wit 0xFFF87840 (NOLOAD) : {
+        __kl15_wit_start = .; *(.kl15_wit) . = ALIGN(4); __kl15_wit_end = .;
+    } > RAM
+    ASSERT(__kl15_wit_end <= 0xFFF87880, ".kl15_wit overflow")
 
     /* our request-law witnesses and the refresh snapshot (not stock cells;
      * free low RAM like .sup_wit, so they do not cost the stack guard) */

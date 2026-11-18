@@ -12,6 +12,7 @@
 #include "bsw/drv/drv_jobs.h"
 #include "bsw/drv/drv_cells.h"
 #include "bsw/drv/drv_reqlaw.h"
+#include "bsw/drv/drv_odiag.h"
 #include "bsw/sup/sup_cells.h"
 #include <stdbool.h>
 #include "bsw/sup/sup_jobs.h"
@@ -26,12 +27,14 @@ static const uint16_t TMPL_DRV_ID[10] = {
     0x0600u, 0x0600u, 0x0600u, 0x0600u, 0x0600u,
     0x0000u, 0x0000u, 0x0000u, 0x0000u, 0x0000u,
 };
+/* the diag job (stock 0x9225C, template 0x40CEE [O bytes]): COMMAND-MAJOR
+ * like every bus-A job — 0x18 ×5 (channel 2c diagnosis), 0x1E ×5 (channel
+ * 2c+1 diagnosis), 0x28 ×5 (the mode register) — queued 3.8 ms after each
+ * cyclic completion (0x92530 → 0x92060 → 0x92078; drv_odiag.c) */
 static const uint16_t TMPL_DRV_DIAG[15] = {
-    0x1800u, 0x1E00u, 0x2800u,   /* per chip ×5 */
-    0x1800u, 0x1E00u, 0x2800u,
-    0x1800u, 0x1E00u, 0x2800u,
-    0x1800u, 0x1E00u, 0x2800u,
-    0x1800u, 0x1E00u, 0x2800u,
+    0x1800u, 0x1800u, 0x1800u, 0x1800u, 0x1800u,
+    0x1E00u, 0x1E00u, 0x1E00u, 0x1E00u, 0x1E00u,
+    0x2800u, 0x2800u, 0x2800u, 0x2800u, 0x2800u,
 };
 static const uint16_t TMPL_DRV_CFG[40] = {
     /* 8 registers × 5 chips: writes 8E,90,96,88; reads 28,30,2E,36 */
@@ -201,7 +204,13 @@ static bool drv_cyclic_send(void)
 void drv_letter_refresh(void)
 {
     bool differ = false;
-    drv_rq_law();                       /* 0x83DB0 (+ 0x89540) this tick */
+    /* 2026-11-17, the output diagnosis (drv_odiag.c): the stock's list
+     * order in this tick — 0x8EE12 (0x904FA: the chip status words), 0x7CBA8
+     * (0x838B0: the feedback chain, stand-ins), 0x7CC1E (0x83DB0 with its
+     * monitors), 0x7ABC8 (0x7B9B8: the DSM report of groups 1–20) */
+    drv_od_tick_head();
+    drv_rq_law_diag();                  /* 0x83DB0 (+ 0x89540) this tick */
+    drv_od_report();
     for (uint8_t ch = 0u; ch < DRV_RQ_NCH; ch++) {
         if (CELL_RQ_LETTER[ch] != s_drv_sent_let[ch] ||
             CELL_RQ_CUR[ch] != s_drv_sent_cur[ch]) {
@@ -245,6 +254,17 @@ bool drv_job_queue(uint8_t id)
     s_drv_in_flight[idx] = 1u;
     plat_rspi_pump(0u);
     return true;
+}
+
+/* 0x9225C: stage the diag template and queue it when the job is free (no
+ * retry: the next cyclic re-arms the delay) */
+bool drv_diag_kick(void)
+{
+    if (!drv_job_check_free(DRV_DIAG)) {
+        return false;
+    }
+    memcpy(stage_drv_diag, TMPL_DRV_DIAG, sizeof TMPL_DRV_DIAG);
+    return drv_job_queue(DRV_DIAG);
 }
 
 void drv_id_kick(void)

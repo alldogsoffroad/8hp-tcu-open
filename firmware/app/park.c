@@ -13,6 +13,34 @@ volatile uint8_t g_park_cells[32];      /* the RAM app keeps the park cells in .
 #endif
 
 static park_status_t s_st;
+/* the OS mode (sup_mode), for 0x89C3C; 1 from park_init. In the
+ * terminal-15 witness block (free low RAM, .kl15_wit) on the flashed
+ * application, so no .data / .bss symbol moves */
+#if defined(__sh__) && !defined(TCU_RAM_APP)
+__attribute__((section(".kl15_wit"))) static uint8_t s_os_mode;
+#else
+static uint8_t s_os_mode;
+#endif
+
+/* the producers of 0x89CF2's inputs that our firmware does not have
+ * (park_law.h park_law_aux; ~/tcu_sweep/keyoff_autop_port.md §3):
+ *   0x89C42  the safety substitute-gear code — the bench's U11E4 →
+ *            reaction 13 → code 0x20 (gear_code_decode; dump 0x89C41 / 42 =
+ *            20 20); held, as the request producer's gear code is
+ *   0x89CED  0xDD118(0x89C44): 1 / 2 only while fault reaction 56 / 57 is
+ *            active — no group our fault model carries (109: 6 9 12 16 36
+ *            53 59 61 63; 98: 36 53) sets either → 0 (dump 00)
+ *   0xFFF8B7BE  0xE32FE's start-up data-set mismatch — not ported (dump 00) */
+#define SI_89C42    0x20u
+#define SI_89CED    0x00u
+#define SI_8B7BE    0x00u
+_Static_assert(SI_89C42 != 6u && SI_89C42 != 8u && SI_89CED != 1u && SI_89CED != 7u &&
+               SI_8B7BE == 0u, "0x89CF2 stand-ins: the dump's (no fault-reaction park request)");
+
+void park_set_os_mode(uint8_t mode)
+{
+    s_os_mode = mode;
+}
 static uint16_t s_dem_release, s_dem_hold;  /* 0 or DRV_PARK_ON_REQ, nothing else */
 
 /* ── the slot getters (bsw/drv/drv_park.h): the ONLY way out ─────────── */
@@ -31,6 +59,7 @@ void park_init(void)
     /* the range itself (D6D6, E549) is the chain's: rng_chain_init */
     park_law_init();
     park_mon_init();
+    s_os_mode = 1u;
     s_dem_release = 0u;
     s_dem_hold = 0u;
     s_st.lever = 0u;
@@ -76,7 +105,16 @@ void park_tick_10ms(void)
     /* stand-ins for the law's inputs whose stock producers are not ported
      * (range_logic_port.md §4): the driving dump's values */
     li.inhibit = 0u;                /* 0x89C30 (dump 0) */
-    li.aux = 0u;                    /* 0x89CF2 (dump 0) */
+    {
+        /* 0x89CF2 (0xB986C +0xB4 → +0xB6): the fault-reaction park request */
+        park_aux_in_t ai;
+
+        ai.c3c = (uint8_t)(s_os_mode == 3u);    /* 0x89C3C: OS mode 3 (slot 26) */
+        ai.c42 = SI_89C42;
+        ai.ced = SI_89CED;
+        ai.b7be = SI_8B7BE;
+        li.aux = park_law_aux(&ai);
+    }
     li.carwash = 0u;                /* 0x8E69B (dump 0) */
     li.temp40 = CELL_TMP_BYTE;      /* 0x89C13 [I]: our 0x94103 = (0x94F9C + 8) >> 4 + 40 */
     li.vspeed = 0;                  /* 0x89D00 (dump 0) */

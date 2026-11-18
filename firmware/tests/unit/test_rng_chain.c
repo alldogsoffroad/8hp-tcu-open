@@ -30,6 +30,7 @@
  *    both demands 0 and held there while the chain later releases legally.
  */
 #include "app/rng_chain.h"
+#include "safety/kl15.h"
 #include "app/park.h"
 #include "app/park_cells.h"
 #include "app/range.h"
@@ -194,6 +195,8 @@ static void run(const uint8_t *sched, uint32_t nseg, shad_t *sh)
     vehicle_init();
     park_init();
     rng_chain_init();
+    kl15_init();
+    *(volatile uint16_t *)(uintptr_t)KL15_SRC_CELL = 13206u;   /* the bench supply, mux 14 (dump 0x94F9E = 0x3396) */
     for (uint32_t t = 0u; t < nseg * SEG; t++) {
         if (t >= s_sim.lever_from &&
             !(t >= s_sim.gap_from && t < s_sim.gap_from + s_sim.gap_len)) {
@@ -201,6 +204,7 @@ static void run(const uint8_t *sched, uint32_t nseg, shad_t *sh)
         }
         sim_frames();
         vehicle_update_10ms();
+        kl15_tick_10ms();
         rng_chain_tick_10ms(s_sim.os_mode, s_sim.g98, 1u);
         if (s_mut != NULL) {
             s_mut(t);
@@ -883,6 +887,8 @@ static void park_check_print(bool sims, bool before_power)
     vehicle_init();
     park_init();
     rng_chain_init();
+    kl15_init();
+    *(volatile uint16_t *)(uintptr_t)KL15_SRC_CELL = 13206u;   /* the bench supply, mux 14 (dump 0x94F9E = 0x3396) */
     printf("  park-check %s%s:", sims ? "WITH brake + engine sims" : "no sims",
            before_power ? ", frames from power-on" : ", TCU up 3 s before");
     for (int k = before_power ? 0 : -1; k < 13; k++) {
@@ -919,6 +925,7 @@ static void park_check_print(bool sims, bool before_power)
                 send(CAN_BUS1, 0x108u, 8u, true, d);
             }
             vehicle_update_10ms();
+            kl15_tick_10ms();
             rng_chain_tick_10ms(1u, 1u, 1u);
             park_tick_10ms();
         }

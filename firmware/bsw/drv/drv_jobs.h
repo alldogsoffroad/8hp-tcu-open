@@ -22,6 +22,7 @@ bool drv_job_check_free(uint8_t id);
 void drv_jobs_init(void);
 void drv_cyclic_build(const uint16_t *setpoints, uint8_t n_ch);
 void drv_id_kick(void);
+bool drv_diag_kick(void);   /* 0x9225C: queue the diag job (drv_odiag.c times it) */
 
 /* reply buffer of a finished bus-A job (bench FE12 results; NULL outside) */
 const uint16_t *drv_job_rx(uint8_t id);

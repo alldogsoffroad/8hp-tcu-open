@@ -64,6 +64,7 @@
 #include "app/range.h"              /* range_arbitrate: pure (writes *res only) */
 #include "io/vehicle/vehicle.h"     /* the lever evaluation, read-only */
 #include "bsw/sched/sched.h"        /* sched_now_ms, read-only */
+#include "safety/kl15.h"            /* the terminal-15 state (0x140AE8 / AF0 / AF8 / AE0), read-only */
 
 #include <stdint.h>
 #include <string.h>
@@ -163,10 +164,10 @@ RC_WIT rng_chain_model_t s_rc_m;
 #define SI_D63E 0x00u  /* D61A+0x24 word hi (0xC3716, 0xC74F4) */
 #define SI_D63F 0x00u  /* D61A+0x25 word lo */
 #define SI_D640 0x00u  /* D61A+0x26 (0xC3716, 0xC74F4) */
-#define SI_D641 0x02u  /* D61A+0x27 CAN 0x112 → D5F2 (0xA8F5C) */
-#define SI_D642 0x01u  /* D61A+0x28 (0xA8F5C) */
-#define SI_D643 0x00u  /* D61A+0x29 (0xA9668, 0xC3B88) */
-#define SI_D644 0x00u  /* D61A+0x2A (0xA9668, 0xC3BF4) */
+#define SI_D641 0x02u  /* D61A+0x27 E9FF (0x140AE8) → D5F2 (0xA8F5C) — LIVE since 2026-11-17 (rs_gather: safety/kl15.c) */
+#define SI_D642 0x01u  /* D61A+0x28 EA01 (0x140AF0), the terminal source quality (0xA8F5C) — LIVE */
+#define SI_D643 0x00u  /* D61A+0x29 EA03 (0x140AF8), codes 3/4/5 (0xA9668, 0xC3B88) — LIVE */
+#define SI_D644 0x00u  /* D61A+0x2A byte 0xFFF9544C (0x1485FE → 0x148646(0xFFF95420)+0x2C, meaning not decoded) (0xA9668 D606, 0xC3BF4) */
 #define SI_D648 0x03u  /* D61A+0x2E safety park request (0xA9126, 0xC7258, 0xC733A) */
 #define SI_D649 0x00u  /* D61A+0x2F (0xA52A2) */
 #define SI_D64A 0x00u  /* D61A+0x30 (0xA52A2) */
@@ -585,6 +586,15 @@ static void rs_gather(void)
     rs_lever(&lev, &src);
     D6(0xD672u) = lev;
     D6(0xD673u) = src;
+    /* the terminal-15 object 0xFFF8E9D4 (safety/kl15.c, run before the
+     * chain in the same pass as the stock's slot 0 0x131FD8 is before slot 3
+     * 0x9B306): getter slots *0x4B764 = 0x140AE8 (E9FF → D641), *0x4B76C =
+     * 0x140AF0 (EA01, the source quality → D642), *0x4B774 = 0x140AF8 (EA03,
+     * the code-3/4/5 flag → D643) [O pools 0xA7F90 / 0xA7F9C / 0xA7FA0]; on
+     * the bench (no 0x112, supply ≈ 13 V) 02 / 01 / 00 — the dump's bytes */
+    D6(0xD641u) = kl15_e9ff();
+    D6(0xD642u) = kl15_ea01();
+    D6(0xD643u) = kl15_ea03();
     rs_live_inputs();
 #if defined(RNG_CHAIN_TEST_HOOKS)
     for (uint8_t k = 0u; k < 0x80u; k++) {
@@ -2557,6 +2567,63 @@ void rng_chain_init(void)
     flt_tab_set(6u, T_E67F);                        /* 0xC8520 (+0x64) */
     /* 0xC3A76(89420), 0xC3604(E546): cleared above */
     RC_D5E4.b[0] = 1u;                              /* 0xA5864 */
+    M.dsm_cyc = 1u;                                 /* 0xAE868: the cycle state at power-up */
+}
+
+/* THE OPERATING CYCLE (fault_manager_decode §3.2; u1267_debounce_decode §5)
+ * [O decode, re-read 2026-11-17]: the 10 ms DSM task 0xA0E2E / 0xA0E44 →
+ * 0xADE6E latches 0xFFF8989C = 0x140AE0() = E9FE (terminal state in 1..3);
+ * the cycle state 0xAE890 (1 at power-up, 0xAE868) goes 1 → 2 when 989C ==
+ * 1, 2 → 3 when 989C == 0 (0xAE8EE), 3 → 2 when 989C == 1 again — a
+ * terminal re-cycle: 0xA0856 → 0xAACE4, the mode-1 rebuild of 0xABDFA:
+ * D714 zeroed, status &= 0xDBBB, and a record stays in the reaction masks
+ * only when its cfg+0x1C bit 4 is clear (or bits 5..7 keep it): groups 109
+ * (0x0111) and 98 (0x0011) are both dropped — U1267 / P0850 have to
+ * re-confirm in the new cycle. (0xA0856's other calls 0xAB31C, 0xA9EB8,
+ * 0xACFE6, 0xAD600 and the warm-start signature 0xAE906 reach nothing the
+ * gather reads — not ported.) [I: the DSM task's order against the chain
+ * in the 10 ms task] */
+static void fm_recycle_group(rng_chain_fm_t *f, const rs_fm_cfg_t *c)
+{
+    f->d714 = 0u;
+    f->st = (uint16_t)(f->st & 0xDBBBu);
+    if ((c->cfg1c & 0x0010u) != 0u &&
+        !((c->cfg1c & 0x0020u) != 0u && (f->rec & FM_REC_ACTIVE) != 0u) &&
+        (c->cfg1c & 0x00C0u) == 0u) {
+        f->rec = (uint16_t)(f->rec & ~FM_REC_MASK);
+    }
+    f->react = (uint8_t)((f->rec & FM_REC_EXISTS) != 0u && (f->rec & FM_REC_MASK) != 0u);
+}
+
+static void dsm_cycle(void)
+{
+    const uint8_t on = kl15_e9fe();             /* 0xFFF8989C */
+
+    switch (M.dsm_cyc) {
+    case 1u:
+        if (on == 1u) {
+            M.dsm_cyc = 2u;
+        }
+        break;
+    case 2u:
+        if (on == 0u) {
+            M.dsm_cyc = 3u;
+        }
+        break;
+    case 3u:
+        if (on == 1u) {
+            M.dsm_cyc = 2u;
+            fm_recycle_group(&M.fm109, &s_fm_cfg109);
+            fm_recycle_group(&M.fm98, &s_fm_cfg98);
+            M.g109 = M.fm109.react;
+            M.g98 = M.fm98.react;
+            M.recycle_n++;
+            M.recycle_ms = sched_now_ms();
+        }
+        break;
+    default:
+        break;
+    }
 }
 
 void rng_chain_tick_10ms(uint8_t os_mode, uint8_t g98_failed, uint8_t g98_tested)
@@ -2569,6 +2636,7 @@ void rng_chain_tick_10ms(uint8_t os_mode, uint8_t g98_failed, uint8_t g98_tested
      * every mode): ours steps 10 ms per call [deviation: a stalled 10 ms
      * task stretches it] */
     M.fm_ms += 10u;
+    dsm_cycle();
     /* group 98 (P0850 / P07B2 / P07B8), reported by 0x141E06 in the stock's
      * 100 ms safety slice (modes 1..3) — taken on the pass after it */
     if (g98_tested != 0xFFu) {         /* 0xFF: no group-98 report this pass */

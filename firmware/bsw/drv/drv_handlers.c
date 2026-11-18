@@ -5,6 +5,7 @@
  * handler does readback checks and fault latching. All ISR context, short.
  */
 #include "bsw/drv/drv_jobs.h"
+#include "bsw/drv/drv_odiag.h"
 #include "bsw/sup/sup_jobs.h"
 #include "platform.h"
 #include <stdbool.h>
@@ -14,33 +15,27 @@
 /* helper: clear the in-flight flag and pump bus A (ISR-context release) */
 void s_drv_in_flight_clear(uint8_t idx);
 
+/* 2026-11-17: every handler harvests into the per-chip records as the
+ * stock's do (0x921E0 / 0x92298 / 0x923BC / 0x92530, drv_odiag.c); n = 0
+ * (an error completion) is the stock's not-'@' branch */
 void drv_resp_id(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
 {
-    (void)bus; (void)n;
-    /* replies must start with the A2 class (spec 22 §2.2) */
-    for (uint8_t i = 0u; i < 5u; i++) {
-        if (!A2_OK(rx[i])) goto fin;
-    }
-    /* chip IDs harvested: rx[0..4] low bytes = the four real + one dead */
-fin:
+    (void)bus;
+    drv_od_rx_id(rx, n != 0u);                  /* 0x921E0 */
     s_drv_in_flight_clear(job_id - DRV_ID);
 }
 
 void drv_resp_diag(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
 {
-    (void)bus; (void)rx; (void)n;
+    (void)bus;
+    drv_od_rx_diag(rx, n != 0u);                /* 0x92298 */
     s_drv_in_flight_clear(job_id - DRV_ID);
 }
 
 void drv_resp_cfg(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
 {
-    (void)bus; (void)n;
-    /* readback checks: rows 4-7 are reads of what rows 0-3 wrote */
-    for (uint8_t chip = 0u; chip < 5u; chip++) {
-        /* check 0x28 (row 4) == what 0x8E wrote (row 0) low byte */
-        /* check 0x2E (row 6) == what 0x96 wrote (row 2) low byte */
-        (void)rx; /* simplified: full check in the sol_ctl module */
-    }
+    (void)bus;
+    drv_od_rx_cfg(drv_job_tx(DRV_CFG), rx, n != 0u);    /* 0x923BC */
     s_drv_in_flight_clear(job_id - DRV_ID);
 }
 
@@ -66,10 +61,7 @@ void drv_resp_cyc(uint8_t bus, uint8_t job_id, uint16_t *rx, uint8_t n)
             s_drv_cyc_ok_n++;
         }
     }
-    /* 5-bit cyclic header check (0xF800 mask) */
-    for (uint8_t i = 0u; i < 5u; i++) {
-        if ((rx[i * 9u] & 0xF800u) != 0xA800u) break;
-    }
+    drv_od_rx_cyc(drv_job_tx(DRV_CYC), rx, n != 0u);   /* 0x92530 */
     s_drv_in_flight_clear(job_id - DRV_ID);
     /* r02v stage 0a: the stock's 0x901A0 sends the config job (0x92344)
      * every pass after the cyclic (0x924B0); bus A runs one job at a time,

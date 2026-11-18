@@ -17,6 +17,7 @@
 #include "bsw/sup/sup_ctrl.h"
 #include "bsw/sup/sup_letters.h"
 #include "bsw/drv/drv_jobs.h"
+#include "bsw/drv/drv_odiag.h"
 #include "bsw/drv/drv_groupa.h"
 #include "bsw/drv/drv_temp.h"
 #include "bsw/drv/drv_pksens.h"
@@ -30,6 +31,7 @@
 #include "app/bench_out.h"
 #include "app/bench_dump.h"
 #include "safety/park_pair.h"
+#include "safety/kl15.h"
 #include "app/flash_entry.h"
 #include "app/meas_table.h"
 #include "app/park.h"
@@ -196,6 +198,9 @@ static void task_1ms(void)
     uds_tick_1ms();
     fca_tx_tick_1ms();
     flash_entry_tick_1ms();             /* FE30 handover countdown (spec 16) */
+    /* the bus-A diag job 3.8 ms after each cyclic (stock: the DCNTD02
+     * one-shot 0x92060 → ISR 0x92078 → 0x9225C; ours polled: drv_odiag.c) */
+    drv_od_diag_poll(plat_frt_us());
     plat_wdt_kick();
 }
 
@@ -235,6 +240,11 @@ static void task_10ms(void)
     }
     sensors_update_10ms();
     vehicle_update_10ms();
+    /* THE TERMINAL-15 STATE (safety/kl15.c, 0x140B80): the stock runs it
+     * every 10 ms in modes 0..3 (0x133C4E / 0x14F34C, slot 0 of the 10 ms
+     * list), after the CAN receive and before the range chain (slot 3) —
+     * its E9FF / EA01 / EA03 are the chain's D641 / D642 / D643 */
+    kl15_tick_10ms();
     {
         /* THE RANGE: the stock's cyclic chain 0x9B306/0x9B322/0x9B34A, the
          * live owner of D6D6 (app/rng_chain.c), which the stock list
@@ -252,6 +262,7 @@ static void task_10ms(void)
         rng_chain_tick_10ms(sup_mode(), pw.failed,
                             park_pair_take_report() ? pw.tested : 0xFFu);
     }
+    park_set_os_mode(sup_mode());   /* 0x89C3C for the fault-reaction park request */
     park_tick_10ms();
     bench_tick_10ms();
     sol_tick_10ms();        /* builds the 45-frame cyclic, queues DRV_CYC */
@@ -363,6 +374,7 @@ int main(void)
     bench_init();
     vehicle_init();
     park_init();
+    kl15_init();                        /* the terminal-15 object 0xFFF8E9D4 (0x140B30) */
     rng_chain_init();                   /* the range: the 0x9B228 one-shot (init arbiter → D6D6) */
     park_pair_init();                   /* park sensor: 0x141B1C (safety layer) */
     sensors_init(&s_sensors_cfg);

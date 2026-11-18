@@ -163,6 +163,12 @@ typedef struct {
     uint32_t skip_mode_n;           /* passes skipped: OS mode outside 1..3 */
     uint32_t fm_ms;                 /* our 0xFFF89898 (ms): +10 per call */
     rng_chain_fm_t fm109, fm98;     /* group 109 (U1267), group 98 (P0850 / P07B2 / P07B8) */
+    /* the DSM operating cycle (2026-11-17, ~/tcu_sweep/keyoff_autop_port.md):
+     * 0xAE890's state (1 power-up, 2 terminal on, 3 terminal off) and the
+     * terminal re-cycles that ran the mode-1 rebuild 0xAACE4 */
+    uint8_t  dsm_cyc;
+    uint8_t  pad2[3];
+    uint32_t recycle_n, recycle_ms;
 } rng_chain_model_t;
 
 const rng_chain_model_t *rng_chain_model(void);

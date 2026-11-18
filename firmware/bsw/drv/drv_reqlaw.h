@@ -178,8 +178,12 @@ void drv_rq_window_boot(drv_rq_win_t *w, bool cold);
  * bytes; clears the law's own NOLOAD ranges (call after sup_cells_init) */
 void drv_rq_init(void);
 
-/* 0x83DB0 (with 0x89540 per channel): the 5 ms entry 0x7CC1E */
+/* 0x83DB0 (with 0x89540 per channel): the 5 ms entry 0x7CC1E.
+ * drv_rq_law_diag: the full pass with the output diagnosis (drv_odiag.h),
+ * once per 5 ms tick (the refresh); drv_rq_law: the law alone (the 10 ms
+ * rebuild), reading the fault / channel classes the diagnosis left */
 void drv_rq_law(void);
+void drv_rq_law_diag(void);
 
 /* 0x901A0's record part (letters applied, 0x9090A step, per-chip records);
  * the staging (0x924B0 / 0x92344) is drv_jobs.c's */

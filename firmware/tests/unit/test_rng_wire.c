@@ -40,6 +40,7 @@
 #include "app/rng_shadow.h"     /* r03s: the chain as a read-only shadow */
 #else
 #include "app/rng_chain.h"
+#include "safety/kl15.h"
 #endif
 
 #include <stdio.h>
@@ -112,6 +113,8 @@ static void run(const scen_t *sc, FILE *out, unsigned base)
     rng_shadow_init();
 #else
     rng_chain_init();
+    kl15_init();
+    *(volatile uint16_t *)(uintptr_t)KL15_SRC_CELL = 13206u;   /* the bench supply, mux 14 (dump 0x94F9E = 0x3396) */
 #endif
     drv_jobs_init();                    /* → drv_rq_init → rq_prod_init */
     /* the temperature byte is LIVE since 2026-11-17 (app/tmp_chain.c, not
@@ -158,6 +161,9 @@ static void run(const scen_t *sc, FILE *out, unsigned base)
         /* main.c's task_10ms order */
         rq_prod_task_10ms(1u);
         vehicle_update_10ms();
+#if !defined(RNG_WIRE_HEAD)
+        kl15_tick_10ms();
+#endif
 #if defined(RNG_WIRE_HEAD)
         rng_shadow_tick_10ms(1u, 1u, 1u);
 #else
@@ -223,6 +229,37 @@ int main(int argc, char **argv)
         fputs(buf, stdout);
         free(buf);
         return 0;
+    }
+    if (argc >= 3 && strcmp(argv[1], "--exact") == 0) {
+        /* 2026-11-17 (keyoff_autop_port.md): the whole trace — the park
+         * release / hold columns included — byte for byte against a golden
+         * file (rng_wire_head_1087992.txt: HEAD 1087992, before the
+         * terminal-15 object fed D641 / D642 / D643): the bench case (no
+         * 0x112, supply 13.2 V) must not change a single output */
+        FILE *g = fopen(argv[2], "rb");
+        static char gb[1u << 20];
+        size_t gl;
+        int same;
+
+        if (g == NULL) {
+            printf("FAIL cannot open %s\n", argv[2]);
+            return 1;
+        }
+        gl = fread(gb, 1u, sizeof gb, g);
+        fclose(g);
+        same = gl == len && memcmp(gb, buf, len) == 0;
+        if (!same) {
+            size_t i = 0u, line = 1u;
+            while (i < len && i < gl && gb[i] == buf[i]) {
+                line += buf[i] == '\n';
+                i++;
+            }
+            printf("FAIL the trace differs from %s at line %zu\n", argv[2], line);
+        } else {
+            printf("rng_wire --exact: %zu bytes identical to %s\n", len, argv[2]);
+        }
+        free(buf);
+        return same ? 0 : 1;
     }
     {
         FILE *g = fopen(argv[1], "r");
