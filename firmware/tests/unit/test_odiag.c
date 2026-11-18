@@ -125,6 +125,10 @@ static void drain(void)
     }
 }
 
+/* part 4: ch 7's request is set by the 10 ms task only (main.c order) */
+static bool s_p4;
+static uint16_t s_p4_req7;
+
 /* the supervisor side of the bench timeline (ms) */
 static void sup_state(uint32_t t)
 {
@@ -150,7 +154,8 @@ static void sup_state(uint32_t t)
     if (t >= 2000u && t < 2100u) {
         CELL_OUT_MV[0] = 7000u;                             /* a rail dip (the UV law) */
     }
-    drv_rq_request_set(7u, (uint16_t)((t >= 1000u && t < 1300u) ? 10000u : 0u));
+    drv_rq_request_set(7u, (uint16_t)(s_p4 ? s_p4_req7 :
+                                     ((t >= 1000u && t < 1300u) ? 10000u : 0u)));
 }
 
 static uint64_t law_hash(uint64_t h)
@@ -484,6 +489,114 @@ static void part3(void)
     printf("part 3b: output on in 'D' -> 0x84644 would-be resets %u (no reset: the program runs on)\n",
            (unsigned)(drv_od_fatal()->site_n[6] - n0));
 }
+
+/* ── part 4: the park release cycled in MAIN.C's ORDER (2026-11-18,
+ * ~/tcu_sweep/ch7_fault_bit4_decode.md). On the target the park demand
+ * changes in task_10ms (phase 1: park_tick → sol_tick → the periodic
+ * rebuild, drv_rq_law_between) one ms BEFORE the 5 ms refresh (phase 2:
+ * the tick head, then drv_rq_law_diag). part 1 changes the request on a
+ * refresh tick, so the diagnostic pass always saw it first. Here the
+ * rebuild sees the change first — the r03x bench sequence (D 2 s, P, R 2 s,
+ * P) on a healthy chip must leave no fault on ch 7, while a real chip flag
+ * 0x10 on the driven ch 7 must still set bit 2 (monitor 2). ── */
+static void step_ms_main(uint32_t t, uint32_t t_sup, bool trace)
+{
+    stub.frt_us += 1000u;
+    stub.ms++;
+    sup_state(t_sup);
+    drv_od_diag_poll(stub.frt_us);      /* task_1ms */
+    drain();
+    if (t % 10u == 1u) {                /* task_10ms, phase 1 */
+        drv_rq_request_set(7u, s_p4_req7);      /* park_tick: the release demand */
+        rq_prod_task_10ms(1u);
+        drv_cyclic_periodic();          /* sol_tick → the 10 ms rebuild */
+        drain();
+    }
+    if (t % 5u == 2u) {                 /* task_sup_batch, phase 2 */
+        countdown();
+        drv_letter_refresh();
+        drain();
+        drv_id_kick();
+        drain();
+        if (trace) {
+            printf("    t=%4u req7 %5u | law mode %u I %5u | 93B0C %02X 93A2E %02X | 94930 %04X 93004 %04X 94944 %04X\n",
+                   t, (unsigned)s_p4_req7, CELL_RQ_MODE[7], CELL_RQ_I[7],
+                   *(volatile uint8_t *)(uintptr_t)(0xFFF93B0Cu + 7u),
+                   *(volatile uint8_t *)(uintptr_t)(0xFFF93A2Eu + 7u),
+                   *(volatile uint16_t *)(uintptr_t)(0xFFF94930u + 14u), fw(7),
+                   *(volatile uint16_t *)(uintptr_t)(0xFFF94944u + 14u));
+        }
+    }
+}
+
+static void part4_run(uint32_t t_end, const uint32_t *edges, const uint16_t *vals, unsigned n_edges,
+                      bool trace)
+{
+    unsigned e = 0u;
+    for (uint32_t t = 1u; t <= t_end; t++) {
+        bool near = false;
+        while (e < n_edges && t >= edges[e]) {
+            s_p4_req7 = vals[e];
+            e++;
+        }
+        for (unsigned k = 0u; k < n_edges; k++) {
+            if (t + 5u >= edges[k] && t <= edges[k] + 25u) {
+                near = true;
+            }
+        }
+        step_ms_main(t, t < 900u ? t : 900u, trace && near);
+    }
+    stub_log_n = 0u;
+}
+
+static void part4(void)
+{
+    /* the r03x bench sequence: D (release) 2 s, P, R 2 s, P */
+    static const uint32_t EDGES[] = { 1001u, 3001u, 3501u, 5501u };
+    static const uint16_t VALS[]  = { 10000u, 0u, 10000u, 0u };
+    reset_model();
+    s_p4 = true;
+    s_p4_req7 = 0u;
+    boot();
+    printf("part 4: ch 7 per diagnostic pass around each request edge (main.c order)\n");
+    part4_run(6000u, EDGES, VALS, 4u, true);
+    printf("part 4: healthy chip after two release cycles: 0x93004[7] %04X 0x94930[7] %04X mode %u, events %u, g15 fail %u g16 fail %u\n",
+           fw(7), *(volatile uint16_t *)(uintptr_t)(0xFFF94930u + 14u), CELL_RQ_MODE[7],
+           (unsigned)drv_od_event_n(7u), (unsigned)drv_od_group(15)->fail_n,
+           (unsigned)drv_od_group(16)->fail_n);
+    CHECK(fw(7) == 0u);
+    CHECK(*(volatile uint16_t *)(uintptr_t)(0xFFF94930u + 14u) == 0u);
+    CHECK(CELL_RQ_MODE[7] == 1u);
+    CHECK(drv_od_group(15)->fail_n == 0u && drv_od_group(16)->fail_n == 0u);
+    for (uint8_t ch = 0u; ch < 10u; ch++) {
+        CHECK(fw(ch) == 0u);
+    }
+
+    /* the same with a REAL fault: the chip flags 0x10 on ch 7 (chip 3, odd
+     * → the 0x1E row) while the release is driven → bit 2, groups 15 / 16 */
+    {
+        static const uint32_t E2[] = { 1001u };
+        static const uint16_t V2[] = { 10000u };
+        reset_model();
+        s_p4_req7 = 0u;
+        boot();
+        part4_run(1300u, E2, V2, 1u, false);
+        CHECK(fw(7) == 0u && CELL_RQ_MODE[7] == 3u);
+        m_diag[3][1] = 0x10u;
+        for (uint32_t t = 1301u; t <= 1400u; t++) {
+            step_ms_main(t, 900u, false);
+        }
+        printf("part 4: injected flag 0x10 on driven ch 7 -> 0x93004[7] %04X, mode %u, g16 fail %u mon %u\n",
+               fw(7), CELL_RQ_MODE[7], (unsigned)drv_od_group(16)->fail_n, drv_od_group(16)->monitor);
+        CHECK((fw(7) & 0x0004u) != 0u);
+        CHECK(CELL_RQ_MODE[7] == 3u);               /* requested: still driven */
+        CHECK(drv_od_group(15)->fail_n > 0u || drv_od_group(16)->fail_n > 0u);
+        for (uint8_t ch = 0u; ch < 7u; ch++) {
+            CHECK(fw(ch) == 0u);
+        }
+    }
+    s_p4 = false;
+}
 #endif
 
 int main(int argc, char **argv)
@@ -501,6 +614,7 @@ int main(int argc, char **argv)
     if (golden != NULL) {
         part2();
         part3();
+        part4();
     }
 #endif
     if (golden != NULL) {

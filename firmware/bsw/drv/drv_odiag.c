@@ -242,6 +242,13 @@ static const uint16_t SI_RES[10] = { 0x1653u, 0x17FAu, 0x17FAu, 0x17FAu, 0x17FAu
 #else
 #define OD_WIT
 #endif
+/* the output the last DIAGNOSTIC pass of the law commanded (mode 0x94FD8,
+ * current 0x94ED4), for the feedback stand-in (od_838b0_standin; 2026-11-18,
+ * ~/tcu_sweep/ch7_fault_bit4_decode.md). Defined FIRST: GCC lays the
+ * .od_wit statics out in reverse order, so these go to the END of .od_wit
+ * and no existing witness address moves */
+static uint8_t  s_fb_mode[10] OD_WIT;
+static uint16_t s_fb_i[10] OD_WIT;
 static drv_od_grp_t    s_grp[21] OD_WIT;          /* [1..20] */
 static drv_od_fatal_t  s_fatal OD_WIT;
 static uint32_t        s_event_n[10] OD_WIT;
@@ -655,7 +662,16 @@ static void od_904fa_status(void)
 }
 
 /* 0x838B0 → 0x89A8C / 0x8390C STAND-INS [S] (the feedback chain is not
- * ported): from the law's PREVIOUS pass, as 0x838B0 sees it —
+ * ported): from the law's previous DIAGNOSTIC pass, as 0x838B0 sees it.
+ * 2026-11-18 (ch7_fault_bit4_decode.md): NOT from the live law cells. In the
+ * stock 0x838B0 (5 ms / 10 ms list, right before 0x83DB0: 0x7CBA8 → 0x7CC1E)
+ * measures the physical output, which the previous law pass commanded — the
+ * same pass whose 0x897AC set the state 0x93B0C that 0x89F5C reads. Our 10 ms
+ * rebuild (drv_rq_law_between, task_10ms) runs the law WITHOUT 0x897AC one
+ * ms before the tick; reading its mode here paired a switched-off feedback
+ * ('!') with a still-driven state (0x30) → 0x89F5C bit 2 (P1D79 on the park
+ * release), latched for good once the state left the driven range (r03x).
+ * The snapshot keeps the stock's pairing: state and feedback from one pass —
  *   0x93A2E = 0x10 (a PWM measured) while the channel is driven (mode 3 /
  *             4 with a current), else 0x21 (static low): the driving dump's
  *             10 ×7 (driven) / 21 ×3 (off) pattern;
@@ -666,8 +682,8 @@ static void od_838b0_standin(void)
 {
     const uint16_t v = CELL_OUT_MV[0];
     for (uint8_t ch = 0u; ch < 10u; ch++) {
-        const uint8_t m = CELL_RQ_MODE[ch];
-        const uint16_t i = CELL_RQ_I[ch];
+        const uint8_t m = s_fb_mode[ch];        /* the last diagnostic pass's 0x94FD8 */
+        const uint16_t i = s_fb_i[ch];          /* ... and 0x94ED4 */
         const bool on = (m == 3u || m == 4u) && i != 0u;
         uint32_t d = 0u;
         C_RES[ch] = SI_RES[ch];
@@ -1758,6 +1774,12 @@ void drv_od_pass_end(uint8_t loops_done)
 {
     C_EN_C = 0xFEu;
     C_EN = 1u;
+    /* the commanded output of THIS diagnostic pass, for the next tick's
+     * feedback stand-in (ours; od_838b0_standin) */
+    for (uint8_t ch = 0u; ch < 10u; ch++) {
+        s_fb_mode[ch] = CELL_RQ_MODE[ch];
+        s_fb_i[ch] = CELL_RQ_I[ch];
+    }
     if (loops_done != 10u) {
         od_fatal(0x226u, OD_SITE_LAW_END, 0xFFu, loops_done, 10u);
     }
@@ -1907,6 +1929,8 @@ void drv_od_init(void)
     s_diag_drop_n = 0u;
     s_cyc_t_us = 0u;
     s_diag_armed = 0u;
+    memset(s_fb_mode, 0, sizeof s_fb_mode);
+    memset(s_fb_i, 0, sizeof s_fb_i);
 #if !defined(__sh__)
     if (s_seed_host) {
         drv_od_host_seed_healthy();
