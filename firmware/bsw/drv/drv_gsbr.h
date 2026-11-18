@@ -11,7 +11,9 @@
  * (ctest gs_bridge_scan_outputs: no other output path may name the bridge,
  * and the one call must sit inside that block).
  *
- * STAGE G1 (this build): GS_LIVE_DIR = 0. The seam does not exist in the
+ * STAGE G1: GS_LIVE_DIR = 0. STAGE G2 (r04i, tcu_app.elf): GS_LIVE_DIR = 3
+ * (CMake cache GS_LIVE_DIR) — the seam applies the bridged A–E currents.
+ * G1 notes follow: The seam does not exist in the
  * output path at all (the call is preprocessed away); the bridge is a
  * witness. On SH a nonzero GS_LIVE_DIR is a compile error (G1). The host may
  * build GS_LIVE_DIR = 1 / 3 for the G2 gate dry-run only.
@@ -35,8 +37,10 @@
 #  error "gs bridge: the RAM application and the loader carry no garage bridge (GS_LIVE_DIR must be 0)"
 #endif
 #if defined(__sh__)
-_Static_assert(GS_LIVE_DIR == 0,
-               "gs bridge: stage G1 - the bridge is computed and recorded, never applied, on SH builds (GS_LIVE_DIR 0)");
+/* STAGE G2 (user decision 2026-11-18: D and R live together): the SH
+ * application takes 0 (off) or 3 (D and R); 1 (D only) is not a G2 build */
+_Static_assert(GS_LIVE_DIR == 0 || GS_LIVE_DIR == 3,
+               "gs bridge: stage G2 - on SH builds the bridge is off (0) or live for D and R (3)");
 #endif
 
 #if GS_LIVE_DIR != 0

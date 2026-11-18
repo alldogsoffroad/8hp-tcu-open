@@ -119,6 +119,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     set(DRV_GA_STAGE 1 CACHE STRING "M4 park-output stage of tcu_app.elf (0 / 1 / 2)")
     set_property(CACHE DRV_GA_STAGE PROPERTY STRINGS 0 1 2)
     target_compile_definitions(tcu_app.elf PRIVATE DRV_GA_STAGE=${DRV_GA_STAGE})
+    # G2 (user decision 2026-11-18): the garage bridge live for D and R on the
+    # flashed application (bsw/drv/drv_gsbr.h; 0 = off, 3 = D and R)
+    set(GS_LIVE_DIR 3 CACHE STRING "garage bridge stage of tcu_app.elf (0 off / 3 D and R)")
+    target_compile_definitions(tcu_app.elf PRIVATE GS_LIVE_DIR=${GS_LIVE_DIR})
     target_link_options(tcu_app.elf PRIVATE -T ${LDSCRIPT} -Wl,-Map=tcu_app.map)
     target_link_libraries(tcu_app.elf PRIVATE gcc)
     add_dependencies(tcu_app.elf tcu_flasher_bin)
@@ -1157,7 +1161,7 @@ else()
     add_test(NAME gs_bridge_sh_guard_dir4
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_LIVE_DIR=4 ${GSB_SH_SRC})
     add_test(NAME gs_bridge_sh_guard_forced
-        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_LIVE_DIR=1 -DGS_FORCED=0 ${CMAKE_SOURCE_DIR}/app/gs_bridge.c)
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_LIVE_DIR=3 -DGS_FORCED=0 ${CMAKE_SOURCE_DIR}/app/gs_bridge.c)
     add_test(NAME gs_bridge_sh_guard_ch5
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGSB_SH_MUT_CH=5 ${CMAKE_SOURCE_DIR}/app/gs_bridge.c)
     add_test(NAME gs_bridge_sh_guard_mut
@@ -1169,7 +1173,7 @@ else()
     set_tests_properties(gs_bridge_sh_guard_output PROPERTIES
         PASS_REGULAR_EXPRESSION "the garage bridge is read-only in G1: an output path may not include gs_bridge.h")
     set_tests_properties(gs_bridge_sh_guard_g1 PROPERTIES
-        PASS_REGULAR_EXPRESSION "stage G1 - the bridge is computed and recorded, never applied, on SH builds")
+        PASS_REGULAR_EXPRESSION "stage G2 - on SH builds the bridge is off .0. or live for D and R .3.")
     set_tests_properties(gs_bridge_sh_guard_dir2 gs_bridge_sh_guard_dir4 PROPERTIES
         PASS_REGULAR_EXPRESSION "GS_LIVE_DIR is 0 .off., 1 .D only. or 3 .D and R., nothing else")
     set_tests_properties(gs_bridge_sh_guard_forced PROPERTIES
