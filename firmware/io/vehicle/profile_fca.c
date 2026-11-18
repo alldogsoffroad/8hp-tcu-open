@@ -4,8 +4,11 @@
  * Assumptions still to be confirmed on a vehicle or bench:
  *   - timeouts: stock raw timeout x 10 ms (spec 07 section 3);
  *   - protection form: variant 1 (spec 07 section 2, coding selection open);
- *   - largest accepted counter step: FCA_COUNTER_MAX_STEP (a calibration value in stock);
- *   - 0x210 (shifter bus) carries no CRC/counter (not seen in the stock receive table).
+ *   - largest accepted counter step: FCA_COUNTER_MAX_STEP = 3, the stock's cal 0x1918FE
+ *     (2026-11-17, ~/tcu_sweep/can_inputs_decode.md; was 2);
+ *   - 0x210 (shifter bus) carries CRC-8 + counter: the stock checks both (handle 0x44,
+ *     enable 0x3B) [O]; their positions are taken as 0x2EA's (counter = byte 3 high
+ *     nibble, CRC = byte 4) [I] — corrected 2026-11-17 (the old note said "none").
  * Substitute values are not applied here; invalid or timed-out signals are reported with
  * Q_INVALID and the consumer decides.
  */
@@ -15,7 +18,7 @@
 #include <string.h>
 
 #define FCA_E2E              COM_E2E_V1
-#define FCA_COUNTER_MAX_STEP 2u
+#define FCA_COUNTER_MAX_STEP 3u
 
 enum {
     M_108, M_112, M_120, M_140, M_14B, M_180, M_2EA, M_2F8, M_334, M_210, M_COUNT
@@ -31,7 +34,7 @@ static const com_rx_cfg_t s_cfg[M_COUNT] = {
     [M_2EA] = { 0x2EAu, CAN_BUS1, 5u,   50u, FCA_E2E,       FCA_COUNTER_MAX_STEP },
     [M_2F8] = { 0x2F8u, CAN_BUS1, 8u,   50u, FCA_E2E,       FCA_COUNTER_MAX_STEP },
     [M_334] = { 0x334u, CAN_BUS1, 8u, 2000u, COM_E2E_NONE,  0u },
-    [M_210] = { 0x210u, CAN_BUS2, 5u,   50u, COM_E2E_NONE,  0u },
+    [M_210] = { 0x210u, CAN_BUS2, 5u,   50u, FCA_E2E,       FCA_COUNTER_MAX_STEP },
 };
 
 static com_rx_state_t s_st[M_COUNT];
@@ -170,10 +173,12 @@ void vehicle_update_10ms(void)
     s_in.soak_s = ok ? (uint32_t)be16(d, 3u, 0x0FFFu) * 60u : 0u;
     s_in.q_soak = ok ? Q_OK : Q_INVALID;
 
-    /* 0x112 byte 0 bits 2..0: park request / hold status, 0 and >= 5 invalid. */
+    /* 0x112 byte 0 bits 2..0: the IGNITION STATUS code (2026-11-17, can_inputs_decode §3:
+     * E9FA -> the terminal-15 FSM 0x140B80 -> E9FF; table 0x191D0C: 4 and 5 = on, 3 sets
+     * E9D4+0x2F, 7 = signal not available). Was read as a "park request". */
     ok = com_rx_read(M_112, d) == COM_RX_OK;
-    s_in.park_request = ok ? (uint8_t)(d[0] & 0x07u) : 0u;
-    s_in.q_park_request = ok && s_in.park_request >= 1u && s_in.park_request <= 4u ? Q_OK : Q_INVALID;
+    s_in.ign_code = ok ? (uint8_t)(d[0] & 0x07u) : 0u;
+    s_in.q_ign_code = ok && s_in.ign_code != 7u ? Q_OK : Q_INVALID;
 
     decode_lever();
 }

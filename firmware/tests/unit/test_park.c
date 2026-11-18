@@ -80,7 +80,7 @@ static void step(void)
     if (sc.lever_code != 0u) {
         const uint8_t l[5] = { sc.lever_code, 0, 0, 0, 0 };
         send(CAN_BUS1, 0x2EAu, 5u, true, l);
-        send(CAN_BUS2, 0x210u, 5u, false, l);
+        send(CAN_BUS2, 0x210u, 5u, true, l);
     }
     if (sc.brake) {
         memset(d, 0, sizeof d);

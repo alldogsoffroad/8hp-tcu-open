@@ -1,6 +1,7 @@
 /* Unit test: FCA vehicle profile decode (spec 07 section 7.1, spec 14 section 5a). */
 #include "io/vehicle/vehicle.h"
 #include "bsw/com/crc8.h"
+#include "bsw/com/com.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -50,7 +51,7 @@ int main(void)
     send(CAN_BUS1, 0x112u, 2u, false, (const uint8_t[2]){ 0x02, 0 });
     /* lever: 0x2EA = D (4), 0x210 = R (2); primary wins */
     send(CAN_BUS1, 0x2EAu, 5u, true, (const uint8_t[5]){ 0x04, 0, 0, 0, 0 });
-    send(CAN_BUS2, 0x210u, 5u, false, (const uint8_t[5]){ 0x02, 0, 0, 0, 0 });
+    send(CAN_BUS2, 0x210u, 5u, true, (const uint8_t[5]){ 0x02, 0, 0, 0, 0 });
     vehicle_update_10ms();
 
     CHECK(v->engine_speed == 2000 && v->q_engine_speed == Q_OK);
@@ -63,7 +64,7 @@ int main(void)
     CHECK(v->brake == BRAKE_ON && v->q_brake == Q_OK);
     CHECK(v->park_speed_raw == 0x123u && v->q_park_speed == Q_OK);
     CHECK(v->soak_s == 5400u && v->q_soak == Q_OK);
-    CHECK(v->park_request == 2u && v->q_park_request == Q_OK);
+    CHECK(v->ign_code == 2u && v->q_ign_code == Q_OK);
     CHECK(v->lever == RANGE_D && v->lever_src == LEVER_SRC_PRIMARY && v->q_lever == Q_OK);
 
     /* primary sends "no change" (0): last value kept; invalid code 7 -> fallback R */
@@ -71,7 +72,7 @@ int main(void)
     vehicle_update_10ms();
     CHECK(v->lever == RANGE_D && v->lever_src == LEVER_SRC_PRIMARY);
     send(CAN_BUS1, 0x2EAu, 5u, true, (const uint8_t[5]){ 0x07, 0, 0, 0, 0 });
-    send(CAN_BUS2, 0x210u, 5u, false, (const uint8_t[5]){ 0x02, 0, 0, 0, 0 });
+    send(CAN_BUS2, 0x210u, 5u, true, (const uint8_t[5]){ 0x02, 0, 0, 0, 0 });
     vehicle_update_10ms();
     CHECK(v->lever == RANGE_R && v->lever_src == LEVER_SRC_FALLBACK && v->q_lever == Q_OK);
 
@@ -93,6 +94,33 @@ int main(void)
     CHECK(v->q_engine_speed == Q_INVALID && v->q_torque_actual == Q_INVALID);
     CHECK(v->q_soak == Q_OK);
     CHECK(v->q_lever == Q_INVALID && v->lever_src == LEVER_SRC_NONE);
+
+    /* 2026-11-17 (can_inputs_decode): 0x210 needs CRC + counter — an unprotected
+     * frame is rejected, so 0x210 alone gives no lever */
+    for (int i = 0; i < 6; i++) {
+        send(CAN_BUS2, 0x210u, 5u, false, (const uint8_t[5]){ 0x02, 0, 0, 0, 0x00 });
+        vehicle_update_10ms();
+    }
+    CHECK(v->q_lever == Q_INVALID && v->lever_src == LEVER_SRC_NONE);
+    {   /* counter step 3 accepted (cal 0x1918FE), 4 rejected */
+        const com_rx_state_t *st;
+        uint8_t f[5] = { 0x01, 0, 0, 0, 0 };
+        uint16_t e0;
+        f[3] = 0x10; f[4] = crc8_j1850(f, 4); vehicle_rx(CAN_BUS2, &(can_frame_t){ .id = 0x210u, .dlc = 5u, .data = { f[0], f[1], f[2], f[3], f[4] } });
+        st = com_rx_state(9u);                 /* M_210 */
+        e0 = st->err_counter;
+        f[3] = 0x40; f[4] = crc8_j1850(f, 4); vehicle_rx(CAN_BUS2, &(can_frame_t){ .id = 0x210u, .dlc = 5u, .data = { f[0], f[1], f[2], f[3], f[4] } });
+        CHECK(st->err_counter == e0);          /* 1 -> 4: step 3 */
+        f[3] = 0x80; f[4] = crc8_j1850(f, 4); vehicle_rx(CAN_BUS2, &(can_frame_t){ .id = 0x210u, .dlc = 5u, .data = { f[0], f[1], f[2], f[3], f[4] } });
+        CHECK(st->err_counter == e0 + 1u);     /* 4 -> 8: step 4 */
+    }
+    /* 0x112 is the ignition status: 4 = on (valid), 7 = SNA (invalid) */
+    send(CAN_BUS1, 0x112u, 2u, false, (const uint8_t[2]){ 0x04, 0 });
+    vehicle_update_10ms();
+    CHECK(v->ign_code == 4u && v->q_ign_code == Q_OK);
+    send(CAN_BUS1, 0x112u, 2u, false, (const uint8_t[2]){ 0x07, 0 });
+    vehicle_update_10ms();
+    CHECK(v->ign_code == 7u && v->q_ign_code == Q_INVALID);
 
     if (fails == 0) {
         printf("test_profile_fca: ok\n");

@@ -140,7 +140,7 @@ static void run(const scen_t *sc, FILE *out, unsigned base)
             !(t >= sc->gap_from && t < sc->gap_from + sc->gap_len)) {
             const uint8_t l[5] = { code, 0, 0, 0, 0 };
             send(CAN_BUS1, 0x2EAu, 5u, true, l);
-            send(CAN_BUS2, 0x210u, 5u, false, l);
+            send(CAN_BUS2, 0x210u, 5u, true, l);
         }
         if (sc->brake) {
             memset(d, 0, sizeof d);

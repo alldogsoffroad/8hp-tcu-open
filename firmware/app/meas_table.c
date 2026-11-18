@@ -56,7 +56,7 @@ static struct {
     int16_t  engine_temp;
     uint8_t  brake, engine_mode;
     uint16_t park_speed, soak_min;
-    uint8_t  park_request, lever, lever_src;
+    uint8_t  ign_code, lever, lever_src;   /* ign_code: 0x112 (was park_request) */
     uint16_t quality, uptime_s, missed;
     uint8_t  session;
     uint16_t speed0, speed1, speed2;
@@ -73,7 +73,7 @@ static struct {
 static const meas_index_t s_index[] = {
     IDX(engine_speed), IDX(torque_t1), IDX(torque_t2), IDX(torque_t3), IDX(pedal),
     IDX(engine_temp), IDX(brake), IDX(engine_mode), IDX(park_speed), IDX(soak_min),
-    IDX(park_request), IDX(lever), IDX(lever_src), IDX(quality), IDX(uptime_s), IDX(missed),
+    IDX(ign_code), IDX(lever), IDX(lever_src), IDX(quality), IDX(uptime_s), IDX(missed),
     IDX(session), IDX(speed0), IDX(speed1), IDX(speed2), IDX(fluid_temp), IDX(tft_faults),
     IDX(battery), IDX(park), IDX(park_bands), IDX(an8_mv), IDX(an1_mv),
     IDX(park_target), IDX(park_reason), IDX(park_state), IDX(park_req), IDX(park_flags),
@@ -104,7 +104,7 @@ void meas_table_update(void)
     s_m.engine_mode = v->engine_mode;
     s_m.park_speed = v->park_speed_raw;
     s_m.soak_min = (uint16_t)(v->soak_s / 60u);
-    s_m.park_request = v->park_request;
+    s_m.ign_code = v->ign_code;
     s_m.lever = (uint8_t)v->lever;
     s_m.lever_src = (uint8_t)v->lever_src;
     s_m.quality = vehicle_quality_bits(v);

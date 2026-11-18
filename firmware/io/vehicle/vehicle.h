@@ -33,7 +33,7 @@ typedef struct {
     uint8_t   engine_mode;      quality_t q_engine_mode;     /* [I] raw code 0..14           */
     uint16_t  park_speed_raw;   quality_t q_park_speed;      /* 0x14B, unit open             */
     uint32_t  soak_s;           quality_t q_soak;            /* [I] engine-off time          */
-    uint8_t   park_request;     quality_t q_park_request;    /* [I] raw code; 1..3 = active  */
+    uint8_t   ign_code;         quality_t q_ign_code;        /* 0x112 ignition status: 4/5 on, 7 SNA */
 
     range_req_t lever;          quality_t q_lever;
     bool        lever_flag;     /* lever code 5: D with extra flag ([I] manual range)        */

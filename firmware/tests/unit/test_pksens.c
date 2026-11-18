@@ -420,7 +420,7 @@ static void park_run(int mode, park_snap_t *out)
         s_z.q_output_speed = Q_OK;
         if (code != 0u) {
             send(CAN_BUS1, 0x2EAu, 5u, true, l);
-            send(CAN_BUS2, 0x210u, 5u, false, l);
+            send(CAN_BUS2, 0x210u, 5u, true, l);
         }
         if (mode >= 0) {
             sens_set(sc[mode == 6 ? (int)(t % 7u) : mode]);

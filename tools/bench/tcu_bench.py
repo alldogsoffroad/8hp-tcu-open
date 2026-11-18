@@ -1284,11 +1284,15 @@ def crc8_j1850(data):
 
 
 def lever_frames(code, ctr, bad_crc=False):
-    """(0x2EA data, 0x210 data) for lever code 1 P, 2 R, 3 N, 4 D (spec 14 section 5a): 0x2EA
-    with counter (byte 3 upper nibble) and CRC-8 (byte 4, variant 1); 0x210 unprotected."""
+    """(0x2EA data, 0x210 data) for lever code 1 P, 2 R, 3 N, 4 D (spec 14 section 5a): both
+    with counter (byte 3 upper nibble) and CRC-8 (byte 4, variant 1). 2026-11-17: the stock
+    checks CRC + counter on 0x210 too (~/tcu_sweep/can_inputs_decode.md); positions as 0x2EA [I].
+    bad_crc corrupts 0x2EA only (the park-check fallback step)."""
     d = bytearray([code & 0x07, 0, 0, (ctr & 0x0F) << 4, 0])
+    e = bytearray(d)
     d[4] = crc8_j1850(d[:4]) ^ (0x55 if bad_crc else 0)
-    return bytes(d), bytes([code & 0x07, 0, 0, 0, 0])
+    e[4] = crc8_j1850(e[:4])
+    return bytes(d), bytes(e)
 
 
 class LeverSender(threading.Thread):

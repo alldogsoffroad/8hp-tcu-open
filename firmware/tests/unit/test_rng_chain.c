@@ -70,7 +70,7 @@ static void lever_frame(uint8_t code)
 
     if (code != 0u) {
         send(CAN_BUS1, 0x2EAu, 5u, true, l);
-        send(CAN_BUS2, 0x210u, 5u, false, l);
+        send(CAN_BUS2, 0x210u, 5u, true, l);
     }
 }
 
@@ -904,7 +904,7 @@ static void park_check_print(bool sims, bool before_power)
                 }
                 if (st[k].c) {
                     const uint8_t m[5] = { st[k].code, 0, 0, 0, 0 };
-                    send(CAN_BUS2, 0x210u, 5u, false, m);
+                    send(CAN_BUS2, 0x210u, 5u, true, m);
                 }
             }
             if (sims && (k >= 0 || before_power)) {
