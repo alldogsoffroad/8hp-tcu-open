@@ -30,6 +30,12 @@
 #ifndef TCU_DRV_ODIAG_H
 #define TCU_DRV_ODIAG_H
 
+/* THE FEEDBACK SHADOW IS READ-ONLY (app/fb_shadow.c defines TCU_FB_SHADOW_TU):
+ * it may not include a live output header */
+#if defined(TCU_FB_SHADOW_TU)
+#error "the feedback shadow is read-only: it may not include a live output header (drv_odiag.h)"
+#endif
+
 #include <stdbool.h>
 #include <stdint.h>
 

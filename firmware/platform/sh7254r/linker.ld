@@ -377,6 +377,20 @@ SECTIONS
     ASSERT(__gs_rec_start >= ADDR(.tmp_edd8) + SIZEOF(.tmp_edd8), ".gs_rec overlaps .tmp_edd8")
     ASSERT(__gs_rec_end <= ADDR(.adc_cells), ".gs_rec runs into .adc_cells")
 
+    /* THE PWM-FEEDBACK SHADOW (app/fb_shadow.c; ours — not stock cells;
+     * 2026-11-18, ~/tcu_sweep/feedback_shadow_port.md): struct fbs_t (0x34C)
+     * in free low RAM 0xFFF86A00..0xFFF87000 between .m5_rec (ASSERTed
+     * <= 0xFFF86A00) and .rng_wit (0xFFF87000); the TU's zero-initialised
+     * statics land here too, so .bss does not move. Cleared by
+     * fb_shadow_init. */
+    .fb_shadow 0xFFF86A00 (NOLOAD) : {
+        __fb_shadow_start = .; *(.fb_shadow) *fb_shadow.c.obj(.bss .bss.* COMMON)
+        . = ALIGN(4); __fb_shadow_end = .;
+    } > RAM
+    ASSERT(__fb_shadow_start >= __m5_rec_end, ".fb_shadow overlaps .m5_rec")
+    ASSERT(__fb_shadow_end <= ADDR(.rng_wit), ".fb_shadow runs into .rng_wit")
+    ASSERT(__fb_shadow_start == 0xFFF86A00 && SIZEOF(.fb_shadow) == 0x34C, ".fb_shadow: fbs_t is off 0xFFF86A00 (witness_fbshadow.py)")
+
     /* our request-law witnesses and the refresh snapshot (not stock cells;
      * free low RAM like .sup_wit, so they do not cost the stack guard) */
     .drv_wit 0xFFF84C40 (NOLOAD) : {

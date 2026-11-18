@@ -4,6 +4,7 @@
 #include <stddef.h>
 
 #include "regs.h"
+#include "platform/plat_fbhw.h"
 
 /* ---- Pins ----------------------------------------------------------------
  * Same two-step sequence as the stock firmware (spec 01 section 4):
@@ -1628,6 +1629,36 @@ static void fb_capture_init(void)
         TSRF(n) = (uint8_t)(TSRF(n) & (uint8_t)~1u);
         TSTRF |= bit;
     }
+}
+#endif
+
+#if !defined(TCU_RAM_APP) && !defined(TCU_LOADER)
+/* THE FEEDBACK SHADOW'S WINDOW SAMPLER (2026-11-18, app/fb_shadow.c;
+ * ~/tcu_sweep/feedback_shadow_port.md): arm the Timer-D0 C-compare channel
+ * 0 (CMID00, vector 216 → header.c v_fbsamp → fb_shadow_isr = 0x90A72).
+ * The stock: 0x970FC writes TIOR1D0 = 0x00FF (OSSD = 00: no TOD pin output;
+ * IOAD0x = 11: compare on) and IPR10 = 0x6665 (bits 15-12 = 6); 0x90010
+ * (bytes 0x900D2-0x900F8) OCRD00 = 3000 << 8, TSRD0 byte 0xF58D &= ~0x10,
+ * TIERD0 byte 0xF58F |= 0x10. Ours, all BYTE accesses on the D0 control
+ * registers (the walk timer owns 0xF585 / 0xF58C / 0xF58E): only IOAD00
+ * (byte 0xF581 |= 0x03 — OSSD byte 0xF580 untouched, IOAD01..03 stay 00:
+ * no other compare runs), OCRD00 = first << 8, CMFAD00 cleared, IPR10 bits
+ * 15-12 = 6 (the walk's level; IPR10 bits 7-4 / 3-0 kept), then CMEAD00 —
+ * under SR.I = 15. DCRD0 is never written (0: no compare-triggered start of
+ * the walk's DCNTD00). The vector is in the ROM table, so it is wired before
+ * the enable. Before r04b no build wrote TIOR1D0, so CMID00 never fired
+ * (regs.h's "never asserts on this silicon" [I strong: IOAD00 = 00 =
+ * "compare match is not performed", manual §13.19.3]). */
+void plat_fbsamp_start(uint32_t first)
+{
+    const uint32_t lk = plat_sr_i();
+    plat_sr_set(15u);
+    REG8(0xFFFFF581u) = (uint8_t)(REG8(0xFFFFF581u) | 0x03u);          /* TIOR1D0: IOAD00 = 11 */
+    REG32(0xFFFFF590u) = (first & 0x00FFFFFFu) << 8;                   /* OCRD00 */
+    REG8(0xFFFFF58Du) = (uint8_t)(REG8(0xFFFFF58Du) & 0xEFu);          /* CMFAD00 clear */
+    INTC_IPR(10) = (uint16_t)((INTC_IPR(10) & 0x0FFFu) | 0x6000u);     /* CMID00..03 level 6 */
+    REG8(0xFFFFF58Fu) = (uint8_t)(REG8(0xFFFFF58Fu) | 0x10u);          /* CMEAD00 enable */
+    plat_sr_set(lk);
 }
 #endif
 

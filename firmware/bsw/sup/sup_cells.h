@@ -10,6 +10,12 @@
 #ifndef TCU_SUP_CELLS_H
 #define TCU_SUP_CELLS_H
 
+/* THE FEEDBACK SHADOW IS READ-ONLY (app/fb_shadow.c defines TCU_FB_SHADOW_TU):
+ * it may not include a live output header */
+#if defined(TCU_FB_SHADOW_TU)
+#error "the feedback shadow is read-only: it may not include a live output header (sup_cells.h)"
+#endif
+
 /* THE GARAGE SHADOW IS READ-ONLY (app/gs_shadow.c defines TCU_GS_SHADOW_TU):
  * it may not include a live output header */
 #if defined(TCU_GS_SHADOW_TU)

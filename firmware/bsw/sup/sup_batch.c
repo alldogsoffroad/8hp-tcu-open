@@ -43,6 +43,13 @@ extern void drv_out_tick_head(void) __attribute__((weak));
 extern void drv_out_law(void) __attribute__((weak));
 extern void drv_f_stage(void) __attribute__((weak));
 extern void drv_out_report(void) __attribute__((weak));
+/* the READ-ONLY PWM-feedback shadow (app/fb_shadow.c, 2026-11-18,
+ * ~/tcu_sweep/feedback_shadow_port.md): app/fb_hook.c's gather, right after
+ * the stand-in at the 0x7CBA8 slot and before the law; weak (the supervisor
+ * tests link without it), absent from the RAM application (zero margin) */
+#if !defined(TCU_RAM_APP)
+extern void app_out_head_hook(void) __attribute__((weak));
+#endif
 /* M4 group A (drv_groupa.c / drv_temp.c; ~/tcu_sweep/groupA_park_port.md):
  * the stock's list entries, weak so the supervisor tests link without them —
  *   0x8F70C   the AN table, first call of the reply proc 0x8EE52
@@ -330,6 +337,11 @@ void sup_batch_5ms(void)
              * 0x7CC76; no cell is shared across that interleave [I] */
             drv_out_tick_head();
         }
+#if !defined(TCU_RAM_APP)
+        if (app_out_head_hook) {
+            app_out_head_hook();        /* the feedback shadow (read-only) */
+        }
+#endif
         /* L1: entries 20..24 BEFORE the J2 stage 0x8EDF6, so a request
          * reaches the J2 word the same tick (letters_law_decode.md §2.4) */
         sup_ladder_tick_seq(true);      /* 0x44D08: 0x7CC76 → 0x8570E */
@@ -402,6 +414,11 @@ void sup_batch_5ms(void)
             if (drv_out_tick_head) {
                 drv_out_tick_head();    /* 0x44E54 0x8EE12 + 0x44E5C 0x7CBA8 */
             }
+#if !defined(TCU_RAM_APP)
+            if (app_out_head_hook) {
+                app_out_head_hook();    /* the feedback shadow (read-only) */
+            }
+#endif
             if (drv_out_law) {
                 drv_out_law();          /* 0x44E60: 0x7CC1E → 0x83DB0 */
             }

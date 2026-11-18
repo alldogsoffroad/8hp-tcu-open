@@ -200,8 +200,23 @@ static void v_dei5(void)
     plat_alive(0x88u);                  /* r02m: DEI5 exit  */
 }
 
+/* the READ-ONLY feedback shadow's window sampler (2026-11-18, app/fb_shadow.c;
+ * stock 0x90A72 at vector 216): application only */
+#if !defined(TCU_RAM_APP)
+extern void fb_shadow_isr(void);
+
+__attribute__((interrupt_handler))
+static void v_fbsamp(void)
+{
+    fb_shadow_isr();
+}
+#else
+#define v_fbsamp default_handler
+#endif
+
 #else
 
+#define v_fbsamp default_handler
 #define v_wdt_iti default_handler
 #define v_walktmr default_handler
 #define v_tick default_handler
@@ -278,12 +293,12 @@ void (*const app_vectors[508])(void) = {
     default_handler, default_handler, default_handler, default_handler,
     default_handler, default_handler, default_handler, default_handler,
     default_handler, default_handler, default_handler, default_handler,
+    v_fbsamp /* index 212 = VECTOR 216 */, default_handler, default_handler, default_handler,
     default_handler, default_handler, default_handler, default_handler,
-    default_handler, default_handler, default_handler, default_handler,
-    /* index 212 = VECTOR 216: CMID00 C-compare ch0 delivers no interrupt on
-     * this silicon (stock 0x90010 arms its OCR with NO flag/enable bit —
-     * bVar6=0 for ch0); the walk tick lives on the U-compare at index 220
-     * (2026-11-10 bench). Vectors 216-219 stay default. */
+    /* index 212 = VECTOR 216 (above): CMID00, the feedback shadow's window
+     * sampler (stock 0x90A72; armed by plat_fbsamp_start, app only — the
+     * old "delivers no interrupt on this silicon" was TIOR1D0 never written:
+     * IOAD00 = 00 = no compare). Vectors 217-219 stay default. */
     v_walktmr,  /* index 220 = VECTOR 224: ATU-D0 UDID00 U-compare — the stock's
                  * walk tick ISR 0x9106C sits at vector 224 (table 0x40070 +
                  * 4*224); IPR10 nibble bits 7-4 = 6 (stock 0x970FC) */

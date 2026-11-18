@@ -25,6 +25,12 @@
 #ifndef TCU_DRV_REQLAW_H
 #define TCU_DRV_REQLAW_H
 
+/* THE FEEDBACK SHADOW IS READ-ONLY (app/fb_shadow.c defines TCU_FB_SHADOW_TU):
+ * it may not include a live output header */
+#if defined(TCU_FB_SHADOW_TU)
+#error "the feedback shadow is read-only: it may not include a live output header (drv_reqlaw.h)"
+#endif
+
 /* THE RANGE CHAIN IS ISOLATED (app/rng_chain.c, ours): its translation
  * unit defines TCU_RNG_CHAIN_TU and may not include an output-side header —
  * its only way to the outputs is the range D6D6, read by app/park.c */

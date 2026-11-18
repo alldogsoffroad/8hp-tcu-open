@@ -710,3 +710,22 @@ void plat_walktmr_wait_until(uint32_t t)
     while ((int32_t)(t - host_us()) > 0) {
     }
 }
+
+/* ---- the feedback shadow's hardware (platform/plat_fbhw.h): the host
+ * simulator has no Timer F / Timer D model (tests/unit/fb_model.c has one):
+ * no captures, pins high, the sampler never fires ---- */
+#include "platform/plat_fbhw.h"
+uint8_t  fbhw_tsrf(uint8_t n) { (void)n; return 0u; }
+void     fbhw_icff_clear(uint8_t n) { (void)n; }
+uint32_t fbhw_grcf(uint8_t n) { (void)n; return 0u; }
+uint32_t fbhw_graf(uint8_t n) { (void)n; return 0u; }
+uint32_t fbhw_ecntcf(uint8_t n) { (void)n; return 0xFFFFFF00u; }
+void     fbhw_grbf_set(uint8_t n, uint16_t v) { (void)n; (void)v; }
+void     fbhw_ecntbf_set(uint8_t n, uint16_t v) { (void)n; (void)v; }
+uint16_t fbhw_phpr(void) { return 0xFFFFu; }
+uint16_t fbhw_pfpr(void) { return 0xFFFFu; }
+uint32_t fbhw_tcnt1d0(void) { return plat_frt_us() << 8; }
+void     fbhw_ocrd00_set(uint32_t v) { (void)v; }
+void     fbhw_cmfad00_clear(void) {}
+uint32_t fbhw_frt_us(void) { return plat_frt_us(); }
+void     plat_fbsamp_start(uint32_t first) { (void)first; }

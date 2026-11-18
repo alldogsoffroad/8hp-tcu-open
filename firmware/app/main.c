@@ -38,6 +38,7 @@
 #include "app/rng_chain.h"
 #include "app/tmp_chain.h"
 #include "app/gs_shadow.h"
+#include "app/fb_shadow.h"
 #include "app/park_law.h"
 
 /* Shaft assignment of the speed channels (spec 02 section 4.1), the stock calibration's routing:
@@ -413,6 +414,11 @@ int main(void)
     rng_chain_init();                   /* the range: the 0x9B228 one-shot (init arbiter → D6D6) */
 #if !defined(TCU_RAM_APP)
     gs_shadow_init();                   /* the read-only garage-engagement shadow (its own RAM) */
+    /* the read-only PWM-feedback shadow (app/fb_shadow.c, its own RAM):
+     * cells cleared, then the Timer-D0 window sampler armed (vector 216,
+     * level 6) — the stock arms it in its init batch (0x90010) */
+    fb_shadow_init();
+    fb_shadow_start();
 #endif
     park_pair_init();                   /* park sensor: 0x141B1C (safety layer) */
     sensors_init(&s_sensors_cfg);

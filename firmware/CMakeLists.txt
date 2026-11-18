@@ -43,6 +43,7 @@ set(CORE_SOURCES
     app/rq_fill_cal.c
     app/tmp_chain.c
     app/gs_shadow.c app/gs_fill.c app/gs_cal.c
+    app/fb_shadow.c app/fb_cal.c app/fb_hook.c
     safety/park_mon.c
     safety/park_pair.c
     safety/kl15.c
@@ -680,6 +681,89 @@ else()
         PASS_REGULAR_EXPRESSION "GS_FORCED is 0 .stock-faithful. or 1 .forced commit., nothing else")
     set_tests_properties(gs_sh_guard_r37 PROPERTIES
         PASS_REGULAR_EXPRESSION "reaction 37 is a compile-time stand-in 0 on SH builds")
+    # THE PWM-FEEDBACK SHADOW (2026-11-18, ~/tcu_sweep/feedback_shadow_port.md):
+    # READ-ONLY. (1) the stock driving dump reproduced on the Timer F / Timer D
+    # model (classes, duties, estimates, resistances); (2) the timeout,
+    # saturation, 950 permil, mixed-hold, R-cadence and sampler-rate paths;
+    # (3) the negative controls (swapped polarity, swapped pins) must FAIL;
+    # the calibration byte-checked against the stock image; the live path
+    # (whole cell window + every bus-A word + the cadence witnesses, parts
+    # 1-4 of test_odiag) byte-identical with and without the shadow; the
+    # source scans and the SH compile checks of the read-only frame.
+    set(FB_TEST_SOURCES tests/unit/test_fb_shadow.c app/fb_shadow.c app/fb_cal.c tests/unit/fb_model.c
+        tests/unit/stub_plat.c)
+    add_executable(test_fb_shadow ${FB_TEST_SOURCES})
+    add_test(NAME fb_shadow COMMAND test_fb_shadow)
+    foreach(neg POLARITY PINS)
+        add_executable(test_fb_shadow_neg_${neg} ${FB_TEST_SOURCES})
+        target_compile_definitions(test_fb_shadow_neg_${neg} PRIVATE FBS_NEG_${neg}=1)
+        add_test(NAME fb_shadow_neg_${neg} COMMAND test_fb_shadow_neg_${neg} --neg)
+        set_tests_properties(fb_shadow_neg_${neg} PROPERTIES WILL_FAIL TRUE)
+    endforeach()
+    add_executable(test_fb_cal tests/unit/test_fb_cal.c app/fb_cal.c)
+    target_compile_definitions(test_fb_cal PRIVATE "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"")
+    add_test(NAME fb_cal_bytes COMMAND test_fb_cal)
+    set_tests_properties(fb_cal_bytes PROPERTIES SKIP_RETURN_CODE 77)
+    add_executable(test_odiag_fbs tests/unit/test_odiag.c
+        app/rq_prod.c app/rq_fill.c app/rq_fill_cal.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
+        app/fb_shadow.c app/fb_cal.c app/fb_hook.c tests/unit/fb_model.c
+        tests/unit/stub_plat.c)
+    target_compile_definitions(test_odiag_fbs PRIVATE DRV_RQ_USE_PRODUCER=1 TEST_ODIAG_FBS=1)
+    add_test(NAME fb_shadow_identity
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fb_identity.py
+            $<TARGET_FILE:test_odiag> $<TARGET_FILE:test_odiag_fbs>)
+    add_executable(test_odiag_fbs_neg tests/unit/test_odiag.c
+        app/rq_prod.c app/rq_fill.c app/rq_fill_cal.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
+        app/fb_shadow.c app/fb_cal.c app/fb_hook.c tests/unit/fb_model.c
+        tests/unit/stub_plat.c)
+    target_compile_definitions(test_odiag_fbs_neg PRIVATE DRV_RQ_USE_PRODUCER=1 TEST_ODIAG_FBS=1
+        TEST_ODIAG_FBS_NEG=1)
+    add_test(NAME fb_shadow_identity_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fb_identity.py
+            $<TARGET_FILE:test_odiag> $<TARGET_FILE:test_odiag_fbs_neg>)
+    set_tests_properties(fb_shadow_identity_negative PROPERTIES WILL_FAIL TRUE)
+    set(FB_OUTPUT_PATHS ${GS_OUTPUT_PATHS}
+        ${CMAKE_SOURCE_DIR}/bsw/sup/sup_batch.c ${CMAKE_SOURCE_DIR}/io/actuators/sol_ctl.c
+        ${CMAKE_SOURCE_DIR}/bsw/drv/drv_cells.h ${CMAKE_SOURCE_DIR}/bsw/drv/drv_odiag.h
+        ${CMAKE_SOURCE_DIR}/bsw/drv/drv_reqlaw.h ${CMAKE_SOURCE_DIR}/bsw/drv/drv_jobs.h)
+    add_test(NAME fb_shadow_scan_outputs
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fb_shadow_scan.py outputs ${FB_OUTPUT_PATHS})
+    add_test(NAME fb_shadow_scan_outputs_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fb_shadow_scan.py outputs
+            ${CMAKE_SOURCE_DIR}/tests/unit/fb_scan_fixture_output.c)
+    set_tests_properties(fb_shadow_scan_outputs_negative PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME fb_shadow_scan_shadow
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fb_shadow_scan.py shadow
+            ${CMAKE_SOURCE_DIR}/app/fb_shadow.c ${CMAKE_SOURCE_DIR}/app/fb_shadow.h
+            ${CMAKE_SOURCE_DIR}/app/fb_cal.c ${CMAKE_SOURCE_DIR}/app/fb_cal.h)
+    add_test(NAME fb_shadow_scan_shadow_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fb_shadow_scan.py shadow
+            ${CMAKE_SOURCE_DIR}/tests/unit/fb_scan_fixture_shadow.c)
+    set_tests_properties(fb_shadow_scan_shadow_negative PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME fb_shadow_scan_hook
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fb_shadow_scan.py hook
+            ${CMAKE_SOURCE_DIR}/app/fb_hook.c)
+    add_test(NAME fb_shadow_scan_hook_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fb_shadow_scan.py hook
+            ${CMAKE_SOURCE_DIR}/tests/unit/fb_scan_fixture_hook.c)
+    set_tests_properties(fb_shadow_scan_hook_negative PROPERTIES WILL_FAIL TRUE)
+    set(FB_SH_SRC ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard_fb.c)
+    add_test(NAME fb_sh_guard_control COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${FB_SH_SRC})
+    add_test(NAME fb_sh_guard_shadow
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/fb_shadow.c)
+    add_test(NAME fb_sh_guard_hook
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/fb_hook.c)
+    add_test(NAME fb_sh_guard_output COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_FB_OUTPUT ${FB_SH_SRC})
+    add_test(NAME fb_sh_guard_live COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_FB_LIVE ${FB_SH_SRC})
+    add_test(NAME fb_sh_guard_cal COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_FB_CAL ${FB_SH_SRC})
+    set_tests_properties(fb_sh_guard_output PROPERTIES
+        PASS_REGULAR_EXPRESSION "the feedback shadow is read-only: an output path may not include fb_shadow.h")
+    set_tests_properties(fb_sh_guard_live PROPERTIES
+        PASS_REGULAR_EXPRESSION "the feedback shadow is read-only: it may not include a live output header")
+    set_tests_properties(fb_sh_guard_cal PROPERTIES
+        PASS_REGULAR_EXPRESSION "the feedback shadow is read-only: an output path may not include fb_cal.h")
     add_executable(test_dump tests/unit/test_dump.c app/bench_dump.c tests/unit/stub_plat.c)
     add_executable(transcript tests/unit/transcript.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c

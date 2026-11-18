@@ -45,6 +45,60 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* THE FEEDBACK SHADOW'S LIVE-PATH IDENTITY (2026-11-18, app/fb_shadow.c;
+ * ~/tcu_sweep/feedback_shadow_port.md): built twice — test_odiag_full
+ * (no shadow) and test_odiag_fbs (-DTEST_ODIAG_FBS: the shadow's hook at the
+ * 0x7CBA8 slot, its CMID00 ISR on the Timer F / D model, the model driven
+ * from the law's own outputs) — and run with --full, which prints per output
+ * tick an EXACT hash of the whole stock cell window 0xFFF80000..0xFFF96000
+ * (the law, the diagnosis, the records, the countdowns), every bus-A word on
+ * the wire with its µs, and the cadence witnesses, through parts 1-4. The
+ * ctest fb_shadow_identity requires the two stdouts byte-identical. */
+static bool s_full;
+static unsigned s_full_n;
+#if defined(TEST_ODIAG_FBS)
+#include "app/fb_shadow.h"
+#include "app/fb_cal.h"
+#include "tests/unit/fb_model.h"
+void app_out_head_hook(void);
+static uint32_t s_fbs_low[10];
+static uint8_t fbs_tf(uint8_t ch) { return FB_PINS[3u * (ch >> 1) + (ch & 1u)]; }
+static void fbs_boot(void)
+{
+    fbm_reset();
+    for (uint8_t ch = 0u; ch < 10u; ch++) {
+        fbm_config(fbs_tf(ch), (uint8_t)(((ch & 1u) == 0u) ? 1u : 2u));
+        fbm_set_static(fbs_tf(ch), true);
+        s_fbs_low[ch] = 0u;
+    }
+    fb_shadow_init();
+    fb_shadow_start();
+}
+/* the chips' feedback as a function of the law's output: a driven channel
+ * (mode 3 / 4 with a current) PWMs at ≈ I / 10 ‰ low (capped 990 ‰) */
+static void fbs_ms(void)
+{
+    for (uint8_t ch = 0u; ch < 10u; ch++) {
+        const uint8_t m = CELL_RQ_MODE[ch];
+        const uint16_t i = CELL_RQ_I[ch];
+        uint32_t low = 0u;
+        if ((m == 3u || m == 4u) && i != 0u) {
+            uint32_t d = i / 10u;
+            low = 4u * (d > 990u ? 990u : (d == 0u ? 1u : d));
+        }
+        if (low != s_fbs_low[ch]) {
+            s_fbs_low[ch] = low;
+            if (low == 0u) {
+                fbm_set_static(fbs_tf(ch), true);
+            } else {
+                fbm_set_pwm(fbs_tf(ch), 4000u, low, 37u * ch);
+            }
+        }
+    }
+    fbm_advance_to(stub.frt_us);
+}
+#endif
+
 extern struct { uint8_t bus; uint8_t job; uint16_t word; uint32_t t_us; } stub_log[32768];
 extern unsigned stub_log_n;
 extern unsigned stub_log_dropped;
@@ -260,6 +314,9 @@ static void boot(void)
     sup_state(0u);
     rq_prod_boot_pass();
     stub_log_n = 0u;
+#if defined(TEST_ODIAG_FBS)
+    fbs_boot();
+#endif
 }
 
 /* one output tick: the stock's slots (sup_batch.c) — or, -DOD_OLD (the
@@ -273,12 +330,45 @@ static void out_tick(void)
     drain();
 #else
     drv_out_tick_head();                /* 0x8EE12 + 0x7CBA8 */
+#if defined(TEST_ODIAG_FBS)
+    app_out_head_hook();                /* the feedback shadow (sup_batch.c's slot) */
+#if defined(TEST_ODIAG_FBS_NEG)
+    /* NEGATIVE CONTROL (ctest fb_shadow_identity_negative): the shadow's
+     * measured duty leaks into the live cell 0x9340C — the identity
+     * comparison must catch it */
+    for (uint8_t ch = 0u; ch < 10u; ch++) {
+        *(volatile uint16_t *)(uintptr_t)(0xFFF9340Cu + 2u * ch) = fb_shadow_state()->duty[ch];
+    }
+#endif
+#endif
     drv_out_law();                      /* 0x7CC1E */
     drv_f_stage();                      /* 0x8EE30: compose, cyclic + config queued */
     drv_id_kick();                      /* 0x8EE82 → 0x921A0 */
     drain();
     drv_out_report();                   /* 0x7ABC8 */
 #endif
+    if (s_full) {
+        /* the exact live state after the tick: the whole cell window, every
+         * bus-A word logged so far (with its µs), the cadence witnesses */
+        uint64_t h = 0xCBF29CE484222325ull;
+        const volatile uint8_t *p = (const volatile uint8_t *)(uintptr_t)0xFFF80000u;
+        for (uint32_t a = 0u; a < 0x16000u; a++) {
+            h = (h ^ p[a]) * 0x100000001B3ull;
+        }
+        for (unsigned k = 0u; k < stub_log_n; k++) {
+            h = fnv(h, ((uint32_t)stub_log[k].bus << 24) | ((uint32_t)stub_log[k].job << 16) | stub_log[k].word);
+            h = fnv(h, stub_log[k].t_us);
+        }
+#if !defined(OD_OLD)
+        {
+            const uint8_t *w = (const uint8_t *)drv_out_wit();
+            for (unsigned k = 0u; k < sizeof(drv_out_wit_t); k++) {
+                h = (h ^ w[k]) * 0x100000001B3ull;
+            }
+        }
+#endif
+        printf("F %u %u %016llx\n", s_full_n++, (unsigned)stub.frt_us, (unsigned long long)h);
+    }
 }
 
 /* one millisecond of main.c (part 1: the mode-0 cadence, an output tick
@@ -287,6 +377,9 @@ static void step_ms(uint32_t t)
 {
     stub.frt_us += 1000u;
     stub.ms++;
+#if defined(TEST_ODIAG_FBS)
+    fbs_ms();
+#endif
     sup_state(t);
     drv_od_diag_poll(stub.frt_us);      /* task_1ms */
     drain();
@@ -574,6 +667,9 @@ static void step_ms_main(uint32_t t, uint32_t t_sup, bool trace)
 {
     stub.frt_us += 1000u;
     stub.ms++;
+#if defined(TEST_ODIAG_FBS)
+    fbs_ms();
+#endif
     sup_state(t_sup);
     drv_od_diag_poll(stub.frt_us);      /* task_1ms */
     drain();
@@ -677,6 +773,29 @@ static void part4(void)
 int main(int argc, char **argv)
 {
     FILE *golden = NULL;
+    if (argc > 1 && strcmp(argv[1], "--full") == 0) {
+        s_full = true;
+        part1(stdout, NULL);
+#if !defined(OD_OLD)
+        part2();
+        part3();
+        part4();
+#endif
+#if defined(TEST_ODIAG_FBS)
+        {
+            const volatile fbs_t *s = fb_shadow_state();
+            unsigned cls_ok = 0u;
+            for (uint8_t ch = 0u; ch < 10u; ch++) {
+                cls_ok += (s->cmp[ch].agree_n != 0u) ? 1u : 0u;
+            }
+            fprintf(stderr, "fbs isr %u windows %u/%u ticks %u r_upd %u pair_bad %u channels-compared %u\n",
+                    (unsigned)s->isr_n, (unsigned)s->win_n[0], (unsigned)s->win_n[1],
+                    (unsigned)s->tick_n, (unsigned)s->r_upd_n, (unsigned)s->pair_bad_n, cls_ok);
+        }
+#endif
+        printf("%s (%d failures)\n", fails == 0 ? "PASS" : "FAIL", fails);
+        return fails == 0 ? 0 : 1;
+    }
     if (argc > 1) {
         golden = fopen(argv[1], "r");
         if (golden == NULL) {
