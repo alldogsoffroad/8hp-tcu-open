@@ -106,6 +106,15 @@ release solenoid **MV-1** (source item 6), so match "MV" numbers by function, no
 - [D] Plausibility of the current unit: the channel maximum `0x2FFA` read as 0.1 mA steps is
   about 1.2 A, which a 5.5 Ω coil reaches at about 6.8 V, well inside the supply range. The
   25 Ω park hold coil draws about 0.5 A at 12–14 V.
+- **Correction (2026-11-13/14/16/18, sources: CLAUDE.md bench blocks r03e, r03h, r03i and the 2026-11-16
+  "REFERENCE: Land Rover 8HP70" block; `docs/reference/8hp70-landrover-l320-overview.md`; `~/tcu_sweep/feedback_shadow_port.md` §8 R model;
+  applied 2026-11-18):** ~~"park release and park hold solenoids about 25 Ω"~~ — the two park coils differ.
+  Measured on this mechatronic from supply-current steps [D]: **pressure regulators ≈ 6–7 Ω** (r03e: 7.0 Ω at
+  850 mA warm; the stock's resistance model reads ≈ 6.0–6.2 Ω), **park release (ch 7) ≈ 11–12 Ω** (r03i ≈ 11 Ω;
+  model ≈ 12.2 Ω cold, rising as the dry coil heats), **park hold (TOE31) ≈ 20–25 Ω** (r03h ≈ 20 Ω). The Land
+  Rover 8HP70 manual [M, a different variant] gives EPRS 5.05 Ω, MV1 10–11 Ω, MV2 (park hold) 25 Ω at 20 °C,
+  which agrees: the "~25 Ω" figure belongs to the **park hold** coil. A 25 Ω coil could not reach 850 mA at
+  13.3 V, so it cannot describe the pressure regulators.
 - [M] Some vehicles add a solenoid holding a stop/start pressure accumulator; [I] this may use
   the spare chip-4 channels on other variants.
 
@@ -136,6 +145,17 @@ enable mask calibration `0x1919B4` = `0x0B`) and `0x8ADF4` turn each into a PWM 
 (battery-voltage compensated) at `0xFFF9086A[k]`; `0x91500` writes it to the timer E duty
 registers. Descriptor table `0x40CB4`:
 
+> **Correction (2026-11-13/14, sources: `~/tcu_sweep/solenoid_chain_decode.md` §0, §B.1–B.3 "Records to correct"; `~/tcu_sweep/groupA_park_port.md` §2.5; applied 2026-11-18):**
+> `0x91500` writes the **reload** registers DRLD (and CRLD/RLDCRE on a cycle change) through **`0x9203C`** (duty
+> ≥ 1000 → DTR = cycle, else cycle × ‰ / 1000), from 0xFFF9087E[k] (= 0x9086A[k] when the cal `0x1918E6` bit is
+> set); per `~/tcu_sweep/groupA_park_port.md`, it refreshes only 0x90888[0] of its own state. Further [O]: the **min-clamp mask `0x1919B8` = 0x1F**
+> (every computed duty < 50 is raised to 50); **TOE32 is excluded from the full-on tests** (source FE skips both
+> test bits) and is supplied from **`0x94F86`** (the mux-11 supply; FF = `0x94F9E`); **before 'L' (0x95005 = 1)
+> outputs with mask 0x0F take the test branch and are off whatever the demand**, so a park-hold demand acts only
+> after 'L'. The eight lead-frame solenoids are **not** on Timer E (bus-A SPI chips, §2b); Timer E group B are
+> one 50 µs pulse per driver chip (spec 02 §3.2). The stock clears TEE before configuring Timer E and sets every
+> used channel's duty before TEE comes on (`0x91F3E`).
+
 | Switch output | Slot | Timer output (pin) | Enabled | Function |
 |---|---|---|---|---|
 | 0 | 10 | TOE30 (PL5) | yes | request 4 = status byte `0xFFF8B100`; meaning open ([I] TRS Park signal or switched supply) |
@@ -153,6 +173,12 @@ and staggered offsets).
 - Park-lock decision (object byte 1): true when Park is requested and a release condition
   (`0xE8B56`, with hysteresis) holds, or when a force flag (`0xFFF89CF2`) is set; blocked by a
   flag (`0xFFF89C30`).
+  **Correction (2026-11-16/17, sources: `~/tcu_sweep/m5_request_producer_decode.md` item 5; `~/tcu_sweep/park_chain_loose_ends_decode.md` §6 / Q6; `~/tcu_sweep/garage_shift_decode.md` item 4; applied 2026-11-18):**
+  `0xFFF89C30` is ~~a block flag~~ the **power-flow state** (0 none, 1 forward, 2 reverse; writers `0xCFE56` /
+  `0xCFDDE`) [O writers, I meaning], so the lock is allowed only with no drive engaged. The park request AE29
+  (`0xCFFDE`) = (`0x89CDC` == 8 && `0x89CF2` == 0) || (`0x89CF2` ≠ 0 && `0xFFF8E69B` == 0), E69B = the committed
+  power flow (not a car-wash inhibit). `0xFFF89CF2` is a **fault-reaction park request** (mode 3, some gear-code
+  faults) [O `~/tcu_sweep/park_chain_loose_ends_decode.md`]. The range input `0x89CDC` is a copy of D6D6 (spec 14 §4.5).
 - Output 2 (MV Pos, park release) = energised when Park is **not** requested.
 - Output 3 (ch 11 → TOE31, park hold) = energised whenever the park-lock decision is **false**.
 - Outputs 1–4 can be overridden by a diagnostic actuator test.
@@ -169,11 +195,17 @@ Inputs come from the converter/park input block `0xFFF89C3C…` (filled by `0xB9
 1. **Park request** (`0xFFF8AE29`, set by `0xCFFDE`): true when the range code
    `0xFFF89CDC` equals **8** ([I] P selected; range code from module `0x9B588`) and the
    auxiliary request `0xFFF89CF2` is clear, **or** when the auxiliary request `0xFFF89CF2` is
-   set and flag `0xFFF8E69B` is clear. [I] `0xFFF89CF2` is an automatic park request (for example
-   ignition off) and `0xFFF8E69B` a "stay in N" (car wash) inhibit.
+   set and flag `0xFFF8E69B` is clear. ~~[I] `0xFFF89CF2` is an automatic park request (for example
+   ignition off) and `0xFFF8E69B` a "stay in N" (car wash) inhibit.~~ **Corrected 2026-11-17
+   (`~/tcu_sweep/park_chain_loose_ends_decode.md` §8 item 6 / Q6; `~/tcu_sweep/garage_shift_decode.md` item 4):**
+   `0xFFF89CF2` is a fault-reaction park request (`0xB986C` `0xB9B52–0xB9BCE`: mode-3 flag, some gear-code faults);
+   `0xFFF8E69B` is the **committed power flow**. Key-off auto-P is a separate path in the range chain (`0xC286C`,
+   spec 14 §3). The range code `0xFFF89CDC` is written twice per `0xB912C` pass: a copy of D6D6 (`0xB91C6`), then
+   the override `0xB97F8` (`0xB9634`) (`~/tcu_sweep/m5_reverse_range_decode.md` §8 item 4).
 2. **Park-lock decision** (park object byte 1, `0xE88FA`): set when not blocked (`0xFFF89C30`
    clear) and either the auxiliary request is set, or Park is requested and the lock is
-   currently set or permitted by `0xE8B56`.
+   currently set or permitted by `0xE8B56`. *(`0xFFF89C30` = the power-flow state, not a block flag — corrected
+   2026-11-16, §1.2.)*
 3. **Speed interlock** (`0xE8B56`): engagement is **refused** only if all of these hold:
    - a calibration map (group `+0x08`, indexed by an input byte) enables the interlock;
    - `0xE8B7E` is false: vehicle speed **> 10** (calibration `+0x0C`, units [I] about km/h)
@@ -242,6 +274,15 @@ TOE31 (§1.2), on its own supply as FCA shows.
 Every stage keeps an inverted copy of the value and reports a fault (`0x226`, `0x238`) on a
 mismatch. A reimplementation must provide equivalent safety (spec 03 §5).
 
+**Correction (2026-11-17, source: `~/tcu_sweep/fault_manager_decode.md` §7 item 5; applied 2026-11-18):** `0x226` / `0x238` are not reports — they
+go to the **fatal handler `0x6865C`**, which resets the MCU (or halts) (spec 13 §2) [O].
+
+**Addition (2026-11-13, source: `~/tcu_sweep/solenoid_chain_decode.md` §0 item 2; applied 2026-11-18):** step 6 `0x83DB0` passes the requested
+current only while the **seq2 state of supervisor output 0 (`0xFFF94FD0[0]`) == 'U'** and the switched-rail
+voltage **`0x94ED0` ≥ 7400 mV** (release 7900); before 'U' every channel is off, except the deliberate rail-off
+full-on tests (`0x94114` ladder phase 0x10, `0x94115` '3' diagnosis) [O bytes `0x83E22–0x83E36`]. The actuator
+chain therefore does consult the supervisor (spec 23).
+
 Channel mode letters used by the driver (`0xFFF9081C`): `0x21` = current-controlled, `0x43` =
 full on, `0x32` = off/fault [O].
 
@@ -263,6 +304,17 @@ logs the source id (`0xFFF8E374`), and its virtual method arbitrates between sou
 resulting pressure is at `request + 2`, the mode at `+7`. [I] Sources are the shift-phase engine
 (spec 11 §3), the line-pressure and lockup strategies (`0xDC4C4` uses source ids `0x15` for Sys
 and `0x16` for WK), and diagnostics.
+
+**Corrections (2026-11-16/17, sources: `~/tcu_sweep/m5_request_producer_decode.md` items 2–3; `~/tcu_sweep/shift_engine_decode.md` item 2; `~/tcu_sweep/m5_transient_decode.md` items 2–4, 8; applied 2026-11-18):**
+- `+4` = min(`+2`, Sys result `0xFFF8B9AA`) (`0xE4EC4–0xE4ED0`); the element actuator reads `+2` (`~/tcu_sweep/m5_0_port.md`).
+- ~~"its virtual method arbitrates between sources"~~ — **`0xE53DA` has no priority arbitration**: the last call
+  wins, every call runs `0xE4E5C`; precedence comes from call order and the `+6` guard [O, `~/tcu_sweep/shift_engine_decode.md`].
+- Source ids [O, `~/tcu_sweep/shift_engine_decode.md`]: 1/2 gear-change elements, 3/4 E33C+5/+6, 5–10 the garage engine (prio 0 engaging
+  6/8/10, prio 1 releasing 5/7/9), 0x10/0x11 `0xFFF8BC74`, 0xB `0xFFF8E328`, 0xC `0xFFF8E4B6`, 0xD fill object
+  `0xFFF8E60F`, 0xF `0xFFF8E5BB`, 0x15 Sys, 0x16 WK, and the **holder (source 0)**: the producer `0xDC4C4` sets
+  every element no other source set to 0 or 20000 mbar, mode 1, priority 4, from table `0x505A4` (spec 11 §1).
+- `0xE4E5C` → `0xE40DA` (which writes mode `+7` = 0): **prio 2 always**; prio 3 never; other prio iff
+  `0xE4DBA()` == 0 and `+0x53` ≠ 0 [O `0xE4EF6–0xE4F1A`]. `+0x46` is the element fill FSM's ramp variable.
 
 **2. Actuator objects** (constructed in `0x15BF2C`, see §1.2) read their request and compute a
 current each cycle (virtual method at vtable `+0x14`, called from `0xD9C7C`; when a diagnostic
@@ -293,12 +345,31 @@ i = clamp(i, i_min, i_max)              0xD9CBC / 0xD9CEE, group 0xFFF84C94: 500
 0xD9F70(actuator, i)                    → §2 step 1
 ```
 
+**Corrections (2026-11-16/17, sources: `~/tcu_sweep/m5_request_producer_decode.md` items 2, 6; `~/tcu_sweep/m5_0_port.md` "Corrections"; `~/tcu_sweep/line_pressure_decode.md` §7 item 4; `~/tcu_sweep/m5_transient_decode.md` item 6; `~/tcu_sweep/fault_manager_decode.md`; applied
+2026-11-18):**
+- **Mode `+7` = 1 is the on/off mode** (not "fast fill / step"): legal requests are 0 / 20000 only (fault
+  `0x19F` otherwise, `0xE4E5C`), and the current is i_min / i_max **by type with no curve and no temperature
+  correction** (`0x107CFC`: 8500 for an applied normally-closed or a released normally-open element, else 500;
+  cal `0x1FEF6C/6E` = 500 / 8500). **Sys and WK in mode ≠ 0 also take the binary law** (`0x107FB8` →
+  `0x10809C`), not the curve.
+- **Sys skips `0xD9F10`.** In binary mode, a request below line and below 12750 gives fault `0x1C2` and
+  **i_min for either type**; in `0xE54A4` a sub-line WK request in mode 1 is zeroed.
+- **i_min `0xD9CBC` returns 0** (not 500) for channels other than 5/6 when `0xA031C(*0x632CB)` ≠ 0
+  (`0xD9CC6–0xD9CE0`) — that is **fault reaction 37**; it applies to the elements only, not Sys/WK.
+- `0xD9CF8` runs at the start of every actuator pass (`0xDA00C` → `0xDA00E`), not only at init.
+- The 0.1 mA scaling is [O]-supported by the bench: the stock P set (A 500, D/B/E/C 8500, WK/Sys 500) draws the
+  stock's 1.77 A, and E alone at 8500 adds 0.38 A (CLAUDE.md r03e/r03f).
+
 - **Curve per channel** (`0xD9D18`, group `0xFFF84D18`): channel 0 → 3371, 1 → 3374, 2 → 3372,
   3 → 3375, 4 → 3373, 5 → 3377, 6 → 3376. With the channel map of §1 this is A, D, B, E, C, WK,
   Sys, **confirming in code** the curve assignment of §3 and again the channel map. For each
   channel a per-unit curve (structure `0xFFF8CDFC`, pairs of curve pointer and valid flag) replaces
   the calibration curve when its flag is 1 [O]; [I] these are the end-of-line characteristics
-  loaded from EEPROM (`0xE32FE`).
+  loaded from EEPROM (`0xE32FE`). **Correction (2026-11-16, `~/tcu_sweep/m5_request_producer_decode.md` item 4):** the per-unit curves are
+  **active** on this unit (`0xFFF8CDFC` pairs, flag 1 for all seven) and point to **flash `0x0000E004` /
+  `E038` / `E06C` / `E0A0` / `E0D4` / `E108` / `E13C`** (12-point curves, order A, B, C, D, E, Sys, WK), not to
+  EEPROM RAM; they differ from cal objects 3371–3377 by up to ~80 units (e.g. Sys at 9000 mbar: per-unit 5969,
+  cal 6010) [O].
 - **Interpolation** (`0xB6EAE`): linear between points, clamped at both ends; 2-D maps
   (`0xB7164`) likewise.
 - **Temperature correction** (group `0xFFF84D14`): one map for normally-closed and one for
@@ -306,8 +377,13 @@ i = clamp(i, i_min, i_max)              0xD9CBC / 0xD9CEE, group 0xFFF84C94: 500
   (°C + 40 = 20, 40, 50, 85, 150, i.e. −20 … 110 °C). The correction is zero at 45 °C and at the
   curve ends; stock magnitudes are up to about ±300 current units at −20 °C. The fluid temperature
   comes from `0xFFF89C13` (spec 07 §7.1).
-- **Fast fill / step mode:** when the request mode (`+7`) is 1, the element method runs a small
-  state machine (`0x107D90`) using a fill pressure from the request (`+0x42`) and a time limit.
+- ~~**Fast fill / step mode:** when the request mode (`+7`) is 1, the element method runs a small
+  state machine (`0x107D90`) using a fill pressure from the request (`+0x42`) and a time limit.~~
+  **Corrected 2026-11-16 (`~/tcu_sweep/m5_request_producer_decode.md` item 2; `~/tcu_sweep/m5_transient_decode.md` items 4, 8):** mode 1 is the on/off mode (above). The actuator fill FSM
+  `0x107D90` never engages for holder requests: its start needs request `+0x5A` = 1, which only `0xE4424` sets,
+  for source 2. A fresh application instead runs the **request object's own fill** (`0xE3836`, spec 11 §3b) and
+  is held in **mode 0 (curve + temperature correction) for the whole fill** by `0xE40DA`; "mode 1 ⇒ binary
+  current" holds only in fill-FSM state 3 and while releasing.
 - **Plausibility:** a pressure request below the line-pressure value `0xFFF8BCB0` and below
   12,750 mbar while the actuator is in limitation is reported (`0x1C4`/`0x1C2`).
 
@@ -340,11 +416,17 @@ Commands with bit 7 set are writes; the data is OR-ed into the low byte (or low 
 
 **Setpoint scaling** (`0x90118`): `setpoint = (I + offset) / 6`, with I in the driver's current unit
 (maximum `0x2FFA` = 12 282 → setpoint 2047, the 11-bit full scale) and `offset` = `0xFFF9090A`
-(a small state value, 0–4). With [I] I in 0.1 mA, one setpoint step = **0.6 mA**, full scale
+(a small state value, 0–4). **Correction (2026-11-13/17, sources: `~/tcu_sweep/request_law_port.md` §0/§1 item 4; `~/tcu_sweep/adaptation_decode.md` §1, §6; applied
+2026-11-18):** `0xFFF9090A` is a **rounding offset**, not a current correction: 3 stays 3, < 3 → 4, > 3 → 1, so
+from its initial cal `0x1918BB` = 0 it cycles 0 → 4 → 1 → 4 … once per `0x901A0` pass [O `0x902A8–0x902BE`]. The
+per-channel **current correction** is `0x837E0` → `0x9337C` (called by `0x89540`): a look-up in the factory
+**plant record `0x0F11`** (200 bytes at RAM `0xFFF84640`; temperature × current map per channel, interpolator
+`0x8856C`), correction = map(`0x940FF`, I/60 + 0.5)·2 − 256 (0.1 mA). It **learns nothing**; it reproduces the
+dump's `0 4 4 2 6 2 2` and is 0 at 21 °C [O]. With [I] I in 0.1 mA, one setpoint step = **0.6 mA**, full scale
 ≈ **1.23 A**. Mode letters (`0x89540`): `0x21` current control, `0x43` full on (setpoint forced to
 `0x2FFA`), `0x32` off. The software re-reads the setpoint from the transmit buffer and reports
 `0x238` if it differs from the commanded value by more than 15 units (buffer integrity, not a
-current measurement).
+current measurement). *(`0x238` → the fatal handler `0x6865C`, i.e. an MCU reset — spec 13 §2, 2026-11-17.)*
 
 **Configuration job** (builder `0x92344`, template `0x40AD8`, 40 frames): writes `0x8E`, `0x90`,
 `0x96`, `0x88`, then reads `0x28`, `0x30`, `0x2E`, `0x36`:
@@ -378,6 +460,19 @@ The cyclic job therefore does **not** return a measured current. The values that
 scales (record `+0x0E`, `+0x16`) have no writer in the driver code that was traced; [I] the
 chips regulate current internally and report faults through the status bytes. Measuring the
 actual current is a bench task (§4).
+
+**Addition — the PWM feedback chain (2026-11-18, sources: `~/tcu_sweep/feedback_chain_decode.md` §0, §3.2; `~/tcu_sweep/feedback_shadow_port.md` §6 correction; applied 2026-11-18)
+[O unless marked]:** the stock does estimate each channel's current, but not from SPI. Each bus-A channel presents
+a **1 kHz active-low feedback signal** whose low time is the chip's switch-on time per chopper period. Timer F
+measures it in PWM-measurement mode (MDF = 100, 4 MHz, one period per capture) on TIF10/11/0A/1A/2A/3/4/5/18/19
+(ch 0–9; spec 02 §4); a Timer-D0 compare ISR (vector 216, `0x90A72` → `0x90844`) snapshots two windows 5.12 ms
+apart [D timing]. The classifier **`0x89A8C`** gives per window 0x10 (PWM), 0x20 (always active / saturated), 0x21
+(inactive), 0x31 (invalid); combined into `0x93A2E` (0x21/0x20/0x10; 0x18/0x19 with dither; a mixed pair holds the
+previous class 4 passes, then 0x31 on the 5th, cal `0x1919F3` = 5), duty `0x9340C`. **With the period inside the
+980–1020 µs window, class 0x20 needs A ≥ P − 10 µs (990 ‰)**; the 950 ‰ saturation rule applies only when the period
+is outside the window [O `0x89B5A–0x89BA6`]. `0x8390C` estimates I (0.1 mA) = (d·V − (1000 − d)·Vf)·k / (100·R),
+mean in `0x93394`; R `0x933A8` comes from a copper-resistance thermal model `0x83ABC` (not learned). Order per tick:
+`0x904FA` → `0x83A1C` → `0x838B0` → the law.
 
 **Readback** (`0x904FA`): per channel an 11-bit signed value from the receive data (record `+0x0E`
 for ch 0, `+0x16` for ch 1), scaled by `324.92 / (n + 1)`, n from the readback-range bits of
@@ -501,6 +596,8 @@ Seven pressure → current curves (calibration objects 3371–3377, group `0xFFF
   The 5.7–20 bar range of 3376 fits line pressure. Bench check still needed.
 - `0xE32FE` compares each curve with a per-unit copy loaded from EEPROM. [I] Each mechatronic
   carries its own end-of-line characteristics, and the calibration copy is the fallback.
+  **Correction (2026-11-16, `~/tcu_sweep/m5_request_producer_decode.md` item 4):** the active per-unit curves point to flash
+  `0xE004…0xE13C`, not to EEPROM RAM (§2a).
   The project firmware should read and use those per-unit values.
 
 ## 4. Open items
@@ -508,13 +605,14 @@ Seven pressure → current curves (calibration objects 3371–3377, group `0xFFF
 1. Bench confirmation of the channel table (§1).
 2. Units of the channel current: the curves span 500 … 8,500 and the driver maximum is `0x2FFA`;
    [I] 0.1 mA steps (§2a). Unit of the 11-bit chip setpoint.
-3. EEPROM block holding the per-unit characteristics (`0xFFF8CDFC`, §2a); meaning of the
+3. ~~EEPROM block holding the per-unit characteristics (`0xFFF8CDFC`, §2a)~~ (corrected 2026-11-16: flash
+   `0xE004…0xE13C`); meaning of the
    inactive correction inputs `0xFFF8BCC0` and `0xFFF8E612`; the arbitration rule of the request
    objects and the list of source ids.
 5. Meaning of switch outputs TOE30 and TOE32 (§1.2), one of which is probably the hard-wired TRS
    Park output (spec 01 §2.8).
-6. Park logic inputs (§1.2): range codes, the auxiliary park request `0xFFF89CF2`, the inhibit
-   `0xFFF8E69B`, the second speed value `0xFFF89CB8`, and the units of the CAN `0x14B` speed.
+6. Park logic inputs (§1.2): range codes, the auxiliary park request `0xFFF89CF2` (a fault-reaction park
+   request, 2026-11-17), the inhibit `0xFFF8E69B` (= the committed power flow, 2026-11-17), the second speed value `0xFFF89CB8`, and the units of the CAN `0x14B` speed.
 4. Identity of the SPI driver chips: not marked (bare dies on the ceramic hybrid, user photos
    2026-10-15); protocol decoded from the firmware (§2b).
 7. Output enable path: SSLB1 control word bit 0 and the supervisor service (spec 03 §4.4).

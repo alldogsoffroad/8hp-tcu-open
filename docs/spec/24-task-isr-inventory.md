@@ -36,7 +36,8 @@ No RTOS (spec 02 §7/§7b, runtime-confirmed §7c): bare superloops + timer ISRs
 | 0x00030F30 | `boot_periodic_kick` | boot-manager copy of the periodic WDT feed (−3000 FRT) → 0x3180C | 04 |
 
 Boot tick: same timer-H/D register set as the app (spec 02 §2: 4 MHz, compare 4000 = 1 ms
-in boot software) [O via spec 02].
+in boot software) [O via spec 02]. *(Note 2026-11-09, `~/tcu_sweep/spec_arch_validation.md` item 1: the app's tick is ATU-D1 CMID10; timer H's
+compare interrupt is never enabled in the app — see the validation corrections at the end.)*
 
 ### 1.2 Application core scheduler (r04_boot region = app startup band 0x40000+)
 
@@ -59,7 +60,7 @@ App task arrays (flash, walked by 0x67BE4): the record table at **0x411A0+** hol
 os_cyclic_task_batch`; per-profile task-array heads are the ten descriptors 0x41090..0x410FC
 selected through the 6×10 table at 0x43430 (indexed by RAM 0xFFF90AB8). [O] (ELF dump)
 
-### 1.3 App startup table (flash 0x66D50..0x66DA0, in execution order) [O]
+### 1.3 App startup table (flash 0x66D50..~~0x66DA0~~ 0x66DA4 — 21 pointer entries preceded by the VBR literal at 0x66D50; corrected 2026-11-09, `~/tcu_sweep/spec_arch_validation.md` item 5, applied 2026-11-18, in execution order) [O]
 
 `lib_empty_hook` 0x95334 → `timer_stamp_buf_init` 0x67124 → `boot_periph_init_full__2`
 0x9533C → `boot_periph_reg_init__3` 0x950A0 → **`wdt_kick` 0x95408** (first app WDT feed) →
@@ -107,7 +108,19 @@ tick" seed; the rest ride the sequencer wrappers. [O]
 |---|---|---|
 | 0x0008EE82 | `sched_batch_f` | 7 jobs incl. 0x91C86 `power_state_update` (supervisor echo bits 0xFFF907D4 → WDT start/stop gating), 0x91AB8, 0x90ACC, 0x90B98, 0x90D58 — referenced from 5 diag/service-table sites 0x44D24/0x44E6C/0x44FC4/0x45114/0x45208 |
 | 0x0008EEDC | `sched_batch_g` | enables CAN ctrl bits 0xFFFFD000/D800/E000, then 0x8FB96, 0x96010, 0x91FA4, **thunk 0x920F8 → 0x95408 `wdt_kick` (the cyclic WDT feed)**, 0x961F0, 0x91A80, 0x91DCC |
-| 0x0008EF1A | `sched_batch_h` | 0x8F9EC (→ 0x96900 `spi_engine_hw_init`), 0x90010, 0x90ACC, 0x90AEC, 0x90D12, 0x90F7A, ... |
+| 0x0008EF1A | `sched_batch_h` | 0x8F9EC (→ 0x96900 ~~`spi_engine_hw_init`~~ **the AN0-multiplexer A-DMAC set-up**, corrected 2026-11-12), 0x90010, 0x90ACC, 0x90AEC, 0x90D12, 0x90F7A, ... |
+
+**Corrections to §1.6 (applied 2026-11-18):**
+- **0x8EE82 is nine calls, not seven** (2026-11-09, `~/tcu_sweep/spec22_validation.md` item 4; spec 22 §2 already lists the order). It is
+  entry 26 of the 5 ms task's mode-0 list (list 0x42CD8, task object 0x41378); in OS modes 1–3 it runs from the
+  10 ms list while the J2 stage `0x8EDF6` stays at 5 ms (CLAUDE.md "THE STOCK'S TASK RATES", 2026-11-11).
+- `0x8EEDC` and `0x8EF1A` run from the **init** lists (CLAUDE.md r02h/r02i blocks and `~/tcu_sweep/adc_chain_port.md` §1.2: "init batch
+  slot 16 (0x8EF1A, first entry 0x8F9EC)"; 0x91FA4 = init slot 14 via 0x8EEDC) [O per those sources]; the
+  "cyclic" label and "the cyclic WDT feed" attribution above are from the edge graph and are not confirmed.
+- **0x96900 is not an SPI engine init** (2026-11-12, `~/tcu_sweep/ladder_blockers_decode.md` corrections table; `~/tcu_sweep/adc_chain_port.md` §1.2 b): it copies the
+  80-byte multiplexer sequence ROM `0x40ECC` to `0xFFF8844C`, programs A-DMAC ch0 (sequence → PGDR[15:8], the mux
+  address on PG12–15, triggered by Timer G2 CMEG2) and ch1 (ADR0 → the 160-word result ring `0xFFF885E8`), and sets
+  ADTRGE0 (spec 04 §4.2).
 
 CAN cyclic schedule: the live RAM dump (spec 02 §7c) shows the flat schedule table at
 0xFFF909C0 (7×20-byte records) as rate divisors of a ≈104 Hz base: 2→52 Hz, 0x0A→10.4 Hz,
@@ -133,8 +146,8 @@ CAN cyclic schedule: the live RAM dump (spec 02 §7c) shows the flat schedule ta
 | 79 | RAM RAME | 0x960C8 | real handler (RAM controller event) | level 15 fixed |
 | 80 | ROM FIFE | 0x961A4 | real handler (flash-if event) | level 15 fixed |
 | 106 | SINT2 (soft int 2) | 0x677DE | clears request byte then tail 0x686A6 stub | level 2 fixed |
-| 124 | **DMAC4 DEI4** | 0x95FEA | DMA transfer-end A — **ADC data DMA** (dmac_init 0x967F4 points ch at 0xFFFFE800 = ADC_A regs) | IPR04 (0xFFFE0C02) nibble15-12 = **0xE** @0x967F4 |
-| 128 | **DMAC5 DEI5** | 0x95FC4 | DMA transfer-end B — ADC_B (0xFFFFEC00) | IPR04 nibble11-8 = **4** @0x967F4 |
+| 124 | **DMAC4 DEI4** | 0x95FEA | ~~DMA transfer-end A — **ADC data DMA** (dmac_init 0x967F4 points ch at 0xFFFFE800 = ADC_A regs)~~ **ADC_B** scan end (descriptor 0x40EAC: SAR 0xFFFFEC3E, RS = 1101; TEMASK = 1) — corrected 2026-11-12 | IPR04 (0xFFFE0C02) nibble15-12 = **0xE** @0x967F4 |
+| 128 | **DMAC5 DEI5** | 0x95FC4 | ~~DMA transfer-end B — ADC_B (0xFFFFEC00)~~ **ADC_A** scan end (descriptor 0x40E8C: SAR 0xFFFFE83E, RS = 1100); **drives the 1 ms acquisition `0x8F058`** (AN0 mux means) — corrected 2026-11-12 | IPR04 nibble11-8 = **4** @0x967F4 |
 | 140 | **CMT0 CMI0** | 0x9A518 → 0x69FA4 | `os_cyclic_task_batch` tick (§1.4) | IPR05 (0xFFFE0C04) hi = 1, CMI1 = 2 (@0x31C4C boot, 0x96E80 app) |
 | 148 | WDT ITI | 0x686BE | **stub — WDT runs in watchdog-reset mode, no interval interrupt** | IPR05 lo = 0xE written by every wdt program/kick |
 | 216/217/218 | ATU-D0 CMID00/01/02 | 0x90A72/0x90A90/0x90AAE | compare-match handlers (loop on 0x90844; distinct arg 0/1/2) | IPR10 (0xFFFE0C0E) nibble15-12 = 6 @0x970FC |
@@ -189,12 +202,12 @@ reporters, one per vector group. [O]
 |---|---|---|---|---|
 | **WDT** | YES — all three boot programs (0x1DBC8 bootloader / 0x3180C bootmgr / 0x3E930): WTCNT=0x5AB7 or 0x5A6E (clock-strap dependent), WRCR=0x5A80 (RSTE=1 → overflow resets chip), WTCR=0xA567 (watchdog mode CKS=7), IPR05 nibble0=0xE; fed per loop 0x1D1A4 / 0x30F30 (FRT −3000) | first feed in startup table (0x66D64 → 0x95408); cyclic feed via `sched_batch_g`→thunk 0x920F8→0x95408 (WTCNT=0x5AB7, WTCR=0xA567) | **conditionally STOPPED**: `power_state_update` 0x91C86 (supervisor echo bits 0xFFF907D4) → 0x920A4 `state_9096a_update` → `wdt_mode_start` 0x97850 (arm) or `wdt_mode_stop` 0x978A4 (clears TME via 0xA5xx keys) — power-state gated | YES cyclically (≈30.3 ms margin per spec 05); fatal path 0x66F82 deliberately forces quick reset via 0x966B8 (WRCR=0x5A80, WTCR=0xA563 CKS=3) [O] |
 | **INTC** | boot clears to known state (0x1DAFC/0x31744/0x9533C walk &DAT_fffe0c00); arms ATU-F IPR16–18 = 7 (0x31D48) or 9 (0x1E1D8), ATU-H CMIH = 2 (0x1E260, IPR20 0xFFFE0C22 (IPR17)), WDT ITI = 0xE; masks RCAN-A nibble (0x1DE9C) / clears IPR28 (0x329F8, 0x1DCF8) | app sets: CMI0/CMI1 = 1/2 (0x96E80), DMAC4/5 = 0xE/4 (0x967F4), ATU-D/E = 5/6/8/4 (0x970FC IPR10-14, 0x97198 IPR14/15), tick CMID10 5→6 (0x6791A), CAN A/B/C = 5 (0x9838C), RSPI A/B = 4 (0x963CC) | app masks: RSPI all idle (0x963A4, IPR27&=0xF000), DMAC2/3 prio cleared (0x96FA4), ATU-A IPR06 = 0 (0x96F7C `boot_frc_irq_disable__3`), ADC/ATU-F/G/H/J IPRs never enabled | ATU prescalers/master enable re-checked at runtime [O spec 02 §1] |
-| **RSPI-A** (0xFFFFB000) | disabled, then boot SPI layer starts (spec 05 §4) | `rspi_all_units_idle` 0x963A4 (SPCR=8); `spi_engine_hw_init` 0x96900 (programs A-DMAC handshake cells 0xFFFE6060-96, staging 0xFFF8844C); `spi_job_dmac_launch` 0x96468 — per job program RSPI+DMAC then **SPCR=0xF8 launch**; RX ISR stops with SPCR=8 | SPTI/SPEI never enabled (v444/446 stubs) | interrupt-driven RX at IPR 4 (v445) [O] |
+| **RSPI-A** (0xFFFFB000) | disabled, then boot SPI layer starts (spec 05 §4) | `rspi_all_units_idle` 0x963A4 (SPCR=8); ~~`spi_engine_hw_init` 0x96900 (programs A-DMAC handshake cells 0xFFFE6060-96, staging 0xFFF8844C)~~ (0x96900 is the AN0-mux A-DMAC set-up — 0xFFFE6060–96 = ADMATCR0/1, ADMAAR0/1 …, 0xFFF8844C = the mux sequence; not RSPI — corrected 2026-11-12, §1.6); `spi_job_dmac_launch` 0x96468 — per job program RSPI+DMAC then **SPCR=0xF8 launch**; RX ISR stops with SPCR=8 | SPTI/SPEI never enabled (v444/446 stubs) | interrupt-driven RX at IPR 4 (v445) [O] |
 | **RSPI-B** (0xFFFFB800) | 〃 | 〃 (bus index 1); supervisor chip on SSLB1 (spec 03 §5) | 〃 | interrupt-driven RX at IPR 4 (v449) [O] |
 | **RSPI-C** (0xFFFFC000) | SPCR=8 | left idle (0x963A4 covers it; stubs at v452-454) | masked | no |
 | **ATU-III** | prescalers PSCR0..3=19/4/6/0, master enable; boot arms ATU-F (IPR16-18=7/9) | app: timer A TCNTA 1 MHz free-run timestamp (≈220 reads); timer D1 = 1 ms-class tick (v228); timer D0 CMID00-02/UDID00/02 = park servo compares (v216-226); timer E = 16 PWM channels (2 MHz, groups per spec 02 §3) **interrupt-free**; timer F = 20 input channels polled; timer G = ADC triggers G1/G2 12.75 µs, G4/G5 ≈1 ms; IPRs per §2.1 | ATU-A IPR cleared in app (0x96F7C) | polled consistently (spec 02 §4.1) |
-| **DMAC (ch 4/5)** | reset then enabled (spec 05 §4) | `dmac_init` 0x967F4: 2 channels pointed at ADC_A (0xFFFFE800) / ADC_B (0xFFFFEC00), end callbacks registered, IPR04 = 0xE4xx | — | DEI4/DEI5 ISRs 0x95FEA/0x95FC4 [O] |
-| **A-DMAC (0xFFFE60xx)** | reset then enabled (spec 05 §4) | 0x96900 programs handshake/alias cells; per-job launch 0x96468 | CPU interrupt never enabled (v488 stub, IPR29 untouched) | completion via RSPI RX ISR + job-descriptor callbacks [O] |
+| **DMAC (ch 4/5)** | reset then enabled (spec 05 §4) | `dmac_init` 0x967F4: 2 channels pointed at ADC_A (0xFFFFE800) / ADC_B (0xFFFFEC00), end callbacks registered, IPR04 = 0xE4xx — *ch5 = ADC_A, ch4 = ADC_B (corrected 2026-11-12, `~/tcu_sweep/adc_chain_port.md`); both ADCs run timer-triggered single scans (Timer G4 / G5) every ~1 ms* | — | DEI4/DEI5 ISRs 0x95FEA/0x95FC4 [O] |
+| **A-DMAC (0xFFFE60xx)** | reset then enabled (spec 05 §4) | 0x96900 programs ~~handshake/alias cells~~ the AN0-mux channels 0/1 (corrected 2026-11-12, §1.6); per-job launch 0x96468 | CPU interrupt never enabled (v488 stub, IPR29 untouched) | completion via RSPI RX ISR + job-descriptor callbacks [O] |
 | **ADC** | — | DMA-driven scan (timer G triggers); **no ADC CPU interrupts** (v392-423 all stubs) | ADI/ADID IPRs never set | results consumed cyclically (spec 04) |
 | **RCAN-TL1 A/B/C** | boot masks/clears IPR28 (0x1DE9C/0x329F8/0x1DCF8); bootloader uses its own CAN handlers via 0x1D758 | `can_group_hw_init` 0x9838C per controller: reset, IPR 5, bitrate 500 kbit/s, 32 mailboxes DLC/0x2700; cyclic tx pump 0x93426; schedule table 0xFFF909C0 | each controller enable-bit driven by `sched_batch_g` (0xFFFFD000/D800/E000 \|= 1) | rx/tx/error ISRs v456-477 [O] |
 | **CMT0** | — | 0x96E80 clears CMSTR/CMCRs at init; 0x91A30 programs CMCNT/CMCOR + CMCR|=0x40 (interrupt enable); hw masks 0x96ED2/0x96EF8 gate CMSTR via shadow 0xFFF94722 | stoppable via mask shadow | CMI0 v140 → os_cyclic_task_batch [O] |
@@ -292,6 +305,22 @@ is: read WTSR bit 7 once at startup before the first WDT feed, and count occurre
 6. The 6×10 table at 0x43430 (u16: 4 / 11276 / 11812 / 12328 / 12844 / ... per column)
    selects the per-profile task arrays; the unit (looks like enable-keys + periods) is
    not decoded. [I]
+   **Resolved (2026-11-11/17, sources: CLAUDE.md "THE STOCK'S TASK RATES"; `~/tcu_sweep/mode1_port.md`; `~/tcu_sweep/os_mode_selection_decode.md` "Corrections";
+   applied 2026-11-18) [O]:** the table is **10 rows × 6 OS modes** (mode 0–5, mode cell `0xFFF93B33`); rows
+   8/7/6/5/4/3/2 = the **2.5/5/10/20/30/50/100 ms tasks**, row 9 = the per-mode init lists (0x42C8C, 0x42FFC,
+   0x43200, 0x43404, mode 4 0x43428, mode 5 0x42DCC), row 0 = background, row 1 exists only for mode 0 (0x42C38);
+   row 8 has a mode-5 entry 0x42DF8. Row objects: +0 pre-list, +4 BSW list, +8 hook list, +0xC application list,
+   +0x10 post-hook list, +0x14 second BSW list, +0x18 tail list (null-terminated). The 5 ms task is two objects
+   (0x41378 mode 0, 0x4134C modes 1–4) sharing countdown 0x9355A; the 10 ms task 0x413A4/0x413D0 sharing 0x9353C.
+   The mode 1/2/3 lists are identical except slot 26 (the one-hot mode flags 0x89C3D/0x89C3E/0x89C3C) and runtime-
+   monitor stubs. **OS mode selection:** the safety function **`0x1418E2`** writes the request `0xFFF95483` (field +7
+   of object `0xFFF9547C`; cal table `0x649F0` = 150 / 100 / 17000 / 6000) every 10 ms in modes 1–3 → `0x68EFE` →
+   `0x93B5E` → `0x6F0B4` (pending `0x93B34`) → applied by **`0x66E06` at the end of the 10 ms task in every mode**.
+   Mode 1 → 2 when the terminal state E9FF == 2, the no-fault flag `0x9584A` == 1, the supply `0x96066` is within
+   6000–17000 mV and (a valid `0x108` engine speed ≥ 150 rpm or turbine ≥ 100 rpm with status 0); **mode 2 latches**
+   until E9FF == 4; mode 3 = fault reaction 0x38 or the overvoltage-at-standstill detector (`0x9584A` == 0); mode 4
+   is never requested (error 0x2F2); mode 5 = power-down (`0x729C8` → `0x93B8F`). Mode 0 → 1 follows the startup
+   modules after the supervisor ladder (module 7 one pass after 'U', or on a ladder failure path).
 7. Boot-block vector tables (bootloader/boot-manager VBR region) not extracted — boot ISR
    → 0x1D758 dispatch mapping is inferred from the handler records, not from boot vector
    slots. [I]

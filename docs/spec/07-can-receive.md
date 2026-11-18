@@ -44,7 +44,7 @@ layout) [O].
 Protected messages: `0x037 0x108 0x10C 0x10D 0x11C 0x120 0x140 0x14B 0x161 0x170 0x29D 0x2A4
 0x2EA 0x2F8 0x2F9 0x2FA` (see the message CSV, columns `crc8…`/`counter…`).
 
-A coded **protocol variant** (1 or 2) selects the exact form [O]:
+~~A coded **protocol variant** (1 or 2) selects the exact form [O]:~~ (corrected below)
 
 | Item | Variant 1 | Variant 2 |
 |---|---|---|
@@ -66,6 +66,16 @@ checksum = crc ^ 0xFF
 A gateway or replacement node feeding this TCU must generate both fields exactly, or the
 messages are rejected.
 
+**Correction (2026-11-17, source: `~/tcu_sweep/can_inputs_decode.md` §1, §2, §9 items 2 and 10; applied 2026-11-18):**
+- **There is one protection form on the wire (the "Variant 1" column).** "Variant 2" is not a coded
+  alternative: it is the stock re-checking the *inverted image* of the same frame for its safety path
+  (E2E byte, inverted copy), run on every protected frame [O 0x6EC80 structure; I purpose].
+- **Counter step:** 1 ≤ n ≤ **3** (cal 0x1918FE = 03, via table 0x664D8[0xFFF90AB8]); a repeat counts as an
+  error; the first frame is accepted [O].
+- **`0x210` (bus 2, shifter) is protected too** — CRC-8 + counter (bus-2 handle 0x44, enable 0x3B) [O; the
+  handle → ID assignment 0x44 = 0x210 is I strong]. It is not in the 16-message list above (that list is
+  bus 1).
+
 ## 3. Timing
 
 Each message object carries an expected period and a timeout (≈ 2 × period) in raw units:
@@ -73,6 +83,13 @@ Each message object carries an expected period and a timeout (≈ 2 × period) i
 was measured as **15.625 ms** (spec 08 §2, bench 2026-10-17); [I] the receive table uses the same
 unit, giving 15.6 ms … 3.1 s periods. The project profile still uses 10 ms × raw timeouts
 (shorter, i.e. stricter); to be revised with a Ram capture.
+
+**Correction (2026-11-17, source: `~/tcu_sweep/can_inputs_decode.md` §9 item 3; applied 2026-11-18):** ~~[I] the receive table
+uses the same unit (15.625 ms)~~ — **the RX raw timeout unit is 10 ms** [O]: the RX scan 0x6E83C sits in the
+row-6/10 ms task lists of modes 0–3 (0x42D54, 0x42F1C, 0x43120, 0x43324 inside objects
+0x42D6C/0x42F44/0x43148/0x4334C). The 15.625 ms hypothesis does not apply to RX. Timeouts: 0x108 / 0x112 /
+0x120 / 0x140 / 0x14B / 0x2EA / 0x2F8 / 0x210 = 50 ms, 0x180 = 200 ms, 0x334 = 2000 ms — the project profile's
+values are the stock's.
 
 ## 4. Diagnostic read-back of received signals
 
@@ -95,6 +112,10 @@ routine [O]; tracing that routine's consumers is the static route to signal mean
   monitoring.
   **Conflict:** the communication monitor (spec 13 §2c) assigns `0x037` and `0x170` to the ABS
   node and `0x2F9` to the steering-column node. To be settled with a bus capture.
+  **Correction (2026-11-17, source: `~/tcu_sweep/can_inputs_decode.md` §9 item 1; applied 2026-11-18): settled — they are
+  transmitted.** 0x037, 0x2F9 and 0x170 are transmit objects (handles 4/3/6 of the TX list 0x44120); their
+  receive echoes are coded out and they are **not** monitored. Spec 13 §2c's entry → message map was wrong
+  (corrected there) [O].
 - **Sender of each received message:** spec 13 §2c lists, for 53 messages, the node whose
   communication fault (U-code) is set when the message is missing or invalid.
 - Signal **scaling is not applied in the getters**; raw values are returned and scaled by the
@@ -153,7 +174,7 @@ saturating at 16,383 rpm), and `0x515` converts the lever code 1–4 to the rang
 | Turbine speed | none: speed sensor | `0xFFF8EF06` (getter `0x14C53C`) → app `+0x2E` → `+0x92` → `+0xFA` | rpm |
 | Lever position | `0x2EA` / bus-2 `0x210` (this unit) | spec 14 §5a | code 1–4 = P/R/N/D |
 | Accelerator pedal [I] | `0x120` byte 2 (diag id `0x5017`) | gathered `0xFFF9545C` (status `0xFFF9545D`) → `0x13CA22` → `0xFFF9545E` (getter `0x13C99C`) → app `+0x28` → `+0x9C` → `+0x100` (float %) | raw 0–250 = 0–100 % (0.4 %/bit); `0xFF` = invalid → calibrated substitute; conditioned value rescaled to 0–254 (`raw × 127 / 125`). Read by the converter/lockup and shift-execution code (pedal axis 0–255) |
-| Transmission fluid temperature | none: internal NTC (spec 04 §4.1) | 1/16 °C → `0xFFF94101` = °C + 40 → `0xFFF8E9C8` (getter `0x140050`) → app `+0x1B` → `+0x96` → `+0xF0` (float °C) | byte − 40 = °C (same +40 offset as the pressure-map temperature axis, spec 11 §2.1) |
+| Transmission fluid temperature | none: internal NTC (spec 04 §4.1) | ~~1/16 °C → `0xFFF94101` = °C + 40 → `0xFFF8E9C8` (getter `0x140050`) → app `+0x1B` → `+0x96` → `+0xF0` (float °C)~~ **corrected 2026-11-17, see the note below the table:** 1/16 °C `0xFFF94F98` → `0xFFF94102` = round(/16) + 40 → `0x940E6` → `0xFFF8E9C5` → `0xFFF8E9C8` (getter `0x140050`) → app `+0x1B` and `+0x96` (both from `0xB9646`, 30 ms) → `0x89C13` | byte − 40 = °C (same +40 offset as the pressure-map temperature axis, spec 11 §2.1) |
 | Engine temperature [I] (coolant) | `0x180` byte 1 | gathered `0xFFF9548C` → `0x13BABA` → `0xFFF9548E` (getter `0x13BAA8`) → app `+0x1C` → `+0x97` → `+0x104` (float °C) | CAN byte − 40 = °C; stored as byte − 48 (conditioning adds 8); `0xFF` invalid → substitute = transmission fluid temperature |
 | Engine torque T1 [I] (actual) | `0x108` bytes 2–3 (13 bit) | gathered `0xFFF8E8D2` → `0x1386E4` → torque `0xFFF8E8DE`, torque minus correction `0xFFF8E8D8` = `0xFFF8E8DC` (getter `0x138698`) → app `+0x22` → `+0x6E` → `+0x108` (×10) | Nm = raw × 0.25 − 500; `0x1FFF` = invalid |
 | Engine torque T2 | `0x2F8` bytes 0–1 (13 bit) | gathered `0xFFF8E8EA` → `0x1389E4` (filtered) → `0xFFF8E8F2` (getter `0x1389DC`) → app `+0x24` → `+0x78` → `+0x10A` (×10) | same encoding |
@@ -162,17 +183,44 @@ saturating at 16,383 rpm), and `0x515` converts the lever code 1–4 to the rang
 
 **Speed sources (2026-11-16) [O]** (`~/tcu_sweep/park_position_speed_decode.md` §3): output speed `0xFFF8EE6E` comes from TIF12 (40 pulses/rev) via `0x143686` → `0x14C23E`, and turbine `0xFFF8EF06` from TIF13 (30 pulses/rev) via `0x14C818`. Both are bench-confirmed on their sensors (spec 02 §4.1).
 
-| Brake pedal switch [I] | `0x140` byte 0 bits 3..2 (2-bit, with check copy); second contact [I] byte 1 bits 3..2 | gathered `0xFFF8E89C` → `0x135DC6` (object `0xFFF8E898`) → status `0xFFF8E8A4`, value `0xFFF8E8A5` (getters `0x135D64/6C`) → app `+0xC9`, `+0x33/+0x34` → flags `+0xC1/+0xC2`; also park module `D61A[0x31]` | 0 = off, 1 = on, 2 = error, 3 = not available; if invalid, substitute "on" when the `0x14B` speed exceeds a calibrated limit (10 raw) |
+| Brake pedal switch [I] | `0x140` byte 0 bits 3..2 (2-bit, with check copy); second contact [I] byte 1 bits 3..2 | gathered `0xFFF8E89C` → `0x135DC6` (object `0xFFF8E898`) → status `0xFFF8E8A4`, value `0xFFF8E8A5` (getters `0x135D64/6C`) → app `+0xC9`, `+0x33/+0x34` → flags `+0xC1/+0xC2`; also park module `D61A[0x31]` | 0 = off, 1 = on, 2 = error, 3 = not available; ~~if invalid, substitute "on" when the `0x14B` speed exceeds a calibrated limit (10 raw)~~ **(corrected 2026-11-17, see the note below the table: no substitution in the conditioning)** |
 | Engine-off (soak) time [I] | `0x334` bytes 3–4 (12 bit, diag id `0x5100`) | gathered `0xFFF958F0` → `0x14B4B8` → `0xFFF958F4` (u32, getter `0x14B4A8`), quality `0xFFF958F8` → app `+0x130`, `+0x138` | raw × 60 (minutes → seconds); `0xFFF` = invalid → calibrated substitute |
-| Park-request / hold status [I] | `0x112` byte 0 bits 2..0 (3-bit, with check copy) | gathered `0xFFF8E9FA` → `0xFFF8E9FF` (getter `0x140AE8`) → park module `D61A[0x27]` (spec 14 §3) | values 1–3 make the auxiliary park request active; 0 and ≥ 5 invalid |
+| ~~Park-request / hold status [I]~~ **Ignition status (corrected 2026-11-17)** | `0x112` byte 0 bits 2..0 (3-bit, with check copy) | gathered `0xFFF8E9FA` → ~~`0xFFF8E9FF`~~ terminal-15 FSM `0x140B80`/`0x140EB0` → state `0xFFF8E9FF` (getter `0x140AE8`) → park module `D61A[0x27]` = D641 (spec 14 §3) | ~~values 1–3 make the auxiliary park request active; 0 and ≥ 5 invalid~~ codes 4 and 5 = ignition ON, 7 = SNA; see the note below the table |
 | Signed dynamics value [I] (longitudinal acceleration or slope) | `0x14C` byte 4 | gathered `0xFFF96026` → `0x1348D6` → `0xFFF96028` (getter `0x134918`) → app `+0x11C` | (raw × 256 − 32768) / 100 = (raw − 128) × 2.56; `0xFF` invalid |
 
 | Engine mode code [I] | `0x2F8` byte 6 bits 3..0 (4-bit, check copy; valid when byte 0 bit 7 = 1) | safety layer `0x141346` → `0xFFF8EA14…EA18` → module `0xD8122` (spec 11 §3a) | codes 0, 1/4, 2/9, 3 distinguished; `0xF` = invalid; [I] engine state (stopped / cranking / running) |
 
+**Corrections to the table above (applied 2026-11-18; the struck text is the earlier claim):**
+- **Fluid temperature (2026-11-17, sources: `~/tcu_sweep/m5_producer_inputs_decode.md` §9 item 1,
+  `~/tcu_sweep/temp_byte_live_port.md` §1.1):** the fluid byte is **`0xFFF94102`** (from `0x94F98`,
+  `0x887D8` @0x88938: clamp(((s16)0x94F98 + 8) >> 4 + 40, 0..255)) → `0x7C100` publishes `0x940E6` (= 0xFF when
+  the fault flag `0x940E8` is set) → gathered `0xFFF8E9C5` → `0xFFF8E9C8`. `0xFFF94101` comes from `0x9393E`
+  (`0x908CC >> 3`), a second temperature (33 °C in the dump), gathered at `0xFFF8E9C4`. `0xFFF8E9C8` has two
+  writers [O]: boot `0x140416` (E9C8 = E9C5, or cal `0x195DB8` = 0x82 on a fault) at startup and boot state 1,
+  and the cyclic `0x1405FA` in the **100 ms task, modes 1–3** (list `0x4D9E4` entry 0), through a second safety
+  object `0xFFF8ED20` with a slew limiter `0x14ACF0`. The app copies `+0x1B` (`0x89C57`) and `+0x96`
+  (`0x89CD2`) are **both** written by `0xB9646` (**30 ms**, modes 1–3 + boot pass); `0xB986C` (10 ms) latches
+  **`0x89C13 = 0x89CD2`**. It is not a "+0x1B → +0x96" chain.
+- **Brake (2026-11-17, source: `~/tcu_sweep/park_interlock_inputs_decode.md` §10 item 1):** with the brake
+  invalid, `0x135DC6`/`0x135F54` give E8A4 = 2 and E8A5 = 0 always; the speed comparison sets only
+  `0xFFF8E8A9` (+17). The "brake-equivalent above speed 10" law is D607's second branch (`0xA90A0`, cal
+  `0x196130` = 10, spec 14). The D631 encoding is 0 = valid, 2 = invalid.
+- **`0x112` (2026-11-17, sources: `~/tcu_sweep/can_inputs_decode.md` §5 and §9 items 4–5; `~/tcu_sweep/park_chain_loose_ends_decode.md`
+  §8 item 4):** it is the **ignition status code** [O]. Bits 2..0 → E9FA → FSM `0x140B80` → **E9FF** (0 init,
+  1 starting, 2 on, 3 shutting, 4 off; FSM `0x140EB0`: 0 → 1 if on else 4; 1 → 2; 2 → 3 if off; 3 → 4; 4 → 1 if
+  on). "On" = code 4 or 5 (table `0x191D0C`); code 3 sets the flag E9D4+0x2F; 7 = SNA. When `0x112` is invalid
+  (RX status `0xFFF8403C` = 01) the FSM falls back on a ≥ 4000 mV voltage path (enabled by cal `0x195DBF` = 1;
+  `0xFFF8403C` is the `0x112` RX status byte, not a selector). Consumers: D641 = E9FF and D642 = its source
+  quality (spec 14), the OS mode (mode 2 → 1 on E9FF = 4). Any valid code other than 4/5 turns the ignition
+  logically off (park held, OS mode 1, comm monitoring off). "Values 1–3 make the auxiliary park request
+  active" is wrong.
+- **`0x2F8`:** the "body-controller group" assignment below is corrected — spec 13 §2c's corrected map puts
+  `0x2F8` in the ECM group (139) [O, `~/tcu_sweep/can_inputs_decode.md` §4a].
+
 **Not received:** individual wheel speeds. The TCU uses its own output-speed sensor; the only
 vehicle-speed-type CAN value is the 11-bit `0x14B` signal.
 
-**Not yet traced:** ignition / power mode (candidates: the 3-bit fields in `0x122` byte 2, sent
+**Not yet traced:** ~~ignition / power mode~~ (ignition = `0x112`, traced 2026-11-17 — see above) (earlier candidates: the 3-bit fields in `0x122` byte 2, sent
 by the body-controller group, diag ids `0x501E`/`0x501F`; the TCU also has its own ignition pin,
 spec 01 §2.8), ambient temperature (candidate `0x180` byte 2, gathered at `0xFFF96036`), roles
 of torques T2/T3 (T3 is read by the converter state machine `0xDEA5E`), unit of `0x14B`.
@@ -192,5 +240,6 @@ getter → safety RAM) is reproducible from `0xB912C`.
    temperature, roles of torques T2/T3, unit of `0x14B`, and confirmation of all [I] rows in §7.1. Follow the
    path in §7, or compare with captures of a stock vehicle (faster).
 2. Timeout reactions and substitute values per signal.
-3. Period unit (§3).
-4. How the protocol variant (1/2) is selected (coding).
+3. ~~Period unit (§3).~~ RX closed 2026-11-17 (10 ms, §3 correction); the TX unit stays as spec 08.
+4. ~~How the protocol variant (1/2) is selected (coding).~~ Closed 2026-11-17: one wire form; see §2's
+   correction.

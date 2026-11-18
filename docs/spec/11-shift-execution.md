@@ -29,8 +29,24 @@ A–E:
 | 8 | `0x50616` | ● | | | ● | ● |
 
 This matches the published ZF 8HP element scheme. Every single-step shift therefore releases
-one element and applies one other, with two elements held. Rows before `0x505E0` are special
-states (open).
+one element and applies one other, with two elements held. ~~Rows before `0x505E0` are special
+states (open).~~
+
+**Correction (2026-11-16, source: `~/tcu_sweep/m5_request_producer_decode.md` "CORRECTIONS to existing specs" items 1 and 8; applied 2026-11-18):**
+the table is **`0x505A4–0x5061B` = 2 blocks × 10 rows (R, N, 1..8) × 6 bytes** (byte 0 unused, then A–E; pool
+`0xDC410` = 0x000505A4) [O]. The rows above are **block 1**, the shift matrix. **Block 0** (`0x505A4–0x505DF`)
+is selected by the holder `0xDC1E2` while the **power-flow state `0xFFF89C30` = 0** and holds **one brake per
+gear** (pre-select): R/1/2/7/8 → A, 3/4/5 → B, N/6 → none. It is not "special rows (garage, limp)". Row index =
+gear code + 1, gear code −1 = R [O `0xDC1E2`]. Elements not set by another source are held by the producer
+`0xDC4C4` (source 0, priority 4) at 0 or 20000 mbar in the on/off mode 1 (spec 12 §2a).
+
+**Gear code (2026-11-17, source: `~/tcu_sweep/gear_code_decode.md` §1–§2, §6; applied 2026-11-18):** the gear code `0xFFF89C2B` is copied by
+`0xD140C` from `0xFFF8E4A7` only on the one-pass "gear change accepted" strobe CCE4[3] (`0x103CEC`). On the
+bench it is **3** because of the safety-layer **substitute-gear code 0x20** (`0x13A9D4` → `0xFFF958A2` →
+`0xDB63C` → 3), which is the reaction to **fault reaction 0x0D (13)**, set on this bench by group 136 **U11E4**
+(CAN-C silent, spec 13 §2c) [O chain]. Fault-free, the target is `0x89CE8` ← `0xF7864` ← `0xFFF8A697` (the
+shift strategy; dump 01 = 1st) [O]. So the stock's P state on this bench (block 0, gear 3 → **B only**) is a
+fault reaction, not a P rule.
 
 ## 1a. Transmission hardware [M]
 
@@ -66,7 +82,10 @@ Additional facts from the FCA *8-Speed Automatic Transmission Diagnosis and Repa
 - Physical element order front to rear: A, B, E, C, D.
 - Extra element states: **P** = A + B; **N**: A applied, B held at contact-point pressure;
   **1st with neutral idle control**: A + C, B in controlled slip. (The firmware table in §1 has an
-  empty N row; [I] these states are handled by the special rows before `0x505E0`, open item 6.)
+  empty N row; ~~[I] these states are handled by the special rows before `0x505E0`, open item 6~~ — corrected
+  2026-11-16: the rows before `0x505E0` are block 0, one brake per gear with no power flow, §1.)
+  **Firmware vs workbook (2026-11-16, `~/tcu_sweep/m5_request_producer_decode.md` item 8):** the stock on this bench holds **B only** in P (block 0,
+  gear code 3 — a fault reaction, §1) [O dump]; fault-free it would be gear 1 → A only [I from the table].
 - Brake B has an apply chamber (B1, applied in three stages) and a release chamber (B2, held at
   about 1.9 bar).
 - Torque converter: multi-disc lockup clutch, can be applied in any gear 1–8; converter
@@ -135,6 +154,20 @@ on-going and off-going pressure levels for the shift phases (§3); slot-by-slot 
 Each shift element taking part in a shift is handled by a phase object (code
 `0x10F7D0–0x111400`):
 
+> **Correction (2026-11-17, source: `~/tcu_sweep/shift_engine_decode.md` "Corrections" items 1, 2, 5, 6; applied 2026-11-18):** the **garage
+> engagement (P/N → D/R) does not use this phase engine** — its objects `0xBF64/0xBE1C/0xBEE8/0xBDA0` are skipped
+> while BD14+3 == 4 (`0xEB348`). It is a separate **three-element engine**, object `0xFFF8E4AC` with element
+> sub-objects `0xFFF8D0DC/D148/D1B4`, phase table **`0x63176`** (10 steps × 6 types, step-major), started by
+> `0xDDCA2` → `0xEB900` → `0x1066D6`; garage calibration = per-target-gear blocks `0x5A504 + 0xFC·i`,
+> `0x58EF4 + 0x38·i`, `0x572C4 + 0x10·i` (i = gear + 1 clamped, R = 0) plus role tables
+> `0x6312F/0x63139/0x63143` (1st = B, A, C). Completion: `0xBAB6C` → `0xEAD9A` → `0xEDA48` → `0x106918` →
+> `0x10CDFA` (B's request object +0x54 ≥ 13030 mbar applied, or the 280-pass timeout) [O]. *Refined 2026-11-18
+> (`~/tcu_sweep/garage_progress_decode.md` "Corrections" item 3): completion also needs the context sync flag BD6C,
+> and B's phases 4/9/0x0A/0x0B are gated on slip — turbine speed enters through BD76/BD30/BD6C; on a dry bench the
+> engagement completes normally in ≈ 0.95 s via the 0.5 s phase-0x0B lock hold (item 2).* Producer source ids:
+> 1/2 = gear-change elements, 3/4 = E33C+5/+6, **5–10 = the garage engine** (prio 0 engaging: 6/8/10; prio 1
+> releasing: 5/7/9), 0x10/0x11 = `0xFFF8BC74`; `0xE53DA` has no priority arbitration (last call wins).
+
 - `0x10FB72` steps through the phases: while the current phase reports "done" (`0x1106DC`),
   it takes the next phase from a **sequence table** (`0x63555`, entry `step × 3 + type`) and
   runs the phase entry (`0x10FFBE`).
@@ -180,13 +213,14 @@ larger. A forced value with priority (`0xEA84E`, `+0x28`) overrides both. Result
 
 | Reason | Source | Demand (stock calibration) |
 |---|---|---|
-| `0x19` | steady state, `0xEA37E` | map 10430 (3 × 3, 6,000 … 10,000 mbar) + temperature curve 10428 (zero) |
+| `0x19` | steady state, `0xEA37E` | map 10430 (3 × 3, 6,000 … 10,000 mbar) + temperature curve 10428 (zero). *Corrected 2026-11-17 (`~/tcu_sweep/line_pressure_decode.md` §7 item 3): the **no-power-flow** demand (N/P): engine speed × conditioned output speed (map `0x1DE7A0`), 6000 at idle … 10000* |
 | `0x18` | steady state, `0xEA37E` | **per-gear map** (gear code → index table `0x51DE0`; maps 10358, 10360 … 10374): x = [I] transmission input torque `0xFFF8E34A` (−200 … about +1,300 Nm, breakpoints per gear), y = engine speed (2,000 / 3,000 / 7,000 rpm), z = 5,500 … 19,000 mbar; + temperature curve 10427 (zero) |
 | `0x11` and from/to gear | during a shift, `0xEA28C` / `0xE9E6A` | maximum of the steady-state demands of both gears, plus a shift demand (`0xE9FF0`) |
 | `0x0A` | `0xEA89C`, per element A–E | curve of [I] element (clutch) temperature (`0xEEF78`, fallback fluid temperature): 0 below 450 °C, 8,000 mbar at 500 °C (curves 10432–10436); combined with map 10431 (zero); active when a value exceeds 8,000 (10437) |
 | `0x2D` | fluid temperature | curve 10429: 8,000 mbar up to 15 °C, 0 from 20 °C (cold-fluid demand) |
 | `0x48` | degraded mode | 9,000 mbar (10450) |
-| `0x01` | forced maximum | per-gear maximum (10451: 20,000 mbar) |
+| `0x01` | forced maximum | per-gear maximum (10451: 20,000 mbar). *Condition (2026-11-17, `~/tcu_sweep/line_pressure_decode.md` §7 item 3):* `0x89CF5` OR the start-maximum flag obj+0x12 (`0xEA0EE`) |
+| `0x10` *(added 2026-11-17, `~/tcu_sweep/line_pressure_decode.md`)* | during a power-flow change (garage engagement) | 9,000 mbar |
 | `0x21`, `0x03`, `0x04`, `0x06`, `0x0F`, `0x1A`, `0x31` | individual conditions (fixed values) | 6,000; 6,000; 6,000; 9,500; 10,000; 10,000; 8,500 mbar |
 | `0x05`, `0x0C`, `0x13`, `0x1C`, `0x3B`, `0x02` | conditions with their own tables | for example `0x1C` = map 10445 (10,000 flat), `0x13` = curve 10438 (15,000) |
 | priority 8 (forced) | `0xEA4C8` first block | 0 mbar ([I] engine not running) |
@@ -194,6 +228,18 @@ larger. A forced value with priority (`0xEA84E`, `+0x28`) overrides both. Result
 Then: clamp to the per-gear maximum (`0xB6C9E`, table 10451), selection/filtering (`0xEA2F8`,
 `0xEA33E`), and an optional additive offset (curve 10419 × map 10420, engine speed × temperature;
 stock zero).
+
+**Corrections (2026-11-17, sources: `~/tcu_sweep/line_pressure_decode.md` §7 items 1–3; `~/tcu_sweep/m5_request_producer_decode.md` items 5 and 7; applied 2026-11-18):**
+- **Reason 0x01 on the bench is a fault reaction, not a P rule.** `0x89CF5` (written by `0xB986C`) = OR of fault
+  reaction 50 (`0xA031C(0x32)`), `0xFFF8B10C`, latch `0xFFF85195`, `0xDCFDA(E6C6, 6)`. In the bench dump reaction
+  50 is active (bit 18 of `0xFFF897D8` = 0xE8260114; set by group 136 U11E4, spec 13 §2c), so `0xEA07E` offers the
+  per-gear maximum with reason 0x01 (cal `0x1DE904` = 20000 mbar for every gear) and `0x89CF5` is also passed as the
+  Sys request mode (binary law → Sys 500) [O]. Dump: reason +0x18 = 0x01 (forced maximum), steady reason +0x1A =
+  0x19 (the computed-and-overridden P/N value), engine state `0xFFF8E6AC` = 2. Without reaction 50 the P/N demand
+  is reason 0x19, 6000 mbar.
+- Reason **0x18**'s per-gear index = **engaged gear + 1** through `0x51DE0` (map 0 = R and N).
+- Reason **0x2D** needs `0x89C2F` == 1; reason **0x0A** runs only while `0x89CD0` > 8000.
+- **Decreases are PT1-filtered** (τ cal 200 [I ms]).
 
 **Conditions of the individual demands** (predicates called in `0xEA4C8`; owner = module that
 writes the flag) [O], names [I]:
@@ -241,7 +287,9 @@ writes the flag) [O], names [I]:
   compares a modelled value with a threshold (`0xFFF8CCF0`).
 - It drives a floating-point model class (functions `0x1052E8…0x106610`, object `0xFFF8E2EE`)
   that integrates temperatures (initialised from fluid temperature and input-object values,
-  `0x105A98`), and checks the park-block flag `0xFFF89C30`. Calibration: objects 2567–2590
+  `0x105A98`), and checks ~~the park-block flag~~ `0xFFF89C30` (**corrected 2026-11-16, `~/tcu_sweep/m5_request_producer_decode.md` item 5: the
+  power-flow state — 0 none, 1 forward, 2 reverse**; writers `0xCFE56` / `0xCFDDE` [O writers, I meaning]).
+  Calibration: objects 2567–2590
   (group `0xFFF84CC4`) and group `0xFFF84CDC`.
 - [I] A **thermal model / warm-up function** that holds line pressure at 6 bar while active.
   Not confirmed.
@@ -266,6 +314,15 @@ re-derive all values for the target engine's torque and the stock pump.
 
 - About 200 accessor functions (`0xBC000–0xC0700`), one per stored variable, each guarded by a
   validity check and writing both the RAM copy and the EEPROM image.
+  **Correction (2026-11-17, source: `~/tcu_sweep/adaptation_decode.md` §3.3, §6; applied 2026-11-18):** the accessors are grouped into **17
+  checksummed/versioned groups** (`[u16 byte-sum][u16 layout version][data]`; object list `0xBC720`, 17 entries at
+  `0x52274`; group state objects `0xFFF89EDC…0xFFF89FAC` {state, vtable}, 0x80 = verified, vtables at
+  `0x47770`/`0x478C0`… initialised by `0x15B31C`); block `0x0309` holds 2 more. The `0xBC000–0xC0700` module also
+  holds the group state-object methods, not only per-variable accessors. A bad checksum/version at boot
+  (`0xE8BFA` → `0xE9048/0xE90E0`) resets the group to defaults (0 for every decoded array). **The decoded learned
+  values are in group 2:** fill-time offsets **+0x13E** (A–E; reader `0xBDD8A`, writer `0xA2028`) and kiss-pressure
+  offsets **+0x11A** (reader `0xBD828`, writers `0xA1712`/`0xBD84E`); group 0 holds the B fill record +0xC0
+  [O].
 - **Per-element state** (elements A–E): five byte arrays at `+0xE8`, `+0xED`, `+0xF2`, `+0xF7`,
   `+0xFC` and two 16-bit arrays; reset per element by `0xB3B4C`, maintained by the element
   adaptation manager (`0xB3xxx–0xB5xxx`, object with state `+0x88`, type `+0x89`, element
@@ -283,6 +340,21 @@ re-derive all values for the target engine's torque and the stock pump.
   the accessor. Learner clusters: `0xA12FC–0xA2C88`, `0xCC9EE–0xCF48C`, `0xE0868–0xE2F46`
   (converter / lockup area), `0xD3D12`, `0xD48AE`, `0xE8058`.
 
+**Element-level fill (2026-11-16, source: `~/tcu_sweep/m5_transient_decode.md` CORRECTIONS item 5; applied 2026-11-18).** This section covers
+only the shift-phase fill (`0x10FFBE`). The request object has an **independent element-level fill**:
+`0xE3836` states 0–6, on top of the holder's on/off requests:
+
+| Quantity | Source |
+|---|---|
+| fill time | cal +0x10/+0x14 (temperature) + cal +0x18/+0x1C + adaptations |
+| quick fill | cal +0x58 (u8 × 10 ms) |
+| fill pressure | cal +4/+8 (temperature × 0x89C1C) + cal +0xC |
+| end blend | to +0x42 + cal +0x74, over the last < 10 ms |
+| first-pass boost | 20000, table 0x1A877C (all 1), armed by +0x58 at construction, state-0 entry and state-5 entry (cal 0x1FE82C = 1) |
+
+During the fill the element runs in mode 0 (curve law) although mode 1 is requested (spec 12 §2a). The fill-time
+adaptation term is block `0x0304` + 0x13E and +0x42's adaptation term is `0x0304` + 0x11A (`~/tcu_sweep/adaptation_decode.md` §6).
+
 **Open:** the path from the stored trims into the fill values above (shift context `+0xB0`,
 `+0xC4`, element map offsets) was not found by direct references; it most likely runs through the
 generic access interface (virtual calls). Mapping each learner to the quantity it learns is also
@@ -294,8 +366,9 @@ open.
   (§3), and table selection by gear pair and shift type (§2).
 - Re-derive pressure levels for the actual hardware (solenoid characteristic, line pressure)
   and for the target vehicle's engine torque.
-- [I] Fill timing is normally adapted over time (learned values). Where the stock firmware stores
-  them (candidate: EEPROM application blocks `0x0304/0x0309/0x0310`) is open.
+- [I] Fill timing is normally adapted over time (learned values). ~~Where the stock firmware stores
+  them (candidate: EEPROM application blocks `0x0304/0x0309/0x0310`) is open.~~ Stored in EEPROM block
+  `0x0304`, group 2 (fill time +0x13E, kiss +0x11A) — 2026-11-17, `~/tcu_sweep/adaptation_decode.md` §2–§3.
 
 ## 5. Open items
 
@@ -306,7 +379,10 @@ open.
 4. Fill-time adaptation: storage and learner pattern in §3b; link from trims to fill values open.
 5. Engine torque reduction during the inertia phase ([I] via the 13-bit values in CAN `0x037`
    and `0x2F9`, spec 08).
-6. Special rows of the element table before `0x505E0` (garage shifts, limp-home).
+6. ~~Special rows of the element table before `0x505E0` (garage shifts, limp-home).~~ Answered: the rows are
+   block 0 (§1 correction, 2026-11-16); garage shifts use the three-element engine and the per-target-gear
+   calibration blocks of §3's correction (2026-11-17, `~/tcu_sweep/shift_engine_decode.md` item 5). No separate substitute-gear table was
+   found; with the rail off C, D and E (normally open) give 6th [D] (`~/tcu_sweep/m5_request_producer_decode.md`).
 7. Element pressure limits: not in the repair manual (§1a). Line pressure: strategy in §3a
    (5.5 … 20 bar in the stock calibration); conditions of the fixed-value demands open.
 8. Element-combination fault monitors (P1D8F…P1DA8, one DTC per element, pair and gear

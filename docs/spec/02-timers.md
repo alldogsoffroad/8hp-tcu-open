@@ -24,7 +24,7 @@ and master-enable bits at run time [O]; a reimplementation should do likewise.
 | Timer | Clock | Setting | Use |
 |---|---|---|---|
 | A — free-running counter TCNTA | 1 MHz | CKSELA = 0 | **µs timestamp**, read throughout the software (≈220 reads) [O] |
-| H | 4 MHz | TCRH = `0x10`, compare OCR1H = 4000 | **1 ms periodic tick** [O][D]; same setting in the boot software |
+| H | 4 MHz | TCRH = `0x10`, compare OCR1H = 4000 | ~~**1 ms periodic tick** [O][D]~~ configured for 1 ms, but its compare interrupt CMIH (vector 376) is never enabled in the app (stub handler, IPR20 not written); the app's 1 ms tick is **ATU-D1 compare CMID10** (OCRD10 `0xFFFFF5D0`, vector 228, IPR10 nibble 5 → 6) — corrected 2026-11-09, `~/tcu_sweep/spec_arch_validation.md` item 1 (spec 24 §1.4); same setting in the boot software |
 | J (channels 0, 1) | 4 MHz | free-running, compare = `0xFFFF` | [I] auxiliary timing |
 
 ## 3. PWM outputs (timer E)
@@ -64,6 +64,13 @@ Pulse width fixed at 100 ticks = **50 µs**. Offsets from a calibration table (0
 [I] Narrow, staggered pulses with two measured inputs per output look like a trigger/excitation
 signal with feedback — e.g. sensor excitation or driver diagnostics — rather than solenoid drive.
 
+**Correction / resolution (2026-11-13 and 2026-11-18, sources: `~/tcu_sweep/solenoid_chain_decode.md` §0 item 1; `~/tcu_sweep/feedback_chain_decode.md` §0; applied
+2026-11-18):** group B is **one pulse per bus-A driver chip** (TOE42 ↔ chip 0 … TOE21 ↔ chip 4), at the same
+frequency the chips' `0x8E` register is programmed with (`0x8E = 32000/f − 1 | 0x80` = 0x9F for f = 1000) [O link; I
+= a PWM sync to the chips]. The two paired Timer F inputs per output are the chip's two channels' **PWM feedback**:
+each bus-A channel presents a 1 kHz active-low signal whose low time is the chip's switch-on time per chopper period
+(ch 0–9 → TIF10, TIF11, TIF0A, TIF1A, TIF2A, TIF3, TIF4, TIF5, TIF18, TIF19) [O table `0x40D96`] — spec 12 §2b.
+
 ### 3.3 Single internal channel [O]
 
 TOE52 (sub-block 5, channel 2; **not routed to a pin**): period from calibration = 200 ticks
@@ -74,6 +81,14 @@ TOE52 (sub-block 5, channel 2; **not routed to a pin**): period from calibration
 Configured as TOE pins but not set up by the routines found so far: TOE00–TOE03 (PE6–PE9),
 TOE10–TOE13 (PE10–PE13), TOE23 (PL4), TOE40 (PD5), TOE41 (PD6), TOE53 (PD3). **Open.**
 
+**Addition (2026-11-13, sources: `~/tcu_sweep/solenoid_chain_decode.md` §0 item 1; `~/tcu_sweep/timerE_0b_port.md`; bench r03c, CLAUDE.md; applied 2026-11-18):**
+these channels have **no writer at all**. `0x97198` sets only TCRE/PSCRE/TIERE/SSTRE/TSTRE/IPR, so they keep reset
+DTR = CYLR = 0xFFFF with the counter started → **constant HIGH ≈ 33 ms after TEE comes on, every boot** [O + M].
+They are 12 pins (the decode's "11" miscounted its own list). The stock clears TEE (`0x96F68(700)`) before `0x97198`,
+zeroes the used channels' duty with TEE off (`0x9136E` group A, `0x919A0` TOE52, `0x90010` → `0x8FF66` group B) and
+sets TEE in the mode-0 init list (`0x91F3E`). Bench r03c reproduced this with no current change. Function of the 12
+pins: open.
+
 ## 4. Pulse / frequency inputs (timer F)
 
 At start-up all 20 channels are set to a neutral state (4 MHz clock, no edges enabled,
@@ -82,12 +97,22 @@ noise-filter value 50) and started [O]. Modes are then assigned:
 | Mode | Channels | Setup |
 |---|---|---|
 | **Rotation speed / pulse measurement** (MDF = 101) | **TIF12, TIF13, TIF14** (PF6, PF7, PF8); the same table also lists TIF0–TIF2 | edge per configuration; [I] the transmission speed sensors |
-| **PWM input waveform timing** (MDF = 100) | TIF0–TIF5, TIF10, TIF11, TIF18, TIF19 (paired with group B outputs) | [O] |
+| **PWM input waveform timing** (MDF = 100) | TIF0–TIF5, TIF10, TIF11, TIF18, TIF19 (paired with group B outputs) | [O]; **the bus-A driver chips' per-channel PWM feedback** (2026-11-18, `~/tcu_sweep/feedback_chain_decode.md` — §3.2 correction, spec 12 §2b) |
 | **PWM input waveform timing** (MDF = 100) | TIF6, TIF7, TIF8, TIF15, TIF16, TIF17 | separate routine [O]; [I] PWM-output sensors or driver feedback |
 | unused / open | TIF9 | |
 
 Noise cancellation is enabled on all timer F inputs and on timer B inputs (filter value `0x32`)
 [O].
+
+**Addition (2026-11-18, sources: `~/tcu_sweep/feedback_chain_decode.md` §0, §1, §3.2; `~/tcu_sweep/feedback_shadow_port.md` correction; `~/tcu_sweep/feedback_pins_decode.md` §7; applied 2026-11-18):** the
+feedback channels capture one PWM period each at 4 MHz (GRBF = 1); a Timer-D0 compare ISR (vector 216, `0x90A72` →
+`0x90844`) snapshots two windows 5.12 ms apart [D: if TCNT1D0 counts at 1 MHz] and the classifier `0x89A8C` gives
+0x10 (PWM), 0x20 (always active), 0x21 (inactive), 0x31 (invalid). **Inside the 980–1020 µs period window class 0x20
+needs A ≥ P − 10 µs (990 ‰); the 950 ‰ saturation rule applies only outside the window** [O `0x89B5A–0x89BA6`].
+The six other PWM inputs (TIF6/7/8/15/16/17, `0x91884`/`0x918F6`, cfg `0x19040C`) are not part of this chain;
+their function is undecoded. Measurement note [O]: PxPR is the pin state in every function, but a meas read is
+CMT-locked, so periodic pin signals sampled that way show a constant phase (`0xFFFFF600` is the Timer D2 block, not
+Timer F — TSTRF is `0xFFFFFA00`).
 
 ### 4.1 Speed measurement (TIF12, TIF13, TIF14)
 
@@ -177,8 +202,12 @@ counter clears on compare match, so the period is OCRG + 1 ticks [M][O].
 |---|---|---|---|---|
 | G1 | 50 | `0xFFD8` (−40) | 12.75 µs | triggers AN0 conversion (spec 04 §4.2) |
 | G2 | 50 | 0 | 12.75 µs | DMA request: writes multiplexer address to port G |
-| G4 | 4000 | `0xFFB0` (−80) | ≈1.000 ms | [I] scan-conversion trigger |
-| G5 | 4000 | `0x0F64` | ≈1.000 ms | [I] second 1 ms trigger, phase-offset |
+| G4 | 4000 | `0xFFB0` (−80) | ≈1.000 ms | ~~[I] scan-conversion trigger~~ **ADC_A scan trigger** (ADCSR0 TRGE, `0x95F68`) → DMAC ch5 → DEI5 [O, 2026-11-12, `~/tcu_sweep/adc_chain_port.md`] |
+| G5 | 4000 | `0x0F64` | ≈1.000 ms | ~~[I] second 1 ms trigger, phase-offset~~ **ADC_B scan trigger** (ADCSR1 TRGE, `0x95F7A`) → DMAC ch4 → DEI4 [O, 2026-11-12, `~/tcu_sweep/adc_chain_port.md`] |
+
+*Note (2026-11-12, `~/tcu_sweep/adc_chain_port.md`):* Timer G1's trigger is an AN0 interrupt conversion (ITTRGS = 1); Timer G2's DMA request is
+CMEG2 (TCRG2 = 0x13, set by `0x96900`). ATUENR.TGE stays 0 until `0x91F3E` (`ATUENR |= 0x3FF`), so the counters are
+frozen through init [O].
 
 ## 5. Timer C
 
@@ -186,12 +215,24 @@ Capture/compare channels TIOC00–TIOC02, TIOC10, TIOC20 (spec 01 §2.3) are con
 number of routines; pins PD0 and PD8 are switched between GPIO and timer function at run time [O].
 Roles **open**.
 
+**Addition (2026-11-12, sources: `~/tcu_sweep/atu_init_audit.md`; CLAUDE.md r02h/r02i/r02j blocks and the ladder decodes; applied
+2026-11-18):** the stock's Timer C init is **`0x96FC8`** (inside the ATU init `0x91FA4`): table `0x40F68`, per channel n
+TIORC = table word, TCRC = table byte (**TCRC1 = TCRC2 = 0x09: PWM mode, clock-bus line 1**; TIORC1 = 0x4443), TIERC =
+0, TSRC cleared, TCNTC = 0; NCRC 0xFFFFF414 + 8n..+3 = 0x32; NCCRC 0xFFFFF402 + n = 0x0F; IPR07 low byte 0x77; TSTRC =
+0x1F [O bytes]; `0x91ED4` then retunes channels 1/2. **TIOC10/TIOC20 (PD4/PD8) carry a PWM clock that the supervisor
+chip monitors:** 0x14 bit 4 = "TIOC10/20 signal absent" (cleared on the bench once Timer C ran in this configuration,
+r02i) and bit 1 needs the clock present [O bytes, I meaning; spec 23/26 corrections]. The self-test ladder's pin-cut
+test (`0x85788` → `0x91E6C` cut / `0x91E4E` restore) switches PD4/PD8 to GPIO for one tick and expects 0x14 bit 1 to
+drop. *(The "PD0" above is not re-checked against this; the sources name PD4/PD8.)*
+
 ## 6. Open items
 
 1. Signal meaning of every PWM group and input (needs bench measurement or shift-control analysis).
 2. Duty-cycle update paths and rates for group A.
-3. Setup of the unassigned TOE outputs (§3.4) and timer C.
-4. Mapping of speed-sensor channels to transmission shafts.
+3. Setup of the unassigned TOE outputs (§3.4) and timer C. *(Timer C: decoded 2026-11-12, §5 addition; the
+   §3.4 pins have no writer, §3.4 addition.)*
+4. ~~Mapping of speed-sensor channels to transmission shafts.~~ Resolved 2026-11-16 (§4.1: TIF12 output,
+   TIF13 turbine).
 
 ## 7. The stock's scheduling architecture: bare metal, no RTOS (2026-11-03) [O]
 

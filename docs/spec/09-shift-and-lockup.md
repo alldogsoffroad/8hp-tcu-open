@@ -98,6 +98,13 @@ tow/haul, manual range, cruise control and limp-home are the usual candidates]. 
 differences: bases 3 and 4 shift much earlier (full-pedal 1→2 at about 2,700 engine rpm); many
 programs from 55 upward use pedal-independent maps.
 
+**Correction (2026-11-18, source: `~/tcu_sweep/shift_map_decode.md` §3.2 and §11; applied 2026-11-18):** in this calibration the remap
+table `(*0xFFF84EB0)+0x1A4` = `0x1F3B7C` (via `0x121432`) calibrates only ids 0, 1, 6, 10, 11, 15/16, 20/21, 25, 26, 30,
+31, 34–38, 41, 48, 50–54 (→ 0x32), 59–63, 66–70; **every other id → 5**. So **bases 2–4 (and base 1 at level 1) are
+remapped to program 5 / map index 1**, and the bases-3/4 maps described above are **not used** [O]. Map pointers: table
+`*0xFFF84EB0` = `0x62278`, id k → `0x62278 + 0x14·(k mod 5) + 4·(k div 5)` (k < 25). Program 1 is the fallback in
+priority column 1 (A706); the program priority table is `0x1F3BE4`.
+
 ### 2.3 Blending and gear decision [O]
 
 - `0x128D9C` evaluates up to **four programs** and blends them bilinearly with two weights in
@@ -106,9 +113,16 @@ programs from 55 upward use pedal-independent maps.
 - `0x128E94` applies further corrections to the threshold (`0x1281A6`, `0x128894`, `0x128C04`;
   [I] hysteresis, grade/load and temperature offsets — open) and stores up/down thresholds in the
   shift object (`+0xD8` up, `+0xDA` down).
+  *Correction (2026-11-18, `~/tcu_sweep/shift_map_decode.md` §3.3, §11):* below pedal S+0xAF (102) the up/down thresholds are the **raw map
+  values**; `0x1281A6` acts only on pedal in [102, 249) and on ≥ 249 (the else branch); its corrections are not
+  decoded [O structure].
 - **Gear decision** `0x1277D8`: starting from the current gear, it compares the output speed with
-  the up and down thresholds and steps the target gear by one per iteration (at most 8 steps),
-  so skip shifts arise naturally. Extra conditions limit multi-step jumps and handle kickdown
+  the up and down thresholds and steps the target gear by one per iteration (~~at most 8 steps~~ *step limits are per
+  program — table `0x1E5E44`; program 1 = 6 down / 1 up; corrected 2026-11-18, `~/tcu_sweep/shift_map_decode.md` §11*),
+  so skip shifts arise naturally. *(2026-11-18: `0x1277D8` is the walk inside the 30 ms target build — list
+  `0x4D940` entry 14 compute `0xF83A0` → `0xF846E` → `0x123990` → `0x1208C0` → `0x12D420` → `0x1277D8`, entry 15
+  confirm `0x123AA2` / `0x120D34` / `0x127D3E`; S = `0xFFF8A4E4`. `0x12133A` is **not** the evaluator — it returns
+  the flag S+0xB6 — CLAUDE.md shift-map block / `~/tcu_sweep/shift_map_decode.md` §11.)* Extra conditions limit multi-step jumps and handle kickdown
   (`+0xB6`) and forced shifts (`+0xDE = 3`, e.g. speed limits at `+0xE6/+0xE8/+0xEA/+0xEC`). The
   result is written to the caller's target-gear byte [O].
 - About 25 callers (`0x129B70 … 0x12D7CC`, `0x1302A8`) are situation handlers. Each picks the

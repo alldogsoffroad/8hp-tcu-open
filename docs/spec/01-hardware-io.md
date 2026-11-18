@@ -157,7 +157,11 @@ Hall signals "Park" / "Not Park" plus sensor ground). ISS and OSS share supply a
 [M]; [I] two-wire current-output sensors. ATRA *ZF8HP Introduction* webinar (2015), user's copy [M]: ISS (Audi G182) reads an encoder
 wheel with a magnetic ring; OSS (Audi G195) reads the **extended teeth on the parking gear**;
 both are called "intelligent" Hall sensors. [I] OSS pulses per revolution = parking-gear tooth
-count (spec 02 assumes 60; README item 6). The TCM also has an internal temperature sensor. No
+count (spec 02 assumes 60; README item 6). *Correction (2026-11-16, `~/tcu_sweep/park_position_speed_decode.md`;
+CLAUDE.md speed-sensor bench blocks; applied 2026-11-18):* the stock's speed computation `0x143686` uses **40
+pulses/rev for output and 30 for turbine** (cal `0x195DCD`/`0x195DCE`) [O; I that these are per revolution]; bench:
+OSS = TIF12 (steel), ISS = TIF13 (magnetic ring); the park position sensor's two Hall elements are AN5 (contact A) /
+AN6 (contact B) (spec 02 §4.1, spec 04 §4.4). The TCM also has an internal temperature sensor. No
 selector switches are wired to the TCM: the range comes over CAN.
 
 ### 2.9 Internal mechatronic terminals [M]

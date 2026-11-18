@@ -32,8 +32,11 @@ Citations: `docs/spec/03-spi-devices.md` ("spec 03 §…"), `docs/spec/22-superv
   TCU documentation states the TCU is a "microcontroller plus application-specific integrated
   circuits (ASICs) optimized for specific applications" [L], and Bosch hybrid driver ASICs
   carry internal production codes (F00C…/Y-numbers) that are not publicly cross-referenced [L].
-- **0x14 bit 1 therefore has no datasheet quote available.** Best evidence-based meaning
-  remains: *commissioning-commit/lock status of the supervisor's certification state machine*
+- **0x14 bit 1 therefore has no datasheet quote available.** ~~Best evidence-based meaning
+  remains: *commissioning-commit/lock status of the supervisor's certification state machine*~~
+  **Corrected 2026-11-12 (`~/tcu_sweep/gate_bit1_decode.md`): bit 1 = "walk level ≤ 4 AND TIOC10/20 clock present" [I strong]; the
+  phase-2 gate passes on bit 1 = 0 at level ≥ 5 (spec 23 correction); bit 4 = TIOC10/20 signal absent.** Earlier
+  reading:
   (our hand-fed commit `0x1200` → `0xAAC2` sets bit 1 of the 0x12 commit word while 0x14
   still reads D5; stock's C7 carries it; the self-test phase-2 gate hard-fails without it —
   spec 03 §6.2ba, spec 23 §A1b). The settling evidence is the planned stock observation run
@@ -72,7 +75,7 @@ Supervisor SSLB1 (bench live values in brackets are ours; stock engaged values n
 | `0x22` | R | **echo of the 0x8E control byte** + supervisor's own bits: bit0 = grant (feeds `0xFFF90954`), bit5 = rail/VS telemetry (excluded from the stock's echo match mask 0xDF) | handler `0x92D94`; spec 22 §4.4 |
 | `0x90` | W | **switch-output enables**: bits 5/6/7 = outputs 0/1/2 (bit5 = output 0 = the solenoid power rail; letters 'c' from classifier `0x8C7A8`); data composed `0x91758`, fault-masked `~(0x14 & 0xE0)` before send | spec 22 §4.5; spec 23 §A1 |
 | `0x24` | R | **readback of 0x90 / certification data** (stock engaged: `0xAA20`; ours `0xAA00`; SSLB0 misaddressed: `0xAAFF`); write protocol: `{90|value, 24}` then cyclic; stock compare mask 0x15 (bits 0/2/4) | handlers `0x92ED4`/`0x92FD0`; spec 22 §4.5, §6.2ax |
-| `0x14` | R | **switch-output status**: bits 5–7 = per-output fault flags (any set → fault-path re-send job 0x40C30); bit1 = commit/lock (stock C7 vs our D5); bit0 → boot handover readiness; bit4 open | handler `0x92BBE`; spec 22 §4.2; spec 23 §E |
+| `0x14` | R | **switch-output status**: bits 5–7 = per-output fault flags (any set → fault-path re-send job 0x40C30); bit1 = ~~commit/lock (stock C7 vs our D5)~~ walk level ≤ 4 ∧ TIOC clock [I strong, corrected 2026-11-12]; bit0 → boot handover readiness; bit4 ~~open~~ TIOC10/20 signal absent [corrected 2026-11-12] | handler `0x92BBE`; spec 22 §4.2; spec 23 §E |
 | `0x84` | W | **PWM level register** — the only latching write pre-certification; values 0x3F/0x06/0x1F; job `{84|lvl, 0A, 12, 0C}` cyclic at timer cadence, dwell `value*200+2400` ticks | builder `0x91190`; spec 22 §2.1/W2 |
 | `0x0A` | R | commanded-level echo (exact echo: 6→AA06, 0x1F→AA1F) | spec 22 §4.8 |
 | `0x12` | R | **commit status** (bit0 challenge-rotation held, bit1 the "commit accepted" bit — hand-fed commit answers AAC2); checked `(0x12 & 5) == phase-mask` per reply | spec 22 §4.8; spec 03 §6.2ba |
@@ -179,6 +182,10 @@ unconfirmed at chip level).
    (E0 mask), bit1 commit/lock (selftest phase-2 gate `0x8BB34:13`, mode-'L' entry
    `0x85160:126-131`, speed interlock `0x85160:23`), bit0 handover-readiness (`0x7291A:12`),
    bit4 open (set for us, clear for stock) — spec 23 §E.
+   **Corrected 2026-11-12 (`~/tcu_sweep/gate_bit1_decode.md` §1–§2; `~/tcu_sweep/c9_bit4_decode.md`):** bit 1 = level ≤ 4 ∧ TIOC clock [I strong];
+   phase 2 passes on bit 1 = 0; `0x85160:23` is a **supply** plausibility (`0x907FC` = mux-13 minimum, mV), not a
+   speed interlock; bits 2/3 have no reader; **bit 4 = TIOC10/20 signal absent** (0x8C34C's expectation table;
+   cleared on the bench by the stock Timer C PWM configuration, r02i) [O bytes, I meaning].
 3. 0x90/0x24: the `{90|value}` write + `{24}` readback + 0x15-mask compare is fully decoded
    (spec 22 §4.5); the chip-internal latch law for 0x90 bit 5 (what flips 0x24 from 0x00 to
    0x20) is chip-internal and is candidates #1/#2 of spec 23 — again only the observation run

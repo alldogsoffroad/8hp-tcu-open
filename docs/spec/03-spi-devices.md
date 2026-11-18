@@ -870,6 +870,16 @@ the other selects carry fixed maintenance words (SSLA2 `0x80←0xB0` constant, S
 `0x30/0xF0` alternating, SSLA5 `0xE0←0xD0` constant, SSLA3 the varying slot-0 row). A
 parameter table at `0x40DD8` carries `{0003, D090}` — the first duty as data.
 
+**Correction (2026-11-12/13, sources: `~/tcu_sweep/ladder_blockers_decode.md` corrections table; `~/tcu_sweep/adc_chain_port.md` §1.2 b; `~/tcu_sweep/solenoid_chain_decode.md` "Records to
+correct"; applied 2026-11-18):** there is no "duty job". `0xFFF8844C` is the **80-byte AN0 multiplexer sequence**
+(copied by `0x96900` from ROM `0x40ECC`; the mux address is the upper nibble of each byte), stepped by A-DMAC ch0
+into PGDR[15:8] (PG12–15) on Timer G2 compare; `0xFFF885E8` is the **AN0 result ring** (A-DMAC ch1, 160 words,
+two halves of 80 — ping-pong `0xFFF885E8`/`0xFFF88688`) (spec 04 §4.2). The "eight five-select rotations / duties"
+reading above is a misinterpretation of the sequence bytes, and the 40-word job our firmware sent as a bus-A burst
+(E7/E8, FE13 sub 13/14) was the mux sequence, not a stock bus-A job. The stock's bus-A jobs are the cyclic (45
+frames), configuration (40), diagnostic (`0x9225C`, command-major, template `0x40CEE`, queued by a 3.8 ms Timer D
+one-shot after every cyclic — `~/tcu_sweep/output_diag_port.md` §8 item 2) and ID jobs (spec 12 §2b).
+
 **E7 (`m4z`, CRC `499C62A0`)** implements the corrections: `sol_engage_config(level)`
 re-runs the bus-A configuration job with `0x8E = 0x80 | level` on every ladder change
 (stock live `0x9F` at HOLD — under the level reading this mirrors the ladder, under the

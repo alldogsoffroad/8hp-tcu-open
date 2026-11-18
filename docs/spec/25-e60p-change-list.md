@@ -42,6 +42,9 @@ behavioral names differ.
    needed. NOTE: on the stock bench the chip already has bit1 (warm) — which is why the
    stock leaps at +250 ms mid-walk (spec 21). Our chip never sets bit1 — candidate #2's
    root cause is expected to be fixed by item 2 (the walk at stock cadence).
+   *Correction (2026-11-12, `~/tcu_sweep/gate_bit1_decode.md`; spec 23 correction): the phase-2 test was read
+   backwards — 0x8BB34 passes on bit 1 = 0 at level ≥ 5; bit 1 = 1 is expected at walk level ≤ 4 with the TIOC clock
+   present. "Gate our enables on 0x14 bit 1" would have been the inverted law.*
 9. **OPTIONAL parity** — spec 24: one-shot WTSR.WOVF read before the first WDT feed
    (count watchdog resets); fatal-ring occurrence-counter semantics. No functional need.
 

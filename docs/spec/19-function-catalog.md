@@ -37,7 +37,7 @@ disassembled as code — they are *not* opaque logic:
 | r08_app | 12–23 | 0x080000–0x0BFFFF | UDS application service layer, fault manager, E-GAS monitor families, C/C++ runtime + SHcompact ABI + heap, DTC engine (report/debounce/aging/3 clear paths), shifter echo banks, adaptation/teach-in subsystem, park/range module (spec 14), timer library, gear-identification monitors, checksummed parameter records (EEPROM ids absent from the CSV map), calibration table access layer, signal publication hubs |
 | r0c_app | 24–33 | 0x0C0000–0x0FFFFF | park-lock subsystem (arbiter, staged ramp, abort matrices), lever/range arbiters + range codes 5/6/7/8 = D/N/R/P, lockup engagement SMs + ramp integrator + IIR speed observer, torque-request coordinator, solenoid-current demand module (12 channel objects 0xFFF8B154–0xFFF8B25C), shift-permission arbiter 0xD64D2, gear-engagement controller + 17-state machine, line-pressure strategy (spec 11 §3a), **second shift-phase engine instance 0xE5E48** (twin of 0x10F7D0), maneuver/shift context manager, float/curve/map library, measurement list refreshers |
 | r10_app | 34–43 | 0x100000–0x13FFFF | condition-monitor/shift-criteria method bank, calibration init bank (193 ROM/RAM default setters + integrity shadows), spec-12 solenoid actuator classes (constructors, element/WK/Sys current calculators, fast-fill SM), three sibling shift-phase engines (spec-11 §3 object + undocumented 19-state + 10-state closed-loop sync), fault-monitor condition-object framework (fault groups 57–123), calibration-source selector stubs, shift-program module (105 maps, tip mode, PID library), OBD Mode-$01 PID family, safety RAM framework, measurement registration, spec-07 CAN dynamics anchors |
-| r14_app | 44–47 | 0x140000–0x15D5DC | safety/monitoring layer (10 monitor modules, shared safety library, park-request producer, pulse→RPM evaluator, ReadDataByIdentifier provider 0x144108, UDS dispatcher), complement-pair guarded monitors + ~90-step monitor master scheduler, measurement protocol (spec 10 command handlers, permission gate), lever/park module with the spec-14 §6 redundant safety layer, range/lever consistency module, fatal RAM-integrity handlers, static-constructor battery |
+| r14_app | 44–47 | 0x140000–0x15D5DC | safety/monitoring layer (10 monitor modules, shared safety library, park-request producer (corrected 2026-11-16: the park **position-code** producer 0x141BA2, not a park request — spec 14 §5), pulse→RPM evaluator, ReadDataByIdentifier provider 0x144108, UDS dispatcher), complement-pair guarded monitors + ~90-step monitor master scheduler, measurement protocol (spec 10 command handlers, permission gate), lever/park module with the spec-14 §6 redundant safety layer, range/lever consistency module, fatal RAM-integrity handlers, static-constructor battery |
 
 ## Files
 
@@ -66,11 +66,16 @@ disassembled as code — they are *not* opaque logic:
   the spec 17 §5 forgery analysis).
 - The boot-selection question (spec 06, "open") is decoded: the handover/self-test block at
   0x3D6E6–0x3EFC2 validates two flash images and honours a RAM-downloaded helper
-  (magic 0x5AA5/0xA55A at 0xFFF80080) (unit 05).
+  (magic 0x5AA5/0xA55A at 0xFFF80080) (unit 05). *Correction (2026-11-11, `~/tcu_sweep/boot_jump_law.md` §5
+  item 1): 0x3D6E6 has zero callers and its indirect targets are calibration data in this image — it is not the
+  power-on handover; the boot selection stays in the user boot MAT (spec 06 §8 item 1).*
 - A **second instance of the spec 11 §3 shift-phase engine** exists at 0xE5E48–0xE7FEE,
   driven by task 0xDE0D8 (unit 30) — the spec documents only the 0x10F7D0 instance.
+  *(Note 2026-11-17: the garage engagement uses a separate three-element engine, object 0xFFF8E4AC, table
+  0x63176 — spec 11 §3 correction; whether it relates to this instance is not stated in the sources.)*
 - Spec 14 §4.3's "second writer" open question: 0x000C79B8 writes the lever object
-  0xFFF8304C+0x00 (unit 25).
+  0xFFF8304C+0x00 (unit 25). *(2026-11-17: confirmed as the normal writer — 0xFFF8304C+0 is the published range
+  output (D6D6), not a lever request; spec 14 §4.3 correction.)*
 - The calibration selector mapping (spec 09 §1.1) is extended with the exact
   group-pointer/source pairs 0xFFF84E7C–0xFFF84F64 (unit 39).
 - Checksummed parameter records with record ids (0x1FD/0x108/0x11C/0x13A/0x112/0x1D0/0x155/

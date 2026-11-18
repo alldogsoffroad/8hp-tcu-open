@@ -86,7 +86,7 @@ exactly 12 branch sites:
 | `0x0006C63E:41` | `if (DAT_fff93ba1 < 7) ... else {DAT_fff93b9a++; if==2 {...}}` | two-pass certification-progress counter after the gate passes |
 | `0x0006C1EA:64` | `if ((DAT_fff94997 < DAT_fff93ba1) && (DAT_fff93b99 != 0)) DAT_fff94997 = ...` | max-level latch (bookkeeping) |
 | `0x000873F0:44` | `if ((DAT_fff93b94 == 0) && (DAT_fff93ba1 < 7)) { 0x6C612(1); }` | one-shot **enable request** when NOT warm; never fires on a level-7 chip. This is the enable/WDT pattern, not the walk |
-| `0x000873F0:53` | `if (DAT_fff93ba1 < 5) { mode_seq_step; stay; } else state=0x34;` | state 0x45 **proceed gate**: a warm chip (7) passes instantly, a cold chip WAITS. Opposite of a skip |
+| `0x000873F0:53` | `if (DAT_fff93ba1 < 5) { mode_seq_step; stay; } else state=0x34;` | ~~state 0x45 **proceed gate**: a warm chip (7) passes instantly, a cold chip WAITS. Opposite of a skip~~ **corrected 2026-11-12 (`~/tcu_sweep/ladder_blockers_decode.md` P3):** state 0x45 = 'E'; level < 5 runs the 'E' walk rule `0x8CEDC`; level ≥ 5 takes the **0x34 fault path** (`0x94F84 \|= 0x800`, then `0x8799C`, back to 'E' at level 0) — a fault exit, not a proceed gate |
 | `0x0008799C:9,21` | `if (DAT_fff93ba1 == 0) {...}` | chooses whether to re-request the 0x1F era (`PTR 0x87A98 -> 0x6C48C(0x1838=0x1F*200)`) or run mode supervision |
 | `0x0008CEDC:29` | `if (DAT_fff93ba1 == 0) {...}` | mode_seq_step sub-state force-advance |
 | `0x0008D020:39` | `if ((bVar2 == 0) \|\| (bVar2 < DAT_fff93ba1)) {...}` | picks duty re-arm (`0x7EE8A`+`0x6C802`) vs walk restart (`0x6C720`) — both (re)start exchanges; neither idles the machine when warm |
@@ -95,9 +95,14 @@ exactly 12 branch sites:
 The walk task itself (`0x0006C63E` → era stepper `0x0006C542`, reply processor `0x0006C1EA`,
 staging ping-pong `0x0006C742`) contains **no** level branch at all. `0x0006C542` steps eras
 whenever the FRT delta exceeds `DAT_fff93848 + 0x960` (period = value*200 + 2400 → 0x06 era
-3600 ms, 0x1F era 8600 ms — the decoded ~3.6 s / ~8.6 s dwells) and bumps the *expected*
+~~3600 ms, 0x1F era 8600 ms — the decoded ~3.6 s / ~8.6 s dwells~~ 3600 µs, 0x1F era 8600 µs — see the
+correction below) and bumps the *expected*
 level toward 7; `0x0006C1EA` compares expected vs reported and flags mismatches (bits in
 `0x93BA7`), it never aborts.
+
+**Correction (2026-11-11, source: CLAUDE.md r02f block "C2's 3.6 s dwell was a units error"; applied 2026-11-18):**
+the era arithmetic runs on TCNTA, a **1 MHz µs counter** (spec 02 §2), so `0x4B0 + 0x960` = **3600 µs** and
+`0x1838 + 0x960` = **8600 µs** — the era's *cycle*, not a multi-second dwell [O units].
 
 ### 1.3 The walk chain and the cyclic job
 
@@ -106,7 +111,9 @@ level toward 7; `0x0006C1EA` compares expected vs reported and flags mismatches 
   → system-mode chain (`0x00085160` → setter `0x00087766`) enters **0x12/0x23** → at 0x23:
   timeout path to 0x34, or `mode_target_reached(0)` (level==0) && `0x0006C48C(0x1838)` →
   **the 0x1F era** → state **0x45** (level>=5 proceed gate) → 0x34 → `0x0008799C
-  fault_state_advance`. Value chain 0x3F (init `0x0006C12C`) → 0x06 (state 0) → 0x1F (state
+  fault_state_advance`. *(Corrected 2026-11-12, `~/tcu_sweep/ladder_blockers_decode.md` P3: `0x87766` is called only by `0x85160` — 0xAA → 0x23
+  directly, 0x12 only on a budget-failed ladder; 0x45 = 'E' and 0x34 is a level-fault path; stock opening 8 → 0x23 →
+  'E'. See spec 22 §6.3.)* Value chain 0x3F (init `0x0006C12C`) → 0x06 (state 0) → 0x1F (state
   0x23) — matching spec 03 §6.2bd's decode.
 - `0x0006C48C park_pwm_learn_value` writes the value cell `0xFFF94FE8`/`0xFFF94E60`
   (diverse pair) or stages the second byte `0xFFF94FE9`, then `0x0006C0BA
@@ -137,7 +144,7 @@ while powered (spec 03, 2026-10-31 note, line ~286).
 The stock never consults the chip's level before starting the walk; the 0x06 era is armed on
 the first monitor pass of every boot. The only warm-sensitive behaviours are: the one-shot
 enable request is *not* sent when already at 7 (the chip doesn't need it), the 0x45 gate is
-passed instantly, and the 0x1F-era request at state 0x23 carries a `mode_target_reached(0)`
+passed instantly *(refuted 2026-11-12: level ≥ 5 in 0x45 is the 0x34 fault path, see §1)*, and the 0x1F-era request at state 0x23 carries a `mode_target_reached(0)`
 = level==0 condition — i.e. on a boot-warm chip the TCU first requests mode 0 (drag the chip
 down) and requests 0x1F once the chip reports 0. Net: a warm chip is walked *through* the
 same 0x3F→0x06→0x1F sequence, if anything with different era-2 timing. Residual unknown [I]:

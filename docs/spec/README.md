@@ -41,6 +41,13 @@ the stock firmware. Markers in each document: **[M]** manual, **[O]** observed i
 
 ## Documents
 
+**Correction sweep (2026-11-18):** decode corrections recorded since 2026-11-09 (in the project CLAUDE.md and the
+`~/tcu_sweep/*.md` reports) were applied to specs 01, 02, 03, 04, 07, 09, 11, 12, 13, 14, 19, 20, 21, 22, 23, 24, 25 and
+26 as dated in-place notes; the earlier claims stay visible (struck or quoted). The list of every correction applied
+or skipped is `~/tcu_sweep/spec_correction_sweep.md`. Several status lines below predate those corrections — notably
+21 ("drive is not walk-gated": solenoid current is gated on seq2 'U'), 23 ("0x14 bit1 the ranked missing condition":
+the phase-2 test was read backwards) and 24 ("38 ISRs": 37 handlers in 42 slots).
+
 | Spec | Topic | Status |
 |---|---|---|
 | [01](01-hardware-io.md) | Memory map, pin functions, safe start-up state; case-pin measurements; overview diagram [`../diagrams/tcu-hardware.svg`](../diagrams/tcu-hardware.svg) | draft |

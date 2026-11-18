@@ -61,6 +61,13 @@ spec 02 §2) for era arithmetic, and an output-compare timer at peripheral `0xFF
 of `0xFFFFF58E`) whose interrupt service routine is **`0x9106C`** [O disassembly; vector #224
 [I], table base 0x40070 derived from vector 445 → 0x96590 at flash 0x40764].
 
+**Correction (2026-11-11/12, sources: `~/tcu_sweep/walktmr_map_fix.md` §7; CLAUDE.md "bench mechanics" and r02g B2; applied
+2026-11-18):** the walk timer is the **DCNTD00 down counter** at `0xFFFFF5B0` (not a compare register); vector
+224 = its **underflow**. The register labels above are swapped: **`0xFFFFF585` = DSTRD0 (start strobe, reads
+0)**, **`0xFFFFF58E` = TIERD0 bit 8 (UDEDn0, the underflow interrupt enable)**. Its rate is **1 µs per tick**
+(measured against TCNTA on the bench, r02g: 1024 ticks in 1025 µs) [O]; the earlier ~9–10 MHz / 28 µs readings are
+refuted.
+
 ---
 
 ## 2. The complete job table (flash 0x409F4–0x40C74) [O — dumped from the ELF]
@@ -82,14 +89,29 @@ descriptor's `selects` byte says how many SPCMD entries get loaded — jobs 0x40
 | # | Descr | Frames→chip | Wire words (TX) | Cadence / caller | Completion handler |
 |---|---|---|---|---|---|
 | J1 | `0x40BE8` | 4 → B1,B0,B1,B0 | `8E00\|ctrl, C900\|c9, 2200, 0900` (live staging `0xFFF88424`) | every 5 ms pass: `0x8EE82` → `0x91DAA` → `0x92D38` (ctrl byte composed by `0x91C86`, C9 byte by `0x93126`) | `0x92D94 shifter_resp_echo` |
-| J2 | `0x40C0C` | 2 → B1,B1 | `9000\|en, 2400` (template @0x40C08) | on letter/output-state change: `0x91804/0x91810` → `0x92E80` (word from `0x91758 switch_status_build`) | `0x92ED4` |
+| J2 | `0x40C0C` | 2 → B1,B1 | `9000\|en, 2400` (template @0x40C08) | ~~on letter/output-state change~~ **every 5 ms pass, in every mode** (corrected 2026-11-11, CLAUDE.md "THE STOCK'S TASK RATES": the J2 stage `0x8EDF6` stays in the 5 ms list and `0x92E80` queues J2): `0x91804/0x91810` → `0x92E80` (word from `0x91758 switch_status_build`) | `0x92ED4` |
 | J3 | `0x40C54` | 2 → B1,B1 | `2800, 2E00` (template @0x40C50) | cyclic [V]: queuer `0x9305A` (`bank_tmpl_init_88444`, called by `0x91ACA`; template `0x40C50`→staging `0xFFF88444`) | `0x93096` |
 | J4 | `0x40C74` | 1 → SSLB2 (mode 0) | `00FF` (template @0x40D8C) | cyclic: `0x93198 bank_tmpl_init_885e4` | `0x931D4` |
 | J5 | `0x40B80` | 4 → B1,B0,B1,B0 | `0600, 0300, 0000, 0000` (template @0x40B78) | first bus-B job at init (`0x91DD2`), then every 5 ms pass: `0x8EE82` → `0x91E12` → `0x92A84` | `0x92AC0` |
 | J6 | `0x40BA0` | 5 → B1,B0,B1,B0,B1 | `1800, 0C00, 1E00, 0600, 1400` (template @0x40D78) | every 5 ms pass: `0x91DAA` → `0x92B82` | `0x92BBE` |
-| J7 | `0x40BC0` | 1 → SSLB0 | `0000` (live staging `0xFFF885E0`) | every rotation [I]: no queuer found ("built inline"); live staging present every pass (spec 03 §6.2m) | `0x92CC8` |
+| J7 | `0x40BC0` | 1 → SSLB0 | `0000` (live staging `0xFFF885E0`) | ~~every rotation [I]: no queuer found ("built inline"); live staging present every pass (spec 03 §6.2m)~~ **never sent by the stock** (corrected 2026-11-11, below the table) | `0x92CC8` |
 | W1 | `0x409F4` | 7 → B1×7 (cfg 0x40CA0) | `8800\|t0, 8800\|t1, 8800\|t2, 8800\|t3, 1200, 0C00, 0A00` (template @0x40CA6; 8th flash word `0C01` @0x40CB4 beyond the 7-frame copy) | the DUTY era: timer ISR `0x9106C` → `0x6C1BA park_pwm_service` (job-mode 0) → builder `0x91086` | `0x910EE serial_resp_handler7` |
 | W2 | `0x40A14` | 4 → B1×4 (cfg 0x40CA0) | `8400\|lvl, 0A00, 1200, 0C00` (template @0x409EC) | the LEVEL eras: same ISR (job-mode 7) → `0x91190(level)`; **one in flight** (check-free `0x93B8E` inside both builders) | `0x911D8 serial_resp_handler4` |
+
+**Corrections to the table (2026-11-11/12, sources: CLAUDE.md "ADDENDUM (2026-11-11 night)" and r02g block S4;
+applied 2026-11-18):**
+- **The stock never sends J7** [O, three lines]: descriptor `0x40BC0` has no literal anywhere in flash; the stock
+  driving RAM dump holds J7's TX/RX staging `0xFFF885E0..E3 = 0000 0000` while J4's neighbour is live; the
+  handler-completeness check `0x93126 → 0x931F8(&0x90973, …, mask 7)` expects bits 0–2 only (J7's handler
+  `0x92CC8` owns bit 3; dump `0x90973` = 07). §4.3 below describes a handler that never runs.
+- **Per-pass order and queues [O]:** the queue engine `0x937F8` keeps per-bus normal (10) and priority (5) rings,
+  selected by descriptor byte 1; the dispatcher `0x93902` drains priority first. F (`0x40C30`) is priority 0;
+  the only priority-1 bus-B descriptors are the walk W2 (`0x40A14`) and W1 (`0x409F4`). **J3 is queued before J4**
+  (`0x91C12`/`0x91C16`). Bench r02g (stock order reproduced): J3, J4, J2, F, J6, J1, J5, F2 per pass, F2 = the F
+  re-fire on 0x14 bits 5–7.
+- **Handler bit map [O]:** A8 triple `0x907C8/C9/CA` (J5 1, J1 2, J6 4, J2 0x10, F 0x20, J3 0x40); AA triple
+  `0x90973/74/75` (J5 1, J1+C9 2, J6 4); summarizer `0x93126`/`0x931F8` with per-round clear into
+  `0x90971/72`. J1's C9 echo compares rx[3] with the C9 data byte `0xFFF88427` [O flash `0x92DD6/0x92DDE`].
 | F  | `0x40C30` | 2 → B1,B1 | `9000\|en, 2400` (template @0x40C2C) | fault path only: `0x92F7C` (queued by `0x92BBE` on 0x14 fault bits) | `0x92FD0` |
 
 ### 2.2 Bus-A driver jobs (same table; the supervisor NEVER sees these) [O]
@@ -130,7 +152,11 @@ driver 1 kHz PWM divider constant), NOT supervisor words — the root error of t
 Composed every 5 ms into `0xFFF907D4` (mirrors the boot programs' direct writes, spec 03
 §4.4). The SSLB0 `0xC9` byte (`0xFFF9097B`) is composed in the same pass: base
 `0xFFF90957 | 0xFFF90962&0xF0`, bit 4 set while shutdown self-test flag `0xFFF9094D==0`
-(set), bit 7 from variant cell `0xFFF9095A`.
+(set), bit 7 from variant cell `0xFFF9095A`. **Note (2026-11-12, source: `~/tcu_sweep/c9_bit4_decode.md`, key claims re-checked
+against the bytes):** in the stock, bit 4 is never set in normal running — the shutdown self-test phase machine
+`0x86916` that drives `0x9094D` is dead (its enable `0x7C6AE` is `mov #0; rtv`; its start `0x868F0` is gated
+by the constant-1 `0x132334`), and the only other `0x9094D = 0` writer, `0x93248`, is in the mode-5 (shutdown)
+list. C9 stays `C900`; J1's C9 word is composed by `0x91C86` (spec22_validation).
 
 | Bit | Meaning | Code (0x91C86) |
 |---|---|---|
@@ -197,6 +223,11 @@ to the 0x90 word (§4.4). Bench: our SSLB1 reads `0x14 → 0xD5` = bits 6/7 faul
 unfaulted** (spec 03 §6.2az).
 
 ### 4.3 J7 SSLB0 nibble poll `[0000]` — handler `0x92CC8 shifter_resp_1w`
+
+*Corrected 2026-11-11: the stock never queues J7 (§2.1 correction); this handler is dead code in the stock.
+`0xFFF90958` is nevertheless live, written from J6: `0x90958 = (J6 rx[1] & 0x0F) ^ 0x0F` (CLAUDE.md park-sensor
+blocks); the park-sensor contacts appear there (bit 2 = AN5 active, bit 3 = AN6 active; bench 2026-11-14,
+CLAUDE.md "PARK HALL SENSOR — MAGNET TEST").*
 
 rx[0]: AA00-class check → low byte → `0xFFF90979`; `0xFFF90958 = (rx & 0xF) ^ 0xF`. The
 stock tolerates this job's header check failing (driving-dump reply was `0x0000`; our bench
@@ -371,19 +402,34 @@ job-mode 0, context-aware expected bumps, **phase mask 1** (context ≠ 0x1E/0x1
 | State | Entry | Action | Exit |
 |---|---|---|---|
 | **0** | boot flag `0xFFF9500E` set at init / re-armed on entering {0, 0x12, 0x23} (`0x87766`) | `0x8D136 mode_req_set(5)` (level target ≥ 5) + **`0x6C48C(0x4B0, 0xFB4F, 2)` = the 0x06 era** (0x4B0 = 6×200) | → **8** |
-| **8** | from 0 | `0x8D020 mode_transition_supervise` every pass: budget `0xFFF9417D` countdown until target reached; not-reached → walk restart (`0x6C720`), reached → `0x8CEDC mode_seq_step` advances | → 0x12 [I: via the system-mode chain 0x85160 → `0x87766 fault_state_write`] |
-| **0x12** | from 8 | boot flag → `mode_req_set(5)` again | → 0x23 |
+| **8** | from 0 | `0x8D020 mode_transition_supervise` every pass: budget `0xFFF9417D` countdown until target reached; not-reached → walk restart (`0x6C720`), reached → `0x8CEDC mode_seq_step` advances | → 0x12 [I: via the system-mode chain 0x85160 → `0x87766 fault_state_write`] — **corrected 2026-11-12: 0x85160 calls `0x87766(0x23)` on the ladder's 0xAA, so 8 → 0x23 directly** (see below) |
+| **0x12** | from 8 | boot flag → `mode_req_set(5)` again | → 0x23 — **corrected 2026-11-12: no exit of its own; reached only on a budget-failed ladder (sub 0xF1)** |
 | **0x23** | from 0x12 | boot flag → **`mode_req_set(0)`** (drag the level to 0); `0x8D020` now arms the **DUTY era** (`0x7EE8A` token → `0x6C802(token, 0x1E)` — context cycling §5); `0x8D1BA` timeout → 0x34; **`0x8D108(0)` = "reported level == 0" AND `0x6C48C(0x1838, 0xE7C7, 2)` = the 0x1F era** (0x1838 = 0x1F×200) | → 0x45 |
-| **0x45** | from 0x23 | **proceed gate: level ≥ 5** (warm chip passes instantly; cold chip WAITS — `0x8CEDC` while < 5) | → 0x34 |
+| **0x45** | from 0x23 | ~~**proceed gate: level ≥ 5** (warm chip passes instantly; cold chip WAITS — `0x8CEDC` while < 5)~~ **'E' (corrected 2026-11-12): level ≥ 5 → the 0x34 path (a fault path: `0x94F84 \|= 0x800`); else the 'E' walk rule `0x8CEDC`** | → 0x34 only on level ≥ 5 |
 | **0x34** | from 0x45 / timeout | `0x8799C fault_state_advance`: if prev = 0x23 and level == 0 → re-request the 0x1F era; else steady supervision | → steady |
 | other | — | event bit, return to previous state `0xFFF93B93` | — |
 
 While the walk is active (`0xFFF93BA3 != 0`) the outer FSM is PARKED (0x873F0 goto) [O].
 
+**Correction (2026-11-12, source: `~/tcu_sweep/ladder_blockers_decode.md` P3, bytes `0x874F2–0x876B0`; applied 2026-11-18):** the FSM
+runs in `0x873F0`, which executes **every 2.5 ms in every OS mode** from the first OS tick (CLAUDE.md "THE STOCK'S
+TASK RATES"). `0x87766(t)` is called only by the system-mode sequencer `0x85160`: **0xAA (ladder complete) →
+0x23**; a ladder failure with no retries left → **0x12 if sub == 0xF1 (budget), else 0x23**. State 0x23: entry →
+`0x8D136(0)`; **budget `0x8D1BA()` == 1 → the 0x34 path**; else if `0x8D108(0)` (reported == 0) and
+`0x6C48C(0x1838, 0xE7C7, 2)` == 0 → **'E'** (0x93B93 = 0x23, no `0x8D020` that pass); otherwise `0x8D020`. The
+'E' rule `0x8CEDC` walks token contexts 0 → 7 → 0x19 at level 0 (the caller inverts the token for 0x19), resends
+(0x2A) on attention 7, and uses context 0x1E above level 0. **Stock opening: 8 → 0x23 → 'E'** (dump 0x95010 = 'E',
+0x93B93 = 0x23); 0x34 only on level faults. The 'E' state was reproduced on the bench under the ported law
+(r02t–r02x, CLAUDE.md).
+
 Dwell arithmetic: era length = `value×200 + 2400` time-base units (0x06 era: 3600; 0x1F
 era: 8600). Spec 03 §6.2bd reads these as ~3.6 s / ~8.6 s (stock commissioning ≈ 5.6–15 s
 end to end, spec 03 §6.2p/§6.2i); the time base unit (TCNTA µs vs timer-H ms vs the <<8
 compare scaling) is [I] — the formula and the sequencing are [O].
+
+**Correction (2026-11-11, source: CLAUDE.md r02f block "C2's 3.6 s dwell was a units error"; applied 2026-11-18):**
+the era arithmetic runs on TCNTA, a **1 MHz µs counter** (spec 02 §2), so `0x4B0 + 0x960` = **3600 µs** and
+`0x1838 + 0x960` = **8600 µs** — the era's *cycle*, not a multi-second dwell [O units]. The "~3.6 s / ~8.6 s" reading above is refuted.
 
 ### 6.4 Certification and steady state
 
@@ -482,4 +528,5 @@ level W2              : 84{lvl} 0A00 1200 0C00              -> echo/commit/feedb
                          bit6 power-down, bit7 engaged-marker; bits 3,5 always 0
 echo 0x22             : mirror of ctrl | bit5 rail (excluded from stock's match, mask 0xDF)
 level ladder          : 0x3F (init) -> 0x06 (state 0, ~3.6 s) -> duty/token era -> 0x1F (0x23, ~8.6 s)
+                        [corrected 2026-11-11: 3600 / 8600 µs cycles, not seconds — §6.3]
 ```

@@ -12,8 +12,12 @@ Markers: **[M]** manual, **[O]** observed in stock firmware, **[I]** inference, 
 | ADC1 | `0xFFFFEC00` | AN40–AN48 [M] | **AN40–AN46** (`ADANS3 = 0x7F`); AN47, AN48 unused [O] | 25 Pφ states (CKS = 1) [O][M] |
 
 AN0 is excluded from the scan and instead enabled as a **timer-triggered conversion**
-(`ADTRE0` bit 0, trigger source selected by `ADCER0` bit 0) [O][M]. [I] AN0 is sampled
-synchronously with a PWM/timer event — typical of solenoid current sensing.
+(`ADTRE0` bit 0, trigger source selected by `ADCER0` bit 0) [O][M]. ~~[I] AN0 is sampled
+synchronously with a PWM/timer event — typical of solenoid current sensing.~~ *Corrected (2026-11-12,
+`~/tcu_sweep/ladder_blockers_decode.md` P1; `~/tcu_sweep/adc_chain_port.md`): AN0 is the external-multiplexer input (§4.2), triggered by Timer G1 10 µs after Timer G2
+steps the mux address; it does not sense solenoid current. ADC0 (ADC_A) and ADC1 (ADC_B) run timer-triggered single
+scans every ~1 ms (Timer G4 / G5), moved by DMAC ch5 (ADC_A → `0xFFF88130`, DEI5 vector 128) and DMAC ch4 (ADC_B →
+`0xFFF884BA`, DEI4 vector 124) [O].*
 
 Control values written at start-up [O]: `ADCSR0/1 = 0x10`, `ADCER0 = 0x4F01`, `ADCER1 = 0x4F80`.
 Both units have the **self-test function enabled** with the fixed AVref × 1 test voltage
@@ -26,6 +30,9 @@ the software (converter plausibility). Result format: left-aligned (`ADRFMT = 0`
    which is based at `0xFFF88000` (`ADMAABR = 1`) [O][M]:
    - buffer 0 at alias offset `0x44C`, reload count `0x50`
    - buffer 1 at alias offset `0x5E8`, reload count `0xA0` (and a second `0xA0` reload)
+   - *Correction (2026-11-12, `~/tcu_sweep/ladder_blockers_decode.md` corrections table; `~/tcu_sweep/adc_chain_port.md` §1.2 b): buffer 0 (`0xFFF8844C`, 80 bytes) is
+     not a conversion buffer — it is the **multiplexer sequence**, the source of A-DMAC ch0 (→ PGDR[15:8]). Only
+     buffer 1 (`0xFFF885E8`, 160 words, ch1 ← ADR0) holds AN0 results (§4.2).*
 2. Each DMA buffer is followed by a **guard word `0x5B97`**. The processing task checks it every
    cycle; if it was overwritten (DMA overrun) it restores it and increments an error counter [O].
    (The SPI buffers use the same guard.)
@@ -175,7 +182,8 @@ port" feature [M §12.3.2][O]:
 
 The select value is in the upper nibble of each byte (values `0x00`–`0xF0`) [O]. [I] It drives
 the port G pins left as general-purpose outputs (PG12–PG15); PG0–PG11 are SPI chip selects
-(spec 01).
+(spec 01). *Confirmed 2026-11-12 (`~/tcu_sweep/adc_chain_port.md` corrections table) [O manual §12.3.2(1)]: A-DMAC ch0's destination
+is fixed in hardware to PGDR[15:8], upper nibble only.*
 
 Sampling schedule of the stock sequence (multiplexer input = byte >> 4) [O]:
 
@@ -206,6 +214,22 @@ Every read maps to exactly one multiplexer input, which confirms the model [O]:
 | 12 | — | not used by this task | |
 
 Signal meanings beyond these interpretations remain **open**.
+
+**Addition (2026-11-12 … 2026-11-17, sources: `~/tcu_sweep/ladder_blockers_decode.md` P1; `~/tcu_sweep/adc_chain_port.md`; `~/tcu_sweep/gate_bit1_decode.md` §1; `~/tcu_sweep/keyoff_autop_port.md` corrections 1;
+`~/tcu_sweep/park_sensor_decode.md`; applied 2026-11-18):** the processing is the DEI5 ISR `0x95FC4` → `0x8F058` (1 ms means), finished every 5
+ms by `0x8F62C` → `0x936FC`; values ×25000/65536 mV (mux 13 minimum ×35000/65536) [O]. Decoded meanings:
+
+| Mux input | Published | Consumer / meaning |
+|---|---|---|
+| 8 | `0x90188` → `0x89114` → **`0x94ED0[0]`** (complement `0x94D48`) | the supervisor's **switched output (rail) node** voltage — ladder classes, the 7400 mV gate of `0x83DB0` [O] |
+| 11 | `0x907E2` → plausibility `0x8D8DE` → **`0x94F86`** (status `0x94FEC`) → `0x94F96` | **supply** for the ladder window, U1267 "tested", the OS-mode window [O] |
+| 13 | `0x907E4` (mean), `0x907FC` (minimum) | supply voltage in mV [I strong]; the bit-1 plausibility in `0x85160` |
+| 14 | `0x907EE` → `0x8E5E8` → `0x94F9E` → `0xFFF938B4` | the terminal-15 **voltage path** (spec 07 §7.1, `0x112`) [O] |
+| 15 | `0x9360C(0x40904)` → **`0x907E8`** → latched `0x93942` (×15000/65536) | the **shared sensor supply** (≈ 8.98 V on the bench) — the reference of the §4.4 switch evaluator [O chain; I name] |
+| 10 | `0x9018A` | ≈ 24.9 V on the bench; meaning open |
+
+Bench readings (r02k/r02q, CLAUDE.md): mux 8 ≈ 2.94 V with the rail open, ≈ supply with the rail closed; mux 11 ≈
+13.36 V; mux 13 ≈ 13.37 V; mux 14 ≈ 13.57 V; mux 10 ≈ 24.9 V; mux 15 ≈ 8.98 V.
 
 Correction to an earlier hypothesis: no evidence was found that the multiplexer carries solenoid
 current. [I] Current regulation is most likely done inside the SPI driver chips (spec 03: two
@@ -262,6 +286,10 @@ Analog evaluation (behavior to reproduce) [O]:
 
 1. Only when the supply reference is at least **6000 mV**.
 2. `ratio = input_mV × 10000 / supply_mV` (0.01 % units).
+
+   *Correction (2026-11-14, source: `~/tcu_sweep/park_sensor_decode.md` corrections; applied 2026-11-18):* the "supply reference" is **AN0
+   multiplexer input 15** (`0x907E8` → `0x93942`, ≈ 8.98 V, the shared sensor supply) — not the battery and not AN21
+   [O]. The evaluator is `0x88EF0` → `0x8DF2E` (+`0x8ED40`), bands cal `0x1913A8`.
 3. Band = number of band thresholds ≤ ratio, thresholds `100, 1900, 5000, 8000, 9500`
    (stock, same for every input):
 
@@ -275,9 +303,15 @@ Analog evaluation (behavior to reproduce) [O]:
    (analog and digital disagree). Each state is also stored with its bitwise complement.
 
 [I] These are switch contacts in a resistor network, designed so open circuits and shorts fall
-into invalid bands. Which physical switches they are is **open**.
+into invalid bands. ~~Which physical switches they are is **open**.~~ **Resolved (2026-11-14/16, bench, CLAUDE.md
+park-sensor blocks; `~/tcu_sweep/park_sensor_decode.md`):** inputs 2/3 (AN5/AN6) are the two Hall elements of the **park position sensor**
+(G747), contacts A and B; each switches independently under a magnet (≈ 6.27 V / 69.8 % inactive ↔ ≈ 0.63 V / 7.1 %
+active), and the supervisor's digital view `0x90958` tracks them (bit 2 = AN5, bit 3 = AN6). The stock's safety pair
+`0x141B42`/`0x141BA2` maps them to the position code (spec 14 §5). Which element means "Park" mechanically is still
+open.
 
-**Project implementation (M2)** [I]: `firmware/io/sensors/sensors.c` evaluates AN5/AN6 against the
+**Project implementation (M2)** [I] *(its reference is wrong — AN21 instead of mux 15; corrected 2026-11-14, see
+above)*: `firmware/io/sensors/sensors.c` evaluates AN5/AN6 against the
 supply (AN21) with the same band layout (provisional, to be re-derived from measured contact
 levels) and reports Park when contact 0 is closed and contact 1 open, Not Park for the reverse,
 unknown otherwise. Supply = AN21, switched supplies AN19/AN20 with 3.0/4.0 V hysteresis.
@@ -285,8 +319,9 @@ All channel assignments are [I] and listed for the bench (items 17, 22, 23).
 
 ## 5. Open items
 
-0. [I] Candidate for the two-input switch evaluator (§4.4, AN5/AN6): the park position sensor's
-   "Park" / "Not Park" pair (spec 01 §2.8), since no selector switches are wired to the TCM [M].
+0. ~~[I] Candidate for the two-input switch evaluator (§4.4, AN5/AN6): the park position sensor's
+   "Park" / "Not Park" pair (spec 01 §2.8), since no selector switches are wired to the TCM [M].~~ Confirmed
+   2026-11-14 on the bench (§4.4 correction).
 
 1. Physical meaning of each channel (fluid temperature, pressure sensors, solenoid supply,
    current sense, sensor supplies).

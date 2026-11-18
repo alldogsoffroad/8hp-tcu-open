@@ -23,6 +23,16 @@ the grant DROPS). Neither known condition gates the rail.
 and its classifier is the POWER-ON SELF-TEST, which hard-fails on the exact status bit our
 bench lacks (0x14 bit 1).**
 
+> **CORRECTION (2026-11-12, sources: `~/tcu_sweep/gate_bit1_decode.md` §0 "Correction to the corpus", §1–§2; `~/tcu_sweep/letters_law_decode.md`; `~/tcu_sweep/ladder_blockers_decode.md`; applied 2026-11-18):
+> the phase-2 test was read backwards.** Stock phase 2 `0x8BB34` **PASSES on 0x14 bit 1 == 0** (`0x93A8C |=
+> 0x94FE2`, sub-state 0x55) and fails with 0xF4 on bit 1 == 1 after the tolerance `0x9481F` (3 → 15 ms). `0x93A8C`
+> is the ladder's **pass mask**, not an error latch; the finisher `0x8C0F2` succeeds only with `0x93A8C == 0x00FF`
+> (sub 0xAA). Driving dump: 0x93A8C = 00FF, 0x9500D = AA, 0x94FE2 = 0x0100, 0x14 = C7 [O]. **Bit 1 = 1 is expected at
+> walk level ≤ 4** (phase 0x20 `0x8BDD6` requires it once `0x8D108(3)` holds, then arms the TIOC pin-cut test and
+> expects bit 1 to drop) [O expectation; I meaning: bit 1 = "level ≤ 4 AND TIOC clock present"]. Bench: setting the
+> walk target to 3 opened the gate (0x14 = C7, r02j), and the stock ladder ran to 0xAA under open firmware (r02t),
+> then letter 'c' and the engaged rail (r02w) — CLAUDE.md. The text below is kept as the earlier reading.
+
 ```
 selftest_seq_dispatch 0x0008B7A8 (from mode sequencer 0x00085160)
   → phase handlers 0x0008B974/8BB34/8BB8A/8BC54/8BD40/8BDD6/8BEC0/8BFB8/8C0F2/8C194
@@ -63,8 +73,8 @@ grant yes, level 7, rail primed (0x22 echo bit5 during the window), 0x24 AA00, 0
 | # | Condition | Code citation | Consumer | Our bench | Verdict |
 |---|---|---|---|---|---|
 | A1 | **0x90 register bit5 written in cyclic job 0x40C0C** — requires letters[0]='c' | 0x00091758:8-10 (letters→bit5/6/7, tbl 0x1918E8={0,1,2}) | chip 0x90 reg; readback 0x24 | we hard-code 0x20 and DO transmit 0x9020 | PARTIAL (byte present, provenance absent) |
-| A1a | **letters[0]='c': 0xFFF93A90[0] set by the seq2/selftest classifier** — needs: calibration channel-enable bit (bank byte @PTR_PTR_00085AA0, bit0), command ladder 0x11/0x16 (uVar11=0xFFF939B6[ch], written 0x00085E64 by selftest phases 1/4/8) or '3'/'U' ladder with previous-state ≠ 0 | 0x00085828 (542-instr FSM); enable call PTR_FUN_00085C94→0x0008C7A8(ch, uVar11≠0) | letters cell 0xFFF90944[0] | not present (no classifier in our firmware) | N/A for wire; see C4 |
-| A1b | **self-test phase 2 passes: 0x14 bit1 SET** (`DAT_fff90959 != 0`), else error latch 0xFFF93A8C and restart | 0x0008BB34:13 `if (DAT_fff90959 == 0) {DAT_fff93a8c |= DAT_fff94fe2; substate 0x55}`; 0x14→0xFFF90959 @0x00092BBE:48 | selftest_seq → letters | **our 0x14=AAD5 has bit1 CLEAR (stock C7 has it SET)** | **FAIL — the discriminator** |
+| A1a | **letters[0]='c': 0xFFF93A90[0] set by the seq2/selftest classifier** — needs: calibration channel-enable bit (bank byte @PTR_PTR_00085AA0, bit0), command ladder 0x11/0x16 (uVar11=0xFFF939B6[ch], written 0x00085E64 by selftest phases ~~1/4/8~~ **1, 8, 0x40, 0x80** (corrected 2026-11-12, `~/tcu_sweep/letters_law_decode.md`), and only while seq2 0x94FD0[ch] is 0x11 or 0x16) or '3'/'U' ladder with previous-state ≠ 0. *Two slots, only channel 0 enabled (cal 0x1919C8 = 01); 0x93A92 is a voltage class, not a channel type; 0x939B8 is seq2's per-channel output status (4 = 'U' settled), not a request slot (`~/tcu_sweep/letters_law_decode.md`; `~/tcu_sweep/ladder_blockers_decode.md`).* | 0x00085828 (542-instr FSM); enable call PTR_FUN_00085C94→0x0008C7A8(ch, uVar11≠0) | letters cell 0xFFF90944[0] | not present (no classifier in our firmware) | N/A for wire; see C4 |
+| A1b | ~~**self-test phase 2 passes: 0x14 bit1 SET** (`DAT_fff90959 != 0`), else error latch 0xFFF93A8C and restart~~ **CORRECTED 2026-11-12: phase 2 passes on bit 1 CLEAR (at level ≥ 5); 0x93A8C is the pass mask** (see the correction under headline finding 2) | 0x0008BB34:13 `if (DAT_fff90959 == 0) {DAT_fff93a8c |= DAT_fff94fe2; substate 0x55}`; 0x14→0xFFF90959 @0x00092BBE:48 | selftest_seq → letters | **our 0x14=AAD5 has bit1 CLEAR (stock C7 has it SET)** | **FAIL — the discriminator** |
 | A1c | chip reports output-0 unfaulted: 0x14 bit5 clear (else bit5 stripped from TX) | 0x00092E80:29 mask `~(0xFFF907D1 & 0xE0)`; fault bool 0xFFF90947[0] @0x0009181C:11 | staged 0x90 word; seq2 'U' class @0x00085828:171/213 | 0xD5 bit5 clear | PASS |
 | A1d | scheduler batch running (cyclic; gate = job-idle only) | 0x0008EDF6→0x00091804→0x00092E80; idle check 0x00093B8E | job queue 0x000937F8 | our cyclic runs | PASS |
 | A2 | **0x8E control word bit0 (output-enable master) = 0xFFF907D4 bit0 ← 0xFFF90953**, set by the one-shot `0x000873F0:44 → 0x0006C612(1)` (requires a harvested level < 7 at a monitor pass AND 0x68BE0()==0 i.e. 0xFFFF1001 bit6 clear); held unless handover-disable 0x00072898→0x0006C612(0) | 0x00091C86:18-31 (`d4|=1` / `d4&=0xFE`; echo-gated WDT switch 0x000920A4) | job 0x40BE8 frame 0 (`8E\|d4`) | our self-ask (own code) obtains bit0/grant | PASS (equiv) |
@@ -82,11 +92,18 @@ grant yes, level 7, rail primed (0x22 echo bit5 during the window), 0x24 AA00, 0
 
 | # | Condition | Code citation | Effect | Our bench | Verdict |
 |---|---|---|---|---|---|
-| C1 | mode sequencer in terminal path: system-mode cell 0xFFF9500C == 'L' (entered from mode '.' when FSM 0xFFF95010==0x45 AND 0x14-bit1 — 0x00085160:126-131), or mode 0 with countdown 0xFFF9414D expired (0x00085160:76-86) | both call `PTR_FUN_000853E8(1)` → 0x00092094 → **0xFFF90969 := 1, never cleared in the image (one-way until reboot)** | 0x00091758:17-19 strips bits 5 AND 6 (mask 0x1918EC=0x03<<5) from the enables byte | n/a (our firmware has no mode sequencer); stock: mode 'L' entry needs 0x14-bit1 — see A1b | noted |
+| C1 | mode sequencer in terminal path: system-mode cell 0xFFF9500C == 'L' (entered from mode '.' when FSM 0xFFF95010==0x45 AND 0x14-bit1 — 0x00085160:126-131), or mode 0 with ~~countdown 0xFFF9414D expired~~ **retry count 0xFFF9414D (3) exhausted — each attempt ≤ 200 ms (0x94820); corrected 2026-11-12, `~/tcu_sweep/ladder_blockers_decode.md`** (0x00085160:76-86). *Also: 0x9500D = 0x40 is the supply-window abort, completion is 0xAA (`~/tcu_sweep/letters_law_decode.md`).* | both call `PTR_FUN_000853E8(1)` → 0x00092094 → **0xFFF90969 := 1, never cleared in the image (one-way until reboot)** | 0x00091758:17-19 strips bits 5 AND 6 (mask 0x1918EC=0x03<<5) from the enables byte | n/a (our firmware has no mode sequencer); stock: mode 'L' entry needs 0x14-bit1 — see A1b | noted |
 | C2 | 0xFFF90952 == 1 would set bit3 of the enables byte (never written anywhere → always 0; stock steady 0x9020 consistent) | 0x00091758:22 | cosmetic | — | PASS |
 | C3 | 0x14 bits 6/7 (outputs 1/2 faulted) do NOT strip bit5 (mask only touches the faulted bits) | 0x00092E80:29 | — | bits 6/7 set both stock and us | PASS |
 
 ### D. Output path (solenoid demand) — cross-check result: NO supervisor gate exists there
+
+> **CORRECTION (2026-11-13, source: `~/tcu_sweep/solenoid_chain_decode.md` §0 item 2 and "Records to correct"; applied 2026-11-18):** the
+> actuator chain **does** consult the supervisor. `0x83DB0` passes the requested current only while the **seq2
+> state of supervisor output 0 (`0xFFF94FD0[0]`) == 'U'** and the switched-rail voltage **`0x94ED0` ≥ 7400 mV**
+> (release 7900) [O bytes `0x83E22–0x83E36`]; the switch-output manager `0x849D4` has its own 'U' gate. Before 'U'
+> every channel is off except the deliberate rail-off full-on tests (spec 12 §2). The paragraph below is the
+> earlier reading.
 
 Exhaustive readers of 0xFFF90954 / 0xFFF800e8 / 0xFFF90944 / 0xFFF907D6: none in the
 actuator chain. Spec 12 §2 chain (objects 0xFFF8B154–0xFFF8B25C → 0xD9F70 → 0xFFF84B78 →
@@ -102,7 +119,7 @@ The on/off actuator slots 10–14 (0xFFF94FAA, switch-output manager 0x849D4, ca
 | Byte | Producer (stock) | Firmware consumers | Verdict |
 |---|---|---|---|
 | 0x24 data | 0x00092ED4/0x00092FD0 → 0xFFF907D7 | **none** (write-only shadow; compare uses only bits 0/2/4 of the word) | pure symptom of chip state |
-| 0x14 data | 0x00092BBE:49 → 0xFFF907D1 | 0x0009181C (bits 5/6/7 → fault bools 0xFFF90947[tbl]; bit1 → 0xFFF90959); 0x00091ACA:23 (bit0 → 0xFFF84A46); 0x00092BBE:56 (fault re-trigger); 0x00092E80/0x00092F7C (TX mask) | **0x14 bit1 is the load-bearing one** (selftest phase 2 + mode-'L' entry + speed interlock at 0x00085160:23,131); bit0 feeds boot-handover readiness 0x0007291A:12 |
+| 0x14 data | 0x00092BBE:49 → 0xFFF907D1 | 0x0009181C (bits 5/6/7 → fault bools 0xFFF90947[tbl]; bit1 → 0xFFF90959); 0x00091ACA:23 (bit0 → 0xFFF84A46); 0x00092BBE:56 (fault re-trigger); 0x00092E80/0x00092F7C (TX mask) | **0x14 bit1 is the load-bearing one** (selftest phase 2 + mode-'L' entry + ~~speed interlock~~ **supply plausibility** at 0x00085160:23,131 — `0x907FC` is the minimum of AN0 mux input 13, a supply voltage in mV [I strong], bit 1 excused below 6.0 V; corrected 2026-11-12, `~/tcu_sweep/gate_bit1_decode.md` §1); bit0 feeds boot-handover readiness 0x0007291A:12. *Bit meanings (2026-11-12, `~/tcu_sweep/gate_bit1_decode.md` §2, `~/tcu_sweep/c9_bit4_decode.md`): 1 = level ≤ 4 ∧ TIOC clock present [I strong]; 2, 3 no reader; 4 = TIOC10/20 signal absent (cleared by the stock Timer C PWM, bench r02i) [O bytes, I meaning].* |
 | 0x28/0x2E | 0x00093096 → 10-bit value 0xFFF907CC + flag 0xFFF907CE | none (0xFFF907CC unread; 0xFFF907CE → 0xFFF9095D diag) | pure telemetry (matches spec 03 6.2n) |
 | 0x22 echo | 0x00092D94 → 0xFFF907D5; compare vs staged 8E word masks bit5 (0xDF) | 0xFFF90954 (grant), 0x91C86 bit0/bit2 branches | bit5 (rail-up) deliberately not checked by the echo compare |
 | 0x12 commit | 0x000911D8 → 0xFFF90551; checked `(0x12&5)==phase-mask` in 0x0006C1EA:66-78 (mismatch → walk restart bits 0xFFF93BA7) | walk progress | hand-fed 0x1200 → AAC2 (bit1) on our bench; stock 0x14 mirrors it as bit1 |
@@ -110,6 +127,10 @@ The on/off actuator slots 10–14 (0xFFF94FAA, switch-output manager 0x849D4, ca
 ---
 
 ## 2. RANKED MISSING-CONDITION CANDIDATES
+
+*(Ranking superseded 2026-11-12 — the phase-2 reading below is inverted; see the correction under headline
+finding 2. Bit 1 follows the walk level (≤ 4) with the TIOC clock present, and the gate opened on the bench once
+the level target was 3 (r02j).)*
 
 **#1 — the chip's 0x14 bit1 ("commit accepted / lock" status) and the self-test gate it feeds.**
 Our 0x14 = AAD5 lacks bit1; the stock's C7 has it. Statically this bit is the single
