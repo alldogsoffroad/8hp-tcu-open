@@ -58,6 +58,27 @@
 
 #include <stdlib.h>
 
+#if defined(DIAG_TEMPS)
+/* STAGE 1b — THE RISK GATE (2026-11-18, ~/tcu_sweep/diag_temp_shadow_port.md):
+ * built -DDIAG_TEMPS (test_diag_temps) the same dry run runs with the
+ * diagnosis's temperature gate OPEN — 0x940FC forced valid (8 / 6, or
+ * following the ECU-temperature shadow's own status) and the shadow's
+ * selected temperature 0x9393A fed to the feedback chain in place of its
+ * 0x0215 stand-in (fb_shadow.c compiled -DFBS_9393A_HOST_SRC) — over the
+ * full sequence: cold boot → ladder (the phase-0x10 full-on tick) → 'U' with
+ * A's fill → the gear-1 P set → the park release D/P/R/P → the garage-shift
+ * shadow's element trajectories (P→D: C third, B first; P→R: D third). Per
+ * law pass it records the bounds 0x93510 / 0x93524 the check used (the
+ * previous pass's — 0x8A788 runs after 0x89F5C), the estimate 0x93394 and
+ * the tested bits 0x94944, so the margin of every TESTED pass, transients
+ * included, is reported per channel. Verdict: zero 0x100 / 0x200 anywhere
+ * (fault word, latched 0x94930), no switch-off, no DSM report, no would-be
+ * reset. Negative: D's estimate forced to 7000 (< 7300) must set 0x100 on
+ * ch 1 while D's request, law mode and chip setpoint stay on. */
+#include "app/tsel_shadow.h"
+volatile int16_t g_fbs_9393a_host = 0x0215;
+#endif
+
 /* ── the bench's four healthy driver chips (test_fullon.c's model) ─────── */
 static uint8_t  f_reg8[5][256];
 static uint16_t f_e8[5], f_f0[5];
@@ -196,11 +217,48 @@ static void fb_wave_step(void)
 /* ── the switch at the 0x838B0 slot (test-only) ────────────────────────── */
 static bool s_real;
 static bool s_temp_valid;
+#if defined(DIAG_TEMPS)
+static uint8_t  s_fc_mode;          /* 8 / 6 forced, 1 = the shadow's status */
+static int16_t  s_brd_raw;          /* the board sensor's word (1/128 °C) */
+static uint16_t s_die_n;            /* the J3 average */
+static bool     s_neg_d;            /* force D's estimate to 7000 from U+100 */
+static unsigned s_frame, s_uframe;
+static unsigned s_neg_set;
+/* the hub slot (sup_batch.c, after drv_temp_tick): the shadow on the bench's
+ * inputs, by value — no J3 / J4 reply in the first frame, the board's
+ * not-ready word in the second, then the scenario's values */
+void app_temp_hub_hook(void);
+void app_temp_hub_hook(void)
+{
+    tsel_in_t in;
+    memset(&in, 0, sizeof in);
+    in.t_us = stub.frt_us;
+    in.n908ca = (s_frame <= 1u) ? 0u : s_die_n;
+    in.r908cc = (s_frame <= 1u) ? 0 : (s_frame == 2u) ? (int16_t)0xFF03 : s_brd_raw;
+    in.t94f98 = (int16_t)(s_temp_valid ? 574 : 0);
+    in.st94fee = (uint8_t)(s_temp_valid ? 8u : 0u);
+    in.n5 = (uint8_t)((CELL_OS_MODE == 0u) ? 1u : 2u);
+    in.fm_ready = 1u;
+    in.os_mode = CELL_OS_MODE;
+    tsel_shadow_pass(&in);
+}
+#endif
 void app_out_head_hook(void);
 void app_out_head_hook(void)
 {
     fbs_in_t in;
     const volatile fbs_t *s;
+#if defined(DIAG_TEMPS)
+    /* STAGE 2a, modelled: the selection's cells live — 0x9393A / 0x940FC
+     * (forced valid, or the shadow's own status) and the feedback chain's
+     * a-curve / R_drv temperature from 0x9393A */
+    {
+        const volatile tsel_t *t = tsel_shadow_state();
+        g_fbs_9393a_host = t->s93a;
+        *(volatile int16_t *)(uintptr_t)0xFFF9393Au = t->s93a;
+        *(volatile uint8_t *)(uintptr_t)0xFFF940FCu = (s_fc_mode == 1u) ? t->s0fc : s_fc_mode;
+    }
+#endif
     /* the fluid temperature: invalid until the ADC chain (r02l: 500 ms) */
     *(volatile int16_t *)(uintptr_t)0xFFF94F9Cu = (int16_t)(s_temp_valid ? 574 : 0);
     *(volatile uint8_t *)(uintptr_t)0xFFF94FF0u = (uint8_t)(s_temp_valid ? 8u : 0u);
@@ -236,6 +294,12 @@ void app_out_head_hook(void)
         *(volatile uint16_t *)(uintptr_t)(0xFFF93394u + 2u * ch) = s->estm[ch];
         *(volatile uint16_t *)(uintptr_t)(0xFFF933A8u + 2u * ch) = s->res[ch];
     }
+#if defined(DIAG_TEMPS)
+    if (s_neg_d && s_uframe != 0u && s_frame >= s_uframe + 100u && s_frame < s_uframe + 400u) {
+        *(volatile uint16_t *)(uintptr_t)(0xFFF93394u + 2u) = 7000u;   /* D (ch 1) below 7300 */
+        s_neg_set++;
+    }
+#endif
 }
 
 /* ── the observed state per law pass ───────────────────────────────────── */
@@ -279,12 +343,34 @@ typedef struct {
     bool verbose;
     bool fill;              /* ch 0 (A) runs the r03p boot fill after 'U' */
     bool c1low;             /* '2' LOW even with the rail closed */
+    uint8_t fc_mode;        /* DIAG_TEMPS: 0x940FC 8 / 6 forced, 1 = the shadow's status */
+    bool gs;                /* DIAG_TEMPS: the garage-shift shadow's element trajectories */
+    bool neg_d;             /* DIAG_TEMPS: D's estimate forced to 7000 */
+    int16_t brd_raw;        /* DIAG_TEMPS: the board word (0 → 0x164B, r04f) */
+    bool info;              /* DIAG_TEMPS: informational run (not part of the verdict) */
+    uint16_t die_n;         /* DIAG_TEMPS: the J3 average (0 → 433, r04f) */
     /* results */
     unsigned u_frame, sw_frame, passes, events;
     unsigned fw_set_events, gfail_tot, gpend_tot, fatal_tot, f84644, switched_off;
     unsigned fb_hist[10][6];        /* consumer-seen class counts after 'U': 00 10 20 21 31 other */
     uint16_t fw_or[10];             /* OR of every fault word seen */
     uint8_t  ccls_max[10];
+    /* DIAG_TEMPS: the bound check's own inputs per tested pass */
+    uint16_t ub_lo[10], ub_hi[10], lb_lo[10], lb_hi[10];   /* nonzero bounds seen (min / max) */
+    int32_t  mup[10], mlo[10];          /* min margin, tested passes (UB − est / est − LB) */
+    unsigned mup_f[10], mlo_f[10];      /* the frame (U+) of that minimum */
+    uint16_t mup_est[10], mlo_est[10], mup_b[10], mlo_b[10];
+    unsigned tup_n[10], tlo_n[10];      /* tested passes */
+    int32_t  aup[10], alo[10];          /* min margin over ALL passes after 'U' with that bound != 0 */
+    uint16_t bits_or[10];               /* OR of (fault word | 0x94930) & 0x300 */
+    uint16_t ub_prev[10], lb_prev[10];
+    unsigned neg_ch1_100;               /* passes with 0x100 in ch 1's fault word / 0x94930 */
+    uint8_t  end_mode1, end_code1;      /* D's law mode / chip code at the end */
+    uint16_t end_req1, end_sp1;
+    uint8_t  end_sel_st, end_sel_src;
+    int16_t  end_sel_t;
+    uint16_t est_ss[10], ub_ss[10], lb_ss[10];  /* the steady P set at U+38 (after A's fill, before the release) */
+    bool ss_done;
 } run_r_t;
 
 static unsigned cls_idx(uint8_t c)
@@ -332,6 +418,53 @@ static uint16_t fill_at(unsigned k)
     return 8500u;               /* pass 11 on: applied */
 }
 
+#if defined(DIAG_TEMPS)
+/* the garage-shift shadow's element trajectories on the live requests
+ * (0.1 mA; ch 0 A, 1 D, 2 B, 3 E, 4 C), from the gs_shadow host trace
+ * (CLAUDE r03x: commit 150 ms after the range change; C boost 500 / fill
+ * 5932 / applied 6850; B boost 8500 / fill 5709 / phase 4 3630 / ramp 19
+ * passes; end P→D A D B E 8500, C 500; P→R D boost 500 / fill 4710 /
+ * applied 6560, end D 500, B 8500) [D, scripted at the 10 ms producer
+ * cadence = 2 frames per pass; k = frames after 'U'; the release lever
+ * steps at k 40 (D), 240 (P), 340 (R), 540 (P), as rel_at] */
+static uint16_t gs_at(uint8_t ch, unsigned k)
+{
+    static const uint16_t PSET[5] = { 8500u, 8500u, 500u, 8500u, 8500u };
+    unsigned j;
+    bool rev;
+    if (k >= 70u && k < 240u) {
+        j = (k - 70u) / 2u;
+        rev = false;
+    } else if (k >= 370u && k < 540u) {
+        j = (k - 370u) / 2u;
+        rev = true;
+    } else {
+        return PSET[ch];
+    }
+    if (ch == 2u) {                         /* B, first element */
+        if (j < 11u) { return 500u; }
+        if (j == 11u) { return 8500u; }
+        if (j <= 21u) { return 5709u; }
+        if (j <= 31u) { return 3630u; }
+        if (j <= 50u) { return (uint16_t)(3630u + (8500u - 3630u) * (j - 31u) / 19u); }
+        return 8500u;
+    }
+    if (!rev && ch == 4u) {                 /* C, third element of 1st */
+        if (j == 0u) { return 500u; }
+        if (j <= 10u) { return 5932u; }
+        if (j <= 50u) { return 6850u; }
+        return 500u;
+    }
+    if (rev && ch == 1u) {                  /* D, third element of R */
+        if (j == 0u) { return 500u; }
+        if (j <= 10u) { return 4710u; }
+        if (j <= 50u) { return 6560u; }
+        return 500u;
+    }
+    return PSET[ch];
+}
+#endif
+
 static void rr_reset(const run_r_t *r)
 {
     static const uint16_t P[10] = { 8500u, 8500u, 500u, 8500u, 8500u, 500u, 500u, 0u, 0u, 0u };
@@ -371,6 +504,19 @@ static void rr_reset(const run_r_t *r)
     s_sat_ms = r->sat_ms;
     s_temp_valid = false;
     s_c1_low_always = r->c1low;
+#if defined(DIAG_TEMPS)
+    tsel_shadow_init();
+    g_fbs_9393a_host = 0x0780;              /* the init value until the first hub pass */
+    *(volatile int16_t *)(uintptr_t)0xFFF9393Au = 0x0780;
+    *(volatile uint8_t *)(uintptr_t)0xFFF940FCu = 0u;
+    s_fc_mode = r->fc_mode;
+    s_brd_raw = (r->brd_raw != 0) ? r->brd_raw : 0x164B;
+    s_die_n = (r->die_n != 0u) ? r->die_n : 433u;
+    s_neg_d = r->neg_d;
+    s_frame = 0u;
+    s_uframe = 0u;
+    s_neg_set = 0u;
+#endif
 }
 
 static void diff_print(run_r_t *r, unsigned p, const obs_t *a, const obs_t *b)
@@ -435,6 +581,106 @@ static void diff_print(run_r_t *r, unsigned p, const obs_t *a, const obs_t *b)
     }
 }
 
+#if defined(DIAG_TEMPS)
+/* after a law pass: the check 0x89F5C used this pass's estimate and the
+ * PREVIOUS pass's bounds (0x8A788 runs after it in the law loop) */
+static void bounds_track(run_r_t *r, unsigned p)
+{
+    for (uint8_t ch = 0u; ch < 10u; ch++) {
+        const uint16_t est = U16C_(0xFFF93394u + 2u * ch);
+        const uint16_t tested = U16C_(0xFFF94944u + 2u * ch);
+        const uint16_t ub = U16C_(0xFFF93510u + 2u * ch), lb = U16C_(0xFFF93524u + 2u * ch);
+        const uint16_t fw = (uint16_t)(U16C_(0xFFF93004u + 2u * ch) | U16C_(0xFFF94930u + 2u * ch));
+        const unsigned k = (r->u_frame != 0u) ? p - r->u_frame : 0u;
+        r->bits_or[ch] = (uint16_t)(r->bits_or[ch] | (fw & 0x300u));
+        if (ch == 1u && (fw & 0x100u) != 0u) {
+            r->neg_ch1_100++;
+        }
+        if ((tested & 0x200u) != 0u && r->ub_prev[ch] != 0u) {
+            const int32_t m = (int32_t)(int16_t)r->ub_prev[ch] - (int32_t)(int16_t)est;
+            r->tup_n[ch]++;
+            if (m < r->mup[ch]) {
+                r->mup[ch] = m; r->mup_f[ch] = k; r->mup_est[ch] = est; r->mup_b[ch] = r->ub_prev[ch];
+            }
+        }
+        if ((tested & 0x100u) != 0u && r->lb_prev[ch] != 0u) {
+            const int32_t m = (int32_t)(int16_t)est - (int32_t)(int16_t)r->lb_prev[ch];
+            r->tlo_n[ch]++;
+            if (m < r->mlo[ch]) {
+                r->mlo[ch] = m; r->mlo_f[ch] = k; r->mlo_est[ch] = est; r->mlo_b[ch] = r->lb_prev[ch];
+            }
+        }
+        if (r->u_frame != 0u) {
+            if (r->ub_prev[ch] != 0u) {
+                const int32_t m = (int32_t)(int16_t)r->ub_prev[ch] - (int32_t)(int16_t)est;
+                if (m < r->aup[ch]) { r->aup[ch] = m; }
+            }
+            if (r->lb_prev[ch] != 0u) {
+                const int32_t m = (int32_t)(int16_t)est - (int32_t)(int16_t)r->lb_prev[ch];
+                if (m < r->alo[ch]) { r->alo[ch] = m; }
+            }
+        }
+        if (ub != 0u) {
+            if (ub < r->ub_lo[ch]) { r->ub_lo[ch] = ub; }
+            if (ub > r->ub_hi[ch]) { r->ub_hi[ch] = ub; }
+        }
+        if (lb != 0u) {
+            if (lb < r->lb_lo[ch]) { r->lb_lo[ch] = lb; }
+            if (lb > r->lb_hi[ch]) { r->lb_hi[ch] = lb; }
+        }
+        if (k >= 38u && r->u_frame != 0u && !r->ss_done) {
+            r->est_ss[ch] = est;
+            r->ub_ss[ch] = r->ub_prev[ch];
+            r->lb_ss[ch] = r->lb_prev[ch];
+            if (ch == 9u) {
+                r->ss_done = true;
+            }
+        }
+        r->ub_prev[ch] = ub;
+        r->lb_prev[ch] = lb;
+    }
+}
+
+static void bounds_summary(const run_r_t *r)
+{
+    const volatile tsel_t *t = tsel_shadow_state();
+    printf("    temperature: 0x940FC %s, selection at the end %d (%.1f C) status %u source %u; "
+           "first status 8 at %u us; bound bits seen:",
+           r->fc_mode == 1u ? "= the shadow's status" : (r->fc_mode == 6u ? "forced 6" :
+                                                 (r->fc_mode == 0u ? "0 (gate closed)" : "forced 8")),
+           t->s93a, (double)t->s93a / 16.0, t->s0fc, t->s170, (unsigned)t->first_sel8_us);
+    for (uint8_t ch = 0u; ch < 10u; ch++) {
+        printf(" %04X", r->bits_or[ch]);
+    }
+    printf("\n    steady P set (U+38) est / UB / LB:");
+    for (uint8_t ch = 0u; ch < 5u; ch++) {
+        printf("  ch%u %u/%u/%u", ch, r->est_ss[ch], r->ub_ss[ch], r->lb_ss[ch]);
+    }
+    printf("\n    ch  UB seen (min..max) tested min-margin (U+, est/UB)   | LB seen (min..max) tested min-margin "
+           "(U+, est/LB)   | all-pass min UB/LB margin\n");
+    for (uint8_t ch = 0u; ch < 10u; ch++) {
+        char up[64], lo[64], ua[16], la[16];
+        if (r->tup_n[ch] != 0u) {
+            snprintf(up, sizeof up, "%5d (U+%u, %u/%u) n=%u", (int)r->mup[ch], r->mup_f[ch], r->mup_est[ch],
+                     r->mup_b[ch], r->tup_n[ch]);
+        } else {
+            snprintf(up, sizeof up, "untested");
+        }
+        if (r->tlo_n[ch] != 0u) {
+            snprintf(lo, sizeof lo, "%5d (U+%u, %u/%u) n=%u", (int)r->mlo[ch], r->mlo_f[ch], r->mlo_est[ch],
+                     r->mlo_b[ch], r->tlo_n[ch]);
+        } else {
+            snprintf(lo, sizeof lo, "untested");
+        }
+        if (r->aup[ch] != 0x7FFFFFFF) { snprintf(ua, sizeof ua, "%d", (int)r->aup[ch]); } else { snprintf(ua, sizeof ua, "-"); }
+        if (r->alo[ch] != 0x7FFFFFFF) { snprintf(la, sizeof la, "%d", (int)r->alo[ch]); } else { snprintf(la, sizeof la, "-"); }
+        printf("    %u   %5u..%-5u %-36s | %5u..%-5u %-36s | %s / %s\n", ch,
+               r->ub_lo[ch] == 0xFFFFu ? 0u : r->ub_lo[ch], r->ub_hi[ch], up,
+               r->lb_lo[ch] == 0xFFFFu ? 0u : r->lb_lo[ch], r->lb_hi[ch], lo, ua, la);
+    }
+}
+#endif
+
 static void run_one(run_r_t *r, unsigned frames)
 {
     obs_t prev, now;
@@ -442,7 +688,17 @@ static void run_one(run_r_t *r, unsigned frames)
     rr_reset(r);
     observe(&prev);
     law0 = drv_out_wit()->law_n;
+#if defined(DIAG_TEMPS)
+    for (uint8_t ch = 0u; ch < 10u; ch++) {
+        r->mup[ch] = r->mlo[ch] = r->aup[ch] = r->alo[ch] = 0x7FFFFFFF;
+        r->ub_lo[ch] = r->lb_lo[ch] = 0xFFFFu;
+    }
+#endif
     for (unsigned p = 1u; p <= frames; p++) {
+#if defined(DIAG_TEMPS)
+        s_frame = p;
+        s_uframe = r->u_frame;
+#endif
         if (p == 100u + r->parity) {
             stub.adc_ready = true;
             s_temp_valid = true;
@@ -452,6 +708,13 @@ static void run_one(run_r_t *r, unsigned frames)
             if (r->fill) {
                 drv_rq_request_set(0u, fill_at(p - r->u_frame));
             }
+#if defined(DIAG_TEMPS)
+            if (r->gs) {
+                for (uint8_t ch = 1u; ch < 5u; ch++) {
+                    drv_rq_request_set(ch, gs_at(ch, p - r->u_frame));
+                }
+            }
+#endif
         }
         inputs();
         for (unsigned step = 0u; step < 500u; step++) {
@@ -493,6 +756,9 @@ static void run_one(run_r_t *r, unsigned frames)
                         }
                         printf("\n");
                     }
+#if defined(DIAG_TEMPS)
+                    bounds_track(r, p);
+#endif
                     if (r->u_frame != 0u) {
                         for (uint8_t ch = 0u; ch < 10u; ch++) {
                             r->fb_hist[ch][cls_idx(now.fb[ch])]++;
@@ -518,6 +784,15 @@ static void run_one(run_r_t *r, unsigned frames)
         }
         stub_log_n = 0u;
     }
+#if defined(DIAG_TEMPS)
+    r->end_mode1 = U8C_(0xFFF94FD8u + 1u);
+    r->end_code1 = s_code[1];
+    r->end_req1 = U16C_(0xFFF94ED4u + 2u);
+    r->end_sp1 = s_sp[1];
+    r->end_sel_st = tsel_shadow_state()->s0fc;
+    r->end_sel_src = tsel_shadow_state()->s170;
+    r->end_sel_t = tsel_shadow_state()->s93a;
+#endif
 }
 
 static void summary(const run_r_t *r)
@@ -538,6 +813,97 @@ static int fails;
 #define DCHECK(c, ...) do { if (!(c)) { printf("FAIL %s:%d: ", __FILE__, __LINE__); \
     printf(__VA_ARGS__); printf("\n"); fails++; } } while (0)
 
+#if defined(DIAG_TEMPS)
+int main(int argc, char **argv)
+{
+    /* the full sequence = fill + release + gs in one run */
+    static run_r_t runs[] = {
+        { .name = "T8 REAL mode-1 full",            .real = true, .fc_mode = 8u, .fill = true, .gs = true, .verbose = true },
+        { .name = "T8 REAL mode-0 full",            .real = true, .fc_mode = 8u, .fill = true, .gs = true, .mode0_held = true },
+        { .name = "T8 REAL mode-1 fill+release (stage-2a exposure)", .real = true, .fc_mode = 8u, .fill = true },
+        { .name = "T8 REAL mode-0 fill+release (stage-2a exposure)", .real = true, .fc_mode = 8u, .fill = true,
+          .mode0_held = true },
+        { .name = "T8 REAL mode-1 full par1",       .real = true, .fc_mode = 8u, .fill = true, .gs = true, .parity = 1u },
+        { .name = "T6 REAL mode-1 full",            .real = true, .fc_mode = 6u, .fill = true, .gs = true },
+        { .name = "TS REAL mode-1 full (shadow st)", .real = true, .fc_mode = 1u, .fill = true, .gs = true },
+        { .name = "T8 REAL mode-1 full board 25C",  .real = true, .fc_mode = 8u, .fill = true, .gs = true,
+          .brd_raw = 0x0C87, .die_n = 340u },
+        { .name = "T8 REAL mode-1 full board 120C", .real = true, .fc_mode = 8u, .fill = true, .gs = true,
+          .brd_raw = 0x3C07, .die_n = 794u },
+        { .name = "T8 REAL mode-0 full board 120C", .real = true, .fc_mode = 8u, .fill = true, .gs = true,
+          .mode0_held = true, .brd_raw = 0x3C07, .die_n = 794u },
+        { .name = "T8 stand-in mode-1 full",        .real = false, .fc_mode = 8u, .fill = true, .gs = true },
+        { .name = "T8 REAL mode-1 full SAT10 (info)", .real = true, .fc_mode = 8u, .fill = true, .gs = true, .sat_ms = 10u,
+          .info = true },
+        { .name = "T0 REAL mode-1 full SAT10 (gate closed, info)", .real = true, .fc_mode = 0u, .fill = true, .gs = true,
+          .sat_ms = 10u, .info = true },
+        { .name = "T8 REAL mode-1 full NEG D 7000", .real = true, .fc_mode = 8u, .fill = true, .gs = true, .neg_d = true,
+          .verbose = true, .info = true },
+    };
+    const unsigned n_runs = sizeof runs / sizeof runs[0];
+    const unsigned frames = 900u;
+    (void)argc;
+    (void)argv;
+    for (unsigned k = 0u; k < n_runs; k++) {
+        run_r_t *r = &runs[k];
+        printf("== %s ==\n", r->name);
+        run_one(r, frames);
+        summary(r);
+        bounds_summary(r);
+    }
+    /* the verdict: every run but the informational SAT10 and the negative
+     * — no bound bit, no fault word, no switch-off, no DSM report, no
+     * would-be reset; the bounds were actually tested */
+    for (unsigned k = 0u; k < n_runs; k++) {
+        const run_r_t *r = &runs[k];
+        unsigned tested = 0u;
+        if (r->info) {
+            continue;
+        }
+        DCHECK(r->u_frame != 0u, "%s: no 'U'", r->name);
+        for (uint8_t ch = 0u; ch < 10u; ch++) {
+            DCHECK(r->bits_or[ch] == 0u, "%s: ch %u bound bits %04X", r->name, ch, r->bits_or[ch]);
+            tested += r->tup_n[ch] + r->tlo_n[ch];
+        }
+        DCHECK(tested > 1000u, "%s: the bounds were tested only %u times", r->name, tested);
+        DCHECK(r->tlo_n[1] != 0u && r->tlo_n[3] != 0u && r->tlo_n[4] != 0u && r->tup_n[2] != 0u,
+               "%s: D/E/C lower and B upper not all tested", r->name);
+        for (uint8_t ch = 0u; ch < 10u; ch++) {
+            DCHECK((r->tup_n[ch] == 0u || r->mup[ch] > 0) && (r->tlo_n[ch] == 0u || r->mlo[ch] > 0),
+                   "%s: ch %u margin %d / %d", r->name, ch, (int)r->mup[ch], (int)r->mlo[ch]);
+        }
+        DCHECK(r->fw_set_events == 0u && r->switched_off == 0u && r->gfail_tot == 0u &&
+               r->gpend_tot == 0u && r->fatal_tot == 0u,
+               "%s: fault %u switch-off %u fail %u pend %u fatal %u", r->name, r->fw_set_events,
+               r->switched_off, r->gfail_tot, r->gpend_tot, r->fatal_tot);
+    }
+    DCHECK(runs[6].end_sel_st == 8u && runs[6].end_sel_src == 4u && runs[6].end_sel_t == 713,
+           "the shadow's selection at the end: %d / %u / %u", runs[6].end_sel_t, runs[6].end_sel_st,
+           runs[6].end_sel_src);
+    {
+        /* the negative: 0x100 on D, and D still driven */
+        const run_r_t *r = &runs[n_runs - 1u];
+        printf("NEG: D's 0x100 passes %u (estimate forced on %u head passes); D at the end: law mode %u, "
+               "request %u, chip code %u, setpoint %u, class max %u\n",
+               r->neg_ch1_100, s_neg_set, r->end_mode1, r->end_req1, r->end_code1, r->end_sp1, r->ccls_max[1]);
+        DCHECK((r->bits_or[1] & 0x100u) != 0u && r->neg_ch1_100 > 0u, "NEG: 0x100 not set on D");
+        DCHECK((r->bits_or[1] & 0x200u) == 0u, "NEG: 0x200 on D");
+        for (uint8_t ch = 0u; ch < 10u; ch++) {
+            if (ch != 1u) {
+                DCHECK(r->bits_or[ch] == 0u, "NEG: ch %u bound bits %04X", ch, r->bits_or[ch]);
+            }
+        }
+        DCHECK(r->end_mode1 == 3u && r->end_code1 == 2u && r->end_req1 == 8500u && r->ccls_max[1] < 4u,
+               "NEG: D not kept on (mode %u code %u req %u class %u)", r->end_mode1, r->end_code1,
+               r->end_req1, r->ccls_max[1]);
+        DCHECK(r->fatal_tot == 0u, "NEG: would-be reset");
+    }
+    if (fails == 0) {
+        printf("test_diag_temps: ok\n");
+    }
+    return fails != 0;
+}
+#else
 int main(int argc, char **argv)
 {
     static run_r_t runs[] = {
@@ -601,3 +967,4 @@ int main(int argc, char **argv)
     }
     return fails != 0;
 }
+#endif

@@ -53,6 +53,11 @@ extern void app_out_head_hook(void) __attribute__((weak));
  * the stock's 0x86B0C is its 6th call, after 0x849D4; weak, so the
  * supervisor tests link without it (2026-11-18, r04d) */
 extern void app_pin_cut_hook(void) __attribute__((weak));
+/* the temperature-selection shadow (app/tsel_hook.c, read-only) at the hub
+ * 0x83300 (stub 0x7CB6E): the stock's 0x88DA8 / 0x88BD0 sit around the
+ * fluid's 0x887D8; weak, so the supervisor tests link without it
+ * (2026-11-18, ~/tcu_sweep/diag_temp_shadow_port.md) */
+extern void app_temp_hub_hook(void) __attribute__((weak));
 #endif
 /* M4 group A (drv_groupa.c / drv_temp.c; ~/tcu_sweep/groupA_park_port.md):
  * the stock's list entries, weak so the supervisor tests link without them —
@@ -321,6 +326,11 @@ void sup_batch_5ms(void)
         if (drv_temp_tick) {
             drv_temp_tick();            /* 7: 0x7CB6E → 0x887D8 (M4) */
         }
+#if !defined(TCU_RAM_APP)
+        if (app_temp_hub_hook) {
+            app_temp_hub_hook();        /* 7: 0x7CB6E → 0x88DA8 / 0x88BD0 (the temperature shadow, read-only) */
+        }
+#endif
         if (drv_pksens_tick) {
             drv_pksens_tick();          /* 7: 0x7CB6E → 0x88EF0 (park sensor) */
         }
@@ -404,6 +414,11 @@ void sup_batch_5ms(void)
             if (drv_temp_tick) {
                 drv_temp_tick();        /* 5: 0x7CB6E → 0x887D8 (M4) */
             }
+#if !defined(TCU_RAM_APP)
+            if (app_temp_hub_hook) {
+                app_temp_hub_hook();    /* 5: 0x7CB6E → 0x88DA8 / 0x88BD0 (the temperature shadow, read-only) */
+            }
+#endif
             if (drv_pksens_tick) {
                 drv_pksens_tick();      /* 5: 0x7CB6E → 0x88EF0 (park sensor) */
             }

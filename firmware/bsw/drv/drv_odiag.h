@@ -30,6 +30,12 @@
 #ifndef TCU_DRV_ODIAG_H
 #define TCU_DRV_ODIAG_H
 
+/* THE TEMPERATURE-SELECTION SHADOW IS READ-ONLY (app/tsel_shadow.c defines
+ * TCU_TSEL_SHADOW_TU): it may not include a live header */
+#if defined(TCU_TSEL_SHADOW_TU)
+#error "the temperature-selection shadow is read-only: it may not include a live header (drv_odiag.h)"
+#endif
+
 /* THE FEEDBACK SHADOW IS READ-ONLY (app/fb_shadow.c defines TCU_FB_SHADOW_TU):
  * it may not include a live output header */
 #if defined(TCU_FB_SHADOW_TU)

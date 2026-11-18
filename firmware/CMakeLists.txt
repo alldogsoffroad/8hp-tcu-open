@@ -45,6 +45,7 @@ set(CORE_SOURCES
     app/gs_shadow.c app/gs_fill.c app/gs_cal.c
     app/fb_shadow.c app/fb_cal.c app/fb_hook.c
     app/pa7_shadow.c app/pa7_hook.c bsw/drv/drv_pa7.c
+    app/tsel_shadow.c app/tsel_hook.c
     safety/park_mon.c
     safety/park_pair.c
     safety/kl15.c
@@ -852,6 +853,93 @@ else()
     endforeach()
     set_tests_properties(pa7_sh_guard_output pa7_sh_guard_ctrlinc PROPERTIES
         PASS_REGULAR_EXPRESSION "the PA7 shadow is read-only: an output path may not include pa7_shadow.h")
+    # THE ECU-TEMPERATURE SHADOW (2026-11-18, ~/tcu_sweep/diag_temp_shadow_port.md,
+    # stage 1): READ-ONLY. (1) the producers 0x8DB28 / 0x8DB5A / 0x8DD40 /
+    # 0x8DD7C / 0x88DA8 / 0x88BAC / 0x88BD0 + the flag publishers reproduce
+    # the stock driving dump and the not-ready / 0x8001 / hold / fallback
+    # cases (tsel_shadow; tsel_cal_bytes against the image; a mutated
+    # selection must FAIL); (2) the live identity: test_odiag with the hub
+    # hook at its slot vs the same seeded build without it (and a leak
+    # negative); (3) the scans (outputs / shadow / hook, negative fixtures);
+    # (4) the SH compile guards. STAGE 1b (the risk gate): test_diag_temps —
+    # the dry run with 0x940FC forced valid and 0x9393A from the shadow.
+    set(TSEL_TEST_SOURCES tests/unit/test_tsel_shadow.c app/tsel_shadow.c)
+    add_executable(test_tsel_shadow ${TSEL_TEST_SOURCES})
+    target_compile_definitions(test_tsel_shadow PRIVATE
+        "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"" "TCU_STOCK_DUMP=\"${TCU_STOCK_DUMP}\"")
+    add_test(NAME tsel_shadow COMMAND test_tsel_shadow)
+    add_test(NAME tsel_cal_bytes COMMAND test_tsel_shadow --cal)
+    set_tests_properties(tsel_cal_bytes PROPERTIES SKIP_RETURN_CODE 77)
+    add_executable(test_tsel_shadow_neg_SEL ${TSEL_TEST_SOURCES})
+    target_compile_definitions(test_tsel_shadow_neg_SEL PRIVATE TSEL_NEG_SEL=1
+        "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"" "TCU_STOCK_DUMP=\"${TCU_STOCK_DUMP}\"")
+    add_test(NAME tsel_shadow_neg_SEL COMMAND test_tsel_shadow_neg_SEL)
+    set_tests_properties(tsel_shadow_neg_SEL PROPERTIES WILL_FAIL TRUE)
+    set(ODIAG_TSEL_SOURCES tests/unit/test_odiag.c
+        app/rq_prod.c app/rq_fill.c app/rq_fill_cal.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
+        app/fb_shadow.c app/fb_cal.c app/fb_hook.c tests/unit/fb_model.c
+        app/tsel_shadow.c app/tsel_hook.c
+        tests/unit/stub_plat.c)
+    add_executable(test_odiag_tselbase ${ODIAG_TSEL_SOURCES})
+    target_compile_definitions(test_odiag_tselbase PRIVATE DRV_RQ_USE_PRODUCER=1 TEST_ODIAG_FBS=1
+        TEST_ODIAG_TSEL_SEED=1)
+    add_executable(test_odiag_tsel ${ODIAG_TSEL_SOURCES})
+    target_compile_definitions(test_odiag_tsel PRIVATE DRV_RQ_USE_PRODUCER=1 TEST_ODIAG_FBS=1
+        TEST_ODIAG_TSEL_SEED=1 TEST_ODIAG_TSEL=1)
+    add_test(NAME tsel_shadow_identity
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fb_identity.py
+            $<TARGET_FILE:test_odiag_tselbase> $<TARGET_FILE:test_odiag_tsel> --tsel)
+    add_executable(test_odiag_tsel_neg ${ODIAG_TSEL_SOURCES})
+    target_compile_definitions(test_odiag_tsel_neg PRIVATE DRV_RQ_USE_PRODUCER=1 TEST_ODIAG_FBS=1
+        TEST_ODIAG_TSEL_SEED=1 TEST_ODIAG_TSEL=1 TEST_ODIAG_TSEL_NEG=1)
+    add_test(NAME tsel_shadow_identity_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fb_identity.py
+            $<TARGET_FILE:test_odiag_tselbase> $<TARGET_FILE:test_odiag_tsel_neg> --tsel)
+    set_tests_properties(tsel_shadow_identity_negative PROPERTIES WILL_FAIL TRUE)
+    set(TSEL_OUTPUT_PATHS ${PA7_OUTPUT_PATHS}
+        ${CMAKE_SOURCE_DIR}/bsw/drv/drv_temp.c ${CMAKE_SOURCE_DIR}/bsw/drv/drv_temp.h
+        ${CMAKE_SOURCE_DIR}/safety/tmp_safe.c ${CMAKE_SOURCE_DIR}/app/tmp_chain.c
+        ${CMAKE_SOURCE_DIR}/app/fb_shadow.c ${CMAKE_SOURCE_DIR}/app/fb_hook.c
+        ${CMAKE_SOURCE_DIR}/bsw/sup/sup_ladder.c)
+    add_test(NAME tsel_shadow_scan_outputs
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/tsel_shadow_scan.py outputs ${TSEL_OUTPUT_PATHS})
+    add_test(NAME tsel_shadow_scan_outputs_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/tsel_shadow_scan.py outputs
+            ${CMAKE_SOURCE_DIR}/tests/unit/tsel_scan_fixture_output.c)
+    set_tests_properties(tsel_shadow_scan_outputs_negative PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME tsel_shadow_scan_shadow
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/tsel_shadow_scan.py shadow
+            ${CMAKE_SOURCE_DIR}/app/tsel_shadow.c ${CMAKE_SOURCE_DIR}/app/tsel_shadow.h)
+    add_test(NAME tsel_shadow_scan_shadow_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/tsel_shadow_scan.py shadow
+            ${CMAKE_SOURCE_DIR}/tests/unit/tsel_scan_fixture_shadow.c)
+    set_tests_properties(tsel_shadow_scan_shadow_negative PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME tsel_shadow_scan_hook
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/tsel_shadow_scan.py hook
+            ${CMAKE_SOURCE_DIR}/app/tsel_hook.c)
+    add_test(NAME tsel_shadow_scan_hook_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/tsel_shadow_scan.py hook
+            ${CMAKE_SOURCE_DIR}/tests/unit/tsel_scan_fixture_hook.c)
+    set_tests_properties(tsel_shadow_scan_hook_negative PROPERTIES WILL_FAIL TRUE)
+    set(TSEL_SH_SRC ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard_tsel.c)
+    add_test(NAME tsel_sh_guard_control COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${TSEL_SH_SRC})
+    add_test(NAME tsel_sh_guard_shadow
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/tsel_shadow.c)
+    add_test(NAME tsel_sh_guard_hook
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform -Wall -Wextra -Wconversion
+            ${CMAKE_SOURCE_DIR}/app/tsel_hook.c)
+    add_test(NAME tsel_sh_guard_output COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_TSEL_OUTPUT ${TSEL_SH_SRC})
+    add_test(NAME tsel_sh_guard_outtu COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform
+        -DSH_GUARD_TSEL_OUTTU ${TSEL_SH_SRC})
+    set_tests_properties(tsel_sh_guard_output tsel_sh_guard_outtu PROPERTIES
+        PASS_REGULAR_EXPRESSION "the temperature-selection shadow is read-only: an output path may not include tsel_shadow.h")
+    foreach(hdr CELLS DCELLS TEMP ODIAG PLAT)
+        add_test(NAME tsel_sh_guard_live_${hdr}
+            COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform -DSH_GUARD_TSEL_LIVE_${hdr} ${TSEL_SH_SRC})
+        set_tests_properties(tsel_sh_guard_live_${hdr} PROPERTIES
+            PASS_REGULAR_EXPRESSION "the temperature-selection shadow is read-only: it may not include a live header")
+    endforeach()
     add_executable(test_dump tests/unit/test_dump.c app/bench_dump.c tests/unit/stub_plat.c)
     add_executable(transcript tests/unit/transcript.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
@@ -947,6 +1035,22 @@ else()
     target_compile_definitions(test_diag_realfb PRIVATE SUP_L1_HOLD_PHASE8_REQUEST=0
         SUP_L1_HOLD_PHASE40=0 SUP_L1_HOLD_FAIL_FSM=0 SUP_L3_HOLD_SEQ_L=0)
     add_test(NAME diag_realfb_dryrun COMMAND test_diag_realfb)
+    # STAGE 1b — THE RISK GATE (2026-11-18, ~/tcu_sweep/diag_temp_shadow_port.md):
+    # the same dry run with 0x940FC forced valid and the ECU-temperature
+    # shadow's 0x9393A fed to the feedback chain; zero 0x100 / 0x200 over
+    # cold boot → ladder → 'U' + A's fill → P set → release D/P/R/P →
+    # the garage-shift trajectories; a forced D estimate below 7300 must
+    # set 0x100 and leave D driven
+    add_executable(test_diag_temps tests/unit/test_diag_realfb.c
+        bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
+        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
+        app/fb_shadow.c app/fb_cal.c tests/unit/fb_model.c app/tsel_shadow.c
+        tests/unit/stub_plat.c)
+    target_compile_definitions(test_diag_temps PRIVATE SUP_L1_HOLD_PHASE8_REQUEST=0
+        SUP_L1_HOLD_PHASE40=0 SUP_L1_HOLD_FAIL_FSM=0 SUP_L3_HOLD_SEQ_L=0
+        DIAG_TEMPS=1 FBS_9393A_HOST_SRC=g_fbs_9393a_host)
+    add_test(NAME diag_temps_dryrun COMMAND test_diag_temps)
     # THE BUS-A OUTPUT CADENCE (2026-11-18, ~/tcu_sweep/output_cadence_port.md):
     # one law pass + one F stage per output tick (5 ms mode 0, 10 ms mode 1),
     # cyclic -> config -> ID per F pass through the ring, nothing lost, the

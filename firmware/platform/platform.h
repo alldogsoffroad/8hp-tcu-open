@@ -3,6 +3,12 @@
 #ifndef TCU_PLATFORM_H
 #define TCU_PLATFORM_H
 
+/* THE TEMPERATURE-SELECTION SHADOW IS READ-ONLY (app/tsel_shadow.c defines
+ * TCU_TSEL_SHADOW_TU): it may not include a live header */
+#if defined(TCU_TSEL_SHADOW_TU)
+#error "the temperature-selection shadow is read-only: it may not include a live header (platform.h)"
+#endif
+
 /* THE PA7 SHADOW IS READ-ONLY (app/pa7_shadow.c defines TCU_PA7_SHADOW_TU):
  * it may not include a live header */
 #if defined(TCU_PA7_SHADOW_TU)

@@ -98,6 +98,30 @@ static void fbs_ms(void)
     fbm_advance_to(stub.frt_us);
 }
 #endif
+#if defined(TEST_ODIAG_TSEL)
+/* THE ECU-TEMPERATURE SHADOW'S LIVE-PATH IDENTITY (2026-11-18,
+ * ~/tcu_sweep/diag_temp_shadow_port.md): its hook at its firmware slot (the
+ * hub, sup_batch.c: after drv_temp_tick, before the out head) reading this
+ * test's live cells by value; ctest tsel_shadow_identity requires the stdout
+ * byte-identical with test_odiag_tselbase's (the same seeded J3 / J4 / fluid
+ * cells, no hook) */
+#include "app/tsel_shadow.h"
+void app_temp_hub_hook(void);
+/* the shadow is re-initialised at every boot() (parts 1..4): its counters
+ * are accumulated here before each re-init, for the stderr line */
+static unsigned long s_ts_pass, s_ts_sel8, s_ts_brd8, s_ts_die8, s_ts_ff03, s_ts_8001, s_ts_tr;
+static void tsel_accum(void)
+{
+    const volatile tsel_t *t = tsel_shadow_state();
+    s_ts_pass += t->pass_n;
+    s_ts_sel8 += t->sel8_n;
+    s_ts_brd8 += t->brd_ok_n;
+    s_ts_die8 += t->die_ok_n;
+    s_ts_ff03 += t->ff03_n;
+    s_ts_8001 += t->r8001_n;
+    s_ts_tr += t->tr_n;
+}
+#endif
 #if defined(TEST_ODIAG_PA7)
 /* THE PA7 SHADOW'S LIVE-PATH IDENTITY (2026-11-18, r04d): its hooks at
  * their firmware slots — the range part in the 10 ms task (mode 1), the
@@ -211,6 +235,17 @@ static void sup_state(uint32_t t)
     if (t >= 1500u && t < 1860u) {
         s = (uint8_t)'4';                                    /* the 0x85E82 letter drop */
     }
+#if defined(TEST_ODIAG_TSEL_SEED)
+    /* the temperature shadow's inputs (both identity builds): no J3 / J4 reply
+     * for 3 ms, the board's not-ready word to 8 ms, the r04f bench values,
+     * a 0x8001 window (the board's 600 ms hold → status 4, then recovery);
+     * the fluid 0x94F98 / 0x94FEE from 500 ms */
+    CELL_TELEM_AVG = (uint16_t)(t < 3u ? 0u : 433u);
+    CELL_SSLB2_COPY = (uint16_t)(t < 3u ? 0u : t < 8u ? 0xFF03u :
+                                 (t >= 1200u && t < 2100u) ? 0x8001u : 0x164Bu);
+    *(volatile int16_t *)(uintptr_t)0xFFF94F98u = (int16_t)(t < 500u ? 0 : 574);
+    *(volatile uint8_t *)(uintptr_t)0xFFF94FEEu = (uint8_t)(t < 500u ? 0u : 8u);
+#endif
     CELL_SEQ2_STATE[0] = s;
     CELL_SEQ2_STATUS[0] = (uint8_t)(s == (uint8_t)'U' ? 4u : 1u);
     CELL_J2_STAGED = (uint16_t)(s == (uint8_t)'U' ? 0x9020u : 0x9000u);
@@ -330,6 +365,10 @@ static void boot(void)
     pa7_shadow_init();
     pa7_hook_range_init();
 #endif
+#if defined(TEST_ODIAG_TSEL)
+    tsel_accum();
+    tsel_hook_init();
+#endif
 }
 
 /* one output tick: the stock's slots (sup_batch.c) — or, -DOD_OLD (the
@@ -342,6 +381,15 @@ static void out_tick(void)
     drv_id_kick();                      /* the batch 0x8EE82 → 0x921A0 */
     drain();
 #else
+#if defined(TEST_ODIAG_TSEL)
+    app_temp_hub_hook();                /* 0x7CB6E → 0x88DA8 / 0x88BD0 (sup_batch.c's slot) */
+#if defined(TEST_ODIAG_TSEL_NEG)
+    /* NEGATIVE CONTROL (ctest tsel_shadow_identity_negative): the shadow's
+     * selection leaks into the live cells 0x9393A / 0x940FC */
+    *(volatile int16_t *)(uintptr_t)0xFFF9393Au = tsel_shadow_state()->s93a;
+    *(volatile uint8_t *)(uintptr_t)0xFFF940FCu = tsel_shadow_state()->s0fc;
+#endif
+#endif
     drv_out_tick_head();                /* 0x8EE12 + 0x7CBA8 */
 #if defined(TEST_ODIAG_FBS)
     app_out_head_hook();                /* the feedback shadow (sup_batch.c's slot) */
@@ -832,6 +880,12 @@ int main(int argc, char **argv)
                 (unsigned)pa7_shadow_state()->rng_n, (unsigned)pa7_shadow_state()->pin_n,
                 (unsigned)pa7_shadow_state()->law_n, (unsigned)pa7_shadow_state()->hi_n,
                 (unsigned)pa7_shadow_state()->c9b7_n);
+#endif
+#if defined(TEST_ODIAG_TSEL)
+        tsel_accum();
+        fprintf(stderr, "tsel pass %lu sel8 %lu brd8 %lu die8 %lu ff03 %lu r8001 %lu tr %lu st %u src %u\n",
+                s_ts_pass, s_ts_sel8, s_ts_brd8, s_ts_die8, s_ts_ff03, s_ts_8001, s_ts_tr,
+                tsel_shadow_state()->s0fc, tsel_shadow_state()->s170);
 #endif
         printf("%s (%d failures)\n", fails == 0 ? "PASS" : "FAIL", fails);
         return fails == 0 ? 0 : 1;

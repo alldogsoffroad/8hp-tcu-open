@@ -18,6 +18,12 @@
 #ifndef TCU_DRV_TEMP_H
 #define TCU_DRV_TEMP_H
 
+/* THE TEMPERATURE-SELECTION SHADOW IS READ-ONLY (app/tsel_shadow.c defines
+ * TCU_TSEL_SHADOW_TU): it may not include a live header */
+#if defined(TCU_TSEL_SHADOW_TU)
+#error "the temperature-selection shadow is read-only: it may not include a live header (drv_temp.h)"
+#endif
+
 #include <stdint.h>
 
 /* 0x88A50 (call after sup_cells_init) */

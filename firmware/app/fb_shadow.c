@@ -46,7 +46,15 @@ static fbs_t s FBS_RAM;
 static fbr_t s_rec FBR_RAM;
 
 /* ── stand-ins [S] (the dump's values; writers not ported) ─────────────── */
-#define FBS_9393A       0x0215          /* 0x9393A second temperature (°C·16) = 33.3 °C */
+#if defined(FBS_9393A_HOST_SRC) && !defined(__sh__)
+/* HOST DRY-RUN ONLY (test_diag_temps, ~/tcu_sweep/diag_temp_shadow_port.md):
+ * the selected ECU temperature from the temperature-selection shadow in
+ * place of the stand-in; never defined for the target (identical SH code) */
+extern volatile int16_t FBS_9393A_HOST_SRC;
+#define FBS_9393A       ((int16_t)FBS_9393A_HOST_SRC)
+#else
+#define FBS_9393A       0x0215          /* 0x9393A the selected ECU temperature (°C·16) = 33.3 °C [S] */
+#endif
 #define FBS_9090B       0x20u           /* 0x9090B chip frequency code (dump) */
 #define FBS_9334C       0u              /* 0x9334C dither amplitude (0x8347C not ported) */
 /* the group-0 table 0x901DC.. (dump: 05 | 00..09 | 00..04) */

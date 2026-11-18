@@ -40,6 +40,7 @@
 #include "app/gs_shadow.h"
 #include "app/fb_shadow.h"
 #include "app/pa7_shadow.h"
+#include "app/tsel_shadow.h"
 #include "app/park_law.h"
 
 /* Shaft assignment of the speed channels (spec 02 section 4.1), the stock calibration's routing:
@@ -431,6 +432,9 @@ int main(void)
      * init arbiter's range */
     pa7_shadow_init();
     pa7_hook_range_init();
+    /* the read-only ECU-temperature shadow (app/tsel_shadow.c, its own RAM):
+     * the stock's init hub 0x832AC (0x88BAC, 0x88D98) */
+    tsel_hook_init();
 #endif
     park_pair_init();                   /* park sensor: 0x141B1C (safety layer) */
     sensors_init(&s_sensors_cfg);

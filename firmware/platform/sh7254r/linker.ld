@@ -211,6 +211,27 @@ SECTIONS
     .drv_ga1  0xFFF93A66 (NOLOAD) : { . += 0x0A; } > RAM   /* 0x93A66..0x93A6F        */
     .drv_tmp1 0xFFF93A9C (NOLOAD) : { . += 0x10; } > RAM   /* 0x93A9C..0x93AAB        */
     .drv_tmp2 0xFFF9416E (NOLOAD) : { . += 0x02; } > RAM   /* 0x9416E..0x9416F        */
+    /* THE ECU TEMPERATURES' STOCK CELLS, RESERVED (2026-11-18,
+     * ~/tcu_sweep/diag_temp_inputs_decode.md / diag_temp_shadow_port.md):
+     * nothing of ours writes them yet (app/tsel_shadow.c keeps its own
+     * copies in .tsel_shadow) — reserved so nothing else lands on them before
+     * a live step: 0x93916 the die fault word (0x7C01E), 0x93AB2..0x93AC3 the
+     * die / board producers 0x8DB5A / 0x8DD7C, 0x9415C..0x9415E the die
+     * copies + status, 0x94730 the board's "never valid" word (not a
+     * countdown). Already inside earlier reservations: 0x9393A..3F
+     * (.sup_l1b), 0x940E0..E8 (.tmp_940e0), 0x940FC..0x94101 (.sup_l1f),
+     * 0x9477A / 0x9477C / 0x94823 (.sup_cnt — the 0x7C7E4 ranges),
+     * 0x93AF0..F7 (.pks_eval, unused by park), 0x94170 (.pks_ev2) */
+    .tsel_93916 0xFFF93916 (NOLOAD) : { . += 0x02; } > RAM   /* 0x93916..0x93917      */
+    .tsel_93ab2 0xFFF93AB2 (NOLOAD) : { . += 0x12; } > RAM   /* 0x93AB2..0x93AC3      */
+    .tsel_9415c 0xFFF9415C (NOLOAD) : { . += 0x03; } > RAM   /* 0x9415C..0x9415E      */
+    .tsel_94730 0xFFF94730 (NOLOAD) : { . += 0x04; } > RAM   /* 0x94730..0x94733      */
+    ASSERT(ADDR(.tsel_93ab2) >= ADDR(.sup_l1e) + SIZEOF(.sup_l1e) &&
+           ADDR(.tsel_93ab2) + SIZEOF(.tsel_93ab2) <= ADDR(.pks_eval), ".tsel_93ab2 overlaps .sup_l1e / .pks_eval")
+    ASSERT(ADDR(.tsel_9415c) >= ADDR(.sup_l1f) + SIZEOF(.sup_l1f) &&
+           ADDR(.tsel_9415c) + SIZEOF(.tsel_9415c) <= ADDR(.pks_ev1), ".tsel_9415c overlaps .sup_l1f / .pks_ev1")
+    ASSERT(ADDR(.tsel_94730) + SIZEOF(.tsel_94730) <= ADDR(.sup_cnt), ".tsel_94730 overlaps .sup_cnt")
+    ASSERT(ADDR(.tsel_93916) >= ADDR(.tmp_93914) + SIZEOF(.tmp_93914), ".tsel_93916 overlaps .tmp_93914")
     /* M4 range / park (app/range.c, app/park_law.c, app/park_cells.h;
      * ~/tcu_sweep/range_logic_port.md): the stock cells of the park module,
      * cleared by park_init — 0x851A8 output flags + complements, 0x89C6C /
@@ -415,6 +436,19 @@ SECTIONS
     ASSERT(__pa7_shadow_start >= __kl15_wit_end, ".pa7_shadow overlaps .kl15_wit")
     ASSERT(__pa7_shadow_end <= __od_wit_start, ".pa7_shadow runs into .od_wit")
     ASSERT(__pa7_shadow_start == 0xFFF87880 && SIZEOF(.pa7_shadow) == 0x124, ".pa7_shadow: pa7s_t is off 0xFFF87880 (witness_pa7.py)")
+
+    /* THE ECU-TEMPERATURE SHADOW (app/tsel_shadow.c, ours — not stock cells;
+     * 2026-11-18, ~/tcu_sweep/diag_temp_shadow_port.md): struct tsel_t
+     * (0x148) in the free low RAM 0xFFF87C40..0xFFF87E00 between .od_wit
+     * (ends 0xFFF87C38) and .out_wit (0xFFF87E00) — the stock driving dump
+     * holds zeros there. Cleared by tsel_shadow_init. */
+    .tsel_shadow 0xFFF87C40 (NOLOAD) : {
+        __tsel_shadow_start = .; *(.tsel_shadow) *tsel_shadow.c.obj(.bss .bss.* COMMON)
+        . = ALIGN(4); __tsel_shadow_end = .;
+    } > RAM
+    ASSERT(__tsel_shadow_start >= __od_wit_end, ".tsel_shadow overlaps .od_wit")
+    ASSERT(__tsel_shadow_end <= __out_wit_start, ".tsel_shadow runs into .out_wit")
+    ASSERT(__tsel_shadow_start == 0xFFF87C40 && SIZEOF(.tsel_shadow) == 0x148, ".tsel_shadow: tsel_t is off 0xFFF87C40 (witness_temps.py)")
 
     /* our request-law witnesses and the refresh snapshot (not stock cells;
      * free low RAM like .sup_wit, so they do not cost the stack guard) */
