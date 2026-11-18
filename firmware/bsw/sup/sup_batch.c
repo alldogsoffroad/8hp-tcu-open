@@ -223,6 +223,12 @@ static void batch_8ee82(void)
     sup_reply_summarize();
     queue_stat();
     queue_ctrl();
+    /* the 0x91DAA tail (0x91DB8..0x91DC6, after J6 0x92B82 / J1 0x92D38):
+     * `cmp/hs #1` → 0x9095B = 1 only while it reads 0 — the reply
+     * processor's gate (sup_reply_condense) */
+    if (CELL_PROC_GATE < 1u) {
+        CELL_PROC_GATE = 1u;
+    }
     queue_id();
     drv_id_kick();
     /* the builder law (0x91C86 tail): force the request cell while outputs

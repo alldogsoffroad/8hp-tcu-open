@@ -46,14 +46,30 @@ static fbs_t s FBS_RAM;
 static fbr_t s_rec FBR_RAM;
 
 /* ── stand-ins [S] (the dump's values; writers not ported) ─────────────── */
+/* 0x9393A, the selected ECU temperature (the a-curve / R_drv model input,
+ * 0x93A10 = 0x9393A). STAGE 2a (2026-11-18): FBS_T_ECU_LIVE (the SH
+ * application by default, as the selection's cells go live there — bsw/drv/
+ * drv_tsel.c) takes it from the live cell, gathered by value (fbs_in_t
+ * t_ecu, app/fb_hook.c); a host build may set -DFBS_T_ECU_LIVE=1 for the
+ * live semantics. Otherwise the dump's 0x0215 stand-in. */
+#if !defined(FBS_T_ECU_LIVE)
+#if defined(__sh__) && !defined(TCU_RAM_APP) && !defined(TCU_LOADER)
+#define FBS_T_ECU_LIVE 1
+#else
+#define FBS_T_ECU_LIVE 0
+#endif
+#endif
+#define FBS_9393A_SI    ((int16_t)0x0215)   /* the stand-in: 33.3 °C [S] */
 #if defined(FBS_9393A_HOST_SRC) && !defined(__sh__)
 /* HOST DRY-RUN ONLY (test_diag_temps, ~/tcu_sweep/diag_temp_shadow_port.md):
  * the selected ECU temperature from the temperature-selection shadow in
  * place of the stand-in; never defined for the target (identical SH code) */
 extern volatile int16_t FBS_9393A_HOST_SRC;
-#define FBS_9393A       ((int16_t)FBS_9393A_HOST_SRC)
+#define FBS_TECU(in)    ((int16_t)FBS_9393A_HOST_SRC)
+#elif FBS_T_ECU_LIVE
+#define FBS_TECU(in)    ((in)->t_ecu)
 #else
-#define FBS_9393A       0x0215          /* 0x9393A the selected ECU temperature (°C·16) = 33.3 °C [S] */
+#define FBS_TECU(in)    FBS_9393A_SI
 #endif
 #define FBS_9090B       0x20u           /* 0x9090B chip frequency code (dump) */
 #define FBS_9334C       0u              /* 0x9334C dither amplitude (0x8347C not ported) */
@@ -509,13 +525,13 @@ static void twin_83ca8(uint8_t ch, uint8_t flag, uint16_t tc)
 }
 
 /* 0x83ABC(ch, I, flag) — the coil-resistance thermal model [O bytes 0x83ABC–0x83CA6] */
-static void r_83abc(uint8_t ch, int16_t i, uint8_t flag, int16_t t_fluid)
+static void r_83abc(uint8_t ch, int16_t i, uint8_t flag, int16_t t_fluid, int16_t t_ecu)
 {
     const float k = 0.0001f;                    /* 0x83CFC */
     float f13, rfix, r20, f7, f5, f1, fi, f10, f8, f4, f15, f14;
     s.r_upd_n++;
     s.tfl = t_fluid;                            /* 0x94FD6 = 0x94F9C */
-    s.tdrv = FBS_9393A;                         /* 0x93A10 = 0x9393A [S] */
+    s.tdrv = t_ecu;                             /* 0x93A10 = 0x9393A (FBS_TECU) */
     f13 = (float)curve_s16(FB_C_RDRV[ch], s.tdrv);     /* 0x669B8 */
     rfix = (float)FB_RFIX[ch];                  /* @r15 */
     r20 = (float)FB_R20[ch];                    /* @(4,r15) */
@@ -613,7 +629,7 @@ static void sched_83a1c(const fbs_in_t *in)
     }
     if (s.c9410e == 1u) {
         for (uint8_t ch = 0u; ch < 10u; ch++) {
-            r_83abc(ch, in->i_req[ch], s.c84a21, in->t_fluid);
+            r_83abc(ch, in->i_req[ch], s.c84a21, in->t_fluid, FBS_TECU(in));
             s.c84a21 = 0u;
         }
         s.c9410d = 10u;
@@ -628,7 +644,7 @@ static void sched_83a1c(const fbs_in_t *in)
     }
     if (s.c9410d < 10u) {
         const uint8_t ch = s.c9410d;
-        r_83abc(ch, in->i_req[ch], s.c84a21, in->t_fluid);
+        r_83abc(ch, in->i_req[ch], s.c84a21, in->t_fluid, FBS_TECU(in));
         s.c84a21 = 0u;
         s.c9410d++;
     }
@@ -814,7 +830,7 @@ void fb_shadow_host_classify(uint8_t ch) { cls_89a8c(ch); }
 void fb_shadow_host_est(uint8_t ch, uint16_t v, int16_t i, uint16_t d) { est_8390c(ch, v, i, d); }
 void fb_shadow_host_rupd(uint8_t ch, int16_t i, uint8_t flag, int16_t t_fluid)
 {
-    r_83abc(ch, i, flag, t_fluid);
+    r_83abc(ch, i, flag, t_fluid, FBS_9393A_SI);
 }
 #endif
 

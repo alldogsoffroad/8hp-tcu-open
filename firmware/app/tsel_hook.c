@@ -10,6 +10,10 @@
  *                       0x7CB6E): 0x88DA8 and 0x88BD0 around the fluid's
  *                       0x887D8; 5 ms in mode 0, the 10 ms part in modes 1..3.
  *
+ * STAGE 2a (TSEL_LIVE, bsw/drv/drv_tsel.h — the SH application): after the
+ * init and after every pass the results go live through tsel_live_apply()
+ * (app/tsel_live.c → bsw/drv/drv_tsel.c); this file still writes nothing.
+ *
  * Inputs: the J3 average 0x908CA (sup_ctrl.c, CELL_TELEM_AVG), the J4 word
  * 0x908CC (CELL_SSLB2_COPY), the supervisor's comparator flags 0x9095E
  * (CELL_DIR_BITS — named "direction bits" in sup_cells.h, a misnomer: they
@@ -19,6 +23,7 @@
  * pass's 0x9393A once 0x940FC >= 7 — the stock's loop too, harmless: the
  * fluid is the selection's lowest priority). */
 #include "app/tsel_shadow.h"
+#include "bsw/drv/drv_tsel.h"       /* TSEL_LIVE (stage 2a) */
 #include "platform/platform.h"      /* plat_frt_us (the witness timestamp) */
 
 #include <stdint.h>
@@ -31,6 +36,11 @@
 void tsel_hook_init(void)
 {
     tsel_shadow_init();
+#if TSEL_LIVE
+    /* stage 2a: the init hub's values (0x93ABA / 0x9393A / 0x9393E =
+     * 0x0780, every status 0) into the live cells */
+    tsel_live_apply();
+#endif
 }
 
 /* the weak hook of bsw/sup/sup_batch.c (after drv_temp_tick) */
@@ -50,5 +60,10 @@ void app_temp_hub_hook(void)
     in.fm_ready = 1u;                                           /* 0x6F594: stand-in S1 */
     in.os_mode = mode;
     tsel_shadow_pass(&in);
+#if TSEL_LIVE
+    /* stage 2a: this pass's results into the live cells (0x88BD0's slot —
+     * the law later in this tick reads them) */
+    tsel_live_apply();
+#endif
 }
 #endif

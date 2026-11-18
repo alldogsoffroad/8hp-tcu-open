@@ -77,6 +77,16 @@
  * ch 1 while D's request, law mode and chip setpoint stay on. */
 #include "app/tsel_shadow.h"
 volatile int16_t g_fbs_9393a_host = 0x0215;
+/* STAGE 2a (2026-11-18, ~/tcu_sweep/temp_stage2a_port.md): built -DTSEL_LIVE=1
+ * (test_diag_temps_live, test_gs_bridge_g2_temps_live) the hub hook hands
+ * the shadow's results to the real output code (app/tsel_live.c →
+ * bsw/drv/drv_tsel.c) instead of this file forcing 0x9393A / 0x940FC: the
+ * status is the shadow's own (fc_mode ignored), the feedback chain reads
+ * the live 0x9393A (fb_shadow.c -DFBS_T_ECU_LIVE=1, fbs_in_t t_ecu), and
+ * drv_temp's 0x887D8 substitute is modelled in the pre-ADC window (0x94F9C
+ * = 0x9393A at status 6 while the fluid is invalid and 0x940FC >= 7 — the
+ * window the live selection opens). */
+#include "bsw/drv/drv_tsel.h"
 #endif
 
 /* ── the bench's four healthy driver chips (test_fullon.c's model) ─────── */
@@ -224,6 +234,7 @@ static uint16_t s_die_n;            /* the J3 average */
 static bool     s_neg_d;            /* force D's estimate to 7000 from U+100 */
 static unsigned s_frame, s_uframe;
 static unsigned s_neg_set;
+static unsigned s_subst_n;          /* TSEL_LIVE: passes on drv_temp's substitute */
 /* the hub slot (sup_batch.c, after drv_temp_tick): the shadow on the bench's
  * inputs, by value — no J3 / J4 reply in the first frame, the board's
  * not-ready word in the second, then the scenario's values */
@@ -241,6 +252,9 @@ void app_temp_hub_hook(void)
     in.fm_ready = 1u;
     in.os_mode = CELL_OS_MODE;
     tsel_shadow_pass(&in);
+#if TSEL_LIVE
+    tsel_live_apply();                  /* stage 2a: the real output path */
+#endif
 }
 #endif
 void app_out_head_hook(void);
@@ -248,7 +262,7 @@ void app_out_head_hook(void)
 {
     fbs_in_t in;
     const volatile fbs_t *s;
-#if defined(DIAG_TEMPS)
+#if defined(DIAG_TEMPS) && !TSEL_LIVE
     /* STAGE 2a, modelled: the selection's cells live — 0x9393A / 0x940FC
      * (forced valid, or the shadow's own status) and the feedback chain's
      * a-curve / R_drv temperature from 0x9393A */
@@ -262,6 +276,15 @@ void app_out_head_hook(void)
     /* the fluid temperature: invalid until the ADC chain (r02l: 500 ms) */
     *(volatile int16_t *)(uintptr_t)0xFFF94F9Cu = (int16_t)(s_temp_valid ? 574 : 0);
     *(volatile uint8_t *)(uintptr_t)0xFFF94FF0u = (uint8_t)(s_temp_valid ? 8u : 0u);
+#if defined(DIAG_TEMPS) && TSEL_LIVE
+    /* drv_temp's 0x887D8 substitute (src 4): the previous pass's live
+     * selection at status 6 while the acquisition is invalid */
+    if (!s_temp_valid && *(volatile uint8_t *)(uintptr_t)0xFFF940FCu >= 7u) {
+        *(volatile int16_t *)(uintptr_t)0xFFF94F9Cu = *(volatile int16_t *)(uintptr_t)0xFFF9393Au;
+        *(volatile uint8_t *)(uintptr_t)0xFFF94FF0u = 6u;
+        s_subst_n++;
+    }
+#endif
     /* fb_hook.c's gather, verbatim */
     in.n5 = (uint8_t)((CELL_OS_MODE == 0u) ? 1u : 2u);
     in.rail_mv = *(volatile uint16_t *)(uintptr_t)0xFFF94ED0u;
@@ -280,6 +303,7 @@ void app_out_head_hook(void)
     in.phase = CELL_LAD_PHASE;
     in.f114 = CELL_LAD_94114;
     in.f115 = CELL_DIAG_94115;
+    in.t_ecu = *(volatile int16_t *)(uintptr_t)0xFFF9393Au;    /* fb_hook.c's stage-2a read */
     fb_shadow_tick(&in);
     if (!s_real) {
         return;
@@ -509,6 +533,9 @@ static void rr_reset(const run_r_t *r)
     g_fbs_9393a_host = 0x0780;              /* the init value until the first hub pass */
     *(volatile int16_t *)(uintptr_t)0xFFF9393Au = 0x0780;
     *(volatile uint8_t *)(uintptr_t)0xFFF940FCu = 0u;
+#if TSEL_LIVE
+    tsel_live_apply();                      /* tsel_hook_init's stage-2a write */
+#endif
     s_fc_mode = r->fc_mode;
     s_brd_raw = (r->brd_raw != 0) ? r->brd_raw : 0x164B;
     s_die_n = (r->die_n != 0u) ? r->die_n : 433u;
@@ -646,6 +673,7 @@ static void bounds_summary(const run_r_t *r)
     const volatile tsel_t *t = tsel_shadow_state();
     printf("    temperature: 0x940FC %s, selection at the end %d (%.1f C) status %u source %u; "
            "first status 8 at %u us; bound bits seen:",
+           TSEL_LIVE ? "LIVE (the real output path; fc_mode ignored)" :
            r->fc_mode == 1u ? "= the shadow's status" : (r->fc_mode == 6u ? "forced 6" :
                                                  (r->fc_mode == 0u ? "0 (gate closed)" : "forced 8")),
            t->s93a, (double)t->s93a / 16.0, t->s0fc, t->s170, (unsigned)t->first_sel8_us);
@@ -880,6 +908,22 @@ int main(int argc, char **argv)
                "%s: fault %u switch-off %u fail %u pend %u fatal %u", r->name, r->fw_set_events,
                r->switched_off, r->gfail_tot, r->gpend_tot, r->fatal_tot);
     }
+#if TSEL_LIVE
+    /* stage 2a: the live cells carry the selection (the real output path),
+     * and drv_temp's substitute window was exercised */
+    DCHECK(*(volatile int16_t *)(uintptr_t)0xFFF9393Au == tsel_shadow_state()->s93a &&
+           *(volatile uint8_t *)(uintptr_t)0xFFF940FCu == tsel_shadow_state()->s0fc &&
+           *(volatile uint8_t *)(uintptr_t)0xFFF94170u == tsel_shadow_state()->s170 &&
+           *(volatile uint8_t *)(uintptr_t)0xFFF940FFu == tsel_shadow_state()->s0ff &&
+           *(volatile uint8_t *)(uintptr_t)0xFFF94101u == tsel_shadow_state()->s101,
+           "TSEL_LIVE: the live cells do not carry the selection");
+    printf("TSEL_LIVE: substitute-window passes %u (all runs); live 0x9393A %d 0x940FC %u src %u\n", s_subst_n,
+           *(volatile int16_t *)(uintptr_t)0xFFF9393Au, *(volatile uint8_t *)(uintptr_t)0xFFF940FCu,
+           *(volatile uint8_t *)(uintptr_t)0xFFF94170u);
+    DCHECK(s_subst_n > 0u, "TSEL_LIVE: the pre-ADC substitute window never opened");
+#else
+    (void)s_subst_n;
+#endif
     DCHECK(runs[6].end_sel_st == 8u && runs[6].end_sel_src == 4u && runs[6].end_sel_t == 713,
            "the shadow's selection at the end: %d / %u / %u", runs[6].end_sel_t, runs[6].end_sel_st,
            runs[6].end_sel_src);

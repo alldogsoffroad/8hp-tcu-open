@@ -6,6 +6,12 @@
  *                              the PA7 pin driver — it needs no libc header, so
  *                              it compiles freestanding; drv_odiag.c's
  *                              <string.h> does not) includes tsel_shadow.h
+ *   SH_GUARD_TSEL_DRVTSEL      stage 2a's output TU (bsw/drv/drv_tsel.c, which
+ *                              writes the live temperature cells) includes
+ *                              tsel_shadow.h
+ *   SH_GUARD_TSEL_RAMLIVE      TSEL_LIVE=1 in a RAM-app (or loader) build
+ *                              (drv_tsel.h: "for the code-flash application
+ *                              only")
  *   SH_GUARD_TSEL_LIVE_<hdr>   the shadow translation unit includes a live
  *                              header (sup_cells.h, drv_cells.h, drv_temp.h,
  *                              drv_odiag.h, platform.h) */
@@ -14,6 +20,14 @@
 #include "app/tsel_shadow.h"
 #elif defined(SH_GUARD_TSEL_OUTTU)
 #include "bsw/drv/drv_pa7.c"
+#include "app/tsel_shadow.h"
+#elif defined(SH_GUARD_TSEL_DRVTSEL)
+#include "bsw/drv/drv_tsel.c"
+#include "app/tsel_shadow.h"
+#elif defined(SH_GUARD_TSEL_RAMLIVE)
+#define TCU_RAM_APP 1
+#define TSEL_LIVE 1
+#include "bsw/drv/drv_tsel.h"
 #include "app/tsel_shadow.h"
 #elif defined(SH_GUARD_TSEL_LIVE_CELLS)
 #define TCU_TSEL_SHADOW_TU 1

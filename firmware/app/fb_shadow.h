@@ -65,6 +65,8 @@ typedef struct {
     uint16_t phase;         /* 0x94FE2 ladder phase word */
     uint8_t  f114;          /* 0x94114 the phase-0x10 full-on flag */
     uint8_t  f115;          /* 0x94115 the '3' diagnosis full-on flag */
+    int16_t  t_ecu;         /* 0x9393A the selected ECU temperature (°C · 16) — used
+                             * when FBS_T_ECU_LIVE (stage 2a; fb_shadow.c) */
 } fbs_in_t;
 
 /* the capture state 0x90334 + 12·ch */

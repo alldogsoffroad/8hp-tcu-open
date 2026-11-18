@@ -8,8 +8,11 @@ between blocks), decodes the die / board / selected temperatures, and reads
 for comparison the LIVE inputs (the J3 word / average 0x907CC / 0x908CA, the
 J4 word 0x908EE / its copy 0x908CC, the comparator flags 0x9095E — our
 misnamed CELL_DIR_BITS, the variant 0x90966, the fluid 0x94F98 / 0x94FEE and
-0x94F9C / 0x94FF0) and the LIVE cells the shadow must never write (stage 1:
-0x9393A / 0x940FC / 0x940FF stay 0 from init; 0x940E0..E8 are drv_temp's).
+0x94F9C / 0x94FF0) and the LIVE cells — stage 1: 0x9393A / 0x940FC / 0x940FF
+stay 0 from init; STAGE 2a (TSEL_LIVE): they carry the shadow's selection
+(bsw/drv/drv_tsel.c), and the reply gate 0x9095B (0x0F after boot), the
+diagnosis bounds 0x93510 / 0x93524, the tested bits 0x94944, the estimates
+0x93394 and the fault words 0x93004 / 0x94930 (ch 0..4) are printed too.
 
     witness_temps.py [rounds] [--raw]
 
@@ -34,8 +37,17 @@ INPUTS = [
     ("OS mode 0x93B33", 0xFFF93B33, 1),
 ]
 LIVE = [
-    ("0x9393A", 0xFFF9393A, 2), ("0x940FC", 0xFFF940FC, 1), ("0x940FE..0x94101", 0xFFF940FE, 4),
+    ("0x9393A..3F", 0xFFF9393A, 6), ("0x93ABA", 0xFFF93ABA, 2), ("0x940FC..0x94101", 0xFFF940FC, 6),
+    ("0x9415E", 0xFFF9415E, 1), ("0x94170", 0xFFF94170, 1),
     ("0x940E0..E8", 0xFFF940E0, 9),
+]
+# stage 2a (2026-11-18, ~/tcu_sweep/temp_stage2a_port.md): the reply
+# processor's gate, and the diagnosis current bounds the live status opens
+EXTRA = [
+    ("gate 0x9095B", 0xFFF9095B, 1),
+    ("UB 0x93510[0..4]", 0xFFF93510, 10), ("LB 0x93524[0..4]", 0xFFF93524, 10),
+    ("tested 0x94944[0..4]", 0xFFF94944, 10), ("est 0x93394[0..4]", 0xFFF93394, 10),
+    ("fw 0x93004[0..4]", 0xFFF93004, 10), ("latched 0x94930[0..4]", 0xFFF94930, 10),
 ]
 
 
@@ -154,7 +166,16 @@ def main():
         for name, a, n in LIVE:
             v = read(b, 1, a, n)
             live.append("%s %s" % (name, v.hex() if v is not None else "??"))
-        print("  LIVE (stage 1: 0x9393A / 0x940FC / 0x940FF must read 0): " + " | ".join(live))
+        print("  LIVE (stage 2a: must equal the shadow's 0x22/0x24/0x1A/0x08/0x26.. fields; "
+              "0x940E1/E2/E4/E5 stay the stand-ins): " + " | ".join(live))
+        ex = []
+        for name, a, n in EXTRA:
+            v = read(b, 1, a, n)
+            if v is not None and n >= 4:
+                ex.append("%s %s" % (name, " ".join("%d" % w for w in struct.unpack(">%dH" % (n // 2), v))))
+            else:
+                ex.append("%s %s" % (name, v.hex() if v is not None else "??"))
+        print("  2a: " + " | ".join(ex))
         time.sleep(1.0)
     b.shutdown()
     print("witness done", flush=True)

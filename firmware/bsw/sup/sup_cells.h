@@ -117,6 +117,7 @@
 #define CELL_SSLB0_BIT2     (*(volatile uint8_t  *)0xFFF90959u) /* 0x14 bit 1 mirror */
 #define CELL_SSLB0_BIT4     (*(volatile uint8_t  *)0xFFF90956u) /* 0x14 bit 4 */
 #define CELL_C9_VARIANT     (*(volatile uint8_t  *)0xFFF9095Au)
+#define CELL_PROC_GATE      (*(volatile uint8_t  *)0xFFF9095Bu) /* the reply processor's gate: 0 (boot) → 1 (end of the first batch, 0x91DAA tail 0x91DB8..C6) → 0x0F (the next 0x91ACA, 0x91B94..D8) */
 #define CELL_DIR_BITS       (*(volatile uint8_t  *)0xFFF9095Eu) /* MISNAMED [I]: the supervisor's two over-temperature comparator flags (0x907D3 bits 4/5; read by the die check 0x8DB5A — diag_temp_inputs_decode §1.2), not "direction bits"; name kept */
 #define CELL_90_BASE        (*(volatile uint8_t  *)0xFFF90963u)
 #define CELL_CTRL_BIT1_SRC  (*(volatile uint8_t  *)0xFFF90964u)

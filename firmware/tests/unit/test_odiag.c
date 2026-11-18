@@ -106,6 +106,7 @@ static void fbs_ms(void)
  * byte-identical with test_odiag_tselbase's (the same seeded J3 / J4 / fluid
  * cells, no hook) */
 #include "app/tsel_shadow.h"
+#include "bsw/drv/drv_tsel.h"           /* TSEL_LIVE (stage 2a) */
 void app_temp_hub_hook(void);
 /* the shadow is re-initialised at every boot() (parts 1..4): its counters
  * are accumulated here before each re-init, for the stderr line */
@@ -138,6 +139,47 @@ extern unsigned stub_log_dropped;
 
 static int fails;
 #define CHECK(c) do { if (!(c)) { printf("FAIL %s:%d %s\n", __FILE__, __LINE__, #c); fails++; } } while (0)
+
+#if defined(TEST_ODIAG_EXCL2A)
+/* STAGE 2a (2026-11-18): the cells bsw/drv/drv_tsel.c writes BY DESIGN —
+ * excluded from the window hash of both builds (tsel_live_identity). Found
+ * by a byte-for-byte window diff of the two builds (ODIAG_WINDOW_DUMP): these
+ * twelve cells and nothing else differ in this harness. */
+static int excl2a(uint32_t a)
+{
+    return (a >= 0xFFF9393Au && a <= 0xFFF9393Fu) ||        /* 0x9393A / C / E */
+           a == 0xFFF93ABAu || a == 0xFFF93ABBu ||           /* 0x93ABA */
+           (a >= 0xFFF940FCu && a <= 0xFFF94101u) ||         /* 0x940FC..0x94101 */
+           a == 0xFFF9415Eu || a == 0xFFF94170u;
+}
+#endif
+#if defined(TEST_ODIAG_TSEL) && TSEL_LIVE
+static unsigned long s_tl_n, s_tl_mism;
+/* the live cells carry this pass's shadow results (the real output path) */
+static void tsel_live_check(void)
+{
+    const volatile tsel_t *t = tsel_shadow_state();
+    s_tl_n++;
+    if (*(volatile int16_t *)(uintptr_t)0xFFF9393Au != t->s93a ||
+        *(volatile int16_t *)(uintptr_t)0xFFF9393Cu != t->s93c ||
+        *(volatile int16_t *)(uintptr_t)0xFFF9393Eu != t->s93e ||
+        *(volatile int16_t *)(uintptr_t)0xFFF93ABAu != t->aba ||
+        *(volatile uint8_t *)(uintptr_t)0xFFF940FCu != t->s0fc ||
+        *(volatile uint8_t *)(uintptr_t)0xFFF940FDu != t->s0fd ||
+        *(volatile uint8_t *)(uintptr_t)0xFFF940FEu != t->s0fe ||
+        *(volatile uint8_t *)(uintptr_t)0xFFF940FFu != t->s0ff ||
+        *(volatile uint8_t *)(uintptr_t)0xFFF94100u != t->s100 ||
+        *(volatile uint8_t *)(uintptr_t)0xFFF94101u != t->s101 ||
+        *(volatile uint8_t *)(uintptr_t)0xFFF9415Eu != t->s15e ||
+        *(volatile uint8_t *)(uintptr_t)0xFFF94170u != t->s170) {
+        s_tl_mism++;
+    }
+    /* the fault flags stay untouched (stage 2b) */
+    if (*(volatile uint8_t *)(uintptr_t)0xFFF940E1u != 0u || *(volatile uint8_t *)(uintptr_t)0xFFF940E4u != 0u) {
+        s_tl_mism++;
+    }
+}
+#endif
 
 static uint64_t fnv(uint64_t h, uint32_t v)
 {
@@ -383,6 +425,15 @@ static void out_tick(void)
 #else
 #if defined(TEST_ODIAG_TSEL)
     app_temp_hub_hook();                /* 0x7CB6E → 0x88DA8 / 0x88BD0 (sup_batch.c's slot) */
+#if TSEL_LIVE
+    tsel_live_check();
+#if defined(TEST_ODIAG_TSEL_LIVE_NEG)
+    /* NEGATIVE CONTROL (ctest tsel_live_identity_negative): a stage-2b cell
+     * (the die's failed flag 0x940E2) written alongside — outside the
+     * excluded set, so the identity must FAIL */
+    *(volatile uint8_t *)(uintptr_t)0xFFF940E2u = tsel_shadow_state()->s0fc;
+#endif
+#endif
 #if defined(TEST_ODIAG_TSEL_NEG)
     /* NEGATIVE CONTROL (ctest tsel_shadow_identity_negative): the shadow's
      * selection leaks into the live cells 0x9393A / 0x940FC */
@@ -427,6 +478,11 @@ static void out_tick(void)
         uint64_t h = 0xCBF29CE484222325ull;
         const volatile uint8_t *p = (const volatile uint8_t *)(uintptr_t)0xFFF80000u;
         for (uint32_t a = 0u; a < 0x16000u; a++) {
+#if defined(TEST_ODIAG_EXCL2A)
+            if (excl2a(0xFFF80000u + a)) {
+                continue;
+            }
+#endif
             h = (h ^ p[a]) * 0x100000001B3ull;
         }
         for (unsigned k = 0u; k < stub_log_n; k++) {
@@ -442,6 +498,17 @@ static void out_tick(void)
         }
 #endif
         printf("F %u %u %016llx\n", s_full_n++, (unsigned)stub.frt_us, (unsigned long long)h);
+        if (getenv("ODIAG_WINDOW_DUMP") != NULL) {
+            /* diagnosis aid (2026-11-18): the window after every tick, to
+             * name the cells two builds differ in */
+            static FILE *wf;
+            if (wf == NULL) {
+                wf = fopen(getenv("ODIAG_WINDOW_DUMP"), "wb");
+            }
+            if (wf != NULL) {
+                fwrite((const void *)(uintptr_t)0xFFF80000u, 1u, 0x16000u, wf);
+            }
+        }
     }
 }
 
@@ -886,6 +953,9 @@ int main(int argc, char **argv)
         fprintf(stderr, "tsel pass %lu sel8 %lu brd8 %lu die8 %lu ff03 %lu r8001 %lu tr %lu st %u src %u\n",
                 s_ts_pass, s_ts_sel8, s_ts_brd8, s_ts_die8, s_ts_ff03, s_ts_8001, s_ts_tr,
                 tsel_shadow_state()->s0fc, tsel_shadow_state()->s170);
+#if TSEL_LIVE
+        fprintf(stderr, "tsel_live checked %lu mism %lu\n", s_tl_n, s_tl_mism);
+#endif
 #endif
         printf("%s (%d failures)\n", fails == 0 ? "PASS" : "FAIL", fails);
         return fails == 0 ? 0 : 1;

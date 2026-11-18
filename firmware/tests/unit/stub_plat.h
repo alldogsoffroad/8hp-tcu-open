@@ -61,6 +61,9 @@ typedef struct {
     unsigned rspi_launch_busy[2];   /* plat_rspi_launch on a busy channel (refused) */
     unsigned rspi_tx_torn[2];       /* a fed word differed from the staging at launch */
     bool reap_enable;               /* plat_rspi_reap error-completes old bursts */
+    /* ---- the J3/J4 temperature words (test_j3seed, 2026-11-18) ---- */
+    uint16_t (*sup_raw_fn)(uint16_t tx);    /* bus B: the WHOLE reply word (no class
+                                             * byte forced); NULL keeps the scripted law */
 } stub_plat_t;
 
 extern stub_plat_t stub;

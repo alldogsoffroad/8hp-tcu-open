@@ -45,7 +45,7 @@ set(CORE_SOURCES
     app/gs_shadow.c app/gs_fill.c app/gs_cal.c app/gs_bridge.c
     app/fb_shadow.c app/fb_cal.c app/fb_hook.c
     app/pa7_shadow.c app/pa7_hook.c bsw/drv/drv_pa7.c
-    app/tsel_shadow.c app/tsel_hook.c
+    app/tsel_shadow.c app/tsel_hook.c app/tsel_live.c bsw/drv/drv_tsel.c
     safety/park_mon.c
     safety/park_pair.c
     safety/kl15.c
@@ -894,6 +894,29 @@ else()
     add_test(NAME tsel_shadow_identity
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fb_identity.py
             $<TARGET_FILE:test_odiag_tselbase> $<TARGET_FILE:test_odiag_tsel> --tsel)
+    # STAGE 2a (2026-11-18): the hub hook with TSEL_LIVE=1 (the selection's
+    # cells written by the real output path; the feedback chain on the live
+    # 0x9393A) — the window hash then EXCLUDES the stage-2a cells and their
+    # by-design consumers (test_odiag.c TEST_ODIAG_EXCL2A, both builds), every
+    # bus-A word, cadence witness and every other cell must stay identical,
+    # and the live cells must carry the shadow's values every pass
+    add_executable(test_odiag_tselbase_x ${ODIAG_TSEL_SOURCES})
+    target_compile_definitions(test_odiag_tselbase_x PRIVATE DRV_RQ_USE_PRODUCER=1 TEST_ODIAG_FBS=1
+        TEST_ODIAG_TSEL_SEED=1 TEST_ODIAG_EXCL2A=1)
+    add_executable(test_odiag_tsel_live ${ODIAG_TSEL_SOURCES} app/tsel_live.c bsw/drv/drv_tsel.c)
+    target_compile_definitions(test_odiag_tsel_live PRIVATE DRV_RQ_USE_PRODUCER=1 TEST_ODIAG_FBS=1
+        TEST_ODIAG_TSEL_SEED=1 TEST_ODIAG_TSEL=1 TEST_ODIAG_EXCL2A=1 TSEL_LIVE=1 FBS_T_ECU_LIVE=1)
+    add_test(NAME tsel_live_identity
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fb_identity.py
+            $<TARGET_FILE:test_odiag_tselbase_x> $<TARGET_FILE:test_odiag_tsel_live> --tsel --tsel-live)
+    add_executable(test_odiag_tsel_live_neg ${ODIAG_TSEL_SOURCES} app/tsel_live.c bsw/drv/drv_tsel.c)
+    target_compile_definitions(test_odiag_tsel_live_neg PRIVATE DRV_RQ_USE_PRODUCER=1 TEST_ODIAG_FBS=1
+        TEST_ODIAG_TSEL_SEED=1 TEST_ODIAG_TSEL=1 TEST_ODIAG_EXCL2A=1 TSEL_LIVE=1 FBS_T_ECU_LIVE=1
+        TEST_ODIAG_TSEL_LIVE_NEG=1)
+    add_test(NAME tsel_live_identity_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fb_identity.py
+            $<TARGET_FILE:test_odiag_tselbase_x> $<TARGET_FILE:test_odiag_tsel_live_neg> --tsel --tsel-live)
+    set_tests_properties(tsel_live_identity_negative PROPERTIES WILL_FAIL TRUE)
     add_executable(test_odiag_tsel_neg ${ODIAG_TSEL_SOURCES})
     target_compile_definitions(test_odiag_tsel_neg PRIVATE DRV_RQ_USE_PRODUCER=1 TEST_ODIAG_FBS=1
         TEST_ODIAG_TSEL_SEED=1 TEST_ODIAG_TSEL=1 TEST_ODIAG_TSEL_NEG=1)
@@ -905,7 +928,7 @@ else()
         ${CMAKE_SOURCE_DIR}/bsw/drv/drv_temp.c ${CMAKE_SOURCE_DIR}/bsw/drv/drv_temp.h
         ${CMAKE_SOURCE_DIR}/safety/tmp_safe.c ${CMAKE_SOURCE_DIR}/app/tmp_chain.c
         ${CMAKE_SOURCE_DIR}/app/fb_shadow.c ${CMAKE_SOURCE_DIR}/app/fb_hook.c
-        ${CMAKE_SOURCE_DIR}/bsw/sup/sup_ladder.c)
+        ${CMAKE_SOURCE_DIR}/bsw/sup/sup_ladder.c ${CMAKE_SOURCE_DIR}/bsw/drv/drv_tsel.c)
     add_test(NAME tsel_shadow_scan_outputs
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/tsel_shadow_scan.py outputs ${TSEL_OUTPUT_PATHS})
     add_test(NAME tsel_shadow_scan_outputs_negative
@@ -921,7 +944,7 @@ else()
     set_tests_properties(tsel_shadow_scan_shadow_negative PROPERTIES WILL_FAIL TRUE)
     add_test(NAME tsel_shadow_scan_hook
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/tsel_shadow_scan.py hook
-            ${CMAKE_SOURCE_DIR}/app/tsel_hook.c)
+            ${CMAKE_SOURCE_DIR}/app/tsel_hook.c ${CMAKE_SOURCE_DIR}/app/tsel_live.c)
     add_test(NAME tsel_shadow_scan_hook_negative
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/tsel_shadow_scan.py hook
             ${CMAKE_SOURCE_DIR}/tests/unit/tsel_scan_fixture_hook.c)
@@ -934,6 +957,18 @@ else()
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform -Wall -Wextra -Wconversion
             ${CMAKE_SOURCE_DIR}/app/tsel_hook.c)
     add_test(NAME tsel_sh_guard_output COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_TSEL_OUTPUT ${TSEL_SH_SRC})
+    # stage 2a: the live writer may not name the shadow; TSEL_LIVE is refused
+    # outside the code-flash application; the live TUs compile on SH
+    add_test(NAME tsel_sh_guard_drvtsel COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_TSEL_DRVTSEL ${TSEL_SH_SRC})
+    set_tests_properties(tsel_sh_guard_drvtsel PROPERTIES
+        PASS_REGULAR_EXPRESSION "an output path may not include tsel_shadow.h")
+    add_test(NAME tsel_sh_guard_ramlive COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_TSEL_RAMLIVE ${TSEL_SH_SRC})
+    set_tests_properties(tsel_sh_guard_ramlive PROPERTIES
+        PASS_REGULAR_EXPRESSION "TSEL_LIVE is for the code-flash application only")
+    add_test(NAME tsel_sh_guard_live_tu
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/tsel_live.c)
+    add_test(NAME tsel_sh_guard_drvtsel_tu
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/bsw/drv/drv_tsel.c)
     add_test(NAME tsel_sh_guard_outtu COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform
         -DSH_GUARD_TSEL_OUTTU ${TSEL_SH_SRC})
     set_tests_properties(tsel_sh_guard_output tsel_sh_guard_outtu PROPERTIES
@@ -968,6 +1003,21 @@ else()
         bsw/sup/sup_ctrl.c bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_token.c
         tests/unit/stub_plat.c)
     add_test(NAME rebuild COMMAND test_rebuild)
+    # the J3 average seed at boot (stock 0x91ACA's 0x9095B gate, 0x91DAA's
+    # tail; ~/tcu_sweep/temp_stage2a_port.md §1): the r04h boot sequence on
+    # our batch + the tsel hook — no implausible selection; a negative
+    # control (the old seeding) inside the test must reproduce r04h's −24 °C
+    add_executable(test_j3seed tests/unit/test_j3seed.c
+        bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_walk.c bsw/sup/sup_batch.c
+        bsw/sup/sup_ctrl.c bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_token.c
+        app/tsel_shadow.c app/tsel_hook.c tests/unit/stub_plat.c)
+    add_test(NAME j3seed COMMAND test_j3seed)
+    add_executable(test_j3seed_live tests/unit/test_j3seed.c
+        bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_walk.c bsw/sup/sup_batch.c
+        bsw/sup/sup_ctrl.c bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_token.c
+        app/tsel_shadow.c app/tsel_hook.c app/tsel_live.c bsw/drv/drv_tsel.c tests/unit/stub_plat.c)
+    target_compile_definitions(test_j3seed_live PRIVATE TSEL_LIVE=1)
+    add_test(NAME j3seed_live COMMAND test_j3seed_live)
     # L1: the stock self-test ladder, held (sup_ladder.c) — driven with the
     # r02q bench inputs and a chip model of 0x14 bit 1 (level <= 4 AND the
     # TIOC clock present); asserts J2 TX 0x9000 through every path
@@ -1055,6 +1105,22 @@ else()
         SUP_L1_HOLD_PHASE40=0 SUP_L1_HOLD_FAIL_FSM=0 SUP_L3_HOLD_SEQ_L=0
         DIAG_TEMPS=1 FBS_9393A_HOST_SRC=g_fbs_9393a_host)
     add_test(NAME diag_temps_dryrun COMMAND test_diag_temps)
+    # STAGE 2a (2026-11-18, ~/tcu_sweep/temp_stage2a_port.md): the same risk
+    # gate with the selection LIVE through the real output path
+    # (app/tsel_live.c → bsw/drv/drv_tsel.c, TSEL_LIVE=1), the feedback chain
+    # on the live 0x9393A (FBS_T_ECU_LIVE=1) and drv_temp's pre-ADC
+    # substitute window modelled
+    add_executable(test_diag_temps_live tests/unit/test_diag_realfb.c
+        bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
+        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
+        app/fb_shadow.c app/fb_cal.c tests/unit/fb_model.c app/tsel_shadow.c
+        app/tsel_live.c bsw/drv/drv_tsel.c
+        tests/unit/stub_plat.c)
+    target_compile_definitions(test_diag_temps_live PRIVATE SUP_L1_HOLD_PHASE8_REQUEST=0
+        SUP_L1_HOLD_PHASE40=0 SUP_L1_HOLD_FAIL_FSM=0 SUP_L3_HOLD_SEQ_L=0
+        DIAG_TEMPS=1 TSEL_LIVE=1 FBS_T_ECU_LIVE=1)
+    add_test(NAME diag_temps_dryrun_live COMMAND test_diag_temps_live)
     # THE GARAGE BRIDGE, STAGE G1 (2026-11-18, ~/tcu_sweep/garage_g1_port.md):
     # test_diag_realfb's supervisor + real bus-A chain + main.c's 10 ms task
     # (producer, vehicle sims, kl15, the range chain, park_tick, the garage
@@ -1087,6 +1153,11 @@ else()
     target_compile_definitions(test_gs_bridge_g2_temps PRIVATE ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3
         DIAG_TEMPS=1 FBS_9393A_HOST_SRC=g_fbs_9393a_host)
     add_test(NAME gs_bridge_g2_gate_bounds COMMAND test_gs_bridge_g2_temps)
+    add_executable(test_gs_bridge_g2_temps_live ${GSB_CHAIN_SOURCES} app/tsel_shadow.c
+        app/tsel_live.c bsw/drv/drv_tsel.c)
+    target_compile_definitions(test_gs_bridge_g2_temps_live PRIVATE ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3
+        DIAG_TEMPS=1 TSEL_LIVE=1 FBS_T_ECU_LIVE=1)
+    add_test(NAME gs_bridge_g2_gate_bounds_live COMMAND test_gs_bridge_g2_temps_live)
     # the bridge's logic on test_gs_shadow's light harness: the OS-mode-2
     # witness, the .noinit windows, the guard negatives (G1: recorded, the
     # wire never moves), and — GS_LIVE_DIR 3, host only — every abort of the

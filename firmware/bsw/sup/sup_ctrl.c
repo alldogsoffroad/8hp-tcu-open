@@ -136,55 +136,82 @@ void sup_enable_request(bool on)
 
 void sup_reply_condense(void)
 {
-    /* grant: the 0x22 echo's bit 0 (stock 0x91ACA) */
-    CELL_GRANT = ((CELL_ECHO_22 & 0x01u) != 0u) ? 1u : 0u;
-    /* handover readiness: the 0x14 reply's bit 0 */
-    CELL_HANDOVER_RDY = (uint8_t)(CELL_REG_14 & 0x01u);
+    /* THE 0x9095B GATE (stock 0x91ACA, bytes 0x91ACE..0x91BD8) [O]: GBR =
+     * 0xFFF9094B, r5 = @(16,gbr) = 0x9095B read once at entry; `tst; bt.s
+     * 0x91B94` skips the whole condense block below while it is 0. The
+     * batch's 0x91DAA sets it 0 → 1 at its tail (0x91DB8..0x91DC6, after
+     * queueing J6/J1 — batch_8ee82 in sup_batch.c), so the stock's FIRST reply
+     * proc (5 ms list entry 5, before the batch at 26) condenses nothing;
+     * the second one sees r5 == 1 and RESEEDS the 4-slot average from the
+     * sample of the J3 reply its own first pass queued (0x91B1A `cmp/eq
+     * #1` → 0x91B5E), then sets 0x9095B = 0x0F (0x91BD4..D8). r02g..r04i
+     * condensed from the first pass, before any J3 reply: the window was
+     * seeded with the cleared cell's 0, so the second pass averaged (N + 0
+     * + 0 + 0) / 4 ≈ 104 — the die at −24 °C, status 6, that r04h's
+     * temperature shadow selected for ≈ 50 ms. */
+    const uint8_t gate = CELL_PROC_GATE;                /* r5 */
 
-    /* THE WDT A-LAW: switch to interval mode only when the sent word carried
-     * bit 0 AND the echo confirms it. No echo bit 0 → no switch, ever. */
+    if (gate != 0u) {
+        /* grant: the 0x22 echo's bit 0 (0x91AFC bld.b #0 0x907D5 → 0x91B06 0x90954) */
+        CELL_GRANT = ((CELL_ECHO_22 & 0x01u) != 0u) ? 1u : 0u;
+        /* handover readiness: the 0x14 reply's bit 0 (0x91AF4 bld.b #0 0x907D1 → 0x91B00 0x84A46) */
+        CELL_HANDOVER_RDY = (uint8_t)(CELL_REG_14 & 0x01u);
+
+        /* the telemetry average into 0xFFF908CA (0x91B04..0x91B70): an
+         * invalid sample (0x907CC = 0xFFFF) propagates; gate == 1 or an
+         * invalid average reseeds all 4 slots with the sample; otherwise
+         * a 4-slot ring (0x90620, index 0x9095C), rounded (sum + 2) >> 2. */
+        {
+            /* ours: a witness that the reseed ran (kept as the old seeding
+             * law's flag so no RAM symbol moves) */
+            static volatile bool s_avg_seeded __attribute__((unused));
+            const uint16_t smp = CELL_TELEMETRY;
+
+            if (smp == 0xFFFFu) {
+                CELL_TELEM_AVG = 0xFFFFu;
+            }
+            if (gate == 1u || CELL_TELEM_AVG == 0xFFFFu) {
+                for (uint8_t i = 0u; i < 4u; i++) {
+                    s_avg_win[i] = smp;
+                }
+                s_avg_sum = 4u * (uint32_t)smp;
+                s_avg_seeded = true;
+                CELL_TELEM_AVG = smp;
+            } else {
+                /* the ring index's start does not change the average (every
+                 * slot holds the reseed value) */
+                s_avg_sum -= s_avg_win[s_avg_i];
+                s_avg_win[s_avg_i] = smp;
+                s_avg_sum += smp;
+                s_avg_i = (uint8_t)((s_avg_i + 1u) & 3u);
+                CELL_TELEM_AVG = (uint16_t)((s_avg_sum + 2u) >> 2);
+            }
+        }
+
+        /* the over-temperature comparator bits from the J6 0x1E harvest
+         * (0x91B76..0x91B88: bld #5 / movt / shal, bld #4 / movt / add →
+         * the WHOLE byte 0x9095E = (b5 << 1) | b4; 0x9095D = 0x907CE not
+         * ported) */
+        CELL_DIR_BITS = (uint8_t)((CELL_STAT_1E >> 4) & 3u);
+
+        /* SSLB2 copy + sentinel re-arm (0x91B84..0x91B92) */
+        CELL_SSLB2_COPY = CELL_SSLB2_RAW;
+        CELL_SSLB2_RAW = 0x8001u;
+    }
+    if (gate == 1u) {
+        /* 0x91B94..0x91BD8: the first condensing pass ends the gate's
+         * reseed state (its 0x9095F/0x90960/0x90961/0x800ED copies are
+         * not ported) */
+        CELL_PROC_GATE = 0x0Fu;
+    }
+
+    /* THE WDT A-LAW (ours, not part of 0x91ACA; ungated as before): switch
+     * to interval mode only when the sent word carried bit 0 AND the echo
+     * confirms it. No echo bit 0 → no switch, ever. */
     if (!s_wdt_interval &&
         (CELL_CTRL_STAGED & 0x01u) != 0u &&
         (CELL_ECHO_22 & 0x01u) != 0u) {
         plat_wdt_mode(true);
         s_wdt_interval = true;
-    }
-
-    /* direction bits from the J6 0x1E harvest (stock 0x91ACA computes
-     * 0x9095E from 0x907D3 — moved here from the J6 handler, S5) */
-    if (CELL_STAT_1E & 0x10u) CELL_DIR_BITS |= 0x01u; else CELL_DIR_BITS &= (uint8_t)~0x01u;
-    if (CELL_STAT_1E & 0x20u) CELL_DIR_BITS |= 0x02u; else CELL_DIR_BITS &= (uint8_t)~0x02u;
-
-    /* SSLB2 copy + sentinel re-arm (stock 0x91ACA law) */
-    CELL_SSLB2_COPY = CELL_SSLB2_RAW;
-    CELL_SSLB2_RAW = 0x8001u;
-
-    /* the telemetry average into 0xFFF908CA (stock 0x91ACA law, r02g
-     * review N1): an invalid sample (0x907CC = 0xFFFF) propagates; after
-     * an invalid average (or the first pass) the window is reseeded with
-     * the sample; otherwise a 4-slot ring, rounded (sum + 2) >> 2. [D] the
-     * stock gates all of it on 0x9095B != 0 and mirrors 0x9095D = 0x907CE —
-     * 0x9095B's producer is not ported. */
-    {
-        static bool s_avg_seeded;
-        uint16_t smp = CELL_TELEMETRY;
-
-        if (smp == 0xFFFFu) {
-            CELL_TELEM_AVG = 0xFFFFu;
-        } else if (!s_avg_seeded || CELL_TELEM_AVG == 0xFFFFu) {
-            for (uint8_t i = 0u; i < 4u; i++) {
-                s_avg_win[i] = smp;
-            }
-            s_avg_sum = 4u * (uint32_t)smp;
-            s_avg_i = 0u;
-            s_avg_seeded = true;
-            CELL_TELEM_AVG = smp;
-        } else {
-            s_avg_sum -= s_avg_win[s_avg_i];
-            s_avg_win[s_avg_i] = smp;
-            s_avg_sum += smp;
-            s_avg_i = (uint8_t)((s_avg_i + 1u) & 3u);
-            CELL_TELEM_AVG = (uint16_t)((s_avg_sum + 2u) >> 2);
-        }
     }
 }

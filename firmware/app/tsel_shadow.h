@@ -30,6 +30,11 @@
  *   The 0x9477A / 0x9477C words and the 0x94823 byte lie in the countdown
  *   service 0x7C7E4's ranges (5 ms, every mode); 0x94730 does not.
  *
+ * STAGE 2a (2026-11-18): under TSEL_LIVE (bsw/drv/drv_tsel.h — the SH
+ * application) the hook hands the results by value to bsw/drv/drv_tsel.c,
+ * which writes 0x9393A / 0x940FC / 0x94170 / 0x940FF / 0x940FE / 0x94101 and
+ * the die / board cells; the fault flags stay stand-ins (stage 2b).
+ *
  * The SHADOW runs all of that into ITS OWN struct (tsel_t, linker section
  * .tsel_shadow at 0xFFF87C40, ours): it writes NOT 0x9393A, NOT 0x940FC,
  * NOT 0x940FF / 0x940FE / 0x94101, NOT the fault flags 0x940E1/E2/E4/E5,
@@ -45,8 +50,8 @@
  *   - 0x72AE0 (profiling hook): nothing;
  *   - the variant 0x90966 indexes two-entry tables; the stock's writer
  *     (0x91ACA) produces 0 / 1 only, the shadow clamps any other value to 1;
- *   - the stock's reply-proc gate 0x9095B on 0x908CA's average (sup_ctrl.c
- *     does not port it): the shadow takes the live average as it is.
+ *   - (the stock's reply-proc gate 0x9095B on 0x908CA's average is ported
+ *     since stage 2a — sup_ctrl.c; the shadow takes the live average.)
  *
  * READ-ONLY, ENFORCED: every output TU defines TCU_OUTPUT_PATH — this header
  * #errors under it; app/tsel_shadow.c defines TCU_TSEL_SHADOW_TU and the
@@ -215,5 +220,9 @@ const volatile tsel_t *tsel_shadow_state(void);
 
 /* app/tsel_hook.c — the gather (it reads the live cells by value) */
 void tsel_hook_init(void);              /* main.c, in the shadow init block */
+
+/* app/tsel_live.c — stage 2a: the shadow's results of this pass handed by
+ * value to bsw/drv/drv_tsel.c (the hook calls it under TSEL_LIVE) */
+void tsel_live_apply(void);
 
 #endif /* TCU_APP_TSEL_SHADOW_H */

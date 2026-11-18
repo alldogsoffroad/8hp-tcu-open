@@ -41,6 +41,7 @@ void fb_shadow_gather_tick(void)
     in.phase = LIVE_U16(0xFFF94FE2u);                           /* 0x94FE2 */
     in.f114 = LIVE_U8(0xFFF94114u);                             /* 0x94114 */
     in.f115 = LIVE_U8(0xFFF94115u);                             /* 0x94115 */
+    in.t_ecu = LIVE_S16(0xFFF9393Au);                           /* 0x9393A (stage 2a) */
     fb_shadow_tick(&in);
 #if DRV_OD_FB_REAL
     {

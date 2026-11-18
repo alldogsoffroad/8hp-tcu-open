@@ -45,7 +45,8 @@ void sup_enable_request(bool on);
 /* the per-pass echo-derived condense (stock 0x90ACC/0x91ACA law): grant
  * cell = 0x22-echo bit 0, handover readiness = 0x14 bit 0, the WDT mode
  * A-law (interval mode ONLY when the echo confirms bit 0), the SSLB2 copy
- * + sentinel re-arm, and the 4-sample telemetry average. */
+ * + sentinel re-arm, and the 4-sample telemetry average — all of it (but
+ * the WDT A-law, ours) gated on 0x9095B != 0 as the stock's 0x91ACA. */
 void sup_reply_condense(void);
 
 /* the 0x93126 summarizer (sup_handlers.c): fold + per-round clear of the

@@ -7,7 +7,11 @@
 (--pa7, 2026-11-18 r04d: the second build also carries the PA7 shadow's
 hooks; its stderr must show the range part, the pin-cut part and the law ran.
 --tsel, 2026-11-18: the second build carries the ECU-temperature shadow's hub
-hook; its stderr must show it ran its valid, not-ready and 0x8001 paths.)
+hook; its stderr must show it ran its valid, not-ready and 0x8001 paths.
+--tsel-live, stage 2a: the second build writes the selection's cells through
+the real output path (TSEL_LIVE); both builds hash the window without those
+cells (TEST_ODIAG_EXCL2A), and the live cells must equal the shadow's results
+after every hub pass.)
 
 Runs both with --full (tests/unit/test_odiag.c: parts 1-4, an exact hash of
 the whole cell window + every bus-A word + the cadence witnesses per output
@@ -52,6 +56,11 @@ def main():
         if not mt or int(mt.group(1)) == 0 or int(mt.group(2)) == 0 or int(mt.group(5)) == 0 \
                 or int(mt.group(6)) == 0 or int(mt.group(7)) < 3:
             print("FAIL: the temperature shadow did not run its paths (%s)" % b.stderr.strip())
+            ok = False
+    if "--tsel-live" in sys.argv[3:]:
+        ml = re.search(r"tsel_live checked (\d+) mism (\d+)", b.stderr)
+        if not ml or int(ml.group(1)) == 0 or int(ml.group(2)) != 0:
+            print("FAIL: the live cells do not carry the selection (%s)" % b.stderr.strip())
             ok = False
     print("feedback shadow identity: %d output ticks, %d lines, %s; %s" %
           (ticks, len(la), "identical" if not bad and len(la) == len(lb) else "DIFFERENT",

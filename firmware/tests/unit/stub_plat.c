@@ -399,6 +399,9 @@ static uint16_t rspi_scripted(uint8_t bus, uint16_t tx, uint8_t i, uint8_t n_sel
     if (bus == 0u && stub.drv_reply_fn != NULL) {
         return stub.drv_reply_fn(tx, (uint8_t)(i % (n_sel != 0u ? n_sel : 1u)));
     }
+    if (bus == 1u && stub.sup_raw_fn != NULL) {
+        return stub.sup_raw_fn(tx);                 /* test_j3seed: whole words */
+    }
     if (bus == 0u) {
         cls = 0xA200u;                              /* driver chips: A2 class */
     } else if (n_sel == 1u && tx == 0x00FFu) {
