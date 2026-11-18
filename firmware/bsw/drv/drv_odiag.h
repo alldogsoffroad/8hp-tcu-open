@@ -99,7 +99,7 @@ const drv_od_fatal_t *drv_od_fatal(void);
 uint32_t drv_od_event_n(uint8_t ch);            /* 0x7CA24(0x9E3, ch) events */
 uint32_t drv_od_rec87120_n(uint8_t ch);         /* 0x87120 calls with a class */
 uint32_t drv_od_diag_sent_n(void);              /* diag jobs queued */
-uint32_t drv_od_diag_drop_n(void);              /* diag timer fired, job not free */
+uint32_t drv_od_diag_drop_n(void);              /* diag timer fired, its own previous job still pending */
 
 #if !defined(__sh__)
 /* host only: the healthy harvested state of the r03v bench (a test
@@ -107,6 +107,8 @@ uint32_t drv_od_diag_drop_n(void);              /* diag timer fired, job not fre
  * from zero like the stock and harvests within ~20 ms of boot) */
 void drv_od_host_seed_healthy(void);
 void drv_od_host_seed_select(bool on);          /* default on */
+/* the pre-r03y feedback stand-in (live law cells) — test_odiag part 4b */
+void drv_od_host_fb_live(bool on);
 #endif
 
 #endif /* TCU_DRV_ODIAG_H */

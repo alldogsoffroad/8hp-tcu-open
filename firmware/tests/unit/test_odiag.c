@@ -1,22 +1,30 @@
 /* THE OUTPUT DIAGNOSIS (2026-11-17, bsw/drv/drv_odiag.c;
  * ~/tcu_sweep/output_diag_port.md).
  *
- * Part 1 — "at the bench's healthy replies the wire and the law are
- * unchanged": the request producer (compile-time inputs) → the request law
- * → the bus-A cyclic / config / ID words are run through a bench timeline
- * (boot, the phase-0x10 and '3' full-on tests, 'U', the park release on and
- * off, a letter drop, a rail dip) at main.c's cadence (1 ms diag poll, 5 ms
- * refresh, 10 ms producer + periodic send), with bus A drained every ms.
- * Per 5 ms tick the program hashes every cyclic / config / ID word put on
- * the wire since the last tick and every law cell, and prints "t hash".
- * The golden file tests/unit/golden/odiag_head_a6ec870.txt was produced by
- * THIS program built against HEAD a6ec870 (-DOD_HEAD: no diagnosis, the
- * r03v firmware). The working tree runs the same timeline WITH the
- * diagnosis, unseeded, harvesting from a model of the bench's four healthy
+ * Part 1 — "at the bench's healthy replies the CONTENT of the wire and the
+ * law is unchanged by the output-cadence port" (2026-11-18,
+ * ~/tcu_sweep/output_cadence_port.md): the request producer (compile-time
+ * inputs) → the request law → the bus-A cyclic / config / ID words are run
+ * through a bench timeline (boot, the phase-0x10 and '3' full-on tests, 'U',
+ * the park release on and off, a letter drop, a rail dip), with bus A
+ * drained every ms, harvesting from a model of the bench's four healthy
  * driver chips (their r03v replies: config readbacks A29A / A221 / A29F /
- * A255, setpoint readbacks, ID BD 12, diag bytes 00, the empty fifth
- * select 0000) — every hash must equal the golden one, and the diagnosis
- * must end with no fault word, no failed DSM report and no would-be reset.
+ * A255, setpoint readbacks, ID BD 12, diag bytes 00, the empty fifth select
+ * 0000). Per 5 ms tick the program prints "t hash" of THE CONTENT:
+ *   - the last complete cyclic, config and ID burst on the wire (the diag
+ *     job is not compared; it is counted), with the setpoint fields of the
+ *     cyclic's E8 / F0 rows masked to their command byte;
+ *   - every law cell, 0x90244 (the composed current, before the 0x9090A
+ *     offset) and the records' non-setpoint fields; the producer's currents.
+ * NOT compared, by design: WHEN a cyclic goes out (every F pass now, on
+ * change + every 10 ms before) and the rounding offset 0x9090A (it steps
+ * once per F pass now, once per send before) — so the setpoint low bits
+ * differ by the phase; the new build checks instead that every staged
+ * setpoint is within the 0x901BC head-check band of 0x90244 (s_rq_f238_n
+ * stays 0). The golden file tests/unit/golden/odiag_content_head_ebf475a.txt
+ * was produced by THIS program built against HEAD ebf475a (-DOD_OLD: the
+ * refresh-on-change + 10 ms periodic). The diagnosis must end with no fault
+ * word, no failed DSM report and no would-be reset.
  *
  *   test_odiag                  print the trace
  *   test_odiag GOLDEN           part 1: compare with GOLDEN, then parts 2–3
@@ -31,9 +39,7 @@
 #include "bsw/drv/drv_rqprod.h"
 #include "bsw/sup/sup_cells.h"
 #include "tests/unit/stub_plat.h"
-#if !defined(OD_HEAD)
 #include "bsw/drv/drv_odiag.h"
-#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -59,7 +65,6 @@ static uint64_t fnv(uint64_t h, uint32_t v)
  * §B.4): four chips on SSLA3..0, the fifth select empty. A read replies in
  * the same frame (the r03v rx rows). 8-bit commands reply A2|data, the
  * 11-bit setpoint commands (E8/F0 write, C0/D8 read) A000|data. ──────── */
-#if !defined(OD_HEAD)
 static uint8_t  m_reg8[5][256];
 static uint16_t m_e8[5], m_f0[5];
 uint8_t  m_diag[5][2];          /* the 0x18 / 0x1E diagnosis bytes (faults) */
@@ -98,7 +103,6 @@ static uint16_t chip_model(uint16_t tx, uint8_t c)
     default: return 0xA200u;
     }
 }
-#endif
 
 /* the 5 ms countdown service 0x7C7E4 (sup_ladder's; local here) */
 static void countdown(void)
@@ -173,9 +177,9 @@ static uint64_t law_hash(uint64_t h)
     h = fnv(h, CELL_RQ_FAULTMASK);
     h = fnv(h, CELL_RQ_FULLMASK);
     h = fnv(h, CELL_RQ_UVFLAGS);
-    h = fnv(h, CELL_RQ_ROUND);
-    for (uint8_t c = 0u; c < 5u; c++) {        /* the composed record fields only */
-        static const uint8_t OFS[] = { 0x07, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x10, 0x14, 0x15, 0x18 };
+    /* NOT CELL_RQ_ROUND (0x9090A: its phase is the cadence) */
+    for (uint8_t c = 0u; c < 5u; c++) {        /* the composed record fields, setpoints excluded */
+        static const uint8_t OFS[] = { 0x07, 0x09, 0x0A, 0x0B, 0x10, 0x18 };
         for (unsigned k = 0u; k < sizeof OFS; k++) {
             h = fnv(h, CELL_REC_U8(c, OFS[k]));
         }
@@ -186,32 +190,62 @@ static uint64_t law_hash(uint64_t h)
     return h;
 }
 
-/* the wire: every cyclic / config / ID word fed since the last call (the
- * diag job — the diagnosis' own addition — is not part of the comparison;
- * it is counted) */
+/* the wire CONTENT: the last complete cyclic / config / ID burst (the diag
+ * job is not part of the comparison; it is counted). The E8 / F0 setpoint
+ * fields carry the 0x9090A rounding phase: masked to the command byte. */
 static unsigned s_diag_words;
+static uint16_t s_last[4][45], s_cur[4][45];
+static unsigned s_cur_n[4];
+static int s_cur_job = -1;
+static const uint8_t k_frames[4] = { 10u, 15u, 40u, 45u };
 static uint64_t wire_hash(uint64_t h)
 {
     for (unsigned k = 0u; k < stub_log_n; k++) {
+        int j;
         if (stub_log[k].bus != 0u) {
             continue;
         }
         if (stub_log[k].job == DRV_DIAG) {
             s_diag_words++;
+        }
+        j = (int)stub_log[k].job - DRV_ID;
+        if (j < 0 || j > 3) {
             continue;
         }
-        h = fnv(h, ((uint32_t)stub_log[k].job << 16) | stub_log[k].word);
+        if (j != s_cur_job) {
+            s_cur_job = j;
+            s_cur_n[j] = 0u;
+        }
+        s_cur[j][s_cur_n[j]++] = stub_log[k].word;
+        if (s_cur_n[j] == k_frames[j]) {
+            memcpy(s_last[j], s_cur[j], sizeof s_cur[j]);
+            s_cur_n[j] = 0u;
+            s_cur_job = -1;
+        }
     }
     stub_log_n = 0u;
+    for (unsigned j = 0u; j < 4u; j++) {
+        if (j == 1u) {
+            continue;                           /* the diag job */
+        }
+        for (unsigned i = 0u; i < k_frames[j]; i++) {
+            uint16_t w = s_last[j][i];
+            if (j == 3u && ((i >= 10u && i < 15u) || (i >= 20u && i < 25u))) {
+                w = (uint16_t)(w & 0xF800u);    /* E8 / F0: the setpoint masked */
+            }
+            h = fnv(h, ((uint32_t)j << 16) | w);
+        }
+    }
     return h;
 }
 
 static void boot(void)
 {
-#if !defined(OD_HEAD)
     stub.drv_reply_fn = chip_model;
     drv_od_host_seed_select(false);     /* harvest from zero, as the target */
-#endif
+    memset(s_last, 0, sizeof s_last);
+    memset(s_cur_n, 0, sizeof s_cur_n);
+    s_cur_job = -1;
     stub.frt_us = 0u;
     stub.ms = 0u;
     drv_jobs_init();                    /* → drv_rq_init → drv_od_init / rq_prod_init */
@@ -228,33 +262,48 @@ static void boot(void)
     stub_log_n = 0u;
 }
 
-/* one millisecond of main.c */
+/* one output tick: the stock's slots (sup_batch.c) — or, -DOD_OLD (the
+ * golden's HEAD ebf475a build), r02w's refresh-on-change */
+static void out_tick(void)
+{
+#if defined(OD_OLD)
+    drv_letter_refresh();               /* after seq2 (sup_batch.c) */
+    drain();
+    drv_id_kick();                      /* the batch 0x8EE82 → 0x921A0 */
+    drain();
+#else
+    drv_out_tick_head();                /* 0x8EE12 + 0x7CBA8 */
+    drv_out_law();                      /* 0x7CC1E */
+    drv_f_stage();                      /* 0x8EE30: compose, cyclic + config queued */
+    drv_id_kick();                      /* 0x8EE82 → 0x921A0 */
+    drain();
+    drv_out_report();                   /* 0x7ABC8 */
+#endif
+}
+
+/* one millisecond of main.c (part 1: the mode-0 cadence, an output tick
+ * every 5 ms; the old build adds its 10 ms periodic) */
 static void step_ms(uint32_t t)
 {
     stub.frt_us += 1000u;
     stub.ms++;
     sup_state(t);
-#if !defined(OD_HEAD)
     drv_od_diag_poll(stub.frt_us);      /* task_1ms */
-#endif
     drain();
     if (t % 5u == 0u) {                 /* the 5 ms supervisor tick */
         countdown();
-        drv_letter_refresh();           /* after seq2 (sup_batch.c) */
-        drain();
-        drv_id_kick();                  /* the batch 0x8EE82 → 0x921A0 */
-        drain();
+        out_tick();
     }
     if (t % 10u == 5u) {                /* the 10 ms task */
         rq_prod_task_10ms(1u);
+#if defined(OD_OLD)
         drv_cyclic_periodic();
         drain();
+#endif
     }
 }
 
-#if !defined(OD_HEAD)
 static uint32_t s_fail_at_u[21];
-#endif
 
 static int part1(FILE *out, FILE *golden)
 {
@@ -263,7 +312,6 @@ static int part1(FILE *out, FILE *golden)
     boot();
     for (uint32_t t = 1u; t <= 2600u; t++) {
         step_ms(t);
-#if !defined(OD_HEAD)
         if (t == 1855u) {
             for (uint8_t g = 1u; g <= 20u; g++) {
                 CHECK(drv_od_group(g)->fail_n == 0u);   /* nothing before the return */
@@ -274,7 +322,6 @@ static int part1(FILE *out, FILE *golden)
                 s_fail_at_u[g] = drv_od_group(g)->fail_n;
             }
         }
-#endif
         if (t % 5u == 0u) {
             const uint64_t h = law_hash(wire_hash(0xCBF29CE484222325ull));
             if (golden != NULL) {
@@ -295,11 +342,29 @@ static int part1(FILE *out, FILE *golden)
     CHECK(stub_log_dropped == 0u);
     if (golden != NULL) {
         CHECK(mismatches == 0u);
-        printf("part 1: %u / %u ticks equal to the r03v trace; diag words on the wire %u\n",
+        printf("part 1: %u / %u ticks of wire and law CONTENT equal to HEAD ebf475a's; diag words on the wire %u\n",
                520u - mismatches, 520u, s_diag_words);
     }
-#if !defined(OD_HEAD)
+#if !defined(OD_OLD)
     if (golden != NULL) {
+        const drv_out_wit_t *ow = drv_out_wit();
+        /* the cadence: one law pass and one compose per F pass, every job
+         * queued was sent, nothing dropped or missed; every staged setpoint
+         * within the head-check band of the composed current */
+        printf("part 1: F passes %u, law passes %u, cyclics %u, configs %u, IDs %u, diags %u; "
+               "dropped %u missed %u, ring high-water %u, f238 %u\n",
+               (unsigned)ow->f_n, (unsigned)ow->law_n, (unsigned)ow->launched[3],
+               (unsigned)ow->launched[2], (unsigned)ow->launched[0], (unsigned)ow->launched[1],
+               (unsigned)(ow->dropped[0] + ow->dropped[1] + ow->dropped[2] + ow->dropped[3]),
+               (unsigned)(ow->missed[0] + ow->missed[1] + ow->missed[2] + ow->missed[3]),
+               ow->ring_hw, (unsigned)drv_rq_f238_n());
+        CHECK(ow->f_n == 520u && ow->law_n == 520u && ow->law_f_bad == 0u && ow->compose_f_bad == 0u);
+        CHECK(ow->launched[3] == 520u && ow->launched[2] == 520u && ow->launched[0] == 520u);
+        CHECK(ow->done[3] == 520u && ow->done[2] == 520u && ow->done[0] == 520u);
+        for (unsigned j = 0u; j < 4u; j++) {
+            CHECK(ow->dropped[j] == 0u && ow->missed[j] == 0u && ow->err[j] == 0u);
+        }
+        CHECK(drv_rq_f238_n() == 0u);
         /* the diagnosis ran, harvested and found nothing */
         CHECK(s_diag_words > 0u && drv_od_diag_sent_n() > 200u);
         for (uint8_t ch = 0u; ch < 10u; ch++) {
@@ -331,12 +396,13 @@ static int part1(FILE *out, FILE *golden)
         CHECK(drv_od_fatal()->n == 0u);
         printf("part 1: fault words 0, one-pass reports only at the 4->U return, no would-be reset; diag jobs %u (dropped %u)\n",
                (unsigned)drv_od_diag_sent_n(), (unsigned)drv_od_diag_drop_n());
+        CHECK(drv_od_diag_drop_n() == 0u);
     }
 #endif
     return 0;
 }
 
-#if !defined(OD_HEAD)
+#if !defined(OD_OLD)
 /* ── part 2: injected chip faults ──────────────────────────────────────── */
 static uint16_t fw(uint8_t ch) { return *(volatile uint16_t *)(uintptr_t)(0xFFF93004u + 2u * ch); }
 
@@ -482,7 +548,9 @@ static void part3(void)
     for (unsigned k = 0u; k < 10u; k++) {
         countdown();
         CELL_RQ_CUR_SENT[3] = 8500u;
-        drv_letter_refresh();
+        drv_out_law();                  /* 0x84644 reads the cell this pass */
+        drv_f_stage();
+        drain();
         CELL_SEQ2_STATE[0] = (uint8_t)'D';
     }
     CHECK(drv_od_fatal()->site_n[6] > n0);
@@ -492,13 +560,16 @@ static void part3(void)
 
 /* ── part 4: the park release cycled in MAIN.C's ORDER (2026-11-18,
  * ~/tcu_sweep/ch7_fault_bit4_decode.md). On the target the park demand
- * changes in task_10ms (phase 1: park_tick → sol_tick → the periodic
- * rebuild, drv_rq_law_between) one ms BEFORE the 5 ms refresh (phase 2:
- * the tick head, then drv_rq_law_diag). part 1 changes the request on a
- * refresh tick, so the diagnostic pass always saw it first. Here the
- * rebuild sees the change first — the r03x bench sequence (D 2 s, P, R 2 s,
- * P) on a healthy chip must leave no fault on ch 7, while a real chip flag
- * 0x10 on the driven ch 7 must still set bit 2 (monitor 2). ── */
+ * changes in task_10ms (phase 1: park_tick) one ms BEFORE the batch
+ * (phase 2). r03x's 10 ms rebuild (drv_rq_law_between, inside sol_tick)
+ * saw the change first and ran the law without 0x897AC — the ch 7 bit-2
+ * artefact. Since the output-cadence port there is no rebuild: in OS mode 1
+ * the ONE law pass of the tick is the batch's 10 ms part (phase 2 of every
+ * second 5 ms pass); the 5 ms part between carries no law and no bus A. The
+ * r03x bench sequence (D 2 s, P, R 2 s, P) on a healthy chip must leave no
+ * fault on ch 7 — with the r03y snapshot stand-in AND (part 4b) with the
+ * pre-r03y live-cell stand-in — while a real chip flag 0x10 on the driven
+ * ch 7 must still set bit 2 (monitor 2). ── */
 static void step_ms_main(uint32_t t, uint32_t t_sup, bool trace)
 {
     stub.frt_us += 1000u;
@@ -509,15 +580,12 @@ static void step_ms_main(uint32_t t, uint32_t t_sup, bool trace)
     if (t % 10u == 1u) {                /* task_10ms, phase 1 */
         drv_rq_request_set(7u, s_p4_req7);      /* park_tick: the release demand */
         rq_prod_task_10ms(1u);
-        drv_cyclic_periodic();          /* sol_tick → the 10 ms rebuild */
-        drain();
+        /* (sol_tick: no bus A since the output-cadence port) */
     }
-    if (t % 5u == 2u) {                 /* task_sup_batch, phase 2 */
+    if (t % 10u == 2u) {                /* task_sup_batch, phase 2, the 10 ms part (mode 1) */
         countdown();
-        drv_letter_refresh();
-        drain();
-        drv_id_kick();
-        drain();
+        countdown();                    /* the 5 ms countdown ran on both 5 ms passes */
+        out_tick();
         if (trace) {
             printf("    t=%4u req7 %5u | law mode %u I %5u | 93B0C %02X 93A2E %02X | 94930 %04X 93004 %04X 94944 %04X\n",
                    t, (unsigned)s_p4_req7, CELL_RQ_MODE[7], CELL_RQ_I[7],
@@ -551,26 +619,33 @@ static void part4_run(uint32_t t_end, const uint32_t *edges, const uint16_t *val
 
 static void part4(void)
 {
-    /* the r03x bench sequence: D (release) 2 s, P, R 2 s, P */
+    /* the r03x bench sequence: D (release) 2 s, P, R 2 s, P — first with the
+     * r03y snapshot stand-in, then (4b) with the pre-r03y LIVE-cell stand-in */
     static const uint32_t EDGES[] = { 1001u, 3001u, 3501u, 5501u };
     static const uint16_t VALS[]  = { 10000u, 0u, 10000u, 0u };
-    reset_model();
-    s_p4 = true;
-    s_p4_req7 = 0u;
-    boot();
-    printf("part 4: ch 7 per diagnostic pass around each request edge (main.c order)\n");
-    part4_run(6000u, EDGES, VALS, 4u, true);
-    printf("part 4: healthy chip after two release cycles: 0x93004[7] %04X 0x94930[7] %04X mode %u, events %u, g15 fail %u g16 fail %u\n",
-           fw(7), *(volatile uint16_t *)(uintptr_t)(0xFFF94930u + 14u), CELL_RQ_MODE[7],
-           (unsigned)drv_od_event_n(7u), (unsigned)drv_od_group(15)->fail_n,
-           (unsigned)drv_od_group(16)->fail_n);
-    CHECK(fw(7) == 0u);
-    CHECK(*(volatile uint16_t *)(uintptr_t)(0xFFF94930u + 14u) == 0u);
-    CHECK(CELL_RQ_MODE[7] == 1u);
-    CHECK(drv_od_group(15)->fail_n == 0u && drv_od_group(16)->fail_n == 0u);
-    for (uint8_t ch = 0u; ch < 10u; ch++) {
-        CHECK(fw(ch) == 0u);
+    for (unsigned live = 0u; live < 2u; live++) {
+        reset_model();
+        s_p4 = true;
+        s_p4_req7 = 0u;
+        drv_od_host_fb_live(live != 0u);
+        boot();
+        printf("part 4%s: ch 7 per diagnostic pass around each request edge (main.c order, mode-1 cadence)\n",
+               live ? "b (live-cell stand-in)" : "");
+        part4_run(6000u, EDGES, VALS, 4u, live == 0u);
+        printf("part 4%s: healthy chip after two release cycles: 0x93004[7] %04X 0x94930[7] %04X mode %u, events %u, g15 fail %u g16 fail %u\n",
+               live ? "b" : "", fw(7), *(volatile uint16_t *)(uintptr_t)(0xFFF94930u + 14u), CELL_RQ_MODE[7],
+               (unsigned)drv_od_event_n(7u), (unsigned)drv_od_group(15)->fail_n,
+               (unsigned)drv_od_group(16)->fail_n);
+        CHECK(fw(7) == 0u);
+        CHECK(*(volatile uint16_t *)(uintptr_t)(0xFFF94930u + 14u) == 0u);
+        CHECK(CELL_RQ_MODE[7] == 1u);
+        CHECK(drv_od_group(15)->fail_n == 0u && drv_od_group(16)->fail_n == 0u);
+        for (uint8_t ch = 0u; ch < 10u; ch++) {
+            CHECK(fw(ch) == 0u);
+        }
+        CHECK(drv_out_wit()->law_f_bad == 0u);
     }
+    drv_od_host_fb_live(false);
 
     /* the same with a REAL fault: the chip flags 0x10 on ch 7 (chip 3, odd
      * → the 0x1E row) while the release is driven → bit 2, groups 15 / 16 */
@@ -610,7 +685,7 @@ int main(int argc, char **argv)
         }
     }
     part1(stdout, golden);
-#if !defined(OD_HEAD)
+#if !defined(OD_OLD)
     if (golden != NULL) {
         part2();
         part3();

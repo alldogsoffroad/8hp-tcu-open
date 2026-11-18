@@ -40,7 +40,7 @@ static uint16_t sup_garbage(uint16_t tx)
 static void drain_rspi(void)
 {
     for (uint8_t b = 0u; b < 2u; b++) {
-        unsigned guard = 100u;
+        unsigned guard = 400u;
         while (stub_rspi_busy(b) && guard-- != 0u) {
             stub_rspi_isr(b);
         }
@@ -258,7 +258,7 @@ int main(void)
     run_10ms(2u);
 
     /* the driver engine stuck busy (a job armed, never drained) refuses a start */
-    sol_tick_10ms();                        /* queue the cyclic and leave it armed */
+    drv_f_stage();                          /* queue the cyclic + config and leave them on bus A (2026-11-18: the F stage sends) */
     CHECK(!start(1u, 300u, 5u) && last_nrc() == 0x22u);     /* DRV_CYC in flight */
     drain_rspi();
     run_10ms(1u);

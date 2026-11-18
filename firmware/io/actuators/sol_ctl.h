@@ -17,8 +17,8 @@ typedef struct {
 
 void sol_init(void);
 void sol_set(uint8_t ch, uint8_t mode, uint16_t setpoint);
-void sol_tick_10ms(void);           /* builds the cyclic, queues DRV_CYC */
-void sol_engage_config(uint8_t level); /* level-change config sync */
+void sol_tick_10ms(void);           /* channel bookkeeping only (the F stage sends) */
+void sol_engage_config(uint8_t level); /* no-op: the F stage sends the config every pass */
 
 const sol_chan_t *sol_channel(uint8_t ch);
 

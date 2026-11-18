@@ -57,6 +57,10 @@ typedef struct {
     unsigned an_converts;       /* plat_adcmux_an_convert() calls */
     /* ---- the output diagnosis (drv_odiag.c, 2026-11-17) ---- */
     uint16_t (*drv_reply_fn)(uint16_t tx, uint8_t chip);   /* bus-A chip model (NULL: A2|scripted) */
+    /* ---- the bus-A ring (drv_jobs.c, 2026-11-18) ---- */
+    unsigned rspi_launch_busy[2];   /* plat_rspi_launch on a busy channel (refused) */
+    unsigned rspi_tx_torn[2];       /* a fed word differed from the staging at launch */
+    bool reap_enable;               /* plat_rspi_reap error-completes old bursts */
 } stub_plat_t;
 
 extern stub_plat_t stub;

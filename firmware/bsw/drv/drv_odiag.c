@@ -561,7 +561,10 @@ void drv_od_rx_cyc(const uint16_t *tx, const uint16_t *rx, bool ok)
 /* the 0x92078 ISR's job (0x9225C: check-free, stage 0x40CEE, queue; no
  * retry — the next cyclic re-arms). DEVIATION (ours): the stock's Timer D
  * one-shot DCNTD02 is not ported; the 1 ms task polls the delay, so the
- * diag job starts 3.8–4.8 ms after the cyclic, not 3.8 ms. */
+ * diag job is QUEUED 3.8–4.8 ms after the cyclic, not 3.8 ms. 2026-11-18:
+ * it waits in the bus-A ring behind any job on the wire (never dropped for
+ * a busy channel); "drop" now counts only a diag whose own previous
+ * instance was still pending (the 0x93B8E busy branch). */
 void drv_od_diag_poll(uint32_t now_us)
 {
     if (s_diag_armed == 0u || (uint32_t)(now_us - s_cyc_t_us) < DRV_OD_DIAG_DELAY_US) {
@@ -666,9 +669,9 @@ static void od_904fa_status(void)
  * 2026-11-18 (ch7_fault_bit4_decode.md): NOT from the live law cells. In the
  * stock 0x838B0 (5 ms / 10 ms list, right before 0x83DB0: 0x7CBA8 → 0x7CC1E)
  * measures the physical output, which the previous law pass commanded — the
- * same pass whose 0x897AC set the state 0x93B0C that 0x89F5C reads. Our 10 ms
- * rebuild (drv_rq_law_between, task_10ms) runs the law WITHOUT 0x897AC one
- * ms before the tick; reading its mode here paired a switched-off feedback
+ * same pass whose 0x897AC set the state 0x93B0C that 0x89F5C reads. r03x's 10 ms
+ * rebuild (drv_rq_law_between, task_10ms; removed 2026-11-18) ran the law
+ * WITHOUT 0x897AC one ms before the tick; reading its mode here paired a switched-off feedback
  * ('!') with a still-driven state (0x30) → 0x89F5C bit 2 (P1D79 on the park
  * release), latched for good once the state left the driven range (r03x).
  * The snapshot keeps the stock's pairing: state and feedback from one pass —
@@ -678,12 +681,26 @@ static void od_904fa_status(void)
  *   0x9340C = 0x93420 = I·R / V in ‰ (≤ 1000) while driven, else 0;
  *   0x93394 = the commanded current 0x94ED4 (0x8390C's estimate);
  *   0x933A8 = the dump's coil resistances. */
+#if !defined(__sh__)
+/* host only (test_odiag part 4b): the PRE-r03y stand-in, reading the LIVE
+ * law cells instead of the end-of-pass snapshot — with one law pass per
+ * output tick (2026-11-18) the two must agree, which proves the r03x ch 7
+ * artefact's root cause (the 10 ms rebuild) gone, not masked */
+static bool s_fb_live;
+void drv_od_host_fb_live(bool on) { s_fb_live = on; }
+#define FB_MODE(ch) (s_fb_live ? CELL_RQ_MODE[ch] : s_fb_mode[ch])
+#define FB_I(ch)    (s_fb_live ? CELL_RQ_I[ch] : s_fb_i[ch])
+#else
+#define FB_MODE(ch) s_fb_mode[ch]
+#define FB_I(ch)    s_fb_i[ch]
+#endif
+
 static void od_838b0_standin(void)
 {
     const uint16_t v = CELL_OUT_MV[0];
     for (uint8_t ch = 0u; ch < 10u; ch++) {
-        const uint8_t m = s_fb_mode[ch];        /* the last diagnostic pass's 0x94FD8 */
-        const uint16_t i = s_fb_i[ch];          /* ... and 0x94ED4 */
+        const uint8_t m = FB_MODE(ch);          /* the last diagnostic pass's 0x94FD8 */
+        const uint16_t i = FB_I(ch);            /* ... and 0x94ED4 */
         const bool on = (m == 3u || m == 4u) && i != 0u;
         uint32_t d = 0u;
         C_RES[ch] = SI_RES[ch];

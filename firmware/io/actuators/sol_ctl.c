@@ -31,11 +31,10 @@ const sol_chan_t *sol_channel(uint8_t ch)
 
 void sol_engage_config(uint8_t level)
 {
-    /* level-change config sync: queue the DRV_CFG job with the stock's
-     * live rows (8E←9F, 90←21, 96←55, 88←mode) */
-    if (drv_job_check_free(DRV_CFG)) {
-        drv_job_queue(DRV_CFG);
-    }
+    /* 2026-11-18: no direct queue — the stock's F stage 0x901A0 stages and
+     * queues the config job (0x92344) on EVERY pass (drv_jobs.c
+     * drv_f_stage), so a second config writer outside it is gone */
+    (void)level;
 }
 
 void sol_tick_10ms(void)
@@ -45,7 +44,8 @@ void sol_tick_10ms(void)
         s_cyclic_sp[ch] = s_chan[ch].mode == SOL_MODE_CURRENT
                           ? s_chan[ch].setpoint : 0u;
     }
-    /* r02w: the cyclic content comes only from the zero-request letter law
-     * (drv_jobs.c); s_cyclic_sp is not sent */
-    drv_cyclic_periodic();
+    /* r02w: the cyclic content comes only from the request law (drv_jobs.c);
+     * s_cyclic_sp is not sent. 2026-11-18: the 10 ms periodic cyclic is
+     * gone — the stock's F stage sends it once per output tick
+     * (sup_batch.c → drv_f_stage; ~/tcu_sweep/output_cadence_port.md) */
 }

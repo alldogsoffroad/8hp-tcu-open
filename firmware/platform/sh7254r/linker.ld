@@ -196,6 +196,13 @@ SECTIONS
         __od_wit_start = .; *(.od_wit) . = ALIGN(4); __od_wit_end = .;
     } > RAM
     ASSERT(__od_wit_start >= 0xFFF87880 && __od_wit_end <= 0xFFF87E00, ".od_wit overflow")
+    /* the bus-A ring and the output-cadence witnesses (ours, 2026-11-18,
+     * drv_jobs.c; ~/tcu_sweep/output_cadence_port.md): free low RAM
+     * 0xFFF87E00..0xFFF88000, below .adc_dma_a 0xFFF88130 */
+    .out_wit 0xFFF87E00 (NOLOAD) : {
+        __out_wit_start = .; *(.out_wit) . = ALIGN(4); __out_wit_end = .;
+    } > RAM
+    ASSERT(__out_wit_start >= __od_wit_end && __out_wit_end <= 0xFFF88000, ".out_wit overflow")
     /* M4 group A (drv_groupa.c / drv_temp.c; ~/tcu_sweep/groupA_park_port.md):
      * the stock cells outside .sup_value / .sup_cells / .sup_cnt / .sup_l1f,
      * cleared by drv_ga_init / drv_temp_init — 0x93A66 the switch-output law's

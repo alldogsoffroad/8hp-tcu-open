@@ -201,7 +201,8 @@ static void task_1ms(void)
     fca_tx_tick_1ms();
     flash_entry_tick_1ms();             /* FE30 handover countdown (spec 16) */
     /* the bus-A diag job 3.8 ms after each cyclic (stock: the DCNTD02
-     * one-shot 0x92060 → ISR 0x92078 → 0x9225C; ours polled: drv_odiag.c) */
+     * one-shot 0x92060 → ISR 0x92078 → 0x9225C; ours polled: drv_odiag.c),
+     * queued in the bus-A ring (never dropped for a busy channel) */
     drv_od_diag_poll(plat_frt_us());
     plat_wdt_kick();
 }
@@ -286,7 +287,7 @@ static void task_10ms(void)
     }
 #endif
     bench_tick_10ms();
-    sol_tick_10ms();        /* builds the 45-frame cyclic, queues DRV_CYC */
+    sol_tick_10ms();        /* channel bookkeeping; bus A is the F stage's (sup_batch.c) */
     meas_table_update();
     meas_tick_10ms();
     park_pair_tick_10ms();  /* park position sensor: the gather + the pair

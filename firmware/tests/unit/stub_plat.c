@@ -373,6 +373,8 @@ typedef struct {
     uint16_t *tx;
     uint16_t *rx;
     rspi_done_fn done;
+    uint16_t snap[64];      /* the staging as it was at launch (torn-staging check) */
+    uint32_t launch_us;     /* the reaper's age */
 } stub_rspi_t;
 
 /* the scripted reply payload (low byte) per transmitted word */
@@ -383,6 +385,7 @@ static uint16_t rspi_scripted_value(uint16_t tx)
 
 static stub_rspi_t s_rs[2];
 static uint32_t s_rs_isr[2];
+static bool s_rs_handoff[2];
 
 void plat_rspi_init(void)
 {
@@ -415,9 +418,16 @@ bool plat_rspi_launch(uint8_t bus, uint8_t job_id, uint16_t *tx, uint16_t *rx,
     stub_rspi_t *c = &s_rs[bus];
 
     (void)sel_cfg;
+    if (c->armed || c->feeding) {
+        stub.rspi_launch_busy[bus]++;
+    }
     if (stub.rspi_launch_fail || c->armed || c->feeding || frames == 0u) {
         return false;
     }
+    for (uint8_t i = 0u; i < frames && i < 64u; i++) {
+        c->snap[i] = tx[i];
+    }
+    c->launch_us = stub.frt_us;
     c->tx = tx;
     c->rx = rx;
     c->frames = frames;
@@ -447,19 +457,31 @@ bool plat_rspi_busy(uint8_t bus)
 
 /* the target's '@' window, modelled: set across the done handler. The
  * launch gate (plat_rspi_busy) must NOT include it — B1: test_rebuild's
- * chaining check fails if it does (negative-tested 2026-11-12). */
-static bool s_rs_handoff[2];
+ * chaining check fails if it does (negative-tested 2026-11-12).
+ * (s_rs_handoff is defined with s_rs_isr) */
 
 bool plat_rspi_owned(uint8_t bus)
 {
     return plat_rspi_busy(bus) || s_rs_handoff[bus];
 }
 
+/* the target's S3 reaper (plat_rspi.c), modelled only when a test enables
+ * it: a burst older than max_us completes with frames = 0, no retry */
 bool plat_rspi_reap(uint8_t bus, uint32_t max_us)
 {
-    (void)bus;
-    (void)max_us;
-    return false;
+    stub_rspi_t *c = &s_rs[bus];
+    if (!stub.reap_enable || bus >= 2u || (!c->armed && !c->feeding) ||
+        (uint32_t)(stub.frt_us - c->launch_us) < max_us) {
+        return false;
+    }
+    c->armed = false;
+    c->feeding = false;
+    s_rs_handoff[bus] = true;
+    if (c->done != NULL) {
+        c->done(bus, c->job_id, c->rx, 0u);
+    }
+    s_rs_handoff[bus] = false;
+    return true;
 }
 
 uint32_t plat_rspi_err_count(uint8_t bus)
@@ -493,6 +515,9 @@ void stub_rspi_isr(uint8_t bus)
         stub_log[stub_log_n].bus = bus;
         stub_log[stub_log_n].job = c->job_id;
         stub_log[stub_log_n].word = c->tx[c->idx - 1u];
+        if (c->idx - 1u < 64u && c->tx[c->idx - 1u] != c->snap[c->idx - 1u]) {
+            stub.rspi_tx_torn[bus]++;           /* the staging changed in flight */
+        }
         stub_log[stub_log_n].t_us = stub.frt_us;
         stub_log_n++;
     } else {

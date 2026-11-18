@@ -32,7 +32,6 @@
 #include <stdio.h>
 #include <string.h>
 
-extern volatile uint32_t s_drv_refresh_n;   /* drv_jobs.c witness */
 
 static int fails;
 #define CHECK(c) do { if (!(c)) { printf("FAIL %s:%d %s\n", __FILE__, __LINE__, #c); fails++; } } while (0)
@@ -408,28 +407,37 @@ int main(void)
         CHECK(cy[4] == 0x8815u && cy[14] == 0xE800u && cy[24] == 0xF000u);
     }
 
-    /* ── 6. the same-tick refresh: a change is sent at once ──────────── */
+    /* ── 6. THE OUTPUT TICK (2026-11-18): one law pass and one F stage per
+     *    tick, the cyclic and config staged and queued EVERY pass — no
+     *    change detection; a change goes out on the tick's own pass ───── */
     reset();
     drain();
     CELL_SEQ2_STATE[0] = 0x11u;
-    drv_letter_refresh();                   /* boot: snapshot empty → send */
-    drain();
     {
-        const uint32_t n0 = s_drv_refresh_n;
-        drv_letter_refresh();               /* nothing changed */
+        const drv_out_wit_t *w = drv_out_wit();
+        const uint32_t c0 = w->launched[3], g0 = w->launched[2], f0 = w->f_n;
+        drv_out_law();
+        drv_f_stage();
         drain();
-        CHECK(s_drv_refresh_n == n0);
-        CELL_SEQ2_STATE[0] = (uint8_t)'U';  /* letters 0 → sent this tick */
-        drv_letter_refresh();
+        CHECK(w->launched[3] == c0 + 1u && w->launched[2] == g0 + 1u && w->f_n == f0 + 1u);
+        drv_out_law();                      /* nothing changed: sent anyway */
+        drv_f_stage();
         drain();
-        CHECK(s_drv_refresh_n == n0 + 1u);
+        CHECK(w->launched[3] == c0 + 2u && w->launched[2] == g0 + 2u);
+        CELL_SEQ2_STATE[0] = (uint8_t)'U';  /* letters 0 → on the wire this tick */
+        drv_out_law();
+        drv_f_stage();
+        drain();
+        CHECK(w->launched[3] == c0 + 3u);
         CHECK(zero_content(POST, 0u));
-        drv_rq_request_set(4u, 8500u);      /* a current change → sent this tick */
-        drv_letter_refresh();
+        drv_rq_request_set(4u, 8500u);      /* a current change → this tick */
+        drv_out_law();
+        drv_f_stage();
         drain();
-        CHECK(s_drv_refresh_n == n0 + 2u);
         CHECK(drv_job_tx(DRV_CYC)[2] == 0x8812u &&
               drv_job_tx(DRV_CYC)[12] == (uint16_t)(0xE800u | (uint16_t)((8500u + CELL_RQ_ROUND) / 6u)));
+        CHECK(w->law_f_bad == 0u && w->compose_f_bad == 0u && w->missed[3] == 0u &&
+              w->dropped[3] == 0u && w->dropped[2] == 0u);
     }
 
     /* ── r03d: THE D1 PILOT as the target builds it — only ch 3 (E) at 500

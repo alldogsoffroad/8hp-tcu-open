@@ -557,8 +557,14 @@ else()
         bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
         tests/unit/stub_plat.c)
     target_compile_definitions(test_odiag PRIVATE DRV_RQ_USE_PRODUCER=1)
-    add_test(NAME odiag_vs_r03v
-        COMMAND test_odiag ${CMAKE_SOURCE_DIR}/tests/unit/golden/odiag_head_a6ec870.txt)
+    # 2026-11-18 (output_cadence_port.md): re-baselined with a CONTENT-only
+    # comparator — the last cyclic / config / ID on the wire (setpoint fields
+    # masked: the 0x9090A phase) and the law cells per 5 ms tick, against the
+    # same program built at HEAD ebf475a with -DOD_OLD (refresh + periodic).
+    # The old per-tick wire hash (odiag_head_a6ec870.txt) pinned the old
+    # cadence itself and can no longer match by construction.
+    add_test(NAME odiag_content_vs_ebf475a
+        COMMAND test_odiag ${CMAKE_SOURCE_DIR}/tests/unit/golden/odiag_content_head_ebf475a.txt)
     add_test(NAME rng_wire_vs_r03s
         COMMAND test_rng_wire ${CMAKE_SOURCE_DIR}/tests/unit/golden/rng_wire_r03s.txt)
     # ... and the WHOLE trace (park demands included) byte for byte against
@@ -748,6 +754,30 @@ else()
     target_compile_definitions(test_fullon PRIVATE SUP_L1_HOLD_PHASE8_REQUEST=0
         SUP_L1_HOLD_PHASE40=0 SUP_L1_HOLD_FAIL_FSM=0 SUP_L3_HOLD_SEQ_L=0)
     add_test(NAME fullon COMMAND test_fullon)
+    # THE BUS-A OUTPUT CADENCE (2026-11-18, ~/tcu_sweep/output_cadence_port.md):
+    # one law pass + one F stage per output tick (5 ms mode 0, 10 ms mode 1),
+    # cyclic -> config -> ID per F pass through the ring, nothing lost, the
+    # diag job queued in its window, 0x9090A per pass, producer before the
+    # law, no launch on a busy channel / no staging torn in flight; the
+    # reaper on a stalled cyclic. Four negative builds must FAIL.
+    set(BUSA_SOURCES tests/unit/transcript_busa.c
+        bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
+        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
+        app/rq_prod.c app/rq_fill.c app/rq_fill_cal.c
+        tests/unit/stub_plat.c)
+    set(BUSA_DEFS SUP_L1_HOLD_PHASE8_REQUEST=0 SUP_L1_HOLD_PHASE40=0 SUP_L1_HOLD_FAIL_FSM=0
+        SUP_L3_HOLD_SEQ_L=0 DRV_RQ_USE_PRODUCER=1)
+    add_executable(transcript_busa ${BUSA_SOURCES})
+    target_compile_definitions(transcript_busa PRIVATE ${BUSA_DEFS})
+    add_test(NAME transcript_busa COMMAND transcript_busa)
+    foreach(neg NEG_PERIODIC DRV_RING_DISABLE NEG_LAW5 NEG_NOFREE)
+        string(TOLOWER ${neg} negl)
+        add_executable(transcript_busa_${negl} ${BUSA_SOURCES})
+        target_compile_definitions(transcript_busa_${negl} PRIVATE ${BUSA_DEFS} ${neg}=1)
+        add_test(NAME transcript_busa_${negl} COMMAND transcript_busa_${negl})
+        set_tests_properties(transcript_busa_${negl} PROPERTIES WILL_FAIL TRUE)
+    endforeach()
     # project flasher on the simulated flash controller (spec 16 section 7)
     set(FL_HOST_SOURCES flasher/fl_core.c flasher/fl_fcu.c tests/unit/fl_sim.c)
     add_executable(test_flasher tests/unit/test_flasher.c ${FL_HOST_SOURCES} app/flash_entry.c

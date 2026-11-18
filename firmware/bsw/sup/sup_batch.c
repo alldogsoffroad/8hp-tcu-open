@@ -27,9 +27,22 @@
 #include "bsw/sup/sup_mode.h"
 #include "platform.h"
 
-/* r02w: bus A's same-tick refresh (drv_jobs.c); weak so the supervisor
- * tests link without the bus-A driver */
-extern void drv_letter_refresh(void) __attribute__((weak));
+/* THE OUTPUT TICK (2026-11-18, drv_jobs.c; ~/tcu_sweep/output_cadence_
+ * decode.md §1, output_cadence_port.md): one law pass and one F stage per
+ * output tick, at the stock's list slots [O lists 0x44CCC/0x44CF4 mode 0
+ * 5 ms, 0x44E34/0x44E50 mode 1 10 ms]:
+ *   0x8EE12 + 0x7CBA8  drv_out_tick_head  (harvest, feedback)
+ *   0x7CC1E            drv_out_law        (0x83DB0 — nothing sent)
+ *   0x8EE30            drv_f_stage        (0x901A0: compose; cyclic + config
+ *                                          staged and queued EVERY pass)
+ *   0x8EE82            drv_id_kick        (batch: the ID job, queued)
+ *   0x7ABC8            drv_out_report     (DSM groups 1–20)
+ * replacing r02w's refresh-on-change + the 10 ms periodic. Weak, so the
+ * supervisor tests link without the bus-A driver. */
+extern void drv_out_tick_head(void) __attribute__((weak));
+extern void drv_out_law(void) __attribute__((weak));
+extern void drv_f_stage(void) __attribute__((weak));
+extern void drv_out_report(void) __attribute__((weak));
 /* M4 group A (drv_groupa.c / drv_temp.c; ~/tcu_sweep/groupA_park_port.md):
  * the stock's list entries, weak so the supervisor tests link without them —
  *   0x8F70C   the AN table, first call of the reply proc 0x8EE52
@@ -309,25 +322,37 @@ void sup_batch_5ms(void)
         }
         sup_mode_request();             /* 14: 0x6F0B4 */
         if (drv_ga_slots_tick) {
-            drv_ga_slots_tick();        /* 17: 0x7AB9C → 0x7B6D8 (M4) */
+            drv_ga_slots_tick();        /* 0x44CFC: 0x7AB9C → 0x7B6D8 (M4) */
+        }
+        if (drv_out_tick_head) {
+            /* 0x44D00 0x8EE12 (harvest) — and 0x44D0C 0x7CBA8 (the
+             * feedback stand-in), which the stock runs after the ladder
+             * 0x7CC76; no cell is shared across that interleave [I] */
+            drv_out_tick_head();
         }
         /* L1: entries 20..24 BEFORE the J2 stage 0x8EDF6, so a request
          * reaches the J2 word the same tick (letters_law_decode.md §2.4) */
-        sup_ladder_tick_seq(true);      /* 20: 0x7CC76 → 0x8570E */
-        sup_ladder_tick_seq2();         /* 22: 0x7CC56 */
-        if (drv_letter_refresh) {
-            drv_letter_refresh();       /* r02w: bus A follows seq2 this tick */
+        sup_ladder_tick_seq(true);      /* 0x44D08: 0x7CC76 → 0x8570E */
+        sup_ladder_tick_seq2();         /* 0x44D10: 0x7CC56 */
+        if (drv_out_law) {
+            drv_out_law();              /* 0x44D14: 0x7CC1E → 0x83DB0 */
         }
-        sup_ladder_tick_cut();          /* 24: 0x7CC32 */
+        sup_ladder_tick_cut();          /* 0x44D18: 0x7CC32 */
         if (drv_ga_law_tick) {
-            drv_ga_law_tick();          /* 24: 0x7CC32 → 0x849D4 (M4) */
+            drv_ga_law_tick();          /* 0x44D18: 0x7CC32 → 0x849D4 (M4) */
         }
-        sup_j2_stage();                 /* 25: 0x8EDF6 → 0x91804 */
+        sup_j2_stage();                 /* 0x44D1C: 0x8EDF6 → 0x91804 */
+        if (drv_f_stage) {
+            drv_f_stage();              /* 0x44D20: 0x8EE30 → 0x901A0 (cyclic, config) */
+        }
         if (drv_ga_fstage) {
-            drv_ga_fstage();            /* 26: 0x8EE30 → 0x91500 (M4) */
+            drv_ga_fstage();            /* 0x44D20: 0x8EE30 → 0x91500 (M4) */
         }
-        sup_f_stage();                  /* 26: 0x8EE30 → 0x91810 */
-        batch_8ee82();                  /* 27: 0x8EE82 */
+        sup_f_stage();                  /* 0x44D20: 0x8EE30 → 0x91810 */
+        batch_8ee82();                  /* 0x44D24: 0x8EE82 (… the bus-A ID job) */
+        if (drv_out_report) {
+            drv_out_report();           /* 0x44D28: 0x7ABC8 → 0x7B9B8 */
+        }
         /* pump the engine: launch whatever's queued and the bus is free
          * (the stock's 0x937F8 dispatches at each queue, 0x93902) */
         sup_job_engine_pump();
@@ -338,9 +363,7 @@ void sup_batch_5ms(void)
         sup_mode_request();             /* 6: 0x6F0B4 */
         sup_ladder_tick_seq(false);     /* 9: 0x7CC66 → 0x85160 */
         sup_ladder_tick_seq2();         /* 10: 0x7CC56 */
-        if (drv_letter_refresh) {
-            drv_letter_refresh();       /* r02w */
-        }
+        /* no law, no harvest, no F stage, no bus A here (0x44EC0) */
         sup_j2_stage();                 /* 11: 0x8EDF6 → 0x91804 */
         sup_job_engine_pump();          /* J2 goes out ahead of the 10 ms jobs */
         sup_mode_apply();               /* 0x67A34: mode != 0 → 0x66E06 */
@@ -369,18 +392,34 @@ void sup_batch_5ms(void)
             if (drv_temp_pub_tick) {
                 drv_temp_pub_tick();    /* 6: 0x7AB48 → 0x7C100 (temperature bytes) */
             }
+            /* group 3 0x44E50: 0x7AB9C, 0x8EE12, (0x8EE80), 0x7CBA8,
+             * 0x7CC1E, 0x7CC32, 0x8EE30, 0x8EE82, 0x7ABC8 — the model
+             * group (the M5 producer 0xA30E2) ran before it: main.c's
+             * task_10ms, 1 ms earlier (transcript_busa pins the order) */
             if (drv_ga_slots_tick) {
-                drv_ga_slots_tick();    /* 70: 0x7AB9C → 0x7B6D8 (M4) */
+                drv_ga_slots_tick();    /* 0x44E50: 0x7AB9C → 0x7B6D8 (M4) */
             }
-            sup_ladder_tick_cut();      /* 75: 0x7CC32 */
+            if (drv_out_tick_head) {
+                drv_out_tick_head();    /* 0x44E54 0x8EE12 + 0x44E5C 0x7CBA8 */
+            }
+            if (drv_out_law) {
+                drv_out_law();          /* 0x44E60: 0x7CC1E → 0x83DB0 */
+            }
+            sup_ladder_tick_cut();      /* 0x44E64: 0x7CC32 */
             if (drv_ga_law_tick) {
-                drv_ga_law_tick();      /* 75: 0x7CC32 → 0x849D4 (M4) */
+                drv_ga_law_tick();      /* 0x44E64: 0x7CC32 → 0x849D4 (M4) */
+            }
+            if (drv_f_stage) {
+                drv_f_stage();          /* 0x44E68: 0x8EE30 → 0x901A0 (cyclic, config) */
             }
             if (drv_ga_fstage) {
-                drv_ga_fstage();        /* 76: 0x8EE30 → 0x91500 (M4) */
+                drv_ga_fstage();        /* 0x44E68: 0x8EE30 → 0x91500 (M4) */
             }
-            sup_f_stage();              /* 76: 0x8EE30 → 0x91810 */
-            batch_8ee82();              /* 77: 0x8EE82 */
+            sup_f_stage();              /* 0x44E68: 0x8EE30 → 0x91810 */
+            batch_8ee82();              /* 0x44E6C: 0x8EE82 (… the bus-A ID job) */
+            if (drv_out_report) {
+                drv_out_report();       /* 0x44E70: 0x7ABC8 → 0x7B9B8 */
+            }
             sup_job_engine_pump();
             /* 0x67A42: no apply in modes >= 1 */
         }

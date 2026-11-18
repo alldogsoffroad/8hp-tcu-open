@@ -4,13 +4,14 @@
  * The real supervisor (test_ladder.c's chip and switched-output plant, L3b:
  * every hold released — the r03w target configuration) runs together with
  * the real bus-A chain (drv_jobs / drv_reqlaw / drv_odiag) in main.c's
- * schedule: the 2.5 ms monitor (0 / 3 ms), the 5 ms batch at ms 2 (ladder →
- * seq2 → drv_letter_refresh → J2 stage), the 10 ms task (the periodic
- * cyclic) at ms 1 of every second frame — both parities, because which
- * frames the 10 ms task falls between is fixed per boot by the ladder start —
- * and the 1 ms diag poll. Bus A is NOT drained at once: one frame per 12 µs
- * (the r02y-measured CPU-fed frame time), so a refresh 1 ms after the
- * periodic finds the config job still in flight, as on the bench.
+ * schedule: the 2.5 ms monitor (0 / 3 ms), the 5 ms batch at ms 2 (in mode
+ * 0: harvest → ladder → seq2 → THE LAW → cut → J2 stage → THE F STAGE
+ * (cyclic + config every pass) → batch (ID) → report; in mode 1 the same in
+ * the 10 ms part), and the 1 ms diag poll. 2026-11-18 (output_cadence_port):
+ * the 10 ms periodic is gone; "both parities" now means the ladder start
+ * shifted by one 5 ms frame, so the phase-0x10 tick falls once on a 10 ms
+ * pass and once between. Bus A is NOT drained at once: one frame per 12 µs
+ * (the r02y-measured CPU-fed frame time), through the ring.
  *
  * What the stock does on this calibration [O, the bytes]: ONE full-on
  * command per ladder run — phase 0x10's entry tick (0x94114 = the alive
@@ -23,6 +24,10 @@
  * open.
  *
  * ASSERTED, both parities:
+ *   - EXACTLY ONE full-on 'C' cyclic (881F…, EFFF / F7FF) on the wire, in
+ *     the phase-0x10 tick, and the next cyclic back to 8815 (r03x: the
+ *     periodic kept bus A busy on about half the boots, and the 'C' never
+ *     reached the wire there);
  *   - the stock full-on tick is COMMANDED by the law (no refusal):
  *     s_rq_ilock_n stays 0, CELL_RQ_FULLMASK = 0x00FF on exactly that tick;
  *   - every full-on cyclic that reaches the bus-A wire goes out while the
@@ -127,6 +132,11 @@ typedef struct {
     unsigned fullon_law_ticks;  /* refresh passes with CELL_RQ_FULLMASK != 0 */
     unsigned fullon_frames[8];  /* … which frames */
     unsigned fullon_wire;       /* full-on cyclics launched on bus A */
+    unsigned fullon_wire_frame; /* … the frame of the first */
+    uint16_t after_c_mode;      /* the mode word of the cyclic after the 'C' one */
+    unsigned efff_ok;           /* the 'C' cyclic carried EFFF / F7FF on chips 0..3 */
+    bool     in_c;              /* scanning the 'C' cyclic */
+    unsigned cyc_word;          /* word index inside the cyclic being scanned */
     unsigned fullon_wire_rail;  /* … while the plant's rail was ON */
     unsigned fullon_wire_cert;  /* … after a heard 0x90|bit5 with the chip certifying */
     unsigned phase4_frame, phase10_frame;   /* the entry ticks (0x94114 set after the batch) */
@@ -137,6 +147,7 @@ typedef struct {
 } fo_run_t;
 
 static bool s_rail_on;          /* the plant's output this frame (its 5 ms model) */
+static unsigned s_cur_p;        /* the frame being run */
 
 static void fo_reset(void)
 {
@@ -168,11 +179,34 @@ static void scan_bus_a(fo_run_t *r, unsigned from)
         if (stub_log[k].bus == 0u && stub_log[k].job == DRV_CFG && stub_log[k].word == 0x9002u) {
             r->hi_cfg++;
         }
+        if (stub_log[k].bus == 0u && stub_log[k].job == DRV_CYC) {
+            /* word index inside the cyclic (45 frames each, back to back) */
+            const unsigned i = r->cyc_word;
+            r->cyc_word = (r->cyc_word + 1u) % 45u;
+            if (i == 0u) {
+                if (r->in_c) {
+                    r->in_c = false;
+                    if (r->after_c_mode == 0u) {
+                        r->after_c_mode = stub_log[k].word;
+                    }
+                }
+                if (stub_log[k].word == 0x881Fu) {
+                    r->in_c = true;
+                }
+            }
+            if (r->in_c && ((i >= 10u && i < 14u && stub_log[k].word == 0xEFFFu) ||
+                            (i >= 20u && i < 24u && stub_log[k].word == 0xF7FFu))) {
+                r->efff_ok++;
+            }
+        }
         if (stub_log[k].bus == 0u && stub_log[k].job == DRV_CYC &&
             (stub_log[k].word & 0xFF0Fu) == 0x880Fu && (stub_log[k].word & 0x00F0u) == 0x0010u &&
             (k == 0u || stub_log[k - 1u].job != DRV_CYC || stub_log[k - 1u].bus != 0u ||
              stub_log[k - 1u].word != stub_log[k].word)) {
             /* first 'C' mode word of a cyclic (0x881F: both channels 'C') */
+            if (r->fullon_wire == 0u) {
+                r->fullon_wire_frame = s_cur_p;
+            }
             r->fullon_wire++;
             if (s_rail_on) {
                 r->fullon_wire_rail++;
@@ -195,10 +229,11 @@ static void fo_run(fo_run_t *r)
     }
 
     for (unsigned p = 1u; p <= r->frames; p++) {
-        if (p == 100u) {
-            stub.adc_ready = true;
+        s_cur_p = p;
+        if (p == 100u + r->parity) {
+            stub.adc_ready = true;          /* the ladder start, shifted by the parity */
         }
-        if (p == 105u) {
+        if (p == 105u + r->parity) {
             r->ilock_at104 = drv_rq_ilock_n() - ilock0;
         }
         if (r->hook != NULL) {
@@ -216,9 +251,6 @@ static void fo_run(fo_run_t *r)
                 sup_monitor_poll();
                 drain_b();
             }
-            if (us == 1000u && (p & 1u) == r->parity) {
-                drv_cyclic_periodic();          /* task_10ms → sol_tick_10ms */
-            }
             if (us == 1500u && r->steps != NULL && r->u_frame != 0u) {
                 /* a request step AFTER the periodic, so only the refresh can
                  * take it (on the target the producer and the park logic
@@ -227,7 +259,7 @@ static void fo_run(fo_run_t *r)
                 r->steps(p - r->u_frame);
             }
             if (us == 2000u) {
-                sup_batch_5ms();                /* … drv_letter_refresh after seq2 */
+                sup_batch_5ms();                /* … the law, the F stage (sup_batch.c) */
                 drain_b();
                 if (CELL_RQ_FULLMASK != 0u) {
                     if (r->fullon_law_ticks < 8u) {
@@ -273,9 +305,11 @@ static void fo_run(fo_run_t *r)
 static void report(const char *name, const fo_run_t *r)
 {
     printf("%s parity %u: phase4 F%u phase10 F%u 'U' F%u | law full-on ticks %u (F%u F%u F%u) | "
-           "wire full-on cyclics %u (rail on %u, certified %u) | ilock %u 84644 %u 8493A %u inline %u\n",
+           "wire full-on cyclics %u at F%u, next mode word %04X, EFFF/F7FF words %u (rail on %u, certified %u) | "
+           "ilock %u 84644 %u 8493A %u inline %u\n",
            name, r->parity, r->phase4_frame, r->phase10_frame, r->u_frame, r->fullon_law_ticks,
            r->fullon_frames[0], r->fullon_frames[1], r->fullon_frames[2], r->fullon_wire,
+           r->fullon_wire_frame, r->after_c_mode, r->efff_ok,
            r->fullon_wire_rail, r->fullon_wire_cert, r->ilock, r->f84644, r->f8493a, r->f226inline);
 }
 
@@ -307,6 +341,11 @@ static void test_stock_sequence(void)
          * phase 4's 0x94114 is group 0 = 0 on this calibration */
         CHECK(r.fullon_law_ticks == 1u);
         CHECK(r.fullon_frames[0] == r.phase10_frame);
+        /* … and EXACTLY ONE 'C' cyclic reaches the wire, in that tick (the
+         * F stage stages every pass), chips 0..3 at EFFF / F7FF, then 8815 */
+        CHECK(r.fullon_wire == 1u && r.fullon_wire_frame == r.phase10_frame);
+        CHECK(r.efff_ok == 8u && r.after_c_mode == 0x8815u);
+        CHECK(drv_out_wit()->law_f_bad == 0u && drv_out_wit()->compose_f_bad == 0u);
         CHECK(r.ilock == 0u);
         CHECK(drv_rq_cguard_n() == 0u);
         /* nothing full-on on the wire with the rail on or a certified rail command */
@@ -332,10 +371,10 @@ static void test_stock_sequence(void)
  * level <= 4) with an output that lags one tick — phase 8 still passes on
  * the old node reading, phase 0x10 is entered, and the rail closes on the
  * next tick. Term 4 (last word 0x9020 AND 0x90959 = 1) refuses it. */
-static unsigned s_mut;
+static unsigned s_mut, s_mut_par;
 static void mut_hook(unsigned p)
 {
-    if (s_mut == 1u && (p == 101u || p == 102u)) {
+    if (s_mut == 1u && (p == 101u + s_mut_par || p == 102u + s_mut_par)) {
         chip.level = 3u;                        /* certifying through phase 8 */
     }
 }
@@ -403,18 +442,20 @@ static void test_mutation_runs(void)
         r.frames = 140u;
         r.hook = mut_hook;
         s_mut = 1u;
+        s_mut_par = par;
         fo_reset();
         plant.lag = 1u;
         fo_run(&r);
         report("certifying-chip", &r);
-        CHECK(r.phase10_frame == 102u);         /* the sequence did not catch it */
+        CHECK(r.phase10_frame == 102u + par);   /* the sequence did not catch it */
         /* the guard did: refused at F102 (term 4) and at F103 — the stock
          * itself would command full-on at F103 with the rail found ON
          * (0x94114 survives the 0xF3 failure until the retry's phase 1) —
          * then the retry's phase 0x10 (F106, chip no longer certifying,
          * rail open) is the stock's test again and is commanded */
-        CHECK(r.ilock >= 16u && r.ilock == r.ilock_at104);   /* F102..F104 only (F104: the periodic before the retry) */
-        CHECK(r.fullon_law_ticks == 1u && r.fullon_frames[0] == 106u);
+        CHECK(r.ilock >= 16u && r.ilock == r.ilock_at104);   /* F102..F103 only (no periodic) */
+        CHECK(r.fullon_law_ticks == 1u && r.fullon_frames[0] == 106u + par);
+        CHECK(r.fullon_wire == 1u && r.fullon_wire_frame == 106u + par);
         CHECK(r.fullon_wire_rail == 0u && r.fullon_wire_cert == 0u);
         CHECK(r.f84644 == 0u && r.f8493a == 0u);
         s_mut = 0u;

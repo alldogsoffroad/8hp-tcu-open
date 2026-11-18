@@ -178,24 +178,18 @@ void drv_rq_window_boot(drv_rq_win_t *w, bool cold);
  * bytes; clears the law's own NOLOAD ranges (call after sup_cells_init) */
 void drv_rq_init(void);
 
-/* 0x83DB0 (with 0x89540 per channel): the 5 ms entry 0x7CC1E.
+/* 0x83DB0 (with 0x89540 per channel): the list entry 0x7CC1E.
  * drv_rq_law_diag: the full pass with the output diagnosis (drv_odiag.h),
- * once per 5 ms tick (the refresh); drv_rq_law: the law alone (the 10 ms
- * rebuild), reading the fault / channel classes the diagnosis left */
+ * once per output tick (drv_jobs.c drv_out_law: 5 ms in OS mode 0, 10 ms
+ * in modes 1..3); drv_rq_law: the law alone (tests / drv_cyclic_build),
+ * reading the fault / channel classes the diagnosis left */
 void drv_rq_law(void);
 void drv_rq_law_diag(void);
-/* the 10 ms periodic rebuild between two ticks (ours): as drv_rq_law, but a
- * full-on only repeats what the last tick's pass commanded (drv_reqlaw.c) */
-void drv_rq_law_between(void);
 
-/* 0x901A0's record part (letters applied, 0x9090A step, per-chip records);
- * the staging (0x924B0 / 0x92344) is drv_jobs.c's */
+/* 0x901A0's record part (head check, letters applied 0x9081C, 0x9090A
+ * step, per-chip records and 0x90244), once per F pass; the staging
+ * (0x924B0 / 0x92344) is drv_jobs.c's drv_f_stage */
 void drv_rq_compose(void);
-
-/* 0x901A0's per-channel cells (0x9081C letters applied, 0x90244 current
- * composed) without a staging: the refresh calls it on a tick it did not
- * compose, so 0x84644 reads the stock's cadence (drv_reqlaw.c) */
-void drv_rq_compose_cells(void);
 
 /* OUR RAIL-OPEN GUARD (not stock): full-on (law and compose, group A too)
  * only while this tick's request cells, seq2 enables and letters are 0,
