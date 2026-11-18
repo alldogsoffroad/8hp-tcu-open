@@ -361,6 +361,11 @@ SECTIONS
         /* the two shadow TUs' zero-initialised statics (the live instance's
          * .bss must not grow: the stack guard has 8 bytes left) */
         *gs_fill.c.obj(.bss .bss.* COMMON) *gs_shadow.c.obj(.bss .bss.* COMMON)
+        /* 2026-11-18 (garage_shadow_v2_port.md): the shift context's progress
+         * state and recorder slot 1, AFTER everything above so that no
+         * earlier shadow symbol moves */
+        . = ALIGN(4); *(.gs_prog)
+        . = ALIGN(4); *(.gs_rec1)
         . = ALIGN(4); __gs_obj_end = .;
     } > RAM
     ASSERT(__gs_req_start >= ADDR(.drv_rec) + SIZEOF(.drv_rec), ".gs_req overlaps .drv_rec")

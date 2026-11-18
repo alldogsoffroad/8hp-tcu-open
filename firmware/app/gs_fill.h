@@ -64,9 +64,15 @@ bool     gsf_e4dba(uint32_t o);                 /* vtable +0x38: +0x46 == 10000 
 /* the engagement's shift kind BD14+2 as the shadow's shift object holds it
  * (0xBA8EC, read by 0xE40DA for sources 1/3/6/8/10) */
 void     gsf_set_bd16(uint8_t v);
+/* the shadow's power flow 0x89C30 and 0x89C2F (0xE47CA's term gate) */
+void     gsf_set_pf(uint8_t pf, uint8_t c2f);
+#if !defined(__sh__)
+void     gsf_host_e469c_off(bool off);          /* host negative test only */
+#endif
 /* counters of THIS instance (never the live ones) */
 uint32_t gsf_unp_n(void);       /* unported branches reached */
 uint32_t gsf_f19f_n(void);      /* stock fault 0x19F reports */
 uint32_t gsf_shift_n(void);     /* the 0xE40DA shift-source stand-in taken */
+uint32_t gsf_e469c_n(void);     /* the garage fill-time term evaluated nonzero */
 
 #endif /* TCU_APP_GS_FILL_H */

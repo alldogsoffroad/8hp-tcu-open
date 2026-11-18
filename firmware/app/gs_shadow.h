@@ -65,9 +65,17 @@ typedef struct {
     uint8_t  cd2;           /* 0xFFF89CD2 (live) */
     uint16_t eng_speed;     /* CAN 0x108 engine speed (E908) */
     uint8_t  eng_valid;     /* CAN 0x108 valid (E90C == 0, E908 != 0xFFFF) */
+    /* the shift context's speed inputs (2026-11-18, the synchronisation-
+     * progress producer 0x117A74 / 0x117F48): our live sensor speeds stand
+     * in for the stock's conditioned cells — 0x89CB8 output speed (from D646
+     * through 0xB986C's conditioning, not ported) and 0x89CBA turbine speed
+     * (from the TIF13 chain, not ported); an invalid sensor gives 0.  Both
+     * read 0 on the dry bench (shafts at rest). */
+    uint16_t out_rpm;       /* → shadow 0x89CB8 (sensors output speed) */
+    uint16_t tur_rpm;       /* → shadow 0x89CBA (sensors turbine speed) */
 } gs_in_t;
 
-/* one recorder entry = one 10 ms pass from a nonzero commit (24 bytes) */
+/* one recorder entry = one 10 ms pass from a nonzero commit (28 bytes) */
 typedef struct {
     uint16_t pass;          /* passes since the commit (0 = the commit pass) */
     uint8_t  pf;            /* 0x89C30 (shadow) */
@@ -80,11 +88,17 @@ typedef struct {
     uint8_t  reqset;        /* bit 0..4: request +0 != 0 for A..E */
     int8_t   gear;          /* the shadow gear code (0x89C2B) */
     uint16_t cur[7];        /* shadow currents 0.1 mA, ch 0..6 = A D B E C WK Sys */
+    /* the synchronisation progress after this pass's slot 34 (2026-11-18) */
+    uint8_t  bd30;          /* 0xFFF8BD30 locked passes (|slip| <= 20 rpm) */
+    uint8_t  sync;          /* bit 0 BD6C sync flag (block A +0), bit 1 the
+                             * hold (+0x28 = D0DC+4), bit 2 BD2E saturated */
+    int16_t  bd76;          /* 0xFFF8BD76 progress (block A +0x0A) */
 } gs_rec_t;
-_Static_assert(sizeof(gs_rec_t) == 24u, "gs_rec_t is 24 bytes");
+_Static_assert(sizeof(gs_rec_t) == 28u, "gs_rec_t is 28 bytes (tools/bench/tcu_bench.py gs-check)");
 
 #define GS_REC_SLOTS    2u
-#define GS_REC_N        95u     /* per slot: 0.95 s of passes */
+#define GS_REC_N        112u    /* per slot: 1.12 s of passes (the dry-bench
+                                 * completion at ≈ pass 96..100, + ≥ 10) */
 
 /* our witnesses (not stock cells) */
 typedef struct {
@@ -131,11 +145,33 @@ uint8_t  gs_shadow_e6ef(void);
 uint8_t  gs_shadow_ae28(void);
 uint8_t  gs_shadow_d0f(void);               /* 0x89D0F engine running */
 
+/* the synchronisation progress of the shift context (block A 0xFFF8BD6C) */
+int16_t  gs_shadow_bd76(void);              /* 0xFFF8BD76 */
+uint8_t  gs_shadow_bd30(void);              /* 0xFFF8BD30 */
+uint8_t  gs_shadow_sync(void);              /* 0xFFF8BD6C */
+int16_t  gs_shadow_slip(void);              /* 0xFFF8BD7C */
+
+/* the shadow's reaction-37 input (0xA031C(0x25) → 0xD9CBC: i_min 0 for the
+ * actuators other than WK / Sys): a compile-time stand-in, inactive (the
+ * dump and a healthy vehicle; actuator_reactions_decode.md) */
+#ifndef GS_R37
+#  define GS_R37 0
+#endif
+#if defined(__sh__) && (GS_R37 != 0)
+#  error "gs_shadow: reaction 37 is a compile-time stand-in 0 on SH builds"
+#endif
+
 #if !defined(__sh__)
-/* host only: stand-in overrides for the dry-bench completion study (e):
- * the progress cells BD76 / BD30 (0xFFF8BD76 s16, 0xFFF8BD30 u8; dump
- * 0x7FFF / 0xFF) */
-void gs_shadow_host_progress(int16_t bd76, uint8_t bd30);
+/* host only: restore the OLD stand-ins (negative tests) — bit 0: the
+ * progress cells at the dump's idle values (BD76 0x7FFF, BD30 0xFF, BD6C 1)
+ * instead of the ported producer; bit 1: the garage fill-time term 0xE469C
+ * at 0; bit 2: force the progress cells to bd76 / bd30 / BD6C 0 (never
+ * satisfied); bit 3: reaction 37 active (i_min 0) */
+#define GS_HOST_OLD_PROGRESS   0x01u
+#define GS_HOST_OLD_E469C      0x02u
+#define GS_HOST_FORCE_PROGRESS 0x04u
+#define GS_HOST_R37            0x08u
+void gs_shadow_host_standins(uint8_t mask, int16_t bd76, uint8_t bd30);
 /* host only: sub-object k's +0xC, +0x24, +0x54, +0x30, +0x32 and its
  * element's request result +2 */
 void gs_shadow_host_sub(uint8_t k, int16_t v[6]);

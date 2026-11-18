@@ -14,8 +14,14 @@ Roots (each justified in app/gs_shadow.c; ~/tcu_sweep/garage_shadow_port.md):
   0x5ADE0 / 0x590EC / 0x57354  index -> blk58 / blk5C / blk60 pointers
   0x5DE08  element -> RAM pointer cell (sub +0x64)
   0x56F98 / 0x5713C  the blocks behind RAM cells 0xFFF84D44 / 0xFFF84D48
+           (0x5713C to +0xB4: +0x28 the slip-rate DT1 map, +0xB0 the 20 rpm
+           sync threshold cal 0x1FF1F6 — 2026-11-18)
   0x57474 + 0x40.e  the element blocks behind 0xFFF84D4C..0xFFF84D5C
   blk58 / blk5C / blk60 for the cal indices 0 (R) and 1 (1st)
+  0x4FAA4  the gear-ratio table (0xD7C8C via *0xFFF84B2C, gear -1..8, x1000)
+           for the synchronisation slip 0x117A74 (2026-11-18)
+  the element cal blocks 0x54CC0 + 0xA0.e: maps +0x20 (the garage fill-time
+           term 0xE469C via 0xE4752) and +0x34 (0xE47CA's +0x52 branch)
 and one level of every word in those blocks that points into flash (the maps
 and scalar cells), each copied over its header-derived size (capped).
 
@@ -70,9 +76,14 @@ def main():
         add(t, 0x48)
     add(0x5DE08, 0x18)
     follow(0x56F98, 0x80)
-    follow(0x5713C, 0x80)
+    follow(0x5713C, 0xB4)       # +0x28 the DT1 map, +0xB0 the sync threshold
     for e in range(5):
         follow(0x57474 + 0x40 * e, 0x40)
+    add(0x4FAA4, 0x14)          # gear ratios (0xD7C8C), gear -1..8
+    for e in range(5):          # element cal blocks (0xFFF84D20 + 4e -> 0x54CC0 + 0xA0e)
+        for off in (0x20, 0x34):
+            w = u32(0x54CC0 + 0xA0 * e + off)
+            add(w, map_size(w))
     for idx in (0, 1):
         follow(u32(0x5ADE0 + 8 * idx), 0xFC)   # blk58
         follow(u32(0x590EC + 8 * idx), 0x38)   # blk5C

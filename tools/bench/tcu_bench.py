@@ -1448,8 +1448,8 @@ def cmd_park_check(b, args):
 # ---------------------------------------------------------------- garage-engagement shadow (2026-11-17)
 
 GS_WIT_SIZE = 76            # app/gs_shadow.h gs_wit_t (static-asserted there)
-GS_REC_ENTRY = 24           # gs_rec_t
-GS_REC_N = 95               # per slot
+GS_REC_ENTRY = 28           # gs_rec_t (2026-11-18: + BD30, sync, BD76)
+GS_REC_N = 112              # per slot (slot 0 _g_rec0 in .gs_rec, slot 1 _g_rec1 in .gs_obj)
 GS_CH = ("A", "D", "B", "E", "C", "WK", "Sys")
 
 
@@ -1476,14 +1476,17 @@ def gs_wit_line(g):
 
 def gs_rec_print(slot, raw, n):
     print(f"  recorder slot {slot}: {n} passes from the commit (0.1 mA; ph = D0DC/D148/D1B4 phase;"
-          " fl b0-1 E6EF b2 pending b3 active b4 B timeout b5 completion b6 commit b7 C3D)")
-    print("  pass pf fl  ph0 ph1 ph2 md  set gear |    A    D    B    E    C   WK  Sys")
+          " fl b0-1 E6EF b2 pending b3 active b4 B timeout b5 completion b6 commit b7 C3D;"
+          " sy b0 BD6C sync b1 hold b2 BD2E saturated)")
+    print("  pass pf fl  ph0 ph1 ph2 md  set gear |    A    D    B    E    C   WK  Sys | bd30 sy   bd76")
     for i in range(n):
         e = raw[i * GS_REC_ENTRY:(i + 1) * GS_REC_ENTRY]
         cur = [int.from_bytes(e[10 + 2 * k:12 + 2 * k], "big") for k in range(7)]
         gear = e[9] - 256 if e[9] > 127 else e[9]
+        bd76 = int.from_bytes(e[26:28], "big", signed=True)
         print(f"  {int.from_bytes(e[0:2], 'big'):4d} {e[2]:2d} {e[3]:02X}  {e[4]:3X} {e[5]:3X} {e[6]:3X}"
-              f" {e[7]:02X} {e[8]:02X} {gear:4d} | " + " ".join(f"{c:4d}" for c in cur))
+              f" {e[7]:02X} {e[8]:02X} {gear:4d} | " + " ".join(f"{c:4d}" for c in cur)
+              + f" | {e[24]:4d} {e[25]:2X} {bd76:6d}")
 
 
 def cmd_gs_check(b, args):
@@ -1494,17 +1497,19 @@ def cmd_gs_check(b, args):
     and the gear target the fault-free 1st - the stock itself never commits in mode 1.
     Sequence (lever, --hold s each): P, D, P, R, P. With --sim-brake --sim-engine 700 the LIVE
     range chain releases park on D and R (release 1.0 A + hold: the only current that moves),
-    the shadow commits ~150 ms later (the park model) and records 0.95 s of the engagement.
-    Expected (host test test_gs_shadow): P->D commit, C fills first (~5930), B waits in 0x0F,
-    B fill ~5710, B phase 4 ~3630, ramp, completion ~0.45 s after the commit, then
-    A 8500 D 8500 B 8500 E 8500 C 500; P->R the same shape with D third, end
-    A 8500 D 500 B 8500 E 8500 C 8500; WK / Sys 500 throughout."""
+    the shadow commits ~150 ms later (the park model) and records 1.12 s of the engagement.
+    Expected (host test test_gs_shadow, 2026-11-18 v2 at 38.9 C): P->D commit, C fills first
+    (~5930, 10 passes), B waits in 0x0F, B fill ~5710, B phase 4 ~3630 (one pass), sync on the
+    next pass (turbine 0), B in 0x0B for 49 passes (~4150 -> 5225, BD30 1..49), the 0x0C ramp,
+    completion (cause 1) ~0.95 s after the commit, then A 8500 D 8500 B 8500 E 8500 C 500;
+    P->R the same shape with D third, end A 8500 D 500 B 8500 E 8500 C 8500; WK / Sys 500."""
     b.start_drain()     # keep the Teensy ports drained (lever-sim gaps, 2026-11-17)
 
     w_addr, w_size = elf_sym(args.elf, "_g_w")
-    r_addr, r_size = elf_sym(args.elf, "_g_rec")
-    if w_size != GS_WIT_SIZE or r_size != 2 * GS_REC_N * GS_REC_ENTRY:
-        sys.exit(f"_g_w {w_size:#x} / _g_rec {r_size:#x}: not the layout this tool expects - rebuild?")
+    r_slots = [elf_sym(args.elf, "_g_rec0"), elf_sym(args.elf, "_g_rec1")]
+    if w_size != GS_WIT_SIZE or any(sz != GS_REC_N * GS_REC_ENTRY for _, sz in r_slots):
+        sys.exit(f"_g_w {w_size:#x} / _g_rec0/1 {[hex(sz) for _, sz in r_slots]}: not the layout this"
+                 " tool expects - rebuild?")
     release = bool(args.sim_brake) and (args.sim_engine or 0) > 430
     print("THE GARAGE SHADOW IS READ-ONLY: it drives no solenoid. The LIVE range chain still drives the"
           " park outputs (release bus-A ch 7 1.0 A + hold TOE31) whenever the range leaves P")
@@ -1545,8 +1550,8 @@ def cmd_gs_check(b, args):
                         raise
                     time.sleep(0.2)
         P, R, D = 1, 2, 4
-        print(f"shadow witnesses _g_w at 0x{w_addr:08X}, recorder _g_rec at 0x{r_addr:08X}; "
-              f"{args.hold:.1f} s per step")
+        print(f"shadow witnesses _g_w at 0x{w_addr:08X}, recorder _g_rec0 at 0x{r_slots[0][0]:08X},"
+              f" _g_rec1 at 0x{r_slots[1][0]:08X}; {args.hold:.1f} s per step")
         for name, code in (("P", P), ("D", D), ("P", P), ("R", R), ("P", P)):
             sim.code = code
             time.sleep(args.hold)
@@ -1567,7 +1572,7 @@ def cmd_gs_check(b, args):
         if n == 0:
             print(f"  recorder slot {slot}: empty" + ("" if release else " (no commit without the sims)"))
             continue
-        raw = read_retry(r_addr + slot * GS_REC_N * GS_REC_ENTRY, n * GS_REC_ENTRY)
+        raw = read_retry(r_slots[slot][0], n * GS_REC_ENTRY)
         gs_rec_print(slot, raw, n)
     return 0
 

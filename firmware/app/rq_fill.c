@@ -679,7 +679,9 @@ static uint16_t e47ca(uint32_t o, uint8_t p4c, uint8_t p4d, uint8_t p4, uint8_t 
     uint32_t map2;
     int32_t r14;
 
+#if !defined(RQF_E469C_HOOK)
     (void)p4d;
+#endif
     if (RQF_S8(o, RO_ELEM) == 5 && s_in->ba79c != 0u) {
         unp();                                  /* 0xBA79C branch: not decoded */
         base = rqf_b6eae(G_MAP(0x30u), temp());
@@ -693,7 +695,12 @@ static uint16_t e47ca(uint32_t o, uint8_t p4c, uint8_t p4d, uint8_t p4, uint8_t 
     }
     r14 = (int32_t)(int16_t)rqf_b6e10(map2, x5c) + (int32_t)(base & 0xFFFFu);
     if (p4c != 0u) {
+#if defined(RQF_E469C_HOOK)
+        /* the garage shadow's instance (app/gs_fill.c): 0xE48A2..0xE48DE */
+        r14 += RQF_E469C_HOOK(o, p4c, p4d, p52);
+#else
         unp();                                  /* 0x89C2F / 0x89C30 / 0xE469C: shift sources */
+#endif
     }
     r14 += (int32_t)e476e(o, p52);
     (void)p4;

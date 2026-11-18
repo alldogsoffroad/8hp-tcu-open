@@ -237,6 +237,13 @@
 #define ECNTBF(n) REG16(TF_BASE(n) + 0x08u)
 #define ECNTCF(n) REG32(TF_BASE(n) + 0x0Cu)
 #define GRDF(n)   REG32(TF_BASE(n) + 0x1Cu)
+/* F1 (2026-11-18): the PWM-measurement registers, stock 0x975EC (bytes
+ * 0x975EC-0x97646): ECNTAF +4, ECNTBF +8 (16), GRBF +0xA (16), ECNTCF +0xC,
+ * GRAF +0x10, GRCF +0x18; TSRF bit 0 = ICFF */
+#define ECNTAF(n) REG32(TF_BASE(n) + 0x04u)
+#define GRBF(n)   REG16(TF_BASE(n) + 0x0Au)
+#define GRAF(n)   REG32(TF_BASE(n) + 0x10u)
+#define GRCF(n)   REG32(TF_BASE(n) + 0x18u)
 
 #endif
 

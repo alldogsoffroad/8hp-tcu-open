@@ -16,7 +16,7 @@ typedef struct {
     const uint8_t *data;
 } gs_blob_t;
 
-#define GS_NBLOBS   24u
+#define GS_NBLOBS   35u
 extern const gs_blob_t GS_BLOBS[GS_NBLOBS];
 
 /* a pointer to n bytes at stock flash address a, or 0 */

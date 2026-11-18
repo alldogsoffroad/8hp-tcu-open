@@ -604,7 +604,11 @@ else()
     # READ-ONLY. (a) the live path bit-identical with and without it over the
     # r03t/r03w scenarios (whole cell window hashed per tick); (b)/(c) P→D /
     # P→R with brake + engine 700 under the forced commit; (d) the stock-
-    # faithful variant never commits; (e) the dry-bench completion (timeout).
+    # faithful variant never commits; (e) (2026-11-18, garage_shadow_v2_port.md)
+    # the dry-bench completion through the ported synchronisation progress
+    # (normal, ≈ 0.95 s) and the 0xE469C fill-time term, at 38.9 and 21 °C;
+    # (g) the 250-pass timeout with a turbine that never synchronises; (n) the
+    # old stand-ins must fail (e); reaction 37 host-forced.
     set(GS_TEST_SOURCES tests/unit/test_gs_shadow.c app/gs_shadow.c app/gs_fill.c app/gs_cal.c
         app/rng_chain.c safety/kl15.c
         app/range.c app/park_law.c app/park.c safety/park_mon.c bsw/sched/sched.c
@@ -664,6 +668,8 @@ else()
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_SHADOW_HOST_HOOKS ${GS_SH_SRC})
     add_test(NAME gs_sh_guard_forced
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_FORCED=2 ${GS_SH_SRC})
+    add_test(NAME gs_sh_guard_r37
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_R37=1 ${CMAKE_SOURCE_DIR}/app/gs_shadow.c)
     set_tests_properties(gs_sh_guard_output PROPERTIES
         PASS_REGULAR_EXPRESSION "the garage shadow is read-only: an output path may not include gs_shadow.h")
     set_tests_properties(gs_sh_guard_live PROPERTIES
@@ -672,6 +678,8 @@ else()
         PASS_REGULAR_EXPRESSION "the host stand-in overrides do not exist on SH builds")
     set_tests_properties(gs_sh_guard_forced PROPERTIES
         PASS_REGULAR_EXPRESSION "GS_FORCED is 0 .stock-faithful. or 1 .forced commit., nothing else")
+    set_tests_properties(gs_sh_guard_r37 PROPERTIES
+        PASS_REGULAR_EXPRESSION "reaction 37 is a compile-time stand-in 0 on SH builds")
     add_executable(test_dump tests/unit/test_dump.c app/bench_dump.c tests/unit/stub_plat.c)
     add_executable(transcript tests/unit/transcript.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c

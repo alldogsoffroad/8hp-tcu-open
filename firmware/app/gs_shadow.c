@@ -47,11 +47,26 @@
  *   flags B0FE/B10D/B10E/E60F dump 0 → kind 0); 0xD1B10/0xD1990 (E6A1 =
  *   the gear target); 0x104A28's undecoded branch (wit seq_n); 0x103CEC's
  *   shift-object checks (accept); AE2A..AE2E, AE70, E298, E618, 0x89C8A
- *   (dump 0, AE2D dump 1); the progress cells BD76 / BD30 (dump 0x7FFF /
- *   0xFF, host override); BD6C (dump 01); 0x89C04 block (dump: 0x89C06
- *   0, 0x89C08 0, 0x89C10 0, 0x89C1A 0, 0x89C1C 0x22, 0x89C1D 0x17), BD78 0,
- *   BD7C 0, 0x89CB8 0, 0x89CBA 0; the line pressure (reaction 50: Sys
- *   20000 binary, 0x89CF5 = 1); WK lockup (0xDCD38.., not ported).
+ *   (dump 0, AE2D dump 1); 0x89C04 block (dump: 0x89C06 0, 0x89C08 0,
+ *   0x89C10 0, 0x89C1A 0, 0x89C1C 0x22, 0x89C1D 0x17), BD78 0; the line
+ *   pressure (reaction 50: Sys 20000 binary, 0x89CF5 = 1); WK lockup
+ *   (0xDCD38.., not ported).
+ *
+ * 2026-11-18 (~/tcu_sweep/garage_shadow_v2_port.md) — PORTED, replacing the
+ * dump stand-ins BD76 0x7FFF / BD30 0xFF / BD6C 1: the synchronisation
+ * progress of the shift context block A — slot 28 0xEC0E0 (BD2E / BD30 ++),
+ * slot 34 0xEBDBC → 0x1175D6 (0x117F48 sync + clears, 0x117A74 slip =
+ * BD7C, 0x1179D8 → 0xD2058 rate, 0x117AEC BD76), the engagement start
+ * 0xEDC5A → 0x11793E / 0xD2046 and the end 0xEBB6C → 0x11755E; the garage
+ * fill-time term 0xE469C (app/gs_fill.c); reaction 37 in 0xD9CBC (stand-in
+ * input GS_R37 = 0). Stand-ins of this part: 0x89CB8 / 0x89CBA = our live
+ * output / turbine sensor rpm (the stock's conditioning not ported; 0 on
+ * the dry bench); the slip signs 0x89D5E / 0x89D60 = 1 (forced by 0x89D63 /
+ * 0x89D65 = 01, dump); block +5 (0x11779C) = 0 (read only by a release
+ * context); BD14+0x34 = 0 (no queued shift); block B not ported (+3 = 0:
+ * never touches the counters, never read by the engine). STILL a stand-in:
+ * the 0x10E896 term (the E4BC turbine-gradient PI output; its target D238
+ * is undecoded) = 0.
  */
 #define TCU_GS_SHADOW_TU 1
 #include "app/gs_shadow.h"
@@ -72,16 +87,19 @@ void gs_shadow_tick_10ms(const gs_in_t *in) { (void)in; }
 #define GS_C1C      0x22u       /* 0xFFF89C1C */
 #define GS_C1D      0x17u       /* 0xFFF89C1D */
 #define GS_C0A      0u          /* 0xFFF89C0A */
-#define GS_CB8      0           /* 0xFFF89CB8 */
-#define GS_CBA      0u          /* 0xFFF89CBA (turbine) */
 #define GS_D09      0u          /* 0xFFF89D09 */
 #define GS_BD78     0u          /* 0xFFF8BD78 */
 #define GS_BD28     0u          /* 0xFFF8BD28 (u16) */
 #define GS_C25      3           /* 0xFFF89C25 engaged gear (s8) */
-#define GS_BD7C     0           /* 0xFFF8BD7C (s16) */
-#define GS_BD76     0x7FFF      /* 0xFFF8BD76 (s16) progress */
-#define GS_BD30     0xFFu       /* 0xFFF8BD30 progress */
-#define GS_BD6C     1u          /* 0xFFF8BD6C = BD14+0x58 */
+/* the shift context's idle values (dump, long-idle synchronised): BD6C
+ * 01, BD76 0x7FFF, BD2E 0xFFFF, BD30 0xFF, +0x27 01, +0x2C 00, target gear
+ * +1 = 3, active context +3 = 01 [O dump 0xFFF8BD6C..] — the INITIAL values
+ * of the ported producer (it starts each engagement from 0x11793E) */
+#define GS_IDLE_BD76  0x7FFF
+#define GS_IDLE_BD2E  0xFFFFu
+#define GS_IDLE_BD30  0xFFu
+#define GS_D5E      1           /* 0xFFF89D5E / 0xFFF89D60 slip signs: forced 1
+                                 * by 0xFFF89D63 / 0xFFF89D65 = 01 [O dump] */
 #define GS_E4B1     1u          /* 0xFFF8E4B1 = E4AC+5 at boot */
 #define GS_E6C1     0u          /* 0xFFF8E6C1 */
 #define GS_E6C2     3           /* 0xFFF8E6C2 (s8) */
@@ -93,9 +111,10 @@ void gs_shadow_tick_10ms(const gs_in_t *in) { (void)in; }
 #define GS_E1F_SETTLE 0x18u     /* cal 0x1FE780 (via 0xFFF84C94 → 0x537F8 + 8) */
 #define GS_E28E_T8  3u          /* cal 0x1FE766 */
 _Static_assert(GS_C06 == 0u && GS_C08 == 0u && GS_C10 == 0u && GS_C1A == 0 &&
-               GS_C1C == 0x22u && GS_C1D == 0x17u && GS_C0A == 0u && GS_CB8 == 0 &&
-               GS_CBA == 0u && GS_D09 == 0u && GS_BD78 == 0u && GS_BD7C == 0 &&
-               GS_BD76 == 0x7FFF && GS_BD30 == 0xFFu && GS_BD6C == 1u && GS_E4B1 == 1u &&
+               GS_C1C == 0x22u && GS_C1D == 0x17u && GS_C0A == 0u &&
+               GS_D09 == 0u && GS_BD78 == 0u && GS_D5E == 1 &&
+               GS_IDLE_BD76 == 0x7FFF && GS_IDLE_BD2E == 0xFFFFu && GS_IDLE_BD30 == 0xFFu &&
+               GS_E4B1 == 1u &&
                GS_E6C1 == 0u && GS_E6C2 == 3 && GS_C25 == 3 && GS_AE2D == 1u && GS_LINEP == 20000u &&
                GS_SYSMODE == 1u && GS_E6C3 == 0u && GS_E298 == 0u,
                "gs_shadow: every dump-held input equals the stock driving dump");
@@ -115,9 +134,13 @@ _Static_assert(GS_C06 == 0u && GS_C08 == 0u && GS_C10 == 0u && GS_C1A == 0 &&
 #if defined(__sh__)
 #  define GS_OBJ __attribute__((section(".gs_obj")))
 #  define GS_REC __attribute__((section(".gs_rec")))
+#  define GS_PRG __attribute__((section(".gs_prog")))   /* the tail of .gs_obj */
+#  define GS_RC1 __attribute__((section(".gs_rec1")))   /* the tail of .gs_obj */
 #else
 #  define GS_OBJ
 #  define GS_REC
+#  define GS_PRG
+#  define GS_RC1
 #endif
 
 typedef struct {        /* the ramp object at sub +0x40 (vtable 0x49FC0) */
@@ -206,19 +229,55 @@ typedef struct {
     uint32_t rec_t0;
 } gs_t;
 
+/* the shift context block A (0xFFF8BD6C = BD14+0x58) and the pass counters
+ * BD2E / BD30 — the synchronisation-progress producer (2026-11-18,
+ * ~/tcu_sweep/garage_shadow_v2_port.md); block B (0xFFF8BEB4, the queued
+ * context, +3 = 0) never touches the counters and the engine reads only
+ * block A: not ported */
+typedef struct {
+    uint8_t  sync;          /* +0x00 BD6C the sync flag */
+    int8_t   tgear;         /* +0x01 target gear (0x1176C4) */
+    uint8_t  act3;          /* +0x03 active context (1) */
+    uint8_t  p5;            /* +0x05 f(gears) (0x11779C: not ported, 0 — read
+                             * only by a BD16 != 3 context, the release) */
+    uint8_t  p27;           /* +0x27 force sync */
+    uint8_t  hold28;        /* +0x28 the hold of this pass */
+    uint8_t  dir;           /* +0x2C sync direction (0xFF = −1) */
+    uint8_t  p31;           /* +0x31 the hold outside a garage */
+    int16_t  slip;          /* +0x10 BD7C */
+    int16_t  rate;          /* +0x12 BD7E (DT1 of −slip) */
+    int32_t  acc;           /* +0x140 the DT1 state ×1000 */
+    uint16_t ts;            /* +0x144 the DT1 time stamp (0x89CF8) */
+    uint16_t bd2e;          /* 0xFFF8BD2E passes since sync */
+    uint16_t cb8, cba;      /* the shadow's 0x89CB8 / 0x89CBA (live, by value) */
+    uint8_t  sync_pass_ok;  /* ours: a sync seen since the last commit */
+    uint8_t  r37;           /* the reaction-37 input (stand-in) */
+    uint32_t sync_pass;     /* ours: shadow pass of the last 0 → 1 sync */
+    uint32_t hold_n;        /* ours: passes with the hold set */
+} gs_prog_t;
+
 static volatile gs_t g_s GS_OBJ;
 static volatile gs_wit_t g_w GS_OBJ;
-static volatile gs_rec_t g_rec[GS_REC_SLOTS][GS_REC_N] GS_REC;
+static volatile gs_prog_t g_p GS_PRG;
+/* the recorder: slot 0 fills .gs_rec, slot 1 the tail of .gs_obj (each
+ * region alone is too small for 2 × 112 × 28 bytes) */
+static volatile gs_rec_t g_rec0[GS_REC_N] GS_REC;
+static volatile gs_rec_t g_rec1[GS_REC_N] GS_RC1;
 #define G   (*(gs_t *)&g_s)
 #define W   (*(gs_wit_t *)&g_w)
+#define P   (*(gs_prog_t *)&g_p)
+static volatile gs_rec_t *rec_at(uint8_t slot, uint8_t i)
+{
+    return slot == 0u ? &g_rec0[i] : &g_rec1[i];
+}
 
-/* the progress cells: dump values unless the host overrides them (the
- * shadow keeps no initialised statics: its RAM is NOLOAD) */
-static uint8_t s_bd_ovr;
-static int16_t s_bd76_h;
-static uint8_t s_bd30_h;
-#define s_bd76  (s_bd_ovr != 0u ? s_bd76_h : (int16_t)GS_BD76)
-#define s_bd30  (s_bd_ovr != 0u ? s_bd30_h : (uint8_t)GS_BD30)
+#if !defined(__sh__)
+static uint8_t s_host_mask;         /* gs_shadow_host_standins */
+static int16_t s_host_bd76;
+static uint8_t s_host_bd30;
+#else
+#  define s_host_mask 0u
+#endif
 static uint8_t s_park_model;      /* 0xFFF8BC70[0], this pass (live, by value) */
 
 /* ── saturators (0xB7xxx, from the bytes / corpus) ──────────────────── */
@@ -383,7 +442,7 @@ static uint32_t b60(const gs_sub_t *s, uint32_t off) { return gsf_fl32(s->blk60 
 static void kind_check(void) { if (G.kind != 0u) { W.unp_n++; } }
 
 static int16_t e994(const gs_sub_t *s) { kind_check(); return (int16_t)gsf_b6e10(b58(s, 0x78u), (int16_t)G.bd22); }
-static int16_t ea72(const gs_sub_t *s) { return (int16_t)gsf_b7164(b58(s, 0x14u + 4u * GS_C06), (int16_t)GS_BD7C, (int16_t)GS_C1A); }
+static int16_t ea72(const gs_sub_t *s) { return (int16_t)gsf_b7164(b58(s, 0x14u + 4u * GS_C06), P.slip, (int16_t)GS_C1A); }
 static int16_t edb2(const gs_sub_t *s) { return (int16_t)gsf_b6e10(b58(s, 0x0Cu), (int16_t)GS_C1A); }
 static int16_t eb10(const gs_sub_t *s) { return (int16_t)gsf_b7164(b58(s, 0x08u), (int16_t)GS_C1D, b7768(GS_C10)); }
 static int16_t eabe(const gs_sub_t *s) { return (int16_t)gsf_b7164(b58(s, 0xA4u), (int16_t)GS_C1D, b7768(GS_C10)); }
@@ -597,7 +656,7 @@ static void d5e4(gs_sub_t *s)
         break;
     case 0x0A:
         s->f4 = 0u;
-        s->r2c = ef92(s, (int16_t)GS_CB8);
+        s->r2c = ef92(s, (int16_t)P.cb8);
         s->r28 = 0;
         ramp_reset(&s->ramp, 0, -20000, 20000);
         s->f2 = 1u;
@@ -761,7 +820,7 @@ static int16_t de46(gs_sub_t *s)
     }
     case 0x0B: {
         const int16_t a = ee4c(s);
-        const int16_t b = efb4(s, (int16_t)GS_CB8);
+        const int16_t b = efb4(s, (int16_t)P.cb8);
         const int16_t sum = b7888((int32_t)a + (int32_t)b);
         int32_t v;
         s->r28 = ramp_step(&s->ramp, sum);
@@ -1061,7 +1120,7 @@ static void e66d6(uint8_t pf, uint8_t e1, uint8_t e2, uint8_t e3, int8_t gear)
     d130(&G.sub[2], pf, e3, gear, flag);
     G.e4ac4 = 0u;
     G.e4ac7 = 0u;
-    G.e4ac2 = (uint16_t)GS_BD7C;
+    G.e4ac2 = (uint16_t)P.slip;                          /* BD7C */
 }
 
 /* 0xDC282: the k-th element of the target gear (role tables 0x6312F /
@@ -1082,6 +1141,175 @@ static uint8_t dc282(uint8_t k, uint8_t pf, int8_t gear)
     return e;
 }
 
+/* ── the synchronisation progress of the shift context (2026-11-18) ─────
+ * ~/tcu_sweep/garage_progress_decode.md, re-derived from the bytes:
+ *   0xD7C8C  ratio(gear) = *(u16)(*0xFFF84B2C + 2·(gear + 1)), *0xFFF84B2C =
+ *            0x4FAA4 (0xD7DDE) → 3306 0 4714 3143 2106 1667 1285 1000 839 667
+ *   0x117A74 slip = sat16(ratio(+1)·0x89CB8·s1/1000 − s2·0x89CBA)  (s1/s2:
+ *            0x89D5E/0x89D60, forced 1 while 0x89D63/0x89D65 != 0 — dump 01)
+ *   0x117F48 sync (+0) / direction (+0x2C) / the BD2E and BD30 clears,
+ *            threshold *(*0xFFF84D48 + 0xB0) = cal 0x1FF1F6 = 20 rpm
+ *   0x1179D8 → 0xD2058 rate (+0x12) = DT1 of −slip, T = 0xB6EAE(*(*0xFFF84D48
+ *            + 0x28) = 0x1B606C, 0x89C08) (250 at 0x89C08 = 0); 0xD2046 the reset
+ *   0x117AEC BD76 (+0x0A): synced → BD2E; else rate 0 or diverging → −32768,
+ *            else −slip·100/rate; then floored at −500 (0x117B3C..0x117B46:
+ *            −32768.0 is floored too — BD76 reads −500, not −32768) → 0xB7910
+ *   0x1175D6 the pass (slot 34, 0xEBDBC, unconditional): hold +0x28 = BD17 == 4
+ *            ? *0xFFF8D0E0 (D0DC+4, 0xEEA80) : +0x31
+ *   0x11793E engagement start (0xEDC5A, BD18 == 0): +0x31 = +0x28 = 1, +0x27 =
+ *            (BD1A ∈ {0x1E, 0x0A}) — BD1A = 0 from 0xEB900 → 0; 0x117F48(1, 0);
+ *            0x1179D8(block, 1) → 0xD2046
+ *   0x11755E end (0xEBB6C ← 0xDDC38): +0x31 = 0, +0x27 = 1
+ *   0xEC0E0  slot 28: BD30 / BD2E += *(u16)0xFFF8E220 (= 1), saturating */
+static int16_t b7910(float v)
+{
+    if (!(v > 32767.0f) && !(-32768.0f > v)) {
+        return (int16_t)(int32_t)v;
+    }
+    return (v > 32767.0f) ? (int16_t)0x7FFF : (int16_t)-0x8000;
+}
+
+static uint16_t d7c8c(int8_t gear)                       /* the gear ratio ×1000 */
+{
+    if ((int)gear < -1 || (int)gear > 8) {
+        W.unp_n++;                                       /* report (0x66) */
+        return 0u;
+    }
+    return gsf_fl16(0x0004FAA4u + 2u * (uint32_t)((int)gear + 1));
+}
+
+static int16_t sync_thr(void)                            /* 0xEB4A4: 20 rpm */
+{
+    return (int16_t)gsf_fl16(gsf_fl32(0x0005713Cu + 0xB0u));
+}
+
+static int16_t a74(void)                                 /* 0x117A74 */
+{
+    const int32_t r = (int32_t)d7c8c(P.tgear);
+    const int32_t v = ((int32_t)GS_D5E * (int32_t)P.cb8 * r) / 1000 - (int32_t)GS_D5E * (int32_t)P.cba;
+    return b7888(v);
+}
+
+static void f48(uint8_t hold, uint8_t p3)                /* 0x117F48 */
+{
+    const int16_t thr = sync_thr();
+    const uint8_t was = P.sync;
+    P.slip = a74();
+    if (hold != 0u) {
+        P.sync = 0u;
+        P.dir = 0xFFu;
+    } else if (P.sync == 0u) {
+        uint8_t d = P.dir;
+        if (d == 0xFFu) {
+            d = (G.bd16 == 3u) ? (P.slip >= 0 ? 3u : 1u) : P.p5;
+            P.dir = d;
+        }
+        if (((d == 1u || d == 2u) && (int32_t)P.slip >= -(int32_t)thr) ||
+            ((d == 3u || d == 4u) && (int32_t)P.slip <= (int32_t)thr) || p3 != 0u) {
+            P.sync = 1u;
+        }
+    }
+    if (P.act3 == 1u) {
+        const int32_t a = (P.slip == -0x8000) ? 0x7FFF : (P.slip < 0 ? -(int32_t)P.slip : P.slip);
+        if (P.sync == 0u) {
+            P.bd2e = 0u;
+        }
+        if (P.sync == 0u || a > (int32_t)thr) {          /* 0xB77A0 */
+            G.bd30 = 0u;
+        }
+    }
+    if (was == 0u && P.sync != 0u) {
+        P.sync_pass = W.passes;
+        P.sync_pass_ok = 1u;
+    }
+}
+
+static void dt1_reset(void)                              /* 0xD2046(+0x140, −slip) */
+{
+    P.ts = G.tb;
+    P.acc = (int32_t)(int16_t)(-(int32_t)P.slip) * 1000;
+}
+
+static void dt1(void)                                    /* 0x1179D8(p, 0) → 0xD2058 */
+{
+    const int16_t x = (int16_t)(-(int32_t)P.slip);
+    uint16_t t = gsf_b6eae(gsf_fl32(0x0005713Cu + 0x28u), (uint16_t)GS_C08);
+    uint16_t dt;
+    int16_t y;
+    if (t == 0u) {
+        t = 1u;
+    }
+    dt = (uint16_t)(G.tb - P.ts);
+    if (dt > t) {
+        dt = t;
+    }
+    y = b7888(((int32_t)x * 1000 - P.acc) / (int32_t)t);
+    P.acc += (int32_t)y * (int32_t)dt;
+    P.ts = G.tb;
+    P.rate = y;
+}
+
+static int16_t aec(void)                                 /* 0x117AEC (p4 = 0) → 0xB7910 */
+{
+    float r;
+    const float fr = (float)P.rate;
+    if (P.sync != 0u) {
+        r = (float)P.bd2e * 1.0f;
+    } else if (fr == 0.0f || (fr > 0.0f && P.slip < 0) || (fr < 0.0f && P.slip > 0)) {
+        r = -32768.0f;
+    } else {
+        r = ((float)(-(int32_t)P.slip) * 100.0f) / fr;
+    }
+    if (-500.0f > r) {
+        r = -500.0f;
+    }
+    return b7910(r);
+}
+
+/* slot 34: 0xEBDBC → 0x1175D6 on block A (BD14+0x34 = 0: stand-in) */
+static void prog_pass(void)
+{
+    const uint8_t hold = (G.bd17 == 4u) ? G.sub[0].f4 : P.p31;
+    P.hold28 = hold;
+    if (hold != 0u) {
+        P.hold_n++;
+    }
+    f48(hold, P.p27);
+    dt1();
+    G.bd76 = aec();
+#if !defined(__sh__)
+    if ((s_host_mask & GS_HOST_OLD_PROGRESS) != 0u) {   /* the old stand-ins */
+        G.bd76 = 0x7FFF;
+        G.bd30 = 0xFFu;
+        P.sync = 1u;
+    } else if ((s_host_mask & GS_HOST_FORCE_PROGRESS) != 0u) {
+        G.bd76 = s_host_bd76;
+        G.bd30 = s_host_bd30;
+        P.sync = 0u;
+    }
+#endif
+}
+
+/* the engagement start: 0xEDC5A's block-A branch (0x11793E, 0x1179D8(p, 1)) */
+static void prog_start(int8_t gear)
+{
+    P.tgear = gear;                                      /* 0x1176C4 (+1, +2) */
+    P.p5 = 0u;
+    P.p31 = 1u;
+    P.hold28 = 1u;
+    P.p27 = 0u;                                          /* BD1A = 0 (0xEB900) */
+    P.sync_pass_ok = 0u;
+    f48(1u, 0u);
+    dt1_reset();
+}
+
+/* the end: 0xEBB6C → 0x11755E(block A, 1, …) */
+static void prog_end(void)
+{
+    P.p31 = 0u;
+    P.p27 = 1u;
+}
+
 /* 0xEB900 + 0xEDC5A (BD14): the shift object enters the garage engagement */
 static void eb900(uint8_t pf, uint8_t e1, uint8_t e2, uint8_t e3, int8_t gear)
 {
@@ -1097,6 +1325,9 @@ static void eb900(uint8_t pf, uint8_t e1, uint8_t e2, uint8_t e3, int8_t gear)
     if (G.bd17 == 4u) {
         e6866(G.bd17, G.bd16);
     }
+    if (G.bd16 != 0u) {
+        prog_start(gear);                                /* 0xEDC5A → 0x11793E */
+    }
 }
 
 /* 0xDDCA2: the engagement start (from the commit) */
@@ -1109,7 +1340,7 @@ static void ddca2(uint8_t old, uint8_t pf, int8_t gear)
         W.unp_n++;                                       /* report 0x373 */
     }
     G.e33c_n = (int16_t)G.cd0;                           /* +0x10 = 0x89CD0 */
-    G.e33c_t = (int16_t)GS_CBA;                          /* +0xA  = 0x89CBA */
+    G.e33c_t = (int16_t)P.cba;                           /* +0xA  = 0x89CBA */
     eb900(pf, G.e33c[0], G.e33c[1], G.e33c[2], gear);
     /* 0xEEDFC (0xFFF8C190) and 0xE984A (BC74: E6C2 = 3 → not started) */
 }
@@ -1121,6 +1352,7 @@ static void ddc38(void)
     G.e33c[1] = 0u;
     G.e33c[2] = 0u;
     e67ec(0u, 0u, 0u);
+    prog_end();                                          /* 0xEBB6C → 0x11755E */
     G.bd16 = 0u;                                         /* 0xEBB6C [stand-in] */
     G.bd17 = 0u;
     gsf_set_bd16(0u);
@@ -1146,7 +1378,7 @@ static bool bab6c(uint8_t *cause)
         if (G.sub[0].act == 0u) {
             d = cdfa(&G.sub[1], 1u) && cdfa(&G.sub[2], 1u);
         } else {
-            d = cdfa(&G.sub[0], GS_BD6C);
+            d = cdfa(&G.sub[0], P.sync);         /* BD14+0x58 = BD6C (last pass) */
         }
         if (d) {
             /* 2: after the timeout flag (+0x14: the 0x0E ramp, then the
@@ -1170,7 +1402,7 @@ static void d4dc2(void)
     const uint8_t r = G.rngd;                            /* 0x89CDC */
     uint8_t st;
 
-    e[2] = (430u < GS_CBA || GS_D09 != 0u) ? 1u : 0u;                        /* 0xD4F02 */
+    e[2] = (430u < P.cba || GS_D09 != 0u) ? 1u : 0u;                         /* 0xD4F02 */
     e[1] = ((int32_t)50 + 380 < (int32_t)n || (q != 0u && (r == 5u || r == 7u))) ? 1u : 0u;  /* 0xD4EC0 */
     e[0] = (380u < n || q != 0u) ? 1u : 0u;                                  /* 0xD4E9E */
     e[3] = 0u;                                  /* 0xD4F24: 0xB80A4(E5C2) == 1 — stand-in 0 */
@@ -1518,15 +1750,26 @@ static void dc4c4(void)
 }
 
 /* the actuators (0x107BD2 / 0x107FB8 as app/rq_prod.c ports them) */
-static uint16_t law1(uint8_t type, uint16_t p)
+#define GS_IMIN 500u                                     /* cal 0x1FEF6C (**0xFFF84C94) */
+#define GS_IMAX 8500u                                    /* cal 0x1FEF6E */
+/* 0xD9CBC: i_min = 0 while reaction 37 is active (0xA031C(*0x632CB = 0x25))
+ * for every actuator except WK / Sys (id 5 / 6) [O bytes 0xD9CCC..0xD9CE2] */
+static uint16_t d9cbc(uint8_t id)
+{
+    if (P.r37 != 0u && id != 6u && id != 5u) {
+        return 0u;
+    }
+    return GS_IMIN;
+}
+static uint16_t law1(uint8_t id, uint8_t type, uint16_t p)
 {
     if (p == 0u) {
-        return type != 0u ? 8500u : 500u;
+        return type != 0u ? GS_IMAX : d9cbc(id);
     }
     if (p < GS_LINEP && p < 12750u) {
-        return 500u;                                     /* fault 0x1C4 / 0x1C2 */
+        return d9cbc(id);                                /* fault 0x1C4 / 0x1C2 */
     }
-    return type == 0u ? 8500u : 500u;
+    return type == 0u ? GS_IMAX : d9cbc(id);
 }
 static void actuators(void)
 {
@@ -1544,17 +1787,17 @@ static void actuators(void)
                 W.unp_n++;                               /* 0x107FE0: not ported */
                 i = 0u;
             } else {
-                i = law1(A[k].type, p);
+                i = law1(A[k].id, A[k].type, p);
             }
         } else if (RU8(o, RO_MODE) == 1u) {
             if (p == 0u && RU8(o, RO_5A) == 1u) {
                 W.unp_n++;                               /* 0x107D90: not ported */
                 i = 0u;
             } else {
-                i = law1(A[k].type, p);
+                i = law1(A[k].id, A[k].type, p);
             }
         } else {
-            i = gsf_107c3e(A[k].id, A[k].type, p, 500u, 8500u);
+            i = gsf_107c3e(A[k].id, A[k].type, p, d9cbc(A[k].id), GS_IMAX);
         }
         G.cur[A[k].id] = i;
     }
@@ -1577,7 +1820,7 @@ static void rec_pass(void)
         G.rec_on = 0xFFu;
         return;
     }
-    r = &g_rec[slot][n];
+    r = rec_at(slot, n);
     for (unsigned e = 0u; e < 5u; e++) {
         if (RU8(EO[e], RO_MODE) != 0u) { modes = (uint8_t)(modes | (1u << e)); }
         if (RU16(EO[e], RO_P) != 0u)   { set = (uint8_t)(set | (1u << e)); }
@@ -1599,6 +1842,10 @@ static void rec_pass(void)
     for (unsigned c = 0u; c < 7u; c++) {
         r->cur[c] = G.cur[c];
     }
+    r->bd30 = G.bd30;
+    r->sync = (uint8_t)((P.sync != 0u ? 1u : 0u) | (P.hold28 != 0u ? 2u : 0u) |
+                        (P.bd2e == 0xFFFFu ? 4u : 0u));
+    r->bd76 = G.bd76;
     W.rec_n[slot] = (uint8_t)(n + 1u);
 }
 
@@ -1631,8 +1878,12 @@ void gs_shadow_init(void)
     for (unsigned i = 0u; i < sizeof g_s; i++) { b[i] = 0u; }
     b = (volatile uint8_t *)&g_w;
     for (unsigned i = 0u; i < sizeof g_w; i++) { b[i] = 0u; }
-    b = (volatile uint8_t *)g_rec;
-    for (unsigned i = 0u; i < sizeof g_rec; i++) { b[i] = 0u; }
+    b = (volatile uint8_t *)g_rec0;
+    for (unsigned i = 0u; i < sizeof g_rec0; i++) { b[i] = 0u; }
+    b = (volatile uint8_t *)g_rec1;
+    for (unsigned i = 0u; i < sizeof g_rec1; i++) { b[i] = 0u; }
+    b = (volatile uint8_t *)&g_p;
+    for (unsigned i = 0u; i < sizeof g_p; i++) { b[i] = 0u; }
     for (uint32_t a = GS_REQ_BASE; a < GS_REQ_BASE + GS_REQ_SIZE; a++) {
         *(volatile uint8_t *)(uintptr_t)a = 0u;
     }
@@ -1653,8 +1904,22 @@ void gs_shadow_init(void)
         G.sub[k].type = 6u;
     }
     G.e4ac5 = GS_E4B1;
-    G.bd30 = s_bd30;
-    G.bd76 = s_bd76;
+    /* the shift context at its idle values (dump: long-idle synchronised) */
+    G.bd30 = (uint8_t)GS_IDLE_BD30;
+    G.bd76 = (int16_t)GS_IDLE_BD76;
+    P.bd2e = (uint16_t)GS_IDLE_BD2E;
+    P.sync = 1u;
+    P.tgear = 3;
+    P.act3 = 1u;
+    P.p27 = 1u;
+    P.p31 = 0u;
+    P.dir = 0u;
+    P.r37 = (uint8_t)GS_R37;
+#if !defined(__sh__)
+    if ((s_host_mask & GS_HOST_R37) != 0u) {
+        P.r37 = 1u;
+    }
+#endif
     G.rec_on = 0xFFu;
     G.c3d = GS_FORCED ? 0u : 1u;
     fill_bind();
@@ -1685,9 +1950,10 @@ void gs_shadow_tick_10ms(const gs_in_t *in)
     }
     G.c13 = in->temp;
     G.cd2_now = in->cd2;
-    G.bd30 = s_bd30;
-    G.bd76 = s_bd76;
+    P.cb8 = in->out_rpm;                                 /* 0x89CB8 (stand-in: live sensor) */
+    P.cba = in->tur_rpm;                                 /* 0x89CBA (stand-in: live sensor) */
     fill_bind();
+    gsf_set_pf(G.pf, G.c2f);
     if (!s_booted) {
         /* the boot-state-1 pass: 0xE5602, then the producer + actuators */
         s_booted = true;
@@ -1698,7 +1964,10 @@ void gs_shadow_tick_10ms(const gs_in_t *in)
         W.passes++;
         return;
     }
-    /* slot 28: the timers, the time base, the element tick / update */
+    /* slot 28: 0xEC0E0 — BD30 / BD2E (+= *0xFFF8E220 = 1), then 0x106848 */
+    G.bd30 = sat8p1(G.bd30);
+    P.bd2e = sat16p1(P.bd2e);
+    /* the timers, the time base, the element tick / update */
     G.e4ac6 = sat8p1(G.e4ac6);
     cf4e(&G.sub[0]);
     cf4e(&G.sub[1]);
@@ -1737,6 +2006,8 @@ void gs_shadow_tick_10ms(const gs_in_t *in)
     r3cec();
     r3de2();
     d0baa();
+    /* slot 34: 0xEBDBC → 0x1175D6 (block A): sync, rate, BD76 */
+    prog_pass();
     /* slot 35: 0xEB348 → step (D148, D1B4, D0DC), output (same order) */
     ce88(&G.sub[1]);
     ce88(&G.sub[2]);
@@ -1745,6 +2016,7 @@ void gs_shadow_tick_10ms(const gs_in_t *in)
     ceca(&G.sub[2]);
     ceca(&G.sub[0]);
     /* slot 42: the producer + actuators */
+    gsf_set_pf(G.pf, G.c2f);
     dc4c4();
     actuators();
     rec_pass();
@@ -1769,8 +2041,12 @@ void gs_shadow_tick_10ms(const gs_in_t *in)
 const volatile gs_wit_t *gs_shadow_wit(void) { return &g_w; }
 const volatile gs_rec_t *gs_shadow_rec(uint8_t slot, uint8_t i)
 {
-    return (slot < GS_REC_SLOTS && i < GS_REC_N) ? &g_rec[slot][i] : 0;
+    return (slot < GS_REC_SLOTS && i < GS_REC_N) ? rec_at(slot, i) : 0;
 }
+int16_t  gs_shadow_bd76(void)        { return g_s.bd76; }
+uint8_t  gs_shadow_bd30(void)        { return g_s.bd30; }
+uint8_t  gs_shadow_sync(void)        { return g_p.sync; }
+int16_t  gs_shadow_slip(void)        { return g_p.slip; }
 uint16_t gs_shadow_cur(uint8_t ch)   { return ch < 7u ? g_s.cur[ch] : 0xFFFFu; }
 uint8_t  gs_shadow_pf(void)          { return g_s.pf; }
 int8_t   gs_shadow_gear(void)        { return g_s.e69f; }
@@ -1792,11 +2068,12 @@ void gs_shadow_host_sub(uint8_t k, int16_t v[6])
     v[5] = (int16_t)RU16(req_obj(s->eng != 0u ? s->eng : 2u), RO_RES);
 }
 
-void gs_shadow_host_progress(int16_t bd76, uint8_t bd30)
+void gs_shadow_host_standins(uint8_t mask, int16_t bd76, uint8_t bd30)
 {
-    s_bd_ovr = 1u;
-    s_bd76_h = bd76;
-    s_bd30_h = bd30;
+    s_host_mask = mask;
+    s_host_bd76 = bd76;
+    s_host_bd30 = bd30;
+    gsf_host_e469c_off((mask & GS_HOST_OLD_E469C) != 0u);
 }
 #endif
 

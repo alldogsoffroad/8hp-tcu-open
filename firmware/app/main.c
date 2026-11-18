@@ -229,6 +229,14 @@ static void task_sup_monitor(void)
 extern void rq_prod_task_10ms(uint8_t os_mode) __attribute__((weak));
 
 /* ── 10 ms: application tasks ──────────────────────────────────────────── */
+#if !defined(TCU_RAM_APP)
+/* the garage shadow's speed inputs: a valid, non-negative sensor rpm, else 0 */
+static uint16_t gs_rpm(rpm_t r, quality_t q)
+{
+    return (q == Q_OK && r > 0) ? (uint16_t)r : 0u;
+}
+#endif
+
 static void task_10ms(void)
 {
     /* M5-1: the stock 10 ms list (modes 1..3) runs the element tick and
@@ -273,6 +281,7 @@ static void task_10ms(void)
          * the live values BY VALUE, after 0xB912C (park_tick: 0x89CDC) as the
          * stock's slots 27..42 follow it, and writes only its own RAM */
         const vehicle_in_t *v = vehicle_in();
+        const sensors_in_t *sn = sensors_in();
         const gs_in_t gi = {
             .os_mode = sup_mode(),
             .rngd = *(const volatile uint8_t *)0xFFF89CDCu,     /* park_law's 0x89CDC */
@@ -282,6 +291,10 @@ static void task_10ms(void)
             .cd2 = *(const volatile uint8_t *)0xFFF89CD2u,      /* tmp_chain's 0x89CD2 */
             .eng_speed = (uint16_t)v->engine_speed,
             .eng_valid = (v->q_engine_speed == Q_OK) ? 1u : 0u,
+            /* the shift context's speeds (0x89CB8 / 0x89CBA stand-ins): our
+             * live output / turbine sensors, 0 when invalid or negative */
+            .out_rpm = gs_rpm(sn->output_speed, sn->q_output_speed),
+            .tur_rpm = gs_rpm(sn->turbine_speed, sn->q_turbine_speed),
         };
         gs_shadow_tick_10ms(&gi);
     }

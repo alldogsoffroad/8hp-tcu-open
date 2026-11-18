@@ -12,7 +12,7 @@
  *   3. the guard: a value outside {500, 8500} or a complement mismatch is
  *      replaced by the r03f value and counted;
  *   4. the table law on other inputs (host-only rq_prod_step_in): the
- *      decode's per-gear currents, the overrides, neutral idle, coding;
+ *      decode's per-gear currents, the overrides, neutral idle, reaction 37;
  *   5. (--stock) the const data and code constants against the pristine
  *      image, and the producer's cells against the driving dump; exit 77
  *      (skipped) when the files are absent.
@@ -261,7 +261,7 @@ int main(int argc, char **argv)
         rq_prod_in_t in = {
             .gear = 3, .pflow = 0, .gear_eng = 3, .c2f = 0, .e28e = 0, .e298 = 0,
             .park_req = 1, .e6c3 = 0, .b52f = 0, .sys_mode = 1, .line_p = 20000,
-            .shift_src = 0, .coding = 0,
+            .shift_src = 0, .r37 = 0,
         };
         /* ch order A D B E C; applied NC (A, B) → 8500, applied NO (C D E) → 500 */
         struct { int8_t g; uint8_t pf; uint16_t a, d, b, e, c; } G[] = {
@@ -308,12 +308,12 @@ int main(int argc, char **argv)
         step_n(&in, 30u);
         CHECK(rq_prod_ch(2u) == 500u && rq_prod_ch(0u) == 500u);
         in.e6c3 = 0;
-        /* the i_min coding flag: 0 for ch 0..4, not for WK / Sys (0xD9CD4..0xD9CE0) */
-        in.coding = 1;
+        /* reaction 37 (0xD9CBC): i_min 0 for ch 0..4, not for WK / Sys (0xD9CD4..0xD9CE0) */
+        in.r37 = 1;
         step_n(&in, 30u);
         CHECK(rq_prod_ch(0u) == 0u && rq_prod_ch(5u) == 500u && rq_prod_ch(6u) == 500u &&
               rq_prod_ch(2u) == 8500u);
-        in.coding = 0;
+        in.r37 = 0;
         /* line pressure below 20000: B's mode-1 law 0x107CFC still 8500 (p >= line) */
         in.line_p = 9000;
         step_n(&in, 30u);

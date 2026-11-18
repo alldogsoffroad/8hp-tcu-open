@@ -359,7 +359,7 @@ int main(int argc, char **argv)
         rq_prod_in_t in = {
             .gear = 3, .pflow = 0, .gear_eng = 3, .c2f = 0, .e28e = 0, .e298 = 0,
             .park_req = 1, .e6c3 = 0, .b52f = 0, .sys_mode = 1, .line_p = 20000,
-            .shift_src = 0, .coding = 0,
+            .shift_src = 0, .r37 = 0,
         };
         reset();
         drv_rq_prod_host_select(true);
@@ -492,7 +492,7 @@ static int stock_checks(void)
         rq_prod_in_t in = {
             .gear = 1, .pflow = 0, .gear_eng = 3, .c2f = 0, .e28e = 0, .e298 = 0,
             .park_req = 1, .e6c3 = 0, .b52f = 0, .sys_mode = 1, .line_p = 20000,
-            .shift_src = 0, .coding = 0,
+            .shift_src = 0, .r37 = 0,
         };
         reset();
         drv_rq_prod_host_select(true);

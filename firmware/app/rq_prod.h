@@ -101,9 +101,14 @@
 #ifndef RQ_M5_SHIFTSRC
 #  define RQ_M5_SHIFTSRC  0     /* shift-phase sources ids 1..0x11 active (dump: none) */
 #endif
-#ifndef RQ_M5_CODING
-#  define RQ_M5_CODING    0     /* 0xA031C(*0x632CB = 0x37): the i_min coding flag
-                                 * (dump: A reads 500 → 0) */
+#ifndef RQ_M5_R37
+#  define RQ_M5_R37       0     /* fault reaction 37: 0xA031C(*0x632CB = 0x25 = 37)
+                                 * → 0xD9CBC i_min = 0 for every actuator but WK /
+                                 * Sys [O bytes 0xD9CBC..0xD9CE2]; inactive in the
+                                 * dump and on a healthy vehicle (actuator_reactions_
+                                 * decode.md) — a compile-time stand-in 0 (the
+                                 * _Static_assert below); host test m5prod forces
+                                 * it through rq_prod_step_in (.r37 = 1) */
 #endif
 
 /* ── M5-1: the inputs of the element fill (rq_fill.h rqf_in_t) — the stock
@@ -177,7 +182,7 @@ typedef struct {
     uint8_t  sys_mode;  /* 0xFFF89CF5 */
     uint16_t line_p;    /* 0xFFF8BCB0 */
     uint8_t  shift_src; /* 0: no shift-phase source */
-    uint8_t  coding;    /* 0xA031C(0x37) */
+    uint8_t  r37;       /* fault reaction 37 active: 0xA031C(*0x632CB = 0x25) */
 } rq_prod_in_t;
 
 #if defined(__sh__)
@@ -214,7 +219,7 @@ _Static_assert(RQ_M5_PFLOW == 0, "rq_prod: the M5-0 power-flow state is 0 (dump 
 _Static_assert(RQ_M5_GEAR_ENG == 3 && RQ_M5_C2F == 0 && RQ_M5_E28E == 0 && RQ_M5_E298 == 0 &&
                RQ_M5_PARKREQ == 1 && RQ_M5_E6C3 == 0 && RQ_M5_B52F == 0 &&
                RQ_M5_SYSMODE == 1 && RQ_M5_LINEP == 20000 && RQ_M5_SHIFTSRC == 0 &&
-               RQ_M5_CODING == 0,
+               RQ_M5_R37 == 0,
                "rq_prod: every M5-0 input equals the stock driving dump");
 _Static_assert(RQ_M5_ENGSTOP == 0 && RQ_M5_C1C == 0x22 &&
                RQ_M5_C0A == 0 && RQ_M5_C3D == 1 && RQ_M5_B119 == 0 &&

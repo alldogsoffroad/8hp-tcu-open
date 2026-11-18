@@ -1592,6 +1592,45 @@ void plat_init(void)
  * to r02f's — S9's sup_pfc_mux removal is in the shared plat_sup_init. The
  * bench install merges only the app block, so the on-bench loader is
  * unchanged until a loader is deliberately rebuilt and flashed. */
+#if !defined(TCU_RAM_APP)
+/* F1 (2026-11-18, CAPTURE ONLY): the ten bus-A feedback inputs in Timer F
+ * PWM-measurement mode, as the stock sets them — 0x9733C (TCRF = 0x20:
+ * clock bus 1 = 4 MHz; TIERF = TSRF = 0; NCRFA = 0x32; NCCRF bit),
+ * 0x90010 (TCRF = (TCRF & 0xE3) | 0x10: MDF 100) and 0x975EC (TSTRF bit
+ * off; EGSEL 01 rising for sub 0, 10 falling for sub 1 (configs 0x40954);
+ * ECNTAF = GRAF = ECNTCF = GRCF = ECNTBF = 0; GRBF = 1; ICFF cleared;
+ * TSTRF bit on). Channels from table 0x40D96 (chip c: sub 0, sub 1):
+ * 10 11 | 0 1 | 2 3 | 4 5 | 18 19. Timer F interrupts stay disabled
+ * (TIERF = 0, as the stock), nothing reads the captures in firmware —
+ * the bench reads GRCF / GRAF / TSRF over meas. The speed channels
+ * F12..F14 are not touched (bit-wise TSTRF / NCCRF only). Not ported: the
+ * Timer-D0 sampler, 0x97648, the classifier (the stand-in stays). */
+static void fb_capture_init(void)
+{
+    static const uint8_t ch[10] = { 10u, 11u, 0u, 1u, 2u, 3u, 4u, 5u, 18u, 19u };
+    for (uint32_t i = 0u; i < 10u; i++) {
+        const uint32_t n = ch[i];
+        const uint32_t bit = 1u << n;
+        TIERF(n) = 0u;
+        TSRF(n) = 0u;
+        TCRF(n) = 0x20u;
+        NCRFA(n) = 0x32u;
+        NCCRF |= bit;
+        TCRF(n) = (uint8_t)((TCRF(n) & 0xE3u) | 0x10u);
+        TSTRF &= ~bit;
+        TCRF(n) = (uint8_t)((TCRF(n) & 0xFCu) | (((i & 1u) == 0u) ? 0x01u : 0x02u));
+        ECNTAF(n) = 0u;
+        GRAF(n) = 0u;
+        ECNTCF(n) = 0u;
+        GRCF(n) = 0u;
+        ECNTBF(n) = 0u;
+        GRBF(n) = 1u;
+        TSRF(n) = (uint8_t)(TSRF(n) & (uint8_t)~1u);
+        TSTRF |= bit;
+    }
+}
+#endif
+
 void plat_app_init(void)
 {
     stock_gpio_init();          /* S10: the stock's init-table GPIO drives (+ Timer C) */
@@ -1613,6 +1652,9 @@ void plat_app_init(void)
      * off (stock_gpio_init). Group A at 0 %, group B 50 us pulses at 1 kHz,
      * TOE52 0 %; the 12 writer-less routed pins go high 32.8 ms later. */
     ATUENR |= 0x037Fu;
+#if !defined(TCU_RAM_APP)
+    fb_capture_init();          /* F1: capture only (0x90010's position, after Timer E) */
+#endif
 }
 
 /* r02l: start the AN0 mux / ADC chain (Timer G) — the 0x91F3E TGE bit,

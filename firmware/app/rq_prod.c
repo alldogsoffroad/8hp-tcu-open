@@ -135,7 +135,7 @@ static const rq_prod_in_t M5_IN = {
     .c2f = RQ_M5_C2F, .e28e = RQ_M5_E28E, .e298 = RQ_M5_E298,
     .park_req = RQ_M5_PARKREQ, .e6c3 = RQ_M5_E6C3, .b52f = RQ_M5_B52F,
     .sys_mode = RQ_M5_SYSMODE, .line_p = RQ_M5_LINEP,
-    .shift_src = RQ_M5_SHIFTSRC, .coding = RQ_M5_CODING,
+    .shift_src = RQ_M5_SHIFTSRC, .r37 = RQ_M5_R37,
 };
 
 /* 0xBAA58: (s16)*0xFFF8BCB0 — the line-pressure result (input) */
@@ -310,9 +310,9 @@ static void dc4c4(void)
 }
 
 /* ── the actuators ─────────────────────────────────────────────────────── */
-static uint16_t d9cbc(const act_t *a)              /* i_min */
+static uint16_t d9cbc(const act_t *a)              /* i_min (reaction 37 → 0) */
 {
-    if (s_in->coding != 0u && a->id != 6u && a->id != 5u) {    /* 0xD9CCC..0xD9CE0 */
+    if (s_in->r37 != 0u && a->id != 6u && a->id != 5u) {    /* 0xD9CCC..0xD9CE0 */
         return 0u;
     }
     return RQ_CAL_IMIN;                             /* 0xD9CE2: **0xFFF84C94 */
