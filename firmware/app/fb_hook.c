@@ -1,6 +1,7 @@
 /* fb_hook.c — the feedback shadow's one live read (app/fb_shadow.h). NOT an
  * output path: it reads the live cells BY VALUE into fbs_in_t and hands them
- * to the read-only shadow; it writes nothing live.
+ * to the read-only shadow. r04f: with DRV_OD_FB_REAL it also hands the
+ * shadow's outputs to drv_od_fb_real (the diagnosis's five input cells).
  *
  * Called at the stock's 0x7CBA8 slot, right after drv_out_tick_head (the
  * harvest 0x904FA status part + the stand-in) and before the law
@@ -8,6 +9,7 @@
  * 1..3), so 0x94ED4 is the previous law pass's current, as the stock's
  * 0x838B0 reads it, and the stand-in's cells are this pass's. */
 #include "app/fb_shadow.h"
+#include "bsw/drv/drv_odiag.h"     /* r04f: drv_od_fb_real (the real chain feeds the diagnosis) */
 
 #include <stdint.h>
 
@@ -40,6 +42,26 @@ void fb_shadow_gather_tick(void)
     in.f114 = LIVE_U8(0xFFF94114u);                             /* 0x94114 */
     in.f115 = LIVE_U8(0xFFF94115u);                             /* 0x94115 */
     fb_shadow_tick(&in);
+#if DRV_OD_FB_REAL
+    {
+        /* r04f: once the sampler is armed and the chain has run two task
+         * passes, its outputs replace the stand-in's in the live cells
+         * (~/tcu_sweep/diag_real_feedback_dryrun.md); before that the
+         * stand-in stays (the pre-'U' window the diagnosis skips anyway). */
+        const volatile fbs_t *s = fb_shadow_state();
+        if (s->armed != 0u && s->tick_n >= 2u) {
+            drv_od_fb_t fb;
+            for (uint8_t ch = 0u; ch < 10u; ch++) {
+                fb.cls[ch] = s->cls[ch];
+                fb.duty[ch] = s->duty[ch];
+                fb.dutyf[ch] = s->dutyf[ch];
+                fb.estm[ch] = s->estm[ch];
+                fb.res[ch] = s->res[ch];
+            }
+            drv_od_fb_real(&fb);
+        }
+    }
+#endif
 }
 
 /* the weak hook of bsw/sup/sup_batch.c (after drv_out_tick_head) */

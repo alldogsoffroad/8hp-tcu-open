@@ -723,6 +723,20 @@ void drv_od_tick_head(void)
     od_838b0_standin();
 }
 
+/* r04f: the real feedback chain over the stand-in (see drv_odiag.h). Runs
+ * after drv_od_tick_head in the same output tick (sup_batch: stand-in → hook
+ * → law), so nothing reads the five cells in between. */
+void drv_od_fb_real(const drv_od_fb_t *fb)
+{
+    for (uint8_t ch = 0u; ch < 10u; ch++) {
+        C_FB[ch] = fb->cls[ch];
+        C_DUTY[ch] = fb->duty[ch];
+        C_DUTYF[ch] = fb->dutyf[ch];
+        C_EST[ch] = fb->estm[ch];
+        C_RES[ch] = fb->res[ch];
+    }
+}
+
 /* ════════════════════════════════════════════════════════════════════════
  * 3. INSIDE THE LAW (0x83DB0's callees)
  * ════════════════════════════════════════════════════════════════════════ */

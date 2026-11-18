@@ -39,6 +39,30 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* r04f (2026-11-18, ~/tcu_sweep/diag_real_feedback_dryrun.md): the REAL
+ * feedback chain feeds the diagnosis. DRV_OD_FB_REAL = 1 (the SH application
+ * only): after the stand-in (kept as the fallback, drv_od_tick_head), the
+ * feedback hook hands the real chain's per-channel class / duty / filtered
+ * duty / estimate / resistance in BY VALUE and they overwrite the five cells
+ * 0x93A2E / 0x9340C / 0x93420 / 0x93394 / 0x933A8 — the cells the stock's
+ * 0x838B0 / 0x89A8C / 0x8390C / 0x83ABC write. 0 = the stand-in only (host
+ * tests, RAM app). */
+#if !defined(DRV_OD_FB_REAL)
+#if defined(__sh__) && !defined(TCU_RAM_APP) && !defined(TCU_LOADER)
+#define DRV_OD_FB_REAL 1
+#else
+#define DRV_OD_FB_REAL 0
+#endif
+#endif
+typedef struct {
+    uint8_t  cls[10];       /* → 0x93A2E */
+    uint16_t duty[10];      /* → 0x9340C (‰) */
+    uint16_t dutyf[10];     /* → 0x93420 */
+    uint16_t estm[10];      /* → 0x93394 (0.1 mA) */
+    uint16_t res[10];       /* → 0x933A8 (mΩ) */
+} drv_od_fb_t;
+void drv_od_fb_real(const drv_od_fb_t *fb);
+
 /* the diag job's delay after a cyclic completion (0x92530 → 0x92060(3800):
  * DCNTD02 loaded with 3800 << 8, 1 µs/tick) */
 #define DRV_OD_DIAG_DELAY_US 3800u
