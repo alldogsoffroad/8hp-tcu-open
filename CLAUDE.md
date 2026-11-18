@@ -2001,5 +2001,5 @@ The entry guard and all witnesses stay. RAM addresses identical to r02y (data-sy
 - **The echo passes under C980:** AA OK/ERR/EF 07/00/00 in every step (the J1 + C9 bit set, no error); A8 37/27 (mid-round reads), ERR/EF 0.
 - **Certification untouched:** 0x14 **C7** and gate **01**, letter 'c', J2 **9020**, seq2 'U' in every step; nibble 00.
 - **AN7 ≈ 19 980–19 989 mV in every step** — on this bench the veto changes nothing on the line (SSLB0's park nibble is 0, so the stock expects LOW everywhere and flags fault 4 either way).
-- No current step at boot (P set 1.82 → 1.83 A).
+- No current step at boot (P set 1.82 → 1.83 A); **user [O]: the ammeter did not move at any C9 lever step.**
 - **Health after the lever check:** boots = 1, job errors 0, cadence err/missed/dropped 0, diag 0x93004 zero, would-reset 0.
