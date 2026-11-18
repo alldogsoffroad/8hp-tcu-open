@@ -24,6 +24,7 @@ void fb_shadow_gather_tick(void)
     in.n5 = (uint8_t)((LIVE_U8(0xFFF93B33u) == 0u) ? 1u : 2u);  /* OS mode 0x93B33 */
     in.rail_mv = LIVE_U16(0xFFF94ED0u);                         /* 0x94ED0[0] */
     in.t_fluid = LIVE_S16(0xFFF94F9Cu);                         /* 0x94F9C */
+    in.t_st = LIVE_U8(0xFFF94FF0u);                             /* 0x94FF0 */
     for (uint8_t ch = 0u; ch < 10u; ch++) {
         in.i_req[ch] = LIVE_S16(0xFFF94ED4u + 2u * ch);         /* 0x94ED4 */
         in.si_cls[ch] = LIVE_U8(0xFFF93A2Eu + ch);              /* the stand-in's */

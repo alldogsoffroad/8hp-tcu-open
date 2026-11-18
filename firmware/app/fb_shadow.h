@@ -50,6 +50,7 @@ typedef struct {
     uint8_t  n5;            /* 5 ms countdown steps since the last pass (mode 0: 1, else 2) */
     uint16_t rail_mv;       /* 0x94ED0[0] (0x8390C's V) */
     int16_t  t_fluid;       /* 0x94F9C (°C · 16) */
+    uint8_t  t_st;          /* 0x94FF0, its status (8 = a fresh plausible acquisition) */
     int16_t  i_req[10];     /* 0x94ED4 (the previous law pass's current, 0.1 mA) */
     /* the stand-in's outputs this pass (drv_odiag.c od_838b0_standin) */
     uint8_t  si_cls[10];    /* 0x93A2E */
@@ -123,7 +124,8 @@ typedef struct {
     uint8_t  c9410d;        /* 0x24F: 0x9410D (0x83A1C channel) */
     uint8_t  c9410e;        /* 0x250: 0x9410E (0x83A1C call count) */
     uint8_t  c84a21;        /* 0x251: 0x84A21 (ambient-update flag) */
-    uint16_t pad1;
+    uint16_t r_wait;        /* 0x252 (ours): passes the R model's start (0x83A1C calls 1-2)
+                             * waited for a valid 0x94F9C (status 8) — see fb_shadow.c */
     /* 0x254 our witnesses */
     uint32_t isr_n;         /* sampler ISR entries */
     uint32_t isr_loops;     /* catch-up iterations (beyond the first per entry) */

@@ -9,7 +9,7 @@ stand-in.
 
     witness_fbshadow.py [rounds] [--raw]
 
-Addresses: the r04b build (nm): fbs_t 0xFFF86A00; s_walk_poll_count
+Addresses: the r04b / r04c builds (nm): fbs_t 0xFFF86A00; s_walk_poll_count
 0xFFF955BC, s_walk_isr_count 0xFFF955C0, s_now_ms 0xFFF956A8 (unchanged
 from r04a). Re-check with sh-elf-nm before every use.
 """
@@ -75,9 +75,10 @@ def show(d, walk):
           (d[7], u32(d, 8), u16(d, 0), u16(d, 2), u16(d, 4), d[6], u32(d, 0x254), u32(d, 0x258),
            u32(d, 0x25C), u32(d, 0x280), u32(d, 0x260), u32(d, 0x264), u32(d, 0x268), u32(d, 0x26C),
            u32(d, 0x270), u32(d, 0x278), u32(d, 0x274), u32(d, 0x27C)))
-    print("  R model: Tdrv %d Tfl %d amb %d (%.1f C) 9410C/D/E %u/%u/%u countdown %u | finit %04X" %
-          (s16(d, 0x242), s16(d, 0x244), s16(d, 0x246), s16(d, 0x246) / 128.0, d[0x24E], d[0x24F], d[0x250],
-           u16(d, 0x24C), u16(d, 0x240)))
+    print("  R model: Tdrv %d Tfl %d (%.1f C) amb %d (%.1f C) 9410C/D/E %u/%u/%u countdown %u flag %u | "
+          "seed waited %u passes | finit %04X" %
+          (s16(d, 0x242), s16(d, 0x244), s16(d, 0x244) / 16.0, s16(d, 0x246), s16(d, 0x246) / 128.0,
+           d[0x24E], d[0x24F], d[0x250], u16(d, 0x24C), d[0x251], u16(d, 0x252), u16(d, 0x240)))
     if walk:
         print("  walk: poll %u isr %u (poll share %.1f %%) now_ms %u" %
               (walk[0], walk[1], 100.0 * walk[0] / max(1, walk[0] + walk[1]), walk[2]))

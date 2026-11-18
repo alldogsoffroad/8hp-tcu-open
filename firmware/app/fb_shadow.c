@@ -569,6 +569,26 @@ static void r_83abc(uint8_t ch, int16_t i, uint8_t flag, int16_t t_fluid)
  * 0x9476E the 2 s countdown, 0x84A21 the ambient flag) */
 static void sched_83a1c(const fbs_in_t *in)
 {
+#if !defined(FBS_NEG_COLDSEED)
+    /* OURS (r04c; 2026-11-18 r04b bench): the R model's start waits for a
+     * valid fluid temperature. Call 2 seeds the ambient state 0x94FD4 (and
+     * its twin 0x94E4C) at 0x94F9C · 8 and from then on follows it only at
+     * 1 % per 2 s (cal 0x1916B6 = 9900: τ ≈ 200 s). The stock's 0x94F9C is
+     * a real reading at that pass (its ADC chain runs from the init list, so
+     * 0x887D8 has a plausible acquisition within its first 5 ms passes);
+     * ours is not: our Timer G starts at app 500 ms (r02l's deferred start),
+     * so 0x94F9C reads 0 (0x8D4B4's init) and then the 120 °C default
+     * 0x0780 (cal 0x1916F0, status 0 / 7 / 3) for ≈ 0.5 s — the r04b seed
+     * (amb 15360 → 12001 after 37 rounds at 35.9 °C fluid: 93.8 °C).
+     * Holding calls 1-2 until status 8 gives the seed the stock's input; the
+     * schedule after it is the stock's, unchanged. */
+    if (s.c9410e < 2u && in->t_st != 8u) {
+        if (s.r_wait != 0xFFFFu) {
+            s.r_wait++;
+        }
+        return;
+    }
+#endif
     if (s.c9410e == 0u) {
         s.c9410e = 1u;
         return;
@@ -613,8 +633,11 @@ static bool chain_838b0(const fbs_in_t *in)
 /* 0x904FA's capture part (under 0x9665C(0x60)) */
 static void cap_904fa(void)
 {
-    const uint32_t t0 = fbhw_frt_us();
     const uint32_t lk = fbhw_lock6();
+    /* the window measured INSIDE the lock (r04c): r04b read the end after
+     * the unlock, so the level-6 ISRs held off by the lock (the sampler,
+     * ≈ 30 µs; the walk) ran inside the measurement — its 79 µs */
+    const uint32_t t0 = fbhw_frt_us();
     for (uint8_t chip = 0u; chip < 5u; chip++) {
         for (uint8_t sub = 0u; sub < 2u; sub++) {
             const uint8_t ch = (uint8_t)(2u * chip + sub);
@@ -639,13 +662,13 @@ static void cap_904fa(void)
         s.snap_p[k] = s.win_p[k];
         s.snap_a[k] = s.win_a[k];
     }
-    fbhw_unlock(lk);
     {
         const uint32_t d = fbhw_frt_us() - t0;
         if (d > s.lock_max_us) {
             s.lock_max_us = d;
         }
     }
+    fbhw_unlock(lk);
 }
 
 static uint16_t absdiff(uint16_t a, uint16_t b) { return (uint16_t)(a > b ? a - b : b - a); }

@@ -25,6 +25,8 @@
 #include "app/fb_shadow.h"
 #include "app/fb_cal.h"
 #include "tests/unit/fb_model.h"
+#include "bsw/drv/drv_temp.h"
+#include "bsw/drv/drv_cells.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -97,6 +99,7 @@ static void in_dump(void)
     memset(&s_in, 0, sizeof s_in);
     s_in.rail_mv = (uint16_t)D_V;
     s_in.t_fluid = D_T;
+    s_in.t_st = 8u;                     /* a plausible acquisition (0x94FF0) */
     for (uint8_t ch = 0u; ch < 10u; ch++) {
         s_in.i_req[ch] = D_I[ch];
     }
@@ -312,8 +315,100 @@ static void test_2_rate(void)
     CHECK(fbm_ipr10() == 0x6000u, "(2) IPR10 bits 15-12 = 6");
 }
 
+/* (4) THE COLD BOOT (2026-11-18, the r04b bench defect): zeroed shadow RAM,
+ * the fluid temperature as OUR drv_temp produces it at boot (0x94F9C = 0 at
+ * init, then the 0x0780 default with status 0 / 7 / 3 until our Timer G
+ * starts at 500 ms; then a plausible acquisition, status 8, 35.9 °C as the
+ * r04b read), the rail at 'U' (+620 ms) with the P set (A D E C 850 mA,
+ * B WK Sys 50 mA) at the r04b duties. After 60 s: the ambient state within
+ * 1 °C of the fluid, R on the 850 mA channels 6.0-6.4 Ω, the estimate in the
+ * stock dump's band for 850 mA (its own 0x930E4: 9087-9271). The negative
+ * build -DFBS_NEG_COLDSEED (the r04b schedule, no wait) must FAIL here and
+ * show the bench's ≈ 94 °C at 75.6 s. */
+static void cnt_5ms(void)            /* the 0x7C7E4 countdown service (sup_ladder's) */
+{
+    for (uint32_t a = 0xFFF94734u; a < 0xFFF94786u; a += 2u) {
+        volatile uint16_t *w = (volatile uint16_t *)(uintptr_t)a;
+        if (*w != 0u) {
+            *w = (uint16_t)(*w - 1u);
+        }
+    }
+    for (uint32_t a = 0xFFF94788u; a < 0xFFF94835u; a++) {
+        volatile uint8_t *b = (volatile uint8_t *)(uintptr_t)a;
+        if (*b != 0u) {
+            *b = (uint8_t)(*b - 1u);
+        }
+    }
+}
+
+static int test_cold(void)
+{
+    static const uint32_t LOW_U[7] = { 1776u, 1804u, 276u, 1836u, 1812u, 272u, 276u };   /* r04b ‰ × 4 */
+    static const int16_t I_P[7] = { 8500, 8500, 500, 8500, 8500, 500, 500 };   /* the gear-1 P set */
+    const volatile fbs_t *s;
+    int bad = 0;
+    bool up = false;
+    uint32_t ms = 0u;
+    memset((void *)(uintptr_t)0xFFF80000u, 0, 0x16000u);
+    s_t = 0u;
+    boot();
+    drv_temp_init();
+    memset(&s_in, 0, sizeof s_in);
+    s_in.rail_mv = 12940u;
+    s = fb_shadow_state();
+    while (ms < 75600u) {
+        const uint32_t step = (ms < 670u) ? 5u : 10u;      /* mode 0, then mode 1 */
+        ms += step;
+        for (uint32_t k = 0u; k < step / 5u; k++) {
+            cnt_5ms();
+        }
+        if (ms >= 500u) {                                  /* Timer G started: AN8 / AN1 plausible */
+            CELL_AN_MV(8) = 2656u;
+            CELL_AN_MV(1) = 170u;
+        }
+        drv_temp_tick();                                   /* 0x887D8 (entry 7, before 0x7CBA8) */
+        if (!up && ms >= 620u) {                           /* 'U': the P set */
+            up = true;
+            for (uint8_t ch = 0u; ch < 7u; ch++) {
+                s_in.i_req[ch] = I_P[ch];
+                fbm_set_pwm(tf_of(ch), 4000u, LOW_U[ch], 37u * ch);
+            }
+        }
+        s_in.n5 = (uint8_t)(step / 5u);
+        s_in.t_fluid = CELL_TMP;
+        s_in.t_st = CELL_TMP_ST;
+        s_t = ms * 1000u;
+        fbm_advance_to(s_t);
+        fb_shadow_tick(&s_in);
+        if (ms == 60670u) {
+            const int amb_err = (int)s->amb - (int)s->tfl * 8;
+            printf("(4) cold boot, 60 s: fluid %d (%.1f C, status %u), amb %d (%.1f C), seed waited %u passes\n",
+                   s->tfl, s->tfl / 16.0, CELL_TMP_ST, s->amb, s->amb / 128.0, s->r_wait);
+            if (amb_err > 128 || amb_err < -128) {
+                bad++;
+            }
+            for (uint8_t ch = 0u; ch < 7u; ch++) {
+                printf("    ch %u: duty %4u R %5u mOhm est %5u (I %u)\n", ch, s->duty[ch], s->res[ch],
+                       s->est[ch], (unsigned)I_P[ch]);
+                if (I_P[ch] == 8500 && (s->res[ch] < 6000u || s->res[ch] > 6400u ||
+                                        s->est[ch] < 8500u || s->est[ch] > 9400u)) {
+                    bad++;
+                }
+            }
+        }
+    }
+    printf("(4) cold boot, 75.6 s: amb %d (%.1f C) — r04b read 12001 (93.8 C)\n", s->amb, s->amb / 128.0);
+    CHECK(bad == 0, "(4) cold boot: %d checks out of band", bad);
+    return bad;
+}
+
 int main(int argc, char **argv)
 {
+    if (argc > 1 && strcmp(argv[1], "--cold") == 0) {
+        const int bad = test_cold();
+        printf("%s\n", bad == 0 ? "PASS" : "FAIL");
+        return bad == 0 ? 0 : 1;
+    }
     if (argc > 1 && strcmp(argv[1], "--neg") == 0) {
         const int bad = test_1a();
         printf("%s (%d channels differ)\n", bad == 0 ? "PASS" : "FAIL", bad);
@@ -327,6 +422,7 @@ int main(int argc, char **argv)
     test_2_cadence(5u);
     test_2_cadence(10u);
     test_2_rate();
+    test_cold();
     printf("%s (%d failures)\n", s_fail == 0 ? "PASS" : "FAIL", s_fail);
     return s_fail == 0 ? 0 : 1;
 }

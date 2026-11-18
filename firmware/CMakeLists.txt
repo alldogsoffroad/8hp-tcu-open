@@ -691,7 +691,7 @@ else()
     # 1-4 of test_odiag) byte-identical with and without the shadow; the
     # source scans and the SH compile checks of the read-only frame.
     set(FB_TEST_SOURCES tests/unit/test_fb_shadow.c app/fb_shadow.c app/fb_cal.c tests/unit/fb_model.c
-        tests/unit/stub_plat.c)
+        bsw/drv/drv_temp.c tests/unit/stub_plat.c)
     add_executable(test_fb_shadow ${FB_TEST_SOURCES})
     add_test(NAME fb_shadow COMMAND test_fb_shadow)
     foreach(neg POLARITY PINS)
@@ -700,6 +700,12 @@ else()
         add_test(NAME fb_shadow_neg_${neg} COMMAND test_fb_shadow_neg_${neg} --neg)
         set_tests_properties(fb_shadow_neg_${neg} PROPERTIES WILL_FAIL TRUE)
     endforeach()
+    # (4) the cold boot: the r04b defect restored (no wait for a valid 0x94F9C
+    # before the R model's seed) must FAIL
+    add_executable(test_fb_shadow_neg_COLDSEED ${FB_TEST_SOURCES})
+    target_compile_definitions(test_fb_shadow_neg_COLDSEED PRIVATE FBS_NEG_COLDSEED=1)
+    add_test(NAME fb_shadow_neg_COLDSEED COMMAND test_fb_shadow_neg_COLDSEED --cold)
+    set_tests_properties(fb_shadow_neg_COLDSEED PROPERTIES WILL_FAIL TRUE)
     add_executable(test_fb_cal tests/unit/test_fb_cal.c app/fb_cal.c)
     target_compile_definitions(test_fb_cal PRIVATE "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"")
     add_test(NAME fb_cal_bytes COMMAND test_fb_cal)
