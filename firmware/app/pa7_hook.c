@@ -16,6 +16,7 @@
 #include "app/pa7_shadow.h"
 #include "platform/platform.h"      /* plat_frt_us (the witness timestamp) */
 #include "app/park_cells.h"         /* PCELL_TGT: the range D6D6, read-only (the writer guard) */
+#include "bsw/drv/drv_pa7.h"         /* r04e: PA7 live (the pin only; C9 bit 7 stays held) */
 
 #include <stdint.h>
 
@@ -67,5 +68,12 @@ void app_pin_cut_hook(void)
     in.an7 = LIVE_S16(0xFFF9018Cu + 2u * PA7_CAL_AN);           /* 0x9018C[7] */
     in.sup = LIVE_S16(0xFFF94F86u);                             /* 0x94F86 */
     pa7_shadow_pin(&in);
+#if PA7_LIVE
+    /* r04e: the real pin follows the shadow's 0x8CE48 result, through the
+     * stock's 0x90CF6. Before the 0x9095B gate the shadow's value is the
+     * init 0 (0x90D12), as the stock's pin. The C9 bit-7 request is NOT
+     * made live (sup_ctrl.c's `& 0x80` test is still to be fixed). */
+    drv_pa7_apply(pa7_shadow_state()->pa7);
+#endif
 }
 #endif

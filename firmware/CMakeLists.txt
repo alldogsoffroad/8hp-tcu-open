@@ -44,7 +44,7 @@ set(CORE_SOURCES
     app/tmp_chain.c
     app/gs_shadow.c app/gs_fill.c app/gs_cal.c
     app/fb_shadow.c app/fb_cal.c app/fb_hook.c
-    app/pa7_shadow.c app/pa7_hook.c
+    app/pa7_shadow.c app/pa7_hook.c bsw/drv/drv_pa7.c
     safety/park_mon.c
     safety/park_pair.c
     safety/kl15.c
