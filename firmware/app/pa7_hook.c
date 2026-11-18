@@ -75,5 +75,10 @@ void app_pin_cut_hook(void)
      * made live (sup_ctrl.c's `& 0x80` test is still to be fixed). */
     drv_pa7_apply(pa7_shadow_state()->pa7);
 #endif
+#if PA7_C9_LIVE
+    /* r04g: the C9 bit-7 request (0x9095A) from the shadow's 0x8CE48 result;
+     * sup_c9_compose (the batch, later in this tick) puts it on bus B. */
+    drv_pa7_c9_apply(pa7_shadow_state()->c9b7);
+#endif
 }
 #endif

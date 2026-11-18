@@ -16,6 +16,16 @@
 #endif
 #endif
 
+/* PA7_C9_LIVE (r04g): 1 = the PA7 hook also writes the shadow's C9 bit-7
+ * request into the live 0x9095A (stock 0x8CEBC), which sup_c9_compose turns
+ * into C9 bit 7 (C980) on bus B — SH application only. */
+#if !defined(PA7_C9_LIVE)
+#define PA7_C9_LIVE PA7_LIVE
+#endif
+
+/* 0x8CEBC: 0xFFF9095A = v (0 / 1) — the C9 bit-7 request */
+void drv_pa7_c9_apply(uint8_t v);
+
 /* 0x90CF6(v): 0xFFF90920 = v; v != 0 → bset.b #7,@(3,0xFFFE3800), else bclr */
 void drv_pa7_apply(uint8_t v);
 #endif

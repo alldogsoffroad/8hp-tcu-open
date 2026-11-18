@@ -203,6 +203,17 @@ static void test_ctrl_composer(void)
     CELL_SHUTDOWN_ST = 1u;
     sup_c9_compose();
     CHECK(CELL_C9_STAGED == 0x00u);
+    /* r04g: bit 7 = (0x9095A != 0), as the stock's 0x91CA6 (0/1 from
+     * 0x8CE48; 0x80 also counts as set) */
+    CELL_C9_VARIANT = 1u;
+    sup_c9_compose();
+    CHECK(CELL_C9_STAGED == 0x80u);
+    CELL_C9_VARIANT = 0x80u;
+    sup_c9_compose();
+    CHECK(CELL_C9_STAGED == 0x80u);
+    CELL_C9_VARIANT = 0u;
+    sup_c9_compose();
+    CHECK(CELL_C9_STAGED == 0x00u);
     CELL_SHUTDOWN_ST = 0u;
 }
 

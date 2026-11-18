@@ -18,4 +18,12 @@ void drv_pa7_apply(uint8_t v)
     }
 }
 
+
+/* 0x8CEBC (in 0x8CE48): mov.b r?,@(0xFFF9095A) — the C9 bit-7 request, 0/1.
+ * Written in the pin-cut pass, before the batch composes C9 in the same tick
+ * (stock 0x44D18 → 0x44D24; 0x44E64 → 0x44E6C). */
+void drv_pa7_c9_apply(uint8_t v)
+{
+    *(volatile uint8_t *)0xFFF9095Au = (uint8_t)((v != 0u) ? 1u : 0u);
+}
 #endif

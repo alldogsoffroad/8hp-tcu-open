@@ -93,8 +93,11 @@ void sup_c9_compose(void)
     if (CELL_SHUTDOWN_ST == 0u) {
         c9 |= 0x10u;
     }
-    /* bit 7 from the variant cell */
-    if ((CELL_C9_VARIANT & 0x80u) != 0u) {
+    /* bit 7 = (0x9095A != 0) — stock 0x91CA6..0x91CB6: `tst; nott;
+     * bst.b #7` (r04g, ~/tcu_sweep/c9_bit7_decode.md). 0x8CE48 writes 0 or
+     * 1 there (the PA7 Park-signal veto in R/D); the old `& 0x80` test could
+     * never see a 1. */
+    if (CELL_C9_VARIANT != 0u) {
         c9 |= 0x80u;
     }
     CELL_C9_STAGED = c9;
