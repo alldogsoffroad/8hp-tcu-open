@@ -934,6 +934,19 @@ else()
     target_compile_definitions(test_fullon PRIVATE SUP_L1_HOLD_PHASE8_REQUEST=0
         SUP_L1_HOLD_PHASE40=0 SUP_L1_HOLD_FAIL_FSM=0 SUP_L3_HOLD_SEQ_L=0)
     add_test(NAME fullon COMMAND test_fullon)
+    # HOST DRY-RUN (2026-11-18, ~/tcu_sweep/diag_real_feedback_dryrun.md):
+    # test_fullon's supervisor + bus-A chain with the feedback shadow on the
+    # Timer F / D model, the consumers fed (test-only, at the 0x838B0 slot)
+    # from the REAL chain vs the stand-in, over the bench waveforms
+    add_executable(test_diag_realfb tests/unit/test_diag_realfb.c
+        bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
+        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
+        app/fb_shadow.c app/fb_cal.c tests/unit/fb_model.c
+        tests/unit/stub_plat.c)
+    target_compile_definitions(test_diag_realfb PRIVATE SUP_L1_HOLD_PHASE8_REQUEST=0
+        SUP_L1_HOLD_PHASE40=0 SUP_L1_HOLD_FAIL_FSM=0 SUP_L3_HOLD_SEQ_L=0)
+    add_test(NAME diag_realfb_dryrun COMMAND test_diag_realfb)
     # THE BUS-A OUTPUT CADENCE (2026-11-18, ~/tcu_sweep/output_cadence_port.md):
     # one law pass + one F stage per output tick (5 ms mode 0, 10 ms mode 1),
     # cyclic -> config -> ID per F pass through the ring, nothing lost, the
