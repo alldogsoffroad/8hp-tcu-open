@@ -398,6 +398,42 @@ SECTIONS
     ASSERT(__gs_rec_start >= ADDR(.tmp_edd8) + SIZEOF(.tmp_edd8), ".gs_rec overlaps .tmp_edd8")
     ASSERT(__gs_rec_end <= ADDR(.adc_cells), ".gs_rec runs into .adc_cells")
 
+    /* THE GARAGE BRIDGE, STAGE G1 (app/gs_bridge.c; ours — not stock cells;
+     * 2026-11-18, ~/tcu_sweep/garage_g1_port.md). Four NOLOAD objects:
+     *   .gsb_win   gsb_win_t (20 B) at 0xFFF87200 — the .noinit windows: NOT
+     *              cleared on a warm boot (gs_bridge_init(cold) decides), so
+     *              they survive an MCU reset like .noinit; a power-on clears;
+     *   .gsb_state gsb_t (172 B) + the TU's zero-initialised data, after it;
+     *              both in the free low RAM 0xFFF87200..0xFFF87800 between
+     *              .rng_wit (ASSERTed <= 0xFFF87800) and .tmp_wit (0xFFF87800)
+     *              — the stock driving dump holds zeros there;
+     *   .gsb_rec0  112 x 36 B (the last D) at 0xFFF8BCC0, below .rng_d5e4;
+     *   .gsb_rec1  112 x 36 B (the last R) at 0xFFF89D20, below .park_req —
+     *              stock RAM our firmware never names (ctest scan: no code
+     *              literal in either range), as .gs_rec / .gs_obj.
+     * ld does NOT refuse overlapping NOLOAD sections: the ASSERTs hold each. */
+    .gsb_win 0xFFF87200 (NOLOAD) : {
+        __gsb_win_start = .; KEEP(*(.gsb_win)) . = ALIGN(4); __gsb_win_end = .;
+    } > RAM
+    .gsb_state 0xFFF87220 (NOLOAD) : {
+        __gsb_state_start = .; KEEP(*(.gsb_state)) *gs_bridge.c.obj(.bss .bss.* COMMON)
+        . = ALIGN(4); __gsb_state_end = .;
+    } > RAM
+    ASSERT(__gsb_win_start >= __rng_wit_end && __gsb_win_end <= __gsb_state_start, ".gsb_win overlaps")
+    ASSERT(__gsb_state_end <= ADDR(.tmp_wit), ".gsb_state runs into .tmp_wit")
+    ASSERT(SIZEOF(.gsb_win) == 0x14 && SIZEOF(.gsb_state) == 0xAC, ".gsb_*: gsb_win_t / gsb_t are off (witness_g1.py)")
+    .gsb_rec0 0xFFF8BCC0 (NOLOAD) : {
+        __gsb_rec0_start = .; KEEP(*(.gsb_rec0)) . = ALIGN(4); __gsb_rec0_end = .;
+    } > RAM
+    .gsb_rec1 0xFFF89D20 (NOLOAD) : {
+        __gsb_rec1_start = .; KEEP(*(.gsb_rec1)) . = ALIGN(4); __gsb_rec1_end = .;
+    } > RAM
+    ASSERT(__gsb_rec0_start >= ADDR(.m5_in4) + SIZEOF(.m5_in4) && __gsb_rec0_end <= ADDR(.rng_d5e4),
+           ".gsb_rec0 overlaps .m5_in4 / .rng_d5e4")
+    ASSERT(__gsb_rec1_start >= ADDR(.m5_in6) + SIZEOF(.m5_in6) && __gsb_rec1_end <= ADDR(.park_req),
+           ".gsb_rec1 overlaps .m5_in6 / .park_req")
+    ASSERT(SIZEOF(.gsb_rec0) == 0xFC0 && SIZEOF(.gsb_rec1) == 0xFC0, ".gsb_rec*: 112 x gsb_rec_t (witness_g1.py)")
+
     /* THE PWM-FEEDBACK SHADOW (app/fb_shadow.c; ours — not stock cells;
      * 2026-11-18, ~/tcu_sweep/feedback_shadow_port.md): struct fbs_t (0x34C)
      * in free low RAM 0xFFF86A00..0xFFF87000 between .m5_rec (ASSERTed

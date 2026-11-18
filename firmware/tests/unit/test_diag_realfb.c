@@ -813,6 +813,9 @@ static int fails;
 #define DCHECK(c, ...) do { if (!(c)) { printf("FAIL %s:%d: ", __FILE__, __LINE__); \
     printf(__VA_ARGS__); printf("\n"); fails++; } } while (0)
 
+/* (2026-11-18) tests/unit/test_gs_bridge_chain.c includes this file for its
+ * harness and brings its own main */
+#if !defined(TEST_DIAG_REALFB_NO_MAIN)
 #if defined(DIAG_TEMPS)
 int main(int argc, char **argv)
 {
@@ -968,3 +971,4 @@ int main(int argc, char **argv)
     return fails != 0;
 }
 #endif
+#endif /* !TEST_DIAG_REALFB_NO_MAIN */

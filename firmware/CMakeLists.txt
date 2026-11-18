@@ -42,7 +42,7 @@ set(CORE_SOURCES
     app/rq_fill.c
     app/rq_fill_cal.c
     app/tmp_chain.c
-    app/gs_shadow.c app/gs_fill.c app/gs_cal.c
+    app/gs_shadow.c app/gs_fill.c app/gs_cal.c app/gs_bridge.c
     app/fb_shadow.c app/fb_cal.c app/fb_hook.c
     app/pa7_shadow.c app/pa7_hook.c bsw/drv/drv_pa7.c
     app/tsel_shadow.c app/tsel_hook.c
@@ -612,7 +612,7 @@ else()
     # (normal, ≈ 0.95 s) and the 0xE469C fill-time term, at 38.9 and 21 °C;
     # (g) the 250-pass timeout with a turbine that never synchronises; (n) the
     # old stand-ins must fail (e); reaction 37 host-forced.
-    set(GS_TEST_SOURCES tests/unit/test_gs_shadow.c app/gs_shadow.c app/gs_fill.c app/gs_cal.c
+    set(GS_TEST_SOURCES tests/unit/test_gs_shadow.c app/gs_shadow.c app/gs_fill.c app/gs_cal.c app/gs_bridge.c
         app/rng_chain.c safety/kl15.c
         app/range.c app/park_law.c app/park.c safety/park_mon.c bsw/sched/sched.c
         io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
@@ -1051,6 +1051,137 @@ else()
         SUP_L1_HOLD_PHASE40=0 SUP_L1_HOLD_FAIL_FSM=0 SUP_L3_HOLD_SEQ_L=0
         DIAG_TEMPS=1 FBS_9393A_HOST_SRC=g_fbs_9393a_host)
     add_test(NAME diag_temps_dryrun COMMAND test_diag_temps)
+    # THE GARAGE BRIDGE, STAGE G1 (2026-11-18, ~/tcu_sweep/garage_g1_port.md):
+    # test_diag_realfb's supervisor + real bus-A chain + main.c's 10 ms task
+    # (producer, vehicle sims, kl15, the range chain, park_tick, the garage
+    # shadow, the bridge) over the gs-check (P D P R P, brake + engine 700).
+    # (1) GS_LIVE_DIR 0: every bus-A word, the cell window and the park
+    # demands identical with and without the bridge, frame by frame; the
+    # recorder against the shadow's own. (2) GS_LIVE_DIR 3 (HOST ONLY — the
+    # G2 gate): the bridged currents applied through the seam, the output
+    # diagnosis on the real feedback silent; _temps with 0x940FC forced 8
+    # (the current bounds).
+    set(GSB_CHAIN_SOURCES tests/unit/test_gs_bridge_chain.c
+        bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
+        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
+        app/fb_shadow.c app/fb_cal.c tests/unit/fb_model.c
+        app/rq_prod.c app/rq_fill.c app/rq_fill_cal.c
+        app/gs_shadow.c app/gs_fill.c app/gs_cal.c app/gs_bridge.c
+        app/rng_chain.c safety/kl15.c app/range.c app/park_law.c app/park.c safety/park_mon.c
+        bsw/sched/sched.c io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
+        tests/unit/stub_plat.c)
+    set(GSB_CHAIN_DEFS SUP_L1_HOLD_PHASE8_REQUEST=0 SUP_L1_HOLD_PHASE40=0 SUP_L1_HOLD_FAIL_FSM=0
+        SUP_L3_HOLD_SEQ_L=0 DRV_RQ_USE_PRODUCER=1 GS_FORCED=1)
+    add_executable(test_gs_bridge_chain ${GSB_CHAIN_SOURCES})
+    target_compile_definitions(test_gs_bridge_chain PRIVATE ${GSB_CHAIN_DEFS})
+    add_test(NAME gs_bridge_chain COMMAND test_gs_bridge_chain)
+    add_executable(test_gs_bridge_g2 ${GSB_CHAIN_SOURCES})
+    target_compile_definitions(test_gs_bridge_g2 PRIVATE ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3)
+    add_test(NAME gs_bridge_g2_gate COMMAND test_gs_bridge_g2)
+    add_executable(test_gs_bridge_g2_temps ${GSB_CHAIN_SOURCES} app/tsel_shadow.c)
+    target_compile_definitions(test_gs_bridge_g2_temps PRIVATE ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3
+        DIAG_TEMPS=1 FBS_9393A_HOST_SRC=g_fbs_9393a_host)
+    add_test(NAME gs_bridge_g2_gate_bounds COMMAND test_gs_bridge_g2_temps)
+    # the bridge's logic on test_gs_shadow's light harness: the OS-mode-2
+    # witness, the .noinit windows, the guard negatives (G1: recorded, the
+    # wire never moves), and — GS_LIVE_DIR 3, host only — every abort of the
+    # plan (the P content within 2 passes, the latches, the windows over a
+    # warm reset); the table mutation and the engagement limit
+    set(GSB_LOGIC_SOURCES tests/unit/test_gs_bridge_logic.c app/gs_shadow.c app/gs_fill.c app/gs_cal.c
+        app/gs_bridge.c app/rng_chain.c safety/kl15.c
+        app/range.c app/park_law.c app/park.c safety/park_mon.c bsw/sched/sched.c
+        io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
+        app/rq_prod.c app/rq_fill.c app/rq_fill_cal.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
+        tests/unit/stub_plat.c)
+    add_executable(test_gs_bridge_logic ${GSB_LOGIC_SOURCES})
+    target_compile_definitions(test_gs_bridge_logic PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=1)
+    add_test(NAME gs_bridge_logic COMMAND test_gs_bridge_logic)
+    add_executable(test_gs_bridge_live ${GSB_LOGIC_SOURCES})
+    target_compile_definitions(test_gs_bridge_live PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=1 GS_LIVE_DIR=3)
+    add_test(NAME gs_bridge_live_aborts COMMAND test_gs_bridge_live)
+    add_executable(test_gs_bridge_mut ${GSB_LOGIC_SOURCES})
+    target_compile_definitions(test_gs_bridge_mut PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=1 GSB_HOST_MUT_TABLE=1)
+    add_test(NAME gs_bridge_table_mutation_trips COMMAND test_gs_bridge_mut)
+    add_executable(test_gs_bridge_engt ${GSB_LOGIC_SOURCES})
+    target_compile_definitions(test_gs_bridge_engt PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=1 GS_LIVE_DIR=3
+        GSB_ENG_PASSES=50u TEST_ENGT=1)
+    add_test(NAME gs_bridge_engagement_limit COMMAND test_gs_bridge_engt)
+    # the compile-time element bounds against the image's bytes (role tables
+    # 0x6312F / 0x63139 / 0x63143, table 0x505A4); the mutated table must FAIL
+    set(GSB_TABLE_SOURCES tests/unit/test_gs_bridge_tables.c app/gs_bridge.c app/gs_shadow.c
+        app/gs_fill.c app/gs_cal.c app/rq_fill_cal.c tests/unit/stub_plat.c)
+    add_executable(test_gs_bridge_tables ${GSB_TABLE_SOURCES})
+    target_compile_definitions(test_gs_bridge_tables PRIVATE GS_FORCED=1
+        "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"")
+    add_test(NAME gs_bridge_tables_bytes COMMAND test_gs_bridge_tables)
+    set_tests_properties(gs_bridge_tables_bytes PROPERTIES SKIP_RETURN_CODE 77)
+    add_executable(test_gs_bridge_tables_mut ${GSB_TABLE_SOURCES})
+    target_compile_definitions(test_gs_bridge_tables_mut PRIVATE GS_FORCED=1 GSB_HOST_MUT_TABLE=1
+        "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"")
+    add_test(NAME gs_bridge_tables_bytes_mutation COMMAND test_gs_bridge_tables_mut)
+    set_tests_properties(gs_bridge_tables_bytes_mutation PROPERTIES WILL_FAIL TRUE)
+    # the ONE SEAM: no output path names the bridge but drv_reqlaw.c's one
+    # drv_gsbr_take( call inside `#if GS_LIVE_DIR != 0`; the bridge reads
+    # live cells only through const volatile and calls no live writer; each
+    # scan with a negative fixture; the SH compile checks
+    set(GSB_OUTPUT_PATHS ${FB_OUTPUT_PATHS})
+    add_test(NAME gs_bridge_scan_outputs
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/gs_bridge_scan.py outputs ${GSB_OUTPUT_PATHS})
+    add_test(NAME gs_bridge_scan_outputs_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/gs_bridge_scan.py outputs
+            ${CMAKE_SOURCE_DIR}/tests/unit/gs_bridge_scan_fixture_output.c)
+    set_tests_properties(gs_bridge_scan_outputs_negative PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME gs_bridge_scan_seam_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/gs_bridge_scan.py seam
+            ${CMAKE_SOURCE_DIR}/tests/unit/gs_bridge_scan_fixture_seam.c)
+    set_tests_properties(gs_bridge_scan_seam_negative PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME gs_bridge_scan_bridge
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/gs_bridge_scan.py bridge
+            ${CMAKE_SOURCE_DIR}/app/gs_bridge.c ${CMAKE_SOURCE_DIR}/app/gs_bridge.h)
+    add_test(NAME gs_bridge_scan_bridge_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/gs_bridge_scan.py bridge
+            ${CMAKE_SOURCE_DIR}/tests/unit/gs_bridge_scan_fixture_bridge.c)
+    set_tests_properties(gs_bridge_scan_bridge_negative PROPERTIES WILL_FAIL TRUE)
+    set(GSB_SH_SRC ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard_gsbr.c)
+    add_test(NAME gs_bridge_sh_guard_control COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${GSB_SH_SRC})
+    add_test(NAME gs_bridge_sh_guard_bridge
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/gs_bridge.c)
+    add_test(NAME gs_bridge_sh_guard_output
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_GSBR_OUTPUT ${GSB_SH_SRC})
+    add_test(NAME gs_bridge_sh_guard_g1
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_LIVE_DIR=1 ${GSB_SH_SRC})
+    add_test(NAME gs_bridge_sh_guard_dir2
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_LIVE_DIR=2 ${GSB_SH_SRC})
+    add_test(NAME gs_bridge_sh_guard_dir4
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_LIVE_DIR=4 ${GSB_SH_SRC})
+    add_test(NAME gs_bridge_sh_guard_forced
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_LIVE_DIR=1 -DGS_FORCED=0 ${CMAKE_SOURCE_DIR}/app/gs_bridge.c)
+    add_test(NAME gs_bridge_sh_guard_ch5
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGSB_SH_MUT_CH=5 ${CMAKE_SOURCE_DIR}/app/gs_bridge.c)
+    add_test(NAME gs_bridge_sh_guard_mut
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGSB_HOST_MUT_TABLE ${GSB_SH_SRC})
+    add_test(NAME gs_bridge_sh_guard_engt
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGSB_ENG_PASSES=50 ${GSB_SH_SRC})
+    add_test(NAME gs_bridge_sh_guard_ramapp
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DTCU_RAM_APP -DGS_LIVE_DIR=3 ${GSB_SH_SRC})
+    set_tests_properties(gs_bridge_sh_guard_output PROPERTIES
+        PASS_REGULAR_EXPRESSION "the garage bridge is read-only in G1: an output path may not include gs_bridge.h")
+    set_tests_properties(gs_bridge_sh_guard_g1 PROPERTIES
+        PASS_REGULAR_EXPRESSION "stage G1 - the bridge is computed and recorded, never applied, on SH builds")
+    set_tests_properties(gs_bridge_sh_guard_dir2 gs_bridge_sh_guard_dir4 PROPERTIES
+        PASS_REGULAR_EXPRESSION "GS_LIVE_DIR is 0 .off., 1 .D only. or 3 .D and R., nothing else")
+    set_tests_properties(gs_bridge_sh_guard_forced PROPERTIES
+        PASS_REGULAR_EXPRESSION "a live bridge needs the forced garage shadow")
+    set_tests_properties(gs_bridge_sh_guard_ch5 PROPERTIES
+        PASS_REGULAR_EXPRESSION "only channels 0..4 .A D B E C. may be bridged")
+    set_tests_properties(gs_bridge_sh_guard_mut PROPERTIES
+        PASS_REGULAR_EXPRESSION "the table mutation is a host-only negative test")
+    set_tests_properties(gs_bridge_sh_guard_engt PROPERTIES
+        PASS_REGULAR_EXPRESSION "GSB_ENG_PASSES is a host-only test override")
+    set_tests_properties(gs_bridge_sh_guard_ramapp PROPERTIES
+        PASS_REGULAR_EXPRESSION "the RAM application and the loader carry no garage bridge")
     # THE BUS-A OUTPUT CADENCE (2026-11-18, ~/tcu_sweep/output_cadence_port.md):
     # one law pass + one F stage per output tick (5 ms mode 0, 10 ms mode 1),
     # cyclic -> config -> ID per F pass through the ring, nothing lost, the

@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+"""witness_g1.py — THE GARAGE BRIDGE, STAGE G1 (computed, recorded, NOT applied;
+firmware/app/gs_bridge.c, ~/tcu_sweep/garage_g1_port.md).
+
+Reads over meas (6 bytes per request; NOT atomic — counters tear between
+blocks; read after the lever sequence, with the bridge idle in P):
+  gsb_win_t  20 B at 0xFFF87200 (.gsb_win)   the .noinit windows
+  gsb_t     172 B at 0xFFF87220 (.gsb_state) state, witnesses, slot headers,
+                                              the OS-mode-2 witness (0x1418E2)
+  gsb_rec_t 112 x 36 B at 0xFFF8BCC0 (.gsb_rec0, the last D)
+  gsb_rec_t 112 x 36 B at 0xFFF89D20 (.gsb_rec1, the last R)
+plus, for comparison, LIVE cells the bridge must never change (D6D6, the park
+model, the OS mode, seq2 / letter, the live producer's A..E 0x84B78, the fault
+word 0x93004 A..E).
+
+    witness_g1.py [rounds] [--rec N] [--quick] [--raw]
+
+  --rec N   read only the first N recorder entries of each slot (default 112;
+            a full slot is ~670 meas requests)
+  --quick   no recorder (state, windows, slot headers, mode-2 witness only)
+
+Addresses from nm of THIS build (sh-elf-nm build/sh2a/tcu_app.elf | grep gsb):
+_s_gsb_win 0xFFF87200, _s_gsb 0xFFF87220, _s_gsb_rec0 0xFFF8BCC0,
+_s_gsb_rec1 0xFFF89D20. Re-check before every use.
+
+Reading a G1 run (the gs-check with --sim-brake --sim-engine 700):
+  - slot D / R: arm_on 0 (would-arm from the commit pass), done_at ~93..96
+    (cause 1), arm_off = the lever-P pass (why RANGE|PARK|IDLE|DIR), back_at
+    = arm_off (+0..2), guard_n 0;
+  - each entry: st bit0 set, why '-', the would-be words = the shadow's
+    currents / 6 (B / C in D; B / D in R), the live staged words = the P
+    content (ED88 F588 E853 F588 ED88 +-1: G1 applies nothing);
+  - windows: commits 2, latch 00, acc ~3.7 s per gs-check (D + R held 2 s each);
+  - mode-2 witness: req 2 from the first mode-1 pass with the engine sim on
+    (latched: stays 2 after the sim stops), live os 1 (never applied).
+"""
+import struct
+import sys
+import time
+
+sys.path.insert(0, "/home/chadk/Documents/REA Projects/tools/bench")
+import tcu_bench  # noqa: E402
+
+WIN = 0xFFF87200
+ST = 0xFFF87220
+REC = (0xFFF8BCC0, 0xFFF89D20)
+RECN = 112
+RECSZ = 36
+LIVE = [
+    ("D6D6", 0xFFF8D6D6, 1), ("park model BC70", 0xFFF8BC70, 1), ("OS mode 0x93B33", 0xFFF93B33, 1),
+    ("seq2 0x94FD0", 0xFFF94FD0, 1), ("letter 0x90944", 0xFFF90944, 1),
+    ("producer A..E 0x84B78", 0xFFF84B78, 10), ("fault word A..E 0x93004", 0xFFF93004, 10),
+]
+WHY = ["IDLE", "DIR", "RAIL", "OS", "RANGE", "PARK", "MON", "DIAG", "RELWIN", "WIN", "ENGT", "COMMITS",
+       "AGREE", "G_RANGE", "G_FIXED", "G_LATCH"]
+
+
+class A:
+    iface = "slcan"
+    bus1 = "/dev/ttyACM0"
+    bus2 = "/dev/ttyACM1"
+    teensy_mode = None
+    keep_rate = True
+
+
+def read(b, bus, addr, length, tries=5):
+    out = bytearray()
+    a = addr
+    while len(out) < length:
+        got = None
+        for _ in range(tries):
+            try:
+                r = tcu_bench.meas(b, bus, [0x2A, 0, a >> 24 & 0xFF, a >> 16 & 0xFF, a >> 8 & 0xFF, a & 0xFF],
+                                   timeout=0.9)
+            except Exception:
+                r = None
+            if r and len(r) >= 2 and r[0] == 0x2A and r[1] == 0x81:
+                got = bytes(r[2:8])
+                break
+            time.sleep(0.1)
+        if got is None:
+            return None
+        out += got
+        a += 6
+    return bytes(out[:length])
+
+
+def u16(d, o):
+    return struct.unpack(">H", d[o:o + 2])[0]
+
+
+def u32(d, o):
+    return struct.unpack(">I", d[o:o + 4])[0]
+
+
+def why(w):
+    s = [WHY[k] for k in range(16) if (w >> k) & 1]
+    return "|".join(s) if s else "-"
+
+
+def none(v):
+    return "-" if v == 0xFFFF else str(v)
+
+
+def show_win(d):
+    print("  windows: magic %08X acc %u ms (inv ok %s) commits %u (inv ok %s) latch %02X (inv ok %s) warm %u broken %u"
+          % (u32(d, 0), u32(d, 4), u32(d, 8) == (~u32(d, 4) & 0xFFFFFFFF), u16(d, 12),
+             u16(d, 14) == (~u16(d, 12) & 0xFFFF), d[16], d[17] == (~d[16] & 0xFF), d[18], d[19]))
+
+
+def show_state(d):
+    print("  bridge: passes %u would-armed %u applied %u (G1: 0) seam %u (G1: 0) | agree %u disagree %u (last %u)"
+          % (u32(d, 0), u32(d, 4), u32(d, 8), u32(d, 12), u32(d, 16), u32(d, 20), u32(d, 24)))
+    print("  events: arm %u disarm %u guard %u (last ch %u v %u why %s) | why now %s | eng_t %u on %u | "
+          "armed %u applied %u agree_run %u pf %u slot_cur %u"
+          % (u16(d, 36), u16(d, 38), u16(d, 40), d[52], u16(d, 44), why(u16(d, 42)), why(u16(d, 46)),
+             u16(d, 48), d[57], d[53], d[54], d[55], d[56], d[58]))
+    print("  A..E shadow %s | live %s | would-be %s" %
+          (" ".join("%5u" % u16(d, 60 + 2 * c) for c in range(5)),
+           " ".join("%5u" % u16(d, 70 + 2 * c) for c in range(5)),
+           " ".join("%5u" % u16(d, 80 + 2 * c) for c in range(5))))
+    for k in range(2):
+        o = 100 + 20 * k
+        print("  slot %u (%s): t0 %u n %u pf %u | arm_on %s arm_off %s (%s) done_at %s cause %u back_at %s "
+              "armed_n %u guard_n %u"
+              % (k, "D" if k == 0 else "R", u32(d, o), d[o + 16], d[o + 17], none(u16(d, o + 4)),
+                 none(u16(d, o + 6)), why(u16(d, o + 8)), none(u16(d, o + 10)), d[o + 18],
+                 none(u16(d, o + 12)), u16(d, o + 14), d[o + 19]))
+    m = 140
+    print("  OS-mode-2 witness (0x1418E2, NOT applied): req %u app %u | live os %u E9FF %u 9584A %u | eng %u st %u "
+          "| tur %u st %u | supply %u | n %u n2 %u first2 %u changes %u"
+          % (d[m], d[m + 1], d[m + 2], d[m + 3], d[m + 4], u16(d, m + 8), d[m + 5], u16(d, m + 10), d[m + 6],
+             u16(d, m + 12), u32(d, m + 16), u32(d, m + 20), u32(d, m + 24), u32(d, m + 28)))
+
+
+def show_rec(k, d, n):
+    print("  slot %u (%s) entries 0..%u:" % (k, "D" if k == 0 else "R", n - 1))
+    print("   pass ph0 ph1 ph2 st why            | would-be A D B E C       | live staged A D B E C    "
+          "| est A D B E C")
+    for i in range(n):
+        e = d[i * RECSZ:(i + 1) * RECSZ]
+        print("   %4u %3X %3X %3X %02X %-14s | %s | %s | %s" %
+              (i, e[0], e[1], e[2], e[3], why(u16(e, 4)),
+               " ".join("%04X" % u16(e, 6 + 2 * c) for c in range(5)),
+               " ".join("%04X" % u16(e, 16 + 2 * c) for c in range(5)),
+               " ".join("%5u" % u16(e, 26 + 2 * c) for c in range(5))))
+
+
+def main():
+    rounds = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else 1
+    nrec = RECN
+    if "--rec" in sys.argv:
+        nrec = max(0, min(RECN, int(sys.argv[sys.argv.index("--rec") + 1])))
+    if "--quick" in sys.argv:
+        nrec = 0
+    raw = "--raw" in sys.argv
+    b = tcu_bench.Buses(A())
+    h = None
+    for _ in range(10):
+        h = tcu_bench.meas(b, 1, [0x02], timeout=1.5)
+        if h:
+            break
+        time.sleep(0.4)
+    print("hyg 0x02:", h.hex() if h else None, flush=True)
+    for r in range(rounds):
+        print("--- round %d %s" % (r, time.strftime("%H:%M:%S")), flush=True)
+        w = read(b, 1, WIN, 20)
+        s = read(b, 1, ST, 172)
+        if w is None or s is None:
+            print("  read FAIL")
+            continue
+        if raw:
+            for o in range(0, 172, 32):
+                print("  +%03X %s" % (o, s[o:o + 32].hex(" ")))
+        show_win(w)
+        show_state(s)
+        live = []
+        for name, a, n in LIVE:
+            v = read(b, 1, a, n)
+            live.append("%s %s" % (name, v.hex() if v is not None else "??"))
+        print("  LIVE (never written by the bridge): " + " | ".join(live))
+        if nrec and r == rounds - 1:
+            for k in range(2):
+                d = read(b, 1, REC[k], nrec * RECSZ)
+                if d is None:
+                    print("  slot %u read FAIL" % k)
+                    continue
+                show_rec(k, d, nrec)
+        time.sleep(1.0)
+    b.shutdown()
+    print("witness done", flush=True)
+
+
+if __name__ == "__main__":
+    main()

@@ -38,6 +38,9 @@
 #include "app/rng_chain.h"
 #include "app/tmp_chain.h"
 #include "app/gs_shadow.h"
+#include "app/gs_bridge.h"
+#include "bsw/drv/drv_reqlaw.h"
+#include "safety/park_mon.h"
 #include "app/fb_shadow.h"
 #include "app/pa7_shadow.h"
 #include "app/tsel_shadow.h"
@@ -306,6 +309,22 @@ static void task_10ms(void)
             .tur_rpm = gs_rpm(sn->turbine_speed, sn->q_turbine_speed),
         };
         gs_shadow_tick_10ms(&gi);
+        {
+            /* THE GARAGE BRIDGE, STAGE G1 (app/gs_bridge.c): computed and
+             * recorded, NOT applied (GS_LIVE_DIR 0: the seam in drv_reqlaw.c
+             * is not compiled). Its live inputs BY VALUE; it writes only its
+             * own RAM (.gsb_*) */
+            const gsb_in_t bi = {
+                .mon_faults = park_mon_faults(),
+                .relwin_st = drv_rq_rel_win_state(),
+                .eng_valid = gi.eng_valid,
+                .tur_ok = (sn->q_turbine_speed == Q_OK) ? 1u : 0u,
+                .eng_speed = gi.eng_speed,
+                .tur_rpm = gi.tur_rpm,
+                .cyc = drv_job_tx(DRV_CYC),
+            };
+            gs_bridge_tick_10ms(&bi);
+        }
     }
 #endif
     bench_tick_10ms();
@@ -422,6 +441,8 @@ int main(void)
     rng_chain_init();                   /* the range: the 0x9B228 one-shot (init arbiter → D6D6) */
 #if !defined(TCU_RAM_APP)
     gs_shadow_init();                   /* the read-only garage-engagement shadow (its own RAM) */
+    /* the garage bridge, G1 (its own RAM; its windows survive a warm reset) */
+    gs_bridge_init(plat_boot_index() <= 1u);
     /* the read-only PWM-feedback shadow (app/fb_shadow.c, its own RAM):
      * cells cleared, then the Timer-D0 window sampler armed (vector 216,
      * level 6) — the stock arms it in its init batch (0x90010) */

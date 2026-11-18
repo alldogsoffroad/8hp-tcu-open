@@ -30,6 +30,7 @@
 #include "bsw/drv/drv_jobs.h"
 #include "bsw/drv/drv_odiag.h"
 #include "bsw/sup/sup_cells.h"
+#include "bsw/drv/drv_gsbr.h"     /* the garage bridge seam (G1: GS_LIVE_DIR 0, absent) */
 #include <string.h>
 
 #if defined(__sh__)
@@ -142,6 +143,15 @@ void drv_rq_window_boot(drv_rq_win_t *w, bool cold)
 static drv_rq_win_t s_rq_rel_win __attribute__((section(".noinit")));
 #endif
 
+uint8_t drv_rq_rel_win_state(void)
+{
+#if defined(__sh__) && defined(DRV_RQ_PSET)
+    return s_rq_rel_win.state;
+#else
+    return 0u;
+#endif
+}
+
 #if DRV_RQ_USE_PRODUCER
 #if defined(__sh__)
 #define rq_prod_on() true
@@ -178,6 +188,19 @@ static uint16_t rq_prod_guarded(uint8_t ch)
     if (!rq_prod_started()) {
         return R03F[ch];
     }
+#if GS_LIVE_DIR != 0
+    /* THE GARAGE BRIDGE SEAM (ours; bsw/drv/drv_gsbr.h, app/gs_bridge.c):
+     * while the bridge is armed, channels 0..4 take the garage shadow's
+     * current — inside the bridge's own guard, re-checked here against the
+     * stock clamp [i_min 500, i_max 8500] (0xB7786). Compiled only with
+     * GS_LIVE_DIR != 0: G1 builds (SH) carry no seam at all. */
+    if (ch < 5u && drv_gsbr_take(ch, &v)) {
+        if (v >= DRV_RQ_FILL_MIN && v <= DRV_RQ_FILL_MAX) {
+            return v;
+        }
+        s_m5_guard_n++;                 /* never in a sound build: the live value stands */
+    }
+#endif
     v = rq_prod_ch(ch);
     if (v == 500u || v == 8500u) {
         return v;

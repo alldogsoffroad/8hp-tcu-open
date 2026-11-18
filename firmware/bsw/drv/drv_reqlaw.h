@@ -179,6 +179,11 @@ typedef struct {
 } drv_rq_win_t;
 uint16_t drv_rq_window_step(drv_rq_win_t *w, uint32_t now_ms, bool at_u, uint16_t req);
 void drv_rq_window_boot(drv_rq_win_t *w, bool cold);
+/* the park-release window's state (read-only; 2 = latched off until
+ * power-off) for the garage bridge's arm condition (app/main.c passes it to
+ * app/gs_bridge.c by value). Builds without the window (host, the RAM
+ * application without the P set) report 0. */
+uint8_t drv_rq_rel_win_state(void);
 
 /* 0x90010's part: letters '2', rounding offset cal 0x1918BB, the config
  * bytes; clears the law's own NOLOAD ranges (call after sup_cells_init) */

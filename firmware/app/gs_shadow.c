@@ -2055,6 +2055,14 @@ uint8_t  gs_shadow_pending(void)     { return g_s.e6ee != g_s.e69b ? 1u : 0u; }
 uint8_t  gs_shadow_e6ef(void)        { return g_s.e6ef; }
 uint8_t  gs_shadow_ae28(void)        { return g_s.ae28; }
 uint8_t  gs_shadow_d0f(void)         { return g_s.d0f; }
+/* the request mode +7 of the shadow's request object behind channel ch
+ * (0..4 = A D B E C): 1 = the on/off law (500 / 8500), 0 = the curve law
+ * (the garage bridge's mode-1 guard, app/gs_bridge.c); 0xFF otherwise */
+uint8_t  gs_shadow_reqmode(uint8_t ch)
+{
+    static const uint32_t EO[5] = { GS_OBJ_A, GS_OBJ_D, GS_OBJ_B, GS_OBJ_E, GS_OBJ_C };
+    return ch < 5u ? RU8(EO[ch], RO_MODE) : 0xFFu;
+}
 
 #if !defined(__sh__)
 void gs_shadow_host_sub(uint8_t k, int16_t v[6])

@@ -144,6 +144,7 @@ uint8_t  gs_shadow_pending(void);
 uint8_t  gs_shadow_e6ef(void);
 uint8_t  gs_shadow_ae28(void);
 uint8_t  gs_shadow_d0f(void);               /* 0x89D0F engine running */
+uint8_t  gs_shadow_reqmode(uint8_t ch);     /* request mode +7 behind ch 0..4 (A D B E C) */
 
 /* the synchronisation progress of the shift context (block A 0xFFF8BD6C) */
 int16_t  gs_shadow_bd76(void);              /* 0xFFF8BD76 */

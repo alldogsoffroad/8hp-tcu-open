@@ -29,6 +29,8 @@
 #define _POSIX_C_SOURCE 200809L
 #include "app/gs_shadow.h"
 #include "app/gs_fill.h"
+#include "app/gs_bridge.h"
+#include "safety/park_mon.h"
 #include "app/park.h"
 #include "app/park_law.h"
 #include "app/rq_prod.h"
@@ -132,6 +134,20 @@ static void shadow_tick(void)
         .tur_rpm = s_tur_inject,
     };
     gs_shadow_tick_10ms(&gi);
+    {
+        /* (2026-11-18) THE GARAGE BRIDGE, G1 (app/gs_bridge.c): ticked with
+         * the shadow, so (a) proves the live path identical with both */
+        const gsb_in_t bi = {
+            .mon_faults = park_mon_faults(),
+            .relwin_st = 0u,
+            .eng_valid = gi.eng_valid,
+            .tur_ok = 1u,
+            .eng_speed = gi.eng_speed,
+            .tur_rpm = gi.tur_rpm,
+            .cyc = drv_job_tx(DRV_CYC),
+        };
+        gs_bridge_tick_10ms(&bi);
+    }
 }
 
 typedef void (*tick_cb_t)(uint32_t t, uint8_t lever);
@@ -156,6 +172,8 @@ static void run(const scen_t *sc, bool shadow, uint64_t *hs, tick_cb_t cb)
         drv_rq_request_set(ch, 0u);
     }
     CELL_SEQ2_STATE[0] = (uint8_t)'U';
+    CELL_LETTERS[0] = (uint8_t)'c';     /* the engaged rail (the bridge's arm condition) */
+    CELL_OS_MODE = 1u;
     CELL_LAD_94114 = 0u;
     CELL_DIAG_94115 = 0u;
     CELL_J2_STAGED = 0x9020u;
@@ -165,6 +183,7 @@ static void run(const scen_t *sc, bool shadow, uint64_t *hs, tick_cb_t cb)
     rq_prod_boot_pass();
     if (shadow) {
         gs_shadow_init();
+        gs_bridge_init(true);
     }
     for (uint32_t t = 0u; t < sc->nseg * SEG; t++) {
         const uint8_t code = sc->sched[t / SEG];
