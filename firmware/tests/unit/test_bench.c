@@ -190,13 +190,15 @@ int main(void)
             CHECK(cy[c] == 0x881Fu && cy[10u + c] == 0xEFFFu && cy[20u + c] == 0xF7FFu);
         }
         CHECK(cy[4] == 0x8815u && cy[14] == 0xE800u && cy[24] == 0xF000u);
-        {   /* the interlock: no full-on while the rail word or a request is up */
+        {   /* the rail-open guard (2026-11-17): no full-on after a rail word
+             * at a certifying chip, nor with a request up */
             const uint16_t j2 = CELL_J2_STAGED;
-            CELL_J2_STAGED = 0x9020u; drv_cyclic_build(0, 8u);
+            const uint8_t g = CELL_SSLB0_BIT2;
+            CELL_J2_STAGED = 0x9020u; CELL_SSLB0_BIT2 = 1u; drv_cyclic_build(0, 8u);
             CHECK(cy[0] == 0x8815u && cy[10] == 0xE800u);
             CELL_J2_STAGED = 0x9000u; CELL_LAD_REQ[0] = 1u; drv_cyclic_build(0, 8u);
             CHECK(cy[0] == 0x8815u);
-            CELL_LAD_REQ[0] = 0u; CELL_J2_STAGED = j2;
+            CELL_LAD_REQ[0] = 0u; CELL_J2_STAGED = j2; CELL_SSLB0_BIT2 = g;
         }
         CELL_SEQ2_STATE[0] = 0x22u; drv_cyclic_build(0, 8u);                    /* not a test state */
         CHECK(cy[0] == 0x8810u && cy[4] == 0x8815u);

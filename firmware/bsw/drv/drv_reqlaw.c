@@ -71,6 +71,8 @@ _Static_assert(DRV_RQ_REQUEST_SOURCE == 0,
 static volatile uint32_t s_rq_ilock_n WIT;
 static volatile uint32_t s_rq_cguard_n WIT;
 static volatile uint32_t s_rq_f238_n WIT;
+/* ours: the channels the last tick pass (drv_rq_law_diag) commanded full on */
+static uint16_t s_rq_tick_full WIT;
 
 /* M5-0 guard (.m5_wit at 0xFFF84D40, with app/rq_prod.c's counters) */
 #if defined(__sh__) && DRV_RQ_USE_PRODUCER
@@ -251,11 +253,45 @@ static int16_t rq_correction(uint8_t ch, uint16_t i)
     return c;
 }
 
-/* our interlock (not stock; drv_jobs.c r02w) */
+/* OUR RAIL-OPEN GUARD (not stock; 2026-11-17, fullon_interlock_decode.md).
+ * The stock commands full-on (mode 4 / letter 'C'; group A duty 1000) with
+ * no check of its own: its sequence alone keeps the supervisor rail open.
+ * On this calibration that is ONE tick per ladder run [O bytes]: phase
+ * 0x10's entry (0x94114 = the alive group, 0x8BD6A; cleared on the phase's
+ * pass, 0x8BDB2) — phase 4's 0x94114 is group 0 = 0 (0x1915A4[0] = 2) and
+ * the '3' diagnosis' 0x94115 is never set (0x1915B8 bit 0 = 0, 0x1919C9 =
+ * 0). In that tick: phase 8's pass wrote both request cells 0 in the same
+ * 0x8B7A8 call, seq2 0x11 copied the request into the enable (0), so this
+ * tick's J2/F word is 0x9000; the previous tick carried phase 8's one
+ * 0x9020 frame at walk level >= 5 with 0x14 bit 1 = 0, which the chip
+ * refused (phase 8 passes on class 0x22 in the very call that enters 0x10).
+ *
+ * The guard reads THIS tick's state (the law runs after the ladder and seq2
+ * and before the J2 stage, stock list order) — r02w..r03w read the staged
+ * J2 word, which is the PREVIOUS tick's there, and refused the stock's
+ * test on every boot (8 channels = s_rq_ilock_n 8). Full-on passes only if
+ * ALL hold:
+ *   1. both request cells 0xFFF939B6 are 0 (0x85E64 ran before us);
+ *   2. seq2's enable 0x93A90 is 0 on both slots and no letter 'c' is up
+ *      (0x8C7A8 ran before us): this tick's 0x907D6 bits 5..7 are 0, the
+ *      J2/F word composed after us is 0x9000;
+ *   3. the output node 0x94ED0[0] is not above the off band: <= 4000 mV
+ *      (cal 0x1912C8, the class-0x22 top; ON reads ~supply);
+ *   4. the word last staged is 0x9000, or the chip does not certify
+ *      (0x90959 = 0x14 bit 1 = 0): a rail command heard by a non-certifying
+ *      chip does not close the rail [O the ladder's own expectation in
+ *      phases 2..8; I the chip side].
+ * Each term is true in the stock's test tick (host: test_fullon). */
+#define RQ_RAIL_OFF_MV  4000u       /* 0x1912C8 (sup_ladder CAL_C2) */
+
 bool drv_rq_rail_quiet(void)
 {
-    return CELL_J2_STAGED == 0x9000u &&
-           CELL_LAD_REQ[0] == 0u && CELL_LAD_REQ[1] == 0u;
+    return CELL_LAD_REQ[0] == 0u && CELL_LAD_REQ[1] == 0u &&
+           CELL_EN_MIRROR[0] == 0u && CELL_EN_MIRROR[1] == 0u &&
+           CELL_LETTERS[0] != (uint8_t)'c' && CELL_LETTERS[1] != (uint8_t)'c' &&
+           CELL_LETTERS[2] != (uint8_t)'c' &&
+           CELL_OUT_MV[0] <= RQ_RAIL_OFF_MV &&
+           (CELL_J2_STAGED == 0x9000u || CELL_SSLB0_BIT2 == 0u);
 }
 
 /* 0x8FD94: chip ch >> 1 present in cal 0x1918C1 */
@@ -330,7 +366,7 @@ static void rq_letters(uint8_t ch)
 #define RQ_DIAG(d) (d)
 #endif
 
-static void rq_law_run(bool diag_req)
+static void rq_law_run(bool diag_req, bool between)
 {
     const bool diag = RQ_DIAG(diag_req);
     (void)diag_req;
@@ -457,10 +493,16 @@ static void rq_law_run(bool diag_req)
                 mode = 0u;
                 inv_m = 0xFFu;
             }
-            /* OUR INTERLOCK (not stock): no full-on while the rail word or
-             * a supervisor request is up — the stock gets this from its
-             * same-tick ordering; our bus-A cyclic is not on that tick */
-            if (mode == 4u && !drv_rq_rail_quiet()) {
+            /* OUR RAIL-OPEN GUARD (not stock; drv_rq_rail_quiet): never
+             * fires in the stock's sequence — only a full-on with the rail
+             * (possibly) closed is refused and counted. The 10 ms rebuild
+             * (between: drv_cyclic_periodic, between two ticks, reading
+             * the cells the last tick published) may only REPEAT a full-on
+             * the tick's own pass commanded on that channel: it runs
+             * outside the stock's list order, ahead of the next publish of
+             * the node and of the ladder's next class check */
+            if (mode == 4u && (!drv_rq_rail_quiet() ||
+                               (between && (s_rq_tick_full & bit) == 0u))) {
                 mode = 0u;
                 inv_m = 0xFFu;
                 i = 0u;
@@ -468,6 +510,11 @@ static void rq_law_run(bool diag_req)
                 full_mask = (uint16_t)(full_mask & (uint16_t)~bit);
                 s_rq_ilock_n++;
                 ilock = true;
+            }
+            if (diag_req) {
+                /* the tick's own decision, for the 10 ms rebuild (ours) */
+                s_rq_tick_full = (mode == 4u) ? (uint16_t)(s_rq_tick_full | bit)
+                                              : (uint16_t)(s_rq_tick_full & (uint16_t)~bit);
             }
             CELL_RQ_I[ch] = i;                              /* 0x840C4 */
             CELL_RQ_MODE[ch] = mode;                        /* 0x840C8 */
@@ -501,11 +548,12 @@ static void rq_law_run(bool diag_req)
     }
 }
 
-void drv_rq_law(void)      { rq_law_run(false); }
-void drv_rq_law_diag(void) { rq_law_run(true); }
+void drv_rq_law(void)         { rq_law_run(false, false); }
+void drv_rq_law_diag(void)    { rq_law_run(true, false); }
+void drv_rq_law_between(void) { rq_law_run(false, true); }
 
 /* ── 0x90118: one channel's setpoint ──────────────────────────────────── */
-static uint16_t rq_setpoint(uint8_t ch, uint8_t letter)
+static uint16_t rq_cur_of(uint8_t ch, uint8_t letter)   /* 0x90118's current */
 {
     uint16_t cur;
     if (letter == (uint8_t)'!') {
@@ -518,7 +566,31 @@ static uint16_t rq_setpoint(uint8_t ch, uint8_t letter)
     } else {
         cur = 0u;
     }
+    return cur;
+}
+
+#if !defined(TCU_RAM_APP)
+/* ours: the current of the last STAGED compose, for the 0x901BC head check
+ * (the compose-cells step below may move 0x90244 between stagings) */
+static uint16_t s_rq_cur_staged[DRV_RQ_NCH] WIT;
+/* ours: high-current first passes the compose-cells step saw, for the next
+ * staged compose (the 0x90232 rule fires on the compose where the current
+ * first reaches 10000) */
+static uint16_t s_rq_hi_pend WIT;
+#define RQ_CUR_STAGED(ch)   s_rq_cur_staged[ch]
+#else
+/* the RAM application carries no diagnosis (no 0x84644 reader) and no
+ * compose-cells step: 0x90244 moves only with a staged compose (64 KB) */
+#define RQ_CUR_STAGED(ch)   CELL_RQ_CUR_SENT[ch]
+#endif
+
+static uint16_t rq_setpoint(uint8_t ch, uint8_t letter)
+{
+    const uint16_t cur = rq_cur_of(ch, letter);
     CELL_RQ_CUR_SENT[ch] = cur;                     /* 0x90190, before the offset */
+#if !defined(TCU_RAM_APP)
+    s_rq_cur_staged[ch] = cur;
+#endif
     /* (I + 0x9090A) × 0x903CC (= 0x3E2AAAAB, 1/6 rounded up), ftrc */
     return (uint16_t)(int32_t)((float)((uint32_t)cur + CELL_RQ_ROUND) * 0x1.555556p-3f);
 }
@@ -566,7 +638,7 @@ void drv_rq_compose(void)
         const uint16_t sp = st != 0
             ? (uint16_t)(st[((ch & 1u) != 0u ? 20u : 10u) + (ch >> 1)] & 0x7FFu) : 0u;
         const uint16_t x6 = (uint16_t)(sp * 6u);
-        const uint16_t sent = CELL_RQ_CUR_SENT[ch];
+        const uint16_t sent = RQ_CUR_STAGED(ch);    /* = 0x90244 of the last staged compose */
         const uint16_t d = x6 >= sent ? (uint16_t)(x6 - sent) : (uint16_t)(sent - x6);
         if (d > 15u) {
             s_rq_f238_n++;
@@ -582,7 +654,12 @@ void drv_rq_compose(void)
             CELL_RQ_REDFREQ = r;                /* (0x91E34 / 0x8FDB6 on 1: not ported) */
         }
     }
-    /* 0x90232: the letters as applied, and the high-current chips */
+    /* 0x90232: the letters as applied, and the high-current chips (with
+     * any first pass the compose-cells step saw since the last compose) */
+#if !defined(TCU_RAM_APP)
+    hi = s_rq_hi_pend;
+    s_rq_hi_pend = 0u;
+#endif
     for (uint8_t ch = 0u; ch < DRV_RQ_NCH; ch++) {
         uint8_t l = CELL_RQ_LETTER[ch];
         if (((CAL_HI_MASK >> ch) & 1u) != 0u && CELL_RQ_CUR[ch] >= 10000u &&
@@ -635,6 +712,41 @@ void drv_rq_compose(void)
      * frequency-reconfiguration tail (group B): not ported. */
 }
 
+/* 0x901A0's per-channel cells WITHOUT a staging (ours; 2026-11-17,
+ * fullon_interlock_decode.md §B). The stock's 0x901A0 runs after the law on
+ * every F-stage pass, so 0x9081C (letters applied) and 0x90244 (the
+ * current composed) always describe the law's previous pass when 0x84644
+ * reads them at the next law pass. Ours composes only when a cyclic is
+ * staged (the refresh send on a change, the 10 ms periodic) and a send is
+ * skipped while bus A still carries the last cyclic/config — the 10 ms task
+ * sits 1 ms before every second refresh, so ~half of the change ticks found
+ * bus A busy, 0x90244 stayed one tick stale and 0x84644 counted two-pass
+ * "unintended outputs" (r03w: 8, site 6, the tick after the phase-0x10
+ * full-on). Called by the refresh when it did not compose this tick: the
+ * same letter / guard / current rules as drv_rq_compose; no rounding step,
+ * no records, no wire change. */
+#if !defined(TCU_RAM_APP)
+void drv_rq_compose_cells(void)
+{
+    const bool quiet = drv_rq_rail_quiet();
+    for (uint8_t ch = 0u; ch < DRV_RQ_NCH; ch++) {
+        uint8_t l = CELL_RQ_LETTER[ch];
+        if (((CAL_HI_MASK >> ch) & 1u) != 0u && CELL_RQ_CUR[ch] >= 10000u &&
+            CELL_RQ_CUR_SENT[ch] < 10000u) {
+            s_rq_hi_pend = (uint16_t)(s_rq_hi_pend | (1u << (ch >> 1)));
+        }
+        if (l != CELL_RQ_LET_APPLIED[ch] && !rq_chip_enabled(ch)) {
+            l = (uint8_t)'2';                   /* 0x90296 */
+        }
+        CELL_RQ_LET_APPLIED[ch] = l;
+        if (!quiet && l == (uint8_t)'C') {
+            l = (uint8_t)'2';                   /* the compose-time guard (not counted here) */
+        }
+        CELL_RQ_CUR_SENT[ch] = rq_cur_of(ch, l);
+    }
+}
+#endif
+
 /* ── init (0x90010's part) ────────────────────────────────────────────── */
 void drv_rq_init(void)
 {
@@ -670,6 +782,11 @@ void drv_rq_init(void)
     CELL_RQ_REDFREQ = 0u;
     s_rq_ilock_n = 0u;
     s_rq_cguard_n = 0u;
+#if !defined(TCU_RAM_APP)
+    memset(s_rq_cur_staged, 0, sizeof s_rq_cur_staged);
+    s_rq_hi_pend = 0u;
+#endif
+    s_rq_tick_full = 0u;
     s_rq_f238_n = 0u;
     s_m5_guard_n = 0u;
     drv_od_init();                      /* the output diagnosis' cells */

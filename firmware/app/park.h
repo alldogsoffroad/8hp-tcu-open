@@ -16,6 +16,12 @@
 #ifndef TCU_PARK_H
 #define TCU_PARK_H
 
+/* THE GARAGE SHADOW IS READ-ONLY (app/gs_shadow.c defines TCU_GS_SHADOW_TU):
+ * it may not include a live output header */
+#if defined(TCU_GS_SHADOW_TU)
+#error "the garage shadow is read-only: it may not include a live output header (park.h)"
+#endif
+
 #include "app/range.h"
 #include "app/park_law.h"
 #include "safety/park_mon.h"

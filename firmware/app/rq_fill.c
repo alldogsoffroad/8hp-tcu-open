@@ -64,6 +64,14 @@ static const uint8_t *fl(uint32_t a, uint32_t n)
             return &b->data[a - b->addr];
         }
     }
+#if defined(RQF_FL_EXTRA_LOOKUP)
+    {   /* the garage shadow's instance (app/gs_fill.c): its own flash copies */
+        const uint8_t *q = RQF_FL_EXTRA_LOOKUP(a, n);
+        if (q != 0) {
+            return q;
+        }
+    }
+#endif
     unp();
     return 0;
 }
@@ -1208,7 +1216,11 @@ static void e40da(uint32_t o)
         }
         break;
     case 1u: case 3u: case 6u: case 8u: case 10u:
+#if defined(RQF_SHIFT_SRC_HOOK)
+        RQF_SHIFT_SRC_HOOK(o);                  /* the garage shadow's instance (gs_fill.c) */
+#else
         unp();                                  /* 0xE433C / 0xE4340: shift sources */
+#endif
         break;
     default:
         f19f();                                 /* 0x19F (8 / 0xB, 0xB, 0x66) */

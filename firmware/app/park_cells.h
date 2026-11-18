@@ -23,6 +23,12 @@
 #ifndef TCU_PARK_CELLS_H
 #define TCU_PARK_CELLS_H
 
+/* THE GARAGE SHADOW IS READ-ONLY (app/gs_shadow.c defines TCU_GS_SHADOW_TU):
+ * it may not include a live output header */
+#if defined(TCU_GS_SHADOW_TU)
+#error "the garage shadow is read-only: it may not include a live output header (park_cells.h)"
+#endif
+
 /* THE RANGE WRITER GUARD (ours, 2026-11-17, ~/tcu_sweep/
  * range_chain_live_port.md): the range D6D6 / D6D7 (+ the reason D6D9) and
  * the init arbiter's E549..E54B belong to the stock's cyclic chain

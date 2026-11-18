@@ -20,6 +20,11 @@
 #if defined(TCU_RNG_CHAIN_TU)
 #error "the range chain is isolated: it may not include an output-side header (rq_fill.h)"
 #endif
+/* THE GARAGE SHADOW IS READ-ONLY (app/gs_shadow.c): its main translation
+ * unit may not include the live fill header (its fill is app/gs_fill.c) */
+#if defined(TCU_GS_SHADOW_TU)
+#error "the garage shadow is read-only: it may not include a live output header (rq_fill.h)"
+#endif
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -32,7 +37,10 @@
 #define RQF_U32(a, o)   (*(volatile uint32_t *)(uintptr_t)((uint32_t)(a) + (o)))
 #define RQF_F32(a, o)   (*(volatile float    *)(uintptr_t)((uint32_t)(a) + (o)))
 
-/* request objects (0x507D8 table) */
+/* request objects (0x507D8 table). RQF_SHADOW_INSTANCE (app/gs_fill.c
+ * only — the read-only garage shadow's second instance of this machinery)
+ * supplies its own object addresses and cells before including rq_fill.c */
+#if !defined(RQF_SHADOW_INSTANCE)
 #define RQ_OBJ_A    0xFFF8B7C8u     /* element 1 */
 #define RQ_OBJ_B    0xFFF8B828u     /* element 2 */
 #define RQ_OBJ_C    0xFFF8B888u     /* element 3 */
@@ -40,6 +48,7 @@
 #define RQ_OBJ_E    0xFFF8B948u     /* element 5 */
 #define RQ_OBJ_SYS  0xFFF8B9A8u     /* element 9 */
 #define RQ_OBJ_WK   0xFFF8B9B8u     /* element 10 */
+#endif
 
 /* request object fields (elements; 0xE3710 constructor, 0xE4E5C ...) */
 #define RO_P        0x00u   /* u16 requested pressure (mbar) */
@@ -105,10 +114,12 @@
 #define RQF_ST_CTOR     6u
 
 /* the stock cells this machinery owns (linker.ld .m5_fl / .m5_e384) */
+#if !defined(RQF_SHADOW_INSTANCE)
 #define RQF_CELL_851A2  (*(volatile uint8_t *)0xFFF851A2u)  /* fill bits, byte 0 */
 #define RQF_CELL_851A3  (*(volatile uint8_t *)0xFFF851A3u)  /* fill bits, byte 1 */
 #define RQF_CELL_851A5  (*(volatile uint8_t *)0xFFF851A5u)  /* = 0x89C3D at the update end */
 #define RQF_CELL_E384   (*(volatile uint8_t *)0xFFF8E384u)  /* last element filled (0xE4214) */
+#endif
 
 /* ── the inputs the fill reads that our firmware does not produce ──────
  * (rq_prod.h RQ_M5_* — compile-time on SH, asserted against the dump) */

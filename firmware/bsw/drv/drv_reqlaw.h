@@ -184,16 +184,28 @@ void drv_rq_init(void);
  * rebuild), reading the fault / channel classes the diagnosis left */
 void drv_rq_law(void);
 void drv_rq_law_diag(void);
+/* the 10 ms periodic rebuild between two ticks (ours): as drv_rq_law, but a
+ * full-on only repeats what the last tick's pass commanded (drv_reqlaw.c) */
+void drv_rq_law_between(void);
 
 /* 0x901A0's record part (letters applied, 0x9090A step, per-chip records);
  * the staging (0x924B0 / 0x92344) is drv_jobs.c's */
 void drv_rq_compose(void);
 
-/* our interlock (not stock): full-on only while the staged J2 word is
- * 0x9000 and both supervisor request cells are 0 */
+/* 0x901A0's per-channel cells (0x9081C letters applied, 0x90244 current
+ * composed) without a staging: the refresh calls it on a tick it did not
+ * compose, so 0x84644 reads the stock's cadence (drv_reqlaw.c) */
+void drv_rq_compose_cells(void);
+
+/* OUR RAIL-OPEN GUARD (not stock): full-on (law and compose, group A too)
+ * only while this tick's request cells, seq2 enables and letters are 0,
+ * the output node 0x94ED0[0] reads <= 4000 mV, and the last staged J2 word
+ * is 0x9000 or the chip does not certify (0x90959 = 0). True in the
+ * stock's only test tick on this calibration (ladder phase 0x10's entry);
+ * drv_reqlaw.c, ~/tcu_sweep/fullon_interlock_decode.md */
 bool drv_rq_rail_quiet(void);
 
-/* witnesses (ours, .drv_wit): full-on refused by the interlock in the law,
+/* witnesses (ours, .drv_wit): full-on refused by the rail-open guard in the law,
  * 'C' letters demoted at compose time (should stay 0: the law already
  * refused), and the 0x901A0 head check (staged setpoint x6 vs 0x90244 more
  * than 15 apart — stock fault 0x238, reported nowhere here) */

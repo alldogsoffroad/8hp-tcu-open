@@ -276,12 +276,14 @@ static void test_toe32(void)
 /* ── the full-on test windows, the hold and the interlock ─────────────── */
 static void test_fullon(void)
 {
-    /* held (the stage-0/1 default): mode 0, counted */
+    /* held (the stage-0/1 default): mode 0, counted — the stock's test tick
+     * (ladder phase 0x10's entry: rail open, node 2939 mV off-with-bias) */
     reset();
     CELL_SEQ2_STATE[0] = 0x11u;
     CELL_LAD_94114 = 1u;
     CELL_J2_STAGED = 0x9000u;
     CELL_LAD_REQ[0] = 0u;
+    CELL_OUT_MV[0] = 2939u;
     pass5_mode0();
     CHECKV(CELL_GA_MODE[0], 0u);
     CHECKV(CELL_GA_MODE[1], 0u);
@@ -315,9 +317,10 @@ static void test_fullon(void)
     CELL_LAD_95005 = 0u;                         /* after 'L': not a test state */
     pass5_mode0();
     CHECKV(CELL_GA_MODE[1], 0u);                 /* no demand */
-    /* our interlock: a request or 0x9020 up → refused, counted */
+    /* our rail-open guard (2026-11-17): the node reading the rail closed
+     * → refused, counted */
     CELL_SEQ2_STATE[0] = 0x11u;
-    CELL_J2_STAGED = 0x9020u;
+    CELL_OUT_MV[0] = 13360u;
     {
         const uint32_t n0 = drv_ga_ilock_n();
         pass5_mode0();
@@ -628,11 +631,12 @@ static void test_stage2(void)
     for (unsigned k = 0u; k < 5u; k++) {
         CHECKV(stub.te_drld[k], 0u);
     }
-    /* a stock test window with a quiet rail: TOE30 / TOE31 at 1000 ‰ */
+    /* a stock test window with the rail open: TOE30 / TOE31 at 1000 ‰ */
     CELL_SEQ2_STATE[0] = 0x11u;
     CELL_LAD_94114 = 1u;
     CELL_J2_STAGED = 0x9000u;
     CELL_LAD_REQ[0] = 0u;
+    CELL_OUT_MV[0] = 2939u;
     pass5_mode0();
     CHECKV(stub.te_drld[0], 2000u);
     CHECKV(stub.te_drld[1], 2000u);

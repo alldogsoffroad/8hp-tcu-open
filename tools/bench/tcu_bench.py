@@ -54,6 +54,10 @@ Commands:
   range-check [--sim-brake] [--sim-engine RPM] [--start-before-power] [--settle S]
                           (alias shadow-check) PROJECT firmware: lever P R N D P, the live range
                           chain's cells (at the stock addresses) and the park path per step
+  gs-check [--sim-brake] [--sim-engine RPM] [--start-before-power] [--hold S]
+                          PROJECT firmware: the READ-ONLY garage-engagement shadow (app/gs_shadow.c)
+                          - lever P, D, P, R, P; prints the shadow's witnesses and its
+                          per-pass engagement recorder after the P->D and P->R commits
   keyoff-check [--off-code C] [--sim-brake] [--sim-engine RPM] [--settle S]
                           PROJECT firmware: KEY-OFF TEST - sends 0x112 (ignition status) 4, then
                           the OFF code C (the only command that may send a code other than 4/5)
@@ -1441,6 +1445,133 @@ def cmd_park_check(b, args):
     return 0 if all(results) else 1
 
 
+# ---------------------------------------------------------------- garage-engagement shadow (2026-11-17)
+
+GS_WIT_SIZE = 76            # app/gs_shadow.h gs_wit_t (static-asserted there)
+GS_REC_ENTRY = 24           # gs_rec_t
+GS_REC_N = 95               # per slot
+GS_CH = ("A", "D", "B", "E", "C", "WK", "Sys")
+
+
+def gs_wit_parse(w):
+    u32 = lambda o: int.from_bytes(w[o:o + 4], "big")
+    return {
+        "passes": u32(0), "commits": u32(4), "commit_pass": u32(8), "commit_old": w[12],
+        "commit_new": w[13], "done_cause": w[14], "rec_slot": w[15], "done_pass": u32(16),
+        "loop_cap": u32(20), "e896": u32(24), "lim": u32(28), "unp": u32(32), "rel": u32(36),
+        "seq": u32(40), "lockup": u32(44), "rec_n": (w[48], w[49]), "e28e": w[50], "e6a8": w[51],
+        "pf": w[52], "e6ef": w[53], "ae28": w[54], "flags": w[55],
+        "gear": w[56] - 256 if w[56] > 127 else w[56], "ph": tuple(w[57:60]),
+        "cur": tuple(int.from_bytes(w[60 + 2 * i:62 + 2 * i], "big") for i in range(7)),
+    }
+
+
+def gs_wit_line(g):
+    f = g["flags"]
+    return (f"pf {g['pf']} E6EF {g['e6ef']} AE28 {g['ae28']} gear {g['gear']} eng-running {f & 1} "
+            f"pending {(f >> 1) & 1} C3D {(f >> 2) & 1} active {(f >> 3) & 1} "
+            f"ph {g['ph'][0]:X}/{g['ph'][1]:X}/{g['ph'][2]:X} E28E {g['e28e']} E6A8 {g['e6a8']} | "
+            + " ".join(f"{n} {c}" for n, c in zip(GS_CH, g["cur"])))
+
+
+def gs_rec_print(slot, raw, n):
+    print(f"  recorder slot {slot}: {n} passes from the commit (0.1 mA; ph = D0DC/D148/D1B4 phase;"
+          " fl b0-1 E6EF b2 pending b3 active b4 B timeout b5 completion b6 commit b7 C3D)")
+    print("  pass pf fl  ph0 ph1 ph2 md  set gear |    A    D    B    E    C   WK  Sys")
+    for i in range(n):
+        e = raw[i * GS_REC_ENTRY:(i + 1) * GS_REC_ENTRY]
+        cur = [int.from_bytes(e[10 + 2 * k:12 + 2 * k], "big") for k in range(7)]
+        gear = e[9] - 256 if e[9] > 127 else e[9]
+        print(f"  {int.from_bytes(e[0:2], 'big'):4d} {e[2]:2d} {e[3]:02X}  {e[4]:3X} {e[5]:3X} {e[6]:3X}"
+              f" {e[7]:02X} {e[8]:02X} {gear:4d} | " + " ".join(f"{c:4d}" for c in cur))
+
+
+def cmd_gs_check(b, args):
+    """The READ-ONLY garage-engagement shadow (app/gs_shadow.c; ~/tcu_sweep/garage_shadow_port.md).
+    It DRIVES NOTHING: the stock's garage engagement (direction request, power-flow commit, the
+    three-element engine, the producer sources ids 6/8/10, the holder, the element law) is
+    computed into the shadow's own RAM. GS_FORCED (the SH build) runs it AS IF OS mode were not 1
+    and the gear target the fault-free 1st - the stock itself never commits in mode 1.
+    Sequence (lever, --hold s each): P, D, P, R, P. With --sim-brake --sim-engine 700 the LIVE
+    range chain releases park on D and R (release 1.0 A + hold: the only current that moves),
+    the shadow commits ~150 ms later (the park model) and records 0.95 s of the engagement.
+    Expected (host test test_gs_shadow): P->D commit, C fills first (~5930), B waits in 0x0F,
+    B fill ~5710, B phase 4 ~3630, ramp, completion ~0.45 s after the commit, then
+    A 8500 D 8500 B 8500 E 8500 C 500; P->R the same shape with D third, end
+    A 8500 D 500 B 8500 E 8500 C 8500; WK / Sys 500 throughout."""
+    b.start_drain()     # keep the Teensy ports drained (lever-sim gaps, 2026-11-17)
+
+    w_addr, w_size = elf_sym(args.elf, "_g_w")
+    r_addr, r_size = elf_sym(args.elf, "_g_rec")
+    if w_size != GS_WIT_SIZE or r_size != 2 * GS_REC_N * GS_REC_ENTRY:
+        sys.exit(f"_g_w {w_size:#x} / _g_rec {r_size:#x}: not the layout this tool expects - rebuild?")
+    release = bool(args.sim_brake) and (args.sim_engine or 0) > 430
+    print("THE GARAGE SHADOW IS READ-ONLY: it drives no solenoid. The LIVE range chain still drives the"
+          " park outputs (release bus-A ch 7 1.0 A + hold TOE31) whenever the range leaves P")
+    print("  dry bench, ammeter on, bench supply limit 4 A; ~2 x --hold s of the 30 s release budget")
+    print("  both Teensy ports are used (0x210 on bus 2): the ammeter logger cannot run - watch the meter")
+    fake_signal_banner(args)
+    if input("Mechatronic dry (no pump, no driveline), ammeter running, supply limit 4 A? [yes/no] ").strip() != "yes":
+        return 1
+    sim = VehicleSim(b)
+    sim.code, sim.lever_on = 1, True
+    sim.brake = bool(args.sim_brake)
+    sim.rpm = int(args.sim_engine or 0)
+    if args.start_before_power:
+        print("TCU must be OFF now. Starting the frames on a dark bus (as the wake storm does).")
+        if input("TCU switched off? [yes/no] ").strip() != "yes":
+            return 1
+    sim.start()
+    try:
+        if args.start_before_power:
+            input("frames running (lever P" + (", brake ON" if sim.brake else "")
+                  + (f", engine {sim.rpm} rpm" if sim.rpm else "")
+                  + ") - switch the TCU ON now, then press Enter ... ")
+            print("waiting 5 s for boot, mode 1 and the 0x9B228 one-shot")
+            time.sleep(5.0)
+        for _ in range(10):         # read hygiene (CLAUDE.md rule 6)
+            if meas(b, args.bus, [0x02], timeout=1.5):
+                break
+            time.sleep(0.4)
+        else:
+            print("  WARNING: meas 0x02 got no reply (continuing with retries)")
+
+        def read_retry(addr, n):
+            for k in range(5):
+                try:
+                    return read_mem(b, args.bus, addr, n)
+                except RuntimeError:
+                    if k == 4:
+                        raise
+                    time.sleep(0.2)
+        P, R, D = 1, 2, 4
+        print(f"shadow witnesses _g_w at 0x{w_addr:08X}, recorder _g_rec at 0x{r_addr:08X}; "
+              f"{args.hold:.1f} s per step")
+        for name, code in (("P", P), ("D", D), ("P", P), ("R", R), ("P", P)):
+            sim.code = code
+            time.sleep(args.hold)
+            g = gs_wit_parse(read_retry(w_addr, GS_WIT_SIZE))
+            print(f"  lever {name}: " + gs_wit_line(g))
+    finally:
+        sim.stop.set()
+        sim.join(1.0)
+        print("all simulated frames stopped (lever, brake, engine)")
+    g = gs_wit_parse(read_retry(w_addr, GS_WIT_SIZE))
+    print(f"witnesses: passes {g['passes']} commits {g['commits']} (last {g['commit_old']} -> "
+          f"{g['commit_new']} at pass {g['commit_pass']}), completion cause {g['done_cause']} "
+          f"(1 normal, 2 timeout, 3 release stand-in, 4 other) at pass {g['done_pass']}")
+    print(f"  stand-ins taken: 0x10E896 term {g['e896']}, 0x1147C8 limit {g['lim']}, release {g['rel']}, "
+          f"0x104A28 {g['seq']}, lockup head {g['lockup']}, unported {g['unp']}, loop cap {g['loop_cap']}")
+    for slot in (0, 1):
+        n = min(g["rec_n"][slot], GS_REC_N)
+        if n == 0:
+            print(f"  recorder slot {slot}: empty" + ("" if release else " (no commit without the sims)"))
+            continue
+        raw = read_retry(r_addr + slot * GS_REC_N * GS_REC_ENTRY, n * GS_REC_ENTRY)
+        gs_rec_print(slot, raw, n)
+    return 0
+
+
 # ---------------------------------------------------------------- range chain check (live since 2026-11-17)
 
 def e2e_frame(data, ctr):
@@ -1825,6 +1956,9 @@ def main():
         p = sub.add_parser(nm); p.add_argument("--bus", type=int, default=1)
         p.add_argument("--elf", default="build/sh2a/tcu_app.elf"); p.add_argument("--settle", type=float, default=2.0)
         sim_args(p)
+    p = sub.add_parser("gs-check"); p.add_argument("--bus", type=int, default=1)
+    p.add_argument("--elf", default="build/sh2a/tcu_app.elf"); p.add_argument("--hold", type=float, default=2.0)
+    sim_args(p)
     p = sub.add_parser("keyoff-check"); p.add_argument("--bus", type=int, default=1)
     p.add_argument("--elf", default="build/sh2a/tcu_app.elf"); p.add_argument("--settle", type=float, default=1.0)
     p.add_argument("--off-code", type=int, default=0, help="the 0x112 OFF code sent (0, 1, 2, 3 or 6)")
@@ -1875,7 +2009,7 @@ def main():
          "app-selftest": cmd_app_selftest, "sensors": cmd_sensors, "park": cmd_park,
          "park-check": cmd_park_check, "park-out": cmd_park_out,
          "range-check": cmd_range_check, "shadow-check": cmd_range_check,
-         "keyoff-check": cmd_keyoff_check}[args.cmd](b, args)
+         "keyoff-check": cmd_keyoff_check, "gs-check": cmd_gs_check}[args.cmd](b, args)
     finally:
         b.shutdown()
 

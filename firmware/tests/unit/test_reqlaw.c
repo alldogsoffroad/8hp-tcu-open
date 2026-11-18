@@ -126,8 +126,12 @@ static uint8_t r03a_code(uint8_t ch)
     if (s == 0x11u || s == 0x16u || s == (uint8_t)'3') {
         const bool full = ((CELL_DIAG_94115 & 1u) != 0u) ||
                           ((CELL_LAD_94114 & 1u) != 0u && (s == 0x11u || s == 0x16u));
-        const bool quiet = CELL_J2_STAGED == 0x9000u &&
-                           CELL_LAD_REQ[0] == 0u && CELL_LAD_REQ[1] == 0u;
+        /* the guard term (ours) follows the rail-open guard of 2026-11-17
+         * (drv_rq_rail_quiet; r03a had "staged J2 0x9000 and no request") */
+        const bool quiet = CELL_LAD_REQ[0] == 0u && CELL_LAD_REQ[1] == 0u &&
+                           CELL_EN_MIRROR[0] == 0u && CELL_EN_MIRROR[1] == 0u &&
+                           CELL_OUT_MV[0] <= 4000u &&
+                           (CELL_J2_STAGED == 0x9000u || CELL_SSLB0_BIT2 == 0u);
         return (full && quiet) ? 3u : 1u;
     }
     return 0u;
@@ -238,8 +242,10 @@ int main(void)
             }
         }
     }
-    /* the full-on tests (ladder phase 0x10 / the '3' diagnosis) */
+    /* the full-on tests (ladder phase 0x10 / the '3' diagnosis), at the
+     * bench's rail-open node (2939 mV, r02r..r03w) */
     reset();
+    CELL_OUT_MV[0] = 2939u;
     CELL_SEQ2_STATE[0] = 0x11u; CELL_LAD_94114 = 1u;
     drv_cyclic_build(0, 8u);
     CHECK(zero_content(FULL, 0x7FFu));
@@ -256,54 +262,76 @@ int main(void)
     CELL_SEQ2_STATE[0] = (uint8_t)'U';    /* 0x94115 outside a test state: ignored */
     drv_cyclic_build(0, 8u);
     CHECK(zero_content(POST, 0u));
-    /* the interlock (ours): no full-on with the rail word or a request up */
+    /* the rail-open guard (ours, 2026-11-17): the stock's test tick passes —
+     * the previous tick's 0x9020 (phase 8) at a non-certifying chip */
     CELL_SEQ2_STATE[0] = 0x11u; CELL_LAD_94114 = 1u; CELL_DIAG_94115 = 0u;
     {
         const uint32_t n0 = drv_rq_ilock_n();
-        CELL_J2_STAGED = 0x9020u;
+        CELL_J2_STAGED = 0x9020u; CELL_SSLB0_BIT2 = 0u;
+        drv_cyclic_build(0, 8u);
+        CHECK(zero_content(FULL, 0x7FFu));
+        CHECK(drv_rq_ilock_n() == n0);
+        /* … a certifying chip after a rail word: refused */
+        CELL_SSLB0_BIT2 = 1u;
         drv_cyclic_build(0, 8u);
         CHECK(zero_content(PRE, 0u));
         CHECK(drv_rq_ilock_n() == n0 + 8u);   /* ch 0..7 refused */
-        CELL_J2_STAGED = 0x9000u; CELL_LAD_REQ[1] = 1u;
+        CELL_J2_STAGED = 0x9000u; CELL_SSLB0_BIT2 = 0u;
+        /* a request up: refused */
+        CELL_LAD_REQ[1] = 1u;
         drv_cyclic_build(0, 8u);
         CHECK(zero_content(PRE, 0u));
         CELL_LAD_REQ[1] = 0u;
+        /* seq2's enable up: refused */
+        CELL_EN_MIRROR[0] = 1u;
+        drv_cyclic_build(0, 8u);
+        CHECK(zero_content(PRE, 0u));
+        CELL_EN_MIRROR[0] = 0u;
+        /* the node at supply (rail closed): refused */
+        CELL_OUT_MV[0] = 13360u;
+        drv_cyclic_build(0, 8u);
+        CHECK(zero_content(PRE, 0u));
+        CHECK(drv_rq_ilock_n() == n0 + 32u);
+        CELL_OUT_MV[0] = 4000u;               /* the off band's top: passes */
         drv_cyclic_build(0, 8u);
         CHECK(zero_content(FULL, 0x7FFu));
         CHECK(drv_rq_cguard_n() == 0u);       /* the compose guard never had to act */
     }
     /* the compose-time guard: a 'C' letter left from a quiet tick is not
-     * staged once the rail word is up (law not re-run) */
-    CELL_J2_STAGED = 0x9020u;
+     * staged once the node reads the rail on (law not re-run) */
+    CELL_OUT_MV[0] = 13360u;
     drv_rq_compose();
     CHECK(drv_rq_cguard_n() == 8u);
-    CELL_J2_STAGED = 0x9000u;
+    CELL_OUT_MV[0] = 2939u;
     CELL_LAD_94114 = 0u;
 
     /* ── 2b. no wire change vs r03a at zero requests: every seq2 byte, every
      *        0x94114 / 0x94115 low pair, J2 0x9000 / 0x9020, both request
-     *        cells, three rail values — 45 cyclic + 40 config words each ── */
+     *        cells, the 0x14 bit-1 gate, four rail values — 45 cyclic + 40
+     *        config words each (the guard term: the 2026-11-17 rail-open
+     *        guard) ── */
     {
-        static const uint16_t RAIL[3] = { 0u, 7399u, 13360u };
+        static const uint16_t RAIL[4] = { 0u, 2939u, 7399u, 13360u };
         unsigned n = 0u, bad = 0u;
         reset();
         for (unsigned sq = 0u; sq < 256u; sq++) {
             for (unsigned t = 0u; t < 16u; t++) {
-                for (unsigned q = 0u; q < 8u; q++) {
+                for (unsigned q = 0u; q < 16u; q++) {
                     CELL_SEQ2_STATE[0] = (uint8_t)sq;
                     CELL_LAD_94114 = (uint8_t)(t & 3u);
                     CELL_DIAG_94115 = (uint8_t)(t >> 2);
                     CELL_J2_STAGED = (q & 1u) != 0u ? 0x9020u : 0x9000u;
                     CELL_LAD_REQ[0] = (uint8_t)((q >> 1) & 1u);
                     CELL_LAD_REQ[1] = (uint8_t)((q >> 2) & 1u);
-                    CELL_OUT_MV[0] = RAIL[(sq + t + q) % 3u];
+                    CELL_SSLB0_BIT2 = (uint8_t)((q >> 3) & 1u);
+                    CELL_OUT_MV[0] = RAIL[(sq + t + q) % 4u];
                     drv_cyclic_build(0, 8u);
                     n++;
                     bad += r03a_equal() ? 0u : 1u;
                 }
             }
         }
-        CHECK(n == 32768u && bad == 0u);
+        CHECK(n == 65536u && bad == 0u);
         CHECK(drv_rq_f238_n() == 0u);
         reset();
     }

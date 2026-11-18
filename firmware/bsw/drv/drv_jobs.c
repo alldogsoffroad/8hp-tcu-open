@@ -137,13 +137,21 @@ static void drv_stage_from_records(void)
     }
 }
 
+/* set while the 10 ms periodic sends (ours, 2026-11-17): its law pass runs
+ * between two 5 ms ticks, on the cells the last tick published */
+static bool s_drv_between;
+
 /* the law (0x83DB0, idempotent on its inputs) and the composition
  * (0x901A0), then the staging; the setpoint arguments are ignored */
 void drv_cyclic_build(const uint16_t *setpoints, uint8_t n_ch)
 {
     (void)setpoints;
     (void)n_ch;
-    drv_rq_law();
+    if (s_drv_between) {
+        drv_rq_law_between();           /* the 10 ms periodic: between two ticks */
+    } else {
+        drv_rq_law();
+    }
     drv_rq_compose();
     drv_stage_from_records();
 }
@@ -221,16 +229,25 @@ void drv_letter_refresh(void)
         if (drv_cyclic_send()) {
             s_drv_refresh_pending = 0u;
             s_drv_refresh_n++;
-        } else {
-            s_drv_refresh_pending = 1u;
+            return;                     /* composed and staged this tick */
         }
+        s_drv_refresh_pending = 1u;
     }
+    /* 2026-11-17: no compose this tick (nothing changed, or bus A still
+     * busy): 0x901A0's per-channel cells follow the law anyway, as the
+     * stock's compose does every pass — 0x84644 reads them next tick
+     * (drv_reqlaw.c, fullon_interlock_decode.md §B) */
+#if !defined(TCU_RAM_APP)
+    drv_rq_compose_cells();
+#endif
 }
 
 /* the 10 ms periodic send (sol_tick_10ms) */
 void drv_cyclic_periodic(void)
 {
+    s_drv_between = true;
     (void)drv_cyclic_send();
+    s_drv_between = false;
 }
 
 bool drv_job_check_free(uint8_t id)

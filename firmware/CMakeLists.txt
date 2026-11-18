@@ -42,6 +42,7 @@ set(CORE_SOURCES
     app/rq_fill.c
     app/rq_fill_cal.c
     app/tmp_chain.c
+    app/gs_shadow.c app/gs_fill.c app/gs_cal.c
     safety/park_mon.c
     safety/park_pair.c
     safety/kl15.c
@@ -593,6 +594,78 @@ else()
         PASS_REGULAR_EXPRESSION "the range chain is isolated: it may not include an output-side header")
     set_tests_properties(rng_sh_guard_hooks PROPERTIES
         PASS_REGULAR_EXPRESSION "RNG_CHAIN_TEST_HOOKS .input overrides. is host-only")
+    # THE GARAGE-ENGAGEMENT SHADOW (2026-11-17, ~/tcu_sweep/garage_shadow_port.md):
+    # READ-ONLY. (a) the live path bit-identical with and without it over the
+    # r03t/r03w scenarios (whole cell window hashed per tick); (b)/(c) P→D /
+    # P→R with brake + engine 700 under the forced commit; (d) the stock-
+    # faithful variant never commits; (e) the dry-bench completion (timeout).
+    set(GS_TEST_SOURCES tests/unit/test_gs_shadow.c app/gs_shadow.c app/gs_fill.c app/gs_cal.c
+        app/rng_chain.c safety/kl15.c
+        app/range.c app/park_law.c app/park.c safety/park_mon.c bsw/sched/sched.c
+        io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
+        app/rq_prod.c app/rq_fill.c app/rq_fill_cal.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
+        tests/unit/stub_plat.c)
+    add_executable(test_gs_shadow ${GS_TEST_SOURCES})
+    target_compile_definitions(test_gs_shadow PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=1)
+    add_test(NAME gs_shadow COMMAND test_gs_shadow)
+    add_executable(test_gs_shadow_faithful ${GS_TEST_SOURCES})
+    target_compile_definitions(test_gs_shadow_faithful PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=0)
+    add_test(NAME gs_shadow_faithful COMMAND test_gs_shadow_faithful)
+    add_executable(test_gs_cal tests/unit/test_gs_cal.c app/gs_cal.c)
+    target_compile_definitions(test_gs_cal PRIVATE "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"")
+    add_test(NAME gs_cal_bytes COMMAND test_gs_cal)
+    set_tests_properties(gs_cal_bytes PROPERTIES SKIP_RETURN_CODE 77)
+    # ... read-only enforcement: the source scans (every output path may not
+    # name the shadow; the shadow may not name a live header, a live cell
+    # address or a live writer), each with a negative fixture, and the SH
+    # compile checks (the shadow compiles under sh-elf-gcc -Werror; an output
+    # TU including the shadow header, the shadow including a live header and
+    # the host hooks on SH must each FAIL with the frame's message)
+    set(GS_OUTPUT_PATHS
+        ${CMAKE_SOURCE_DIR}/app/park.c ${CMAKE_SOURCE_DIR}/app/park_law.c
+        ${CMAKE_SOURCE_DIR}/app/range.c ${CMAKE_SOURCE_DIR}/app/rng_chain.c
+        ${CMAKE_SOURCE_DIR}/app/rq_prod.c ${CMAKE_SOURCE_DIR}/app/rq_fill.c
+        ${CMAKE_SOURCE_DIR}/safety/park_mon.c ${CMAKE_SOURCE_DIR}/bsw/drv/drv_jobs.c
+        ${CMAKE_SOURCE_DIR}/bsw/drv/drv_reqlaw.c ${CMAKE_SOURCE_DIR}/bsw/drv/drv_groupa.c
+        ${CMAKE_SOURCE_DIR}/bsw/drv/drv_odiag.c ${CMAKE_SOURCE_DIR}/bsw/drv/drv_handlers.c
+        ${CMAKE_SOURCE_DIR}/bsw/sup/sup_cells.h)
+    add_test(NAME gs_shadow_scan_outputs
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/gs_shadow_scan.py outputs ${GS_OUTPUT_PATHS})
+    add_test(NAME gs_shadow_scan_outputs_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/gs_shadow_scan.py outputs
+            ${CMAKE_SOURCE_DIR}/tests/unit/gs_scan_fixture_output.c)
+    set_tests_properties(gs_shadow_scan_outputs_negative PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME gs_shadow_scan_shadow
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/gs_shadow_scan.py shadow
+            ${CMAKE_SOURCE_DIR}/app/gs_shadow.c ${CMAKE_SOURCE_DIR}/app/gs_fill.c
+            ${CMAKE_SOURCE_DIR}/app/gs_shadow.h ${CMAKE_SOURCE_DIR}/app/gs_fill.h)
+    add_test(NAME gs_shadow_scan_shadow_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/gs_shadow_scan.py shadow
+            ${CMAKE_SOURCE_DIR}/tests/unit/gs_scan_fixture_shadow.c)
+    set_tests_properties(gs_shadow_scan_shadow_negative PROPERTIES WILL_FAIL TRUE)
+    set(GS_SH_SRC ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard_gs.c)
+    add_test(NAME gs_sh_guard_control COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${GS_SH_SRC})
+    add_test(NAME gs_sh_guard_shadow
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/gs_shadow.c)
+    add_test(NAME gs_sh_guard_fill
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/gs_fill.c)
+    add_test(NAME gs_sh_guard_output
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_GS_OUTPUT ${GS_SH_SRC})
+    add_test(NAME gs_sh_guard_live
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_GS_LIVE ${GS_SH_SRC})
+    add_test(NAME gs_sh_guard_hooks
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_SHADOW_HOST_HOOKS ${GS_SH_SRC})
+    add_test(NAME gs_sh_guard_forced
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_FORCED=2 ${GS_SH_SRC})
+    set_tests_properties(gs_sh_guard_output PROPERTIES
+        PASS_REGULAR_EXPRESSION "the garage shadow is read-only: an output path may not include gs_shadow.h")
+    set_tests_properties(gs_sh_guard_live PROPERTIES
+        PASS_REGULAR_EXPRESSION "the garage shadow is read-only: it may not include a live output header")
+    set_tests_properties(gs_sh_guard_hooks PROPERTIES
+        PASS_REGULAR_EXPRESSION "the host stand-in overrides do not exist on SH builds")
+    set_tests_properties(gs_sh_guard_forced PROPERTIES
+        PASS_REGULAR_EXPRESSION "GS_FORCED is 0 .stock-faithful. or 1 .forced commit., nothing else")
     add_executable(test_dump tests/unit/test_dump.c app/bench_dump.c tests/unit/stub_plat.c)
     add_executable(transcript tests/unit/transcript.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
@@ -663,6 +736,18 @@ else()
     target_compile_definitions(test_ladder_l3a_e PRIVATE SUP_L1_HOLD_PHASE8_REQUEST=0
         SUP_L1_HOLD_PHASE40=0 SUP_L1_HOLD_FAIL_FSM=0 SUP_L3_HOLD_SEQ_L=1)
     add_test(NAME ladder_l3a_e COMMAND test_ladder_l3a_e)
+    # the stock's rail-off full-on tests (ladder phases 4 / 0x10) against our
+    # rail-open guard and the 0x84644 witness: the real supervisor (L3b, the
+    # target configuration) + the real bus-A chain in main.c's schedule,
+    # bus A in time (~/tcu_sweep/fullon_interlock_decode.md)
+    add_executable(test_fullon tests/unit/test_fullon.c
+        bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
+        bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c bsw/sup/sup_token.c
+        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
+        tests/unit/stub_plat.c)
+    target_compile_definitions(test_fullon PRIVATE SUP_L1_HOLD_PHASE8_REQUEST=0
+        SUP_L1_HOLD_PHASE40=0 SUP_L1_HOLD_FAIL_FSM=0 SUP_L3_HOLD_SEQ_L=0)
+    add_test(NAME fullon COMMAND test_fullon)
     # project flasher on the simulated flash controller (spec 16 section 7)
     set(FL_HOST_SOURCES flasher/fl_core.c flasher/fl_fcu.c tests/unit/fl_sim.c)
     add_executable(test_flasher tests/unit/test_flasher.c ${FL_HOST_SOURCES} app/flash_entry.c

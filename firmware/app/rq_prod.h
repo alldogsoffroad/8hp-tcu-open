@@ -24,6 +24,12 @@
 #ifndef TCU_APP_RQ_PROD_H
 #define TCU_APP_RQ_PROD_H
 
+/* THE GARAGE SHADOW IS READ-ONLY (app/gs_shadow.c defines TCU_GS_SHADOW_TU):
+ * it may not include a live output header */
+#if defined(TCU_GS_SHADOW_TU)
+#error "the garage shadow is read-only: it may not include a live output header (rq_prod.h)"
+#endif
+
 /* THE RANGE CHAIN IS ISOLATED (app/rng_chain.c, ours): its translation
  * unit defines TCU_RNG_CHAIN_TU and may not include an output-side header —
  * its only way to the outputs is the range D6D6, read by app/park.c */

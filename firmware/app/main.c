@@ -37,6 +37,8 @@
 #include "app/park.h"
 #include "app/rng_chain.h"
 #include "app/tmp_chain.h"
+#include "app/gs_shadow.h"
+#include "app/park_law.h"
 
 /* Shaft assignment of the speed channels (spec 02 section 4.1), the stock calibration's routing:
  * channel 0 = TIF12 -> stock signal B (0xFFF93048), channel 1 = TIF13 -> signal A (0xFFF93044).
@@ -264,6 +266,25 @@ static void task_10ms(void)
     }
     park_set_os_mode(sup_mode());   /* 0x89C3C for the fault-reaction park request */
     park_tick_10ms();
+#if !defined(TCU_RAM_APP)    /* the RAM application carries no shadow (its 64 KB limit) */
+    {
+        /* THE GARAGE-ENGAGEMENT SHADOW (app/gs_shadow.c): READ-ONLY — it gets
+         * the live values BY VALUE, after 0xB912C (park_tick: 0x89CDC) as the
+         * stock's slots 27..42 follow it, and writes only its own RAM */
+        const vehicle_in_t *v = vehicle_in();
+        const gs_in_t gi = {
+            .os_mode = sup_mode(),
+            .rngd = *(const volatile uint8_t *)0xFFF89CDCu,     /* park_law's 0x89CDC */
+            .park_model = park_law_state(),
+            .park_req = park_law_request(),
+            .temp = *(const volatile uint8_t *)0xFFF89C13u,     /* tmp_chain's 0x89C13 */
+            .cd2 = *(const volatile uint8_t *)0xFFF89CD2u,      /* tmp_chain's 0x89CD2 */
+            .eng_speed = (uint16_t)v->engine_speed,
+            .eng_valid = (v->q_engine_speed == Q_OK) ? 1u : 0u,
+        };
+        gs_shadow_tick_10ms(&gi);
+    }
+#endif
     bench_tick_10ms();
     sol_tick_10ms();        /* builds the 45-frame cyclic, queues DRV_CYC */
     meas_table_update();
@@ -376,6 +397,9 @@ int main(void)
     park_init();
     kl15_init();                        /* the terminal-15 object 0xFFF8E9D4 (0x140B30) */
     rng_chain_init();                   /* the range: the 0x9B228 one-shot (init arbiter → D6D6) */
+#if !defined(TCU_RAM_APP)
+    gs_shadow_init();                   /* the read-only garage-engagement shadow (its own RAM) */
+#endif
     park_pair_init();                   /* park sensor: 0x141B1C (safety layer) */
     sensors_init(&s_sensors_cfg);
     fca_tx_init();

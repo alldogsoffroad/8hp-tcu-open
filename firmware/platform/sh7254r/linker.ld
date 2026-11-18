@@ -340,6 +340,31 @@ SECTIONS
     } > RAM
     ASSERT(__kl15_wit_end <= 0xFFF87880, ".kl15_wit overflow")
 
+    /* THE GARAGE-ENGAGEMENT SHADOW (app/gs_shadow.c, app/gs_fill.c; ours —
+     * not stock cells; 2026-11-17, ~/tcu_sweep/garage_shadow_port.md): the
+     * shadow request objects (7 × 0x60, addressed by number: gs_fill.h
+     * GS_REQ_BASE), the engine / chain cells and witnesses, the recorder —
+     * free low RAM; cleared by gs_shadow_init; no cost to the stack guard.
+     * ld does NOT refuse overlapping NOLOAD sections: the ASSERTs hold each
+     * block between its neighbours (verified against every section by nm /
+     * objdump -h at the port, report §5). */
+    .gs_req 0xFFF911A0 (NOLOAD) : { __gs_req_start = .; . += 0x2A0; __gs_req_end = .; } > RAM
+    .gs_obj 0xFFF91440 (NOLOAD) : {
+        __gs_obj_start = .; *(.gs_obj)
+        /* the two shadow TUs' zero-initialised statics (the live instance's
+         * .bss must not grow: the stack guard has 8 bytes left) */
+        *gs_fill.c.obj(.bss .bss.* COMMON) *gs_shadow.c.obj(.bss .bss.* COMMON)
+        . = ALIGN(4); __gs_obj_end = .;
+    } > RAM
+    ASSERT(__gs_req_start >= ADDR(.drv_rec) + SIZEOF(.drv_rec), ".gs_req overlaps .drv_rec")
+    ASSERT(__gs_req_start == 0xFFF911A0 && __gs_req_end == __gs_obj_start, ".gs_req is off GS_REQ_BASE")
+    ASSERT(__gs_obj_end <= ADDR(.sup_era), ".gs_obj runs into .sup_era")
+    .gs_rec 0xFFF8EE00 (NOLOAD) : {
+        __gs_rec_start = .; *(.gs_rec) . = ALIGN(4); __gs_rec_end = .;
+    } > RAM
+    ASSERT(__gs_rec_start >= ADDR(.tmp_edd8) + SIZEOF(.tmp_edd8), ".gs_rec overlaps .tmp_edd8")
+    ASSERT(__gs_rec_end <= ADDR(.adc_cells), ".gs_rec runs into .adc_cells")
+
     /* our request-law witnesses and the refresh snapshot (not stock cells;
      * free low RAM like .sup_wit, so they do not cost the stack guard) */
     .drv_wit 0xFFF84C40 (NOLOAD) : {
