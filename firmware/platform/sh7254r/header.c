@@ -381,8 +381,10 @@ void (*const app_vectors[508])(void) = {
     /* platform_audit #8/P0#5: the initializer had 512 entries for this
      * 508-element array — GCC silently dropped the 4 excess ones, leaving
      * vectors 508-511 as NULL slots (jump-to-0 if ever taken). Trimmed to
-     * exactly 508; every wired entry above is unchanged. */
-    default_handler, default_handler, default_handler, default_handler,
+     * exactly 508; every wired entry above is unchanged. (2026-11-19: the
+     * trim had not actually been made — 512 initializers remained; the last
+     * four are now removed. The emitted table is byte-identical, since GCC
+     * had been dropping them.) */
 };
 
 /* Tail record at 0x17FB70 (outside the CRC range): project identification and end marker. */
