@@ -386,18 +386,44 @@ SECTIONS
      * section scan (tests/unit/g6c_sections.py) checks every allocated RAM
      * section of the image pairwise. */
     .gse_bd14 0xFFF8BD14 (NOLOAD) : { KEEP(*(.gse_bd14)) } > RAM   /* 0x8BD14..0x8BEB3 (+ block A 0x8BD6C) */
+    /* r04s (~/tcu_sweep/r04s_port.md): the element sub-objects D0DC / D148 /
+     * D1B4 (0x6C each, stock layout) and the {idx, blk} cells their +0x58 /
+     * +0x5C / +0x60 point to (three cells of 8 per group; the groups'
+     * stock neighbours 0x8CE74 / 0x8CF04 / 0x8CF8C belong to other objects
+     * and are not ours). The pointer values the engine stores ARE these
+     * addresses: each ADDR is asserted equal to the stock value. */
+    .gse_pr60 0xFFF8CE7C (NOLOAD) : { KEEP(*(.gse_pr60)) } > RAM   /* 0x8CE7C..0x8CE93 */
+    .gse_pr5c 0xFFF8CF0C (NOLOAD) : { KEEP(*(.gse_pr5c)) } > RAM   /* 0x8CF0C..0x8CF23 */
+    .gse_pr58 0xFFF8CF94 (NOLOAD) : { KEEP(*(.gse_pr58)) } > RAM   /* 0x8CF94..0x8CFAB */
+    .gse_d0dc 0xFFF8D0DC (NOLOAD) : { KEEP(*(.gse_d0dc)) } > RAM   /* 0x8D0DC..0x8D21F */
     .gse_e28e 0xFFF8E28E (NOLOAD) : { KEEP(*(.gse_e28e)) } > RAM   /* 0x8E28E..0x8E297 */
-    .gse_e33c 0xFFF8E33C (NOLOAD) : { KEEP(*(.gse_e33c)) } > RAM   /* 0x8E33C..0x8E34D */
+    .gse_e33c 0xFFF8E33C (NOLOAD) : { KEEP(*(.gse_e33c)) } > RAM   /* 0x8E33C..0x8E34F (r04s: + E34E) */
     .gse_e4a7 0xFFF8E4A7 (NOLOAD) : { KEEP(*(.gse_e4a7)) } > RAM   /* 0x8E4A7 */
     .gse_e4ac 0xFFF8E4AC (NOLOAD) : { KEEP(*(.gse_e4ac)) } > RAM   /* 0x8E4AC..0x8E4B5 */
     .gse_e69b 0xFFF8E69B (NOLOAD) : { KEEP(*(.gse_e69b)) } > RAM   /* 0x8E69B */
     .gse_e69f 0xFFF8E69F (NOLOAD) : { KEEP(*(.gse_e69f)) } > RAM   /* 0x8E69F */
     .gse_e6a1 0xFFF8E6A1 (NOLOAD) : { KEEP(*(.gse_e6a1)) } > RAM   /* 0x8E6A1 */
     .gse_e6a8 0xFFF8E6A8 (NOLOAD) : { KEEP(*(.gse_e6a8)) } > RAM   /* 0x8E6A8..0x8E6AC */
+    .gse_e6c1 0xFFF8E6C1 (NOLOAD) : { KEEP(*(.gse_e6c1)) } > RAM   /* 0x8E6C1..0x8E6C2 (r04s: E6BF +2/+3, 0xDC0F8) */
     .gse_e6c5 0xFFF8E6C5 (NOLOAD) : { KEEP(*(.gse_e6c5)) } > RAM   /* 0x8E6C5 */
     .gse_e6ee 0xFFF8E6EE (NOLOAD) : { KEEP(*(.gse_e6ee)) } > RAM   /* 0x8E6EE */
     .gse_e6ef 0xFFF8E6EF (NOLOAD) : { KEEP(*(.gse_e6ef)) } > RAM   /* 0x8E6EF */
-    ASSERT(SIZEOF(.gse_bd14) == 0x1A0 && SIZEOF(.gse_e28e) == 0x0A && SIZEOF(.gse_e33c) == 0x12 &&
+    ASSERT(SIZEOF(.gse_pr60) == 0x18 && SIZEOF(.gse_pr5c) == 0x18 && SIZEOF(.gse_pr58) == 0x18 &&
+           SIZEOF(.gse_d0dc) == 0x144 && SIZEOF(.gse_e6c1) == 2,
+           ".gse_pr* / .gse_d0dc / .gse_e6c1: not the stock size (app/gs_engine.c gs_sub_t / gse_pair_t)")
+    ASSERT(ADDR(.gse_pr60) == 0xFFF8CE7C && ADDR(.gse_pr5c) == 0xFFF8CF0C && ADDR(.gse_pr58) == 0xFFF8CF94 &&
+           ADDR(.gse_d0dc) == 0xFFF8D0DC, ".gse_pr* / .gse_d0dc: the stored pointers must equal the stock cells")
+    ASSERT(ADDR(.gse_pr60) >= ADDR(.gse_bd14) + SIZEOF(.gse_bd14) &&
+           ADDR(.gse_pr60) + SIZEOF(.gse_pr60) <= 0xFFF8CE94 &&
+           ADDR(.gse_pr5c) >= ADDR(.gse_pr60) + SIZEOF(.gse_pr60) &&
+           ADDR(.gse_pr5c) + SIZEOF(.gse_pr5c) <= 0xFFF8CF24 &&
+           ADDR(.gse_pr58) >= ADDR(.gse_pr5c) + SIZEOF(.gse_pr5c) &&
+           ADDR(.gse_pr58) + SIZEOF(.gse_pr58) <= 0xFFF8CFAC &&
+           ADDR(.gse_d0dc) >= ADDR(.gse_pr58) + SIZEOF(.gse_pr58) &&
+           ADDR(.gse_d0dc) + SIZEOF(.gse_d0dc) <= 0xFFF8D220 &&
+           ADDR(.gse_d0dc) + SIZEOF(.gse_d0dc) <= ADDR(.rng_d5e4),
+           ".gse_pr60 / pr5c / pr58 / d0dc overlap .gse_bd14 / each other / their stock groups / .rng_d5e4")
+    ASSERT(SIZEOF(.gse_bd14) == 0x1A0 && SIZEOF(.gse_e28e) == 0x0A && SIZEOF(.gse_e33c) == 0x14 &&
            SIZEOF(.gse_e4a7) == 1 && SIZEOF(.gse_e4ac) == 0x0A && SIZEOF(.gse_e69b) == 1 &&
            SIZEOF(.gse_e69f) == 1 && SIZEOF(.gse_e6a1) == 1 && SIZEOF(.gse_e6a8) == 5 &&
            SIZEOF(.gse_e6c5) == 1 && SIZEOF(.gse_e6ee) == 1 && SIZEOF(.gse_e6ef) == 1,
@@ -414,7 +440,8 @@ SECTIONS
            ".gse_e28e / e33c / e4a7 / e4ac overlap E298 / .m5_e384 / .rng_e530")
     ASSERT(ADDR(.gse_e69b) >= ADDR(.rng_e64b) + SIZEOF(.rng_e64b) &&
            ADDR(.gse_e69f) > ADDR(.gse_e69b) && ADDR(.gse_e6a1) > ADDR(.gse_e69f) &&
-           ADDR(.gse_e6a8) > ADDR(.gse_e6a1) && ADDR(.gse_e6c5) >= ADDR(.gse_e6a8) + SIZEOF(.gse_e6a8) &&
+           ADDR(.gse_e6a8) > ADDR(.gse_e6a1) && ADDR(.gse_e6c1) >= ADDR(.gse_e6a8) + SIZEOF(.gse_e6a8) &&
+           ADDR(.gse_e6c5) >= ADDR(.gse_e6c1) + SIZEOF(.gse_e6c1) &&
            ADDR(.gse_e6ee) > ADDR(.gse_e6c5) && ADDR(.gse_e6ef) > ADDR(.gse_e6ee) &&
            ADDR(.gse_e6ef) + SIZEOF(.gse_e6ef) <= ADDR(.kl15_obj),
            ".gse_e69b .. e6ef overlap .rng_e64b / each other / .kl15_obj")

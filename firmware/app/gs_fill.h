@@ -75,6 +75,9 @@ uint32_t gsf_fl32(uint32_t a);
 uint16_t gsf_b6eae(uint32_t map, uint16_t x);
 int32_t  gsf_b6e10(uint32_t map, int16_t x);
 uint8_t  gsf_b6d6c(uint32_t map, uint8_t x);
+/* r04s: 0xBA7DC → 0x10CFB6(0xFFF8D1B4, e) — the engine's (renamed per
+ * binding, app/gs_cand_bind.h): D1B4's +0x3A while D1B4's element is e */
+int16_t  gs_shadow_cfb6(uint8_t elem);
 int32_t  gsf_b7164(uint32_t map, int16_t x, int16_t y);
 uint16_t gsf_e4c18(uint32_t o, uint8_t p2);     /* 0xE4C18 (via 0xB8356 / 0x1147C8) */
 uint16_t gsf_e4bec(uint32_t o);                 /* 0xE4BEC (via 0xB836E) */

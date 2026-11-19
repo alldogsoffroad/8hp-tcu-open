@@ -186,6 +186,9 @@ static unsigned g_kR = K_R, g_kP1 = K_P1, g_kP2 = K_P2;
  * and shortP (0.3 s) — the stock's R engagement starts with B not yet
  * released and completes earlier (pass 84; HEAD's instant release: 93) */
 static unsigned g_done_lo = 90u;
+/* r04s (~/tcu_sweep/r04s_port.md): R first, then D (the reversal's mirror;
+ * set by test_g6b's scenario before run_g; default false = D then R) */
+static bool g_rfirst;
 static uint8_t lever_at(unsigned p, unsigned m1)
 {
     unsigned k;
@@ -193,8 +196,8 @@ static uint8_t lever_at(unsigned p, unsigned m1)
         return 1u;
     }
     k = p - m1;
-    if (k >= K_D && k < g_kP1) { return 4u; }
-    if (k >= g_kR && k < g_kP2) { return 2u; }
+    if (k >= K_D && k < g_kP1) { return g_rfirst ? 2u : 4u; }
+    if (k >= g_kR && k < g_kP2) { return g_rfirst ? 4u : 2u; }
     return 1u;
 }
 

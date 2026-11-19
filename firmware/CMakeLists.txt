@@ -1447,7 +1447,25 @@ else()
     # G6R_NOREP), every tick / gsb_t / window / release header exact.
     file(ARCHIVE_EXTRACT INPUT ${CMAKE_SOURCE_DIR}/tests/unit/golden/g6r_r04r_test_g6b.tgz
         DESTINATION ${CMAKE_BINARY_DIR}/g6r_r04r)
-    set(G6C_GOLD_ENV "G6C_GOLD_IN=${CMAKE_BINARY_DIR}/g6r_r04r/gold")
+    # r04s (~/tcu_sweep/r04s_port.md): the pinned element sub-objects,
+    # 0xDC0F8 (E6C1 / E6C2) with the reversal's consumers, 0x106698's
+    # prologue / epilogue. test_g6b now compares with the r04s goldens
+    # (gold/, this build's G6C_GOLD_OUT; + the new run "R -> D direct").
+    # g6s_vs_r04r_goldens proves the r04r -> r04s difference of every run is
+    # confined to the "D -> R direct" reversal (channels D and B from its R
+    # start, the two engagement timers, D's fill time −10 ms) and that the
+    # new run is identical to what the r04r engine does (gold_r04r_extra/,
+    # written by HEAD 2884c9b with only the scenario added); strict must FAIL
+    file(ARCHIVE_EXTRACT INPUT ${CMAKE_SOURCE_DIR}/tests/unit/golden/g6s_r04s_test_g6b.tgz
+        DESTINATION ${CMAKE_BINARY_DIR}/g6s_r04s)
+    set(G6C_GOLD_ENV "G6C_GOLD_IN=${CMAKE_BINARY_DIR}/g6s_r04s/gold")
+    add_test(NAME g6s_vs_r04r_goldens
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6s_gold_diff.py ${CMAKE_BINARY_DIR}/g6r_r04r/gold
+            ${CMAKE_BINARY_DIR}/g6s_r04s/gold_r04r_extra ${CMAKE_BINARY_DIR}/g6s_r04s/gold)
+    add_test(NAME g6s_vs_r04r_goldens_strict_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6s_gold_diff.py ${CMAKE_BINARY_DIR}/g6r_r04r/gold
+            ${CMAKE_BINARY_DIR}/g6s_r04s/gold_r04r_extra ${CMAKE_BINARY_DIR}/g6s_r04s/gold --strict)
+    set_tests_properties(g6s_vs_r04r_goldens_strict_negative PROPERTIES WILL_FAIL TRUE)
     add_test(NAME g6r_vs_r04q_goldens
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6r_gold_diff.py ${CMAKE_BINARY_DIR}/g6q_r04q/gold
             ${CMAKE_BINARY_DIR}/g6r_r04r/gold)

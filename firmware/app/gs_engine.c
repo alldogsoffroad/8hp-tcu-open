@@ -185,8 +185,15 @@ void gs_shadow_tick_10ms(const gs_in_t *in) { (void)in; }
 #define GS_D5E      1           /* 0xFFF89D5E / 0xFFF89D60 slip signs: forced 1
                                  * by 0xFFF89D63 / 0xFFF89D65 = 01 [O dump] */
 #define GS_E4B1     1u          /* 0xFFF8E4B1 = E4AC+5 at boot */
-#define GS_E6C1     0u          /* 0xFFF8E6C1 */
-#define GS_E6C2     3           /* 0xFFF8E6C2 (s8) */
+/* r04s: E6C1 / E6C2 (0xFFF8E6C1 / C2) are no longer stand-ins (0 / 3):
+ * 0xDC0F8 is ported (slot 42, gse_e6c1_t below) */
+/* r04s: the accelerator pedal 0x89CD8 (0xB912C's copy of 0xFFF9545E, the
+ * safety object 0xFFF95458's conditioned 0x120 byte 2: raw · 127 / 125, the
+ * no-frame default *(0x195DA8) = 23 [O cal]). We receive 0x120 (io/vehicle
+ * profile_fca.c, permil) but do NOT run the stock's conditioning (0x13C99C /
+ * 0x13C9BA): the stock's no-frame value stands in, by value — the bench
+ * sends no 0x120, so the stock reads exactly this */
+#define GS_PEDAL    23u         /* 0xFFF89CD8 (stand-in = cal 0x195DA8) */
 #define GS_AE2D     1u          /* 0xFFF8AE2D */
 #define GS_LINEP    20000u      /* 0xFFF8BCB0 (reaction 50, forced maximum) */
 #define GS_SYSMODE  1u          /* 0xFFF89CF5 (reaction 50) */
@@ -199,7 +206,7 @@ _Static_assert(GS_C06 == 0u && GS_C08 == 0u && GS_C10 == 0u && GS_C1A == 0 &&
                GS_D09 == 0u && GS_BD78 == 0u && GS_D5E == 1 &&
                GS_IDLE_BD76 == 0x7FFF && GS_IDLE_BD2E == 0xFFFFu && GS_IDLE_BD30 == 0xFFu &&
                GS_E4B1 == 1u &&
-               GS_E6C1 == 0u && GS_E6C2 == 3 && GS_C25 == 3 && GS_AE2D == 1u && GS_LINEP == 20000u &&
+               GS_PEDAL == 23u && GS_C25 == 3 && GS_AE2D == 1u && GS_LINEP == 20000u &&
                GS_SYSMODE == 1u && GS_E6C3 == 0u && GS_E298 == 0u,
                "gs_shadow: every dump-held input equals the stock driving dump");
 /* the gear target: forced = the fault-free strategy's 1st (0xFFF8A697 = 1);
@@ -236,12 +243,25 @@ _Static_assert(GS_C06 == 0u && GS_C08 == 0u && GS_C10 == 0u && GS_C1A == 0 &&
 #  define GS_REL
 #endif
 
+/* r04s (2026-11-19, ~/tcu_sweep/r04s_port.md; layout b2_slots_subobj_decode.md
+ * §B, re-checked against the constructor 0x10D010 and the driving dump's D148
+ * `+0x40 43D98000 07D0 0000 C69C4000 469C4000 | 00049FC0`): the ramp object
+ * at sub +0x40 — 0x14 bytes, its vtable word 0x49FC0 at its +0x10 (= sub
+ * +0x50, written by 0x10D010 at 0x10D02E/0x10D030: base 0x49F9C, then the
+ * class 0x49FC0). The vtable word is stored as the value only: our port
+ * calls 0xD1C4C / 0xD1C70 directly, never through it. */
 typedef struct {        /* the ramp object at sub +0x40 (vtable 0x49FC0) */
-    float    v;         /* +0  */
-    uint16_t ts;        /* +4  0x89CF8 at the last step */
-    float    lo;        /* +0x10 */
-    float    hi;        /* +0x18 */
+    float    v;         /* +0x00 */
+    uint16_t ts;        /* +0x04 0x89CF8 at the last step */
+    uint16_t r6;        /* +0x06 */
+    float    lo;        /* +0x08 */
+    float    hi;        /* +0x0C */
+    uint32_t vptr;      /* +0x10 (sub +0x50) 0x00049FC0 */
 } gs_ramp_t;
+_Static_assert(offsetof(gs_ramp_t, ts) == 0x04u && offsetof(gs_ramp_t, lo) == 0x08u &&
+               offsetof(gs_ramp_t, hi) == 0x0Cu && offsetof(gs_ramp_t, vptr) == 0x10u &&
+               sizeof(gs_ramp_t) == 0x14u, "the ramp object at its stock offsets (0x14 bytes)");
+#define GSE_RAMP_VTBL   0x00049FC0u
 
 typedef struct {        /* one element sub-object 0xFFF8D0DC/D148/D1B4 (0x6C) */
     uint8_t  act;       /* +0    */
@@ -274,17 +294,50 @@ typedef struct {        /* one element sub-object 0xFFF8D0DC/D148/D1B4 (0x6C) */
     uint8_t  t34;       /* +0x34 */
     int16_t  d36;       /* +0x36 */
     uint16_t f38;       /* +0x38 */
-    int16_t  f3a;       /* +0x3A */
-    uint8_t  f3b;       /* +0x3B */
+    int16_t  f3a;       /* +0x3A (u16: word accesses only; r04s: the write-only
+                         * f3b at +0x3C is gone — 0x10D130's +0x3A/+0x3B byte
+                         * stores are this word's two halves) */
     uint8_t  t3c;       /* +0x3C */
     uint8_t  f3d;       /* +0x3D */
     int16_t  f3e;       /* +0x3E */
-    gs_ramp_t ramp;     /* +0x40 */
+    gs_ramp_t ramp;     /* +0x40 .. +0x53 (vtable word at +0x50) */
     int16_t  tgt54;     /* +0x54 */
     uint8_t  tgt56;     /* +0x56 */
-    uint32_t idx58, blk58, idx5c, blk5c, idx60, blk60;  /* +0x58/+0x5C/+0x60 cells */
-    uint32_t p64;       /* +0x64 */
+    uint8_t  r57;       /* +0x57 */
+    uint32_t p58;       /* +0x58 pointer to its {idx, blk} cell 0xFFF8CF94 + 8·(class − 2) */
+    uint32_t p5c;       /* +0x5C                                0xFFF8CF0C + 8·(class − 2) */
+    uint32_t p60;       /* +0x60                                0xFFF8CE7C + 8·(class − 2) */
+    uint32_t p64;       /* +0x64 **(0x5DE08 + 4e) */
+    uint32_t r68;       /* +0x68 kinds 1/2: 0x125B6C(..) — 0 here */
 } gs_sub_t;
+_Static_assert(offsetof(gs_sub_t, out_p) == 0x0Au && offsetof(gs_sub_t, out_mode) == 0x10u &&
+               offsetof(gs_sub_t, phase) == 0x11u && offsetof(gs_sub_t, lim12) == 0x12u &&
+               offsetof(gs_sub_t, tmo) == 0x14u && offsetof(gs_sub_t, type) == 0x15u &&
+               offsetof(gs_sub_t, f18) == 0x18u && offsetof(gs_sub_t, to1a) == 0x1Au &&
+               offsetof(gs_sub_t, cls) == 0x1Cu && offsetof(gs_sub_t, f1e) == 0x1Eu &&
+               offsetof(gs_sub_t, eng) == 0x20u && offsetof(gs_sub_t, rel) == 0x21u &&
+               offsetof(gs_sub_t, step) == 0x22u && offsetof(gs_sub_t, base24) == 0x24u &&
+               offsetof(gs_sub_t, p26) == 0x26u && offsetof(gs_sub_t, p2e) == 0x2Eu &&
+               offsetof(gs_sub_t, dur30) == 0x30u && offsetof(gs_sub_t, t32) == 0x32u &&
+               offsetof(gs_sub_t, t34) == 0x34u && offsetof(gs_sub_t, d36) == 0x36u &&
+               offsetof(gs_sub_t, f38) == 0x38u && offsetof(gs_sub_t, f3a) == 0x3Au &&
+               offsetof(gs_sub_t, t3c) == 0x3Cu && offsetof(gs_sub_t, f3d) == 0x3Du &&
+               offsetof(gs_sub_t, f3e) == 0x3Eu && offsetof(gs_sub_t, ramp) == 0x40u &&
+               offsetof(gs_sub_t, ramp.vptr) == 0x50u && offsetof(gs_sub_t, tgt54) == 0x54u &&
+               offsetof(gs_sub_t, tgt56) == 0x56u && offsetof(gs_sub_t, p58) == 0x58u &&
+               offsetof(gs_sub_t, p5c) == 0x5Cu && offsetof(gs_sub_t, p60) == 0x60u &&
+               offsetof(gs_sub_t, p64) == 0x64u && offsetof(gs_sub_t, r68) == 0x68u &&
+               sizeof(gs_sub_t) == 0x6Cu, "the element sub-object at its stock offsets (0x6C, 0x10D010)");
+/* r04s: one {idx, blk} cell behind a sub-object's +0x58 / +0x5C / +0x60
+ * pointer (0x10D130 writes `*p = idx; p[1] = blk`) */
+typedef struct {
+    uint32_t idx;
+    uint32_t blk;
+} gse_pair_t;
+_Static_assert(sizeof(gse_pair_t) == 8u, "the {idx, blk} cell");
+#define GSE_PR58_STOCK  0xFFF8CF94u     /* table 0x5AE28[class − 2] */
+#define GSE_PR5C_STOCK  0xFFF8CF0Cu     /* table 0x59134[class − 2] */
+#define GSE_PR60_STOCK  0xFFF8CE7Cu     /* table 0x5739C[class − 2] */
 
 typedef struct {
     /* 0x89C3C block (shadow copies) */
@@ -304,7 +357,8 @@ typedef struct {
      * stock addresses (below, D-G6-9) */
     uint8_t  ae28;          /* 0xFFF8AE28 (the live cell is park_law's: not pinned) */
     uint8_t  e69c0;         /* the 0x103CEC strobe flag (its stock cell not decoded: not pinned) */
-    gs_sub_t sub[3];        /* 0 D0DC (first, class 2), 1 D148 (class 3), 2 D1B4 (class 4) */
+    /* r04s: the three element sub-objects left gs_t — they are pinned at
+     * 0xFFF8D0DC / D148 / D1B4 (g_sub below, SUB[k]) */
     uint16_t cur[7];        /* shadow currents ch 0..6 */
     uint8_t  done_now, commit_now;
     uint8_t  rec_on;        /* 0xFF idle, else the slot being written */
@@ -358,17 +412,33 @@ typedef struct {            /* 0xFFF8E33C, the engagement object (0xDDCA2) */
     int16_t  ta;            /* +0xA snapshot of 0x89CBA */
     uint8_t  rc[4];
     int16_t  n10;           /* +0x10 snapshot of 0x89CD0 */
+    uint16_t t12;           /* +0x12 (0xFFF8E34E, r04s) passes since 0x89C2F last read 0:
+                             * +1 sat. in slot 28 (0xDE0FE → 0xBAE5E(E21E, +0x12), step
+                             * *0xFFF8E220 = 1), 0 while 0x89C2F != 0 (0xDE2FA: slot 34
+                             * 0xDDFD8 and the start 0xDDCA2); read by 0x10D130 (+0x1E) */
 } gse_e33c_t;
 _Static_assert(offsetof(gse_e33c_t, b) == 2u && offsetof(gse_e33c_t, ta) == 0x0Au &&
-               offsetof(gse_e33c_t, n10) == 0x10u && sizeof(gse_e33c_t) == 0x12u, "E33C at its stock offsets");
+               offsetof(gse_e33c_t, n10) == 0x10u && offsetof(gse_e33c_t, t12) == 0x12u &&
+               sizeof(gse_e33c_t) == 0x14u, "E33C at its stock offsets");
+/* r04s: 0xFFF8E6C1 / E6C2 = E6BF +2 / +3 (0xDC0F8, slot 42): the last power
+ * flow whose gear's first element (role table 0x6312F) reported applied
+ * (0xE55DC(e) → vtable +0x38 = 0xE4DBA, +0x46 == 10000), and the gear code
+ * while 0x89C30 == E6C1 */
+typedef struct {
+    uint8_t  c1;            /* 0xFFF8E6C1 */
+    int8_t   c2;            /* 0xFFF8E6C2 */
+} gse_e6c1_t;
+_Static_assert(sizeof(gse_e6c1_t) == 2u, "E6C1 / E6C2");
 typedef struct {            /* 0xFFF8E4AC, the three-element engine (0x1066D6 ..) */
-    uint8_t  r0[2];
+    uint8_t  e4ac0;         /* +0 (r04s) 0x106AC4: D0DC's phase in {0x0B, 0x0C, 0x0E} */
+    uint8_t  r1;
     uint16_t e4ac2;         /* +2 */
     uint8_t  e4ac4, e4ac5, e4ac6, e4ac7;    /* +4 .. +7 */
     uint8_t  kind;          /* +8 the shift kind (0x106AE6) */
     uint8_t  e4ac9;         /* +9 */
 } gse_e4ac_t;
-_Static_assert(offsetof(gse_e4ac_t, e4ac2) == 2u && offsetof(gse_e4ac_t, e4ac4) == 4u &&
+_Static_assert(offsetof(gse_e4ac_t, e4ac0) == 0u && offsetof(gse_e4ac_t, e4ac2) == 2u &&
+               offsetof(gse_e4ac_t, e4ac7) == 7u && offsetof(gse_e4ac_t, e4ac4) == 4u &&
                offsetof(gse_e4ac_t, e4ac5) == 5u && offsetof(gse_e4ac_t, kind) == 8u &&
                offsetof(gse_e4ac_t, e4ac9) == 9u && sizeof(gse_e4ac_t) == 0x0Au, "E4AC at its stock offsets");
 typedef struct {            /* 0xFFF8BD14, the shift object, with its context block A
@@ -377,12 +447,17 @@ typedef struct {            /* 0xFFF8BD14, the shift object, with its context bl
     uint8_t  bd15;          /* +0x01 */
     uint8_t  bd16;          /* +0x02 the shift kind (3 garage, 4 release) */
     uint8_t  bd17;          /* +0x03 */
-    uint8_t  r4[0x0Au];
+    uint8_t  r4[4];
+    uint8_t  bd1c;          /* +0x08 (r04s) 0xEC6FE: a forward reversal's flag */
+    uint8_t  bd1d;          /* +0x09 (r04s) 0xEC6FE: a reverse reversal's flag */
+    uint8_t  ra[4];
     uint8_t  bd22;          /* +0x0E 0x89CD2 at the start (0xED9B2) */
     uint8_t  rf[0x0Bu];
     uint16_t bd2e;          /* +0x1A BD2E passes since sync */
     uint8_t  bd30;          /* +0x1C BD30 locked passes */
-    uint8_t  r1d[0x3Bu];
+    uint8_t  r1d[0x13u];
+    uint8_t  bd44;          /* +0x30 (r04s) 0xEB900: the third element of the last release */
+    uint8_t  r31[0x27u];
     uint8_t  sync;          /* +0x58 BD6C (A +0x00) the sync flag */
     int8_t   tgear;         /* +0x59 BD6D (A +0x01) target gear (0x1176C4) */
     uint8_t  r5a;
@@ -410,6 +485,8 @@ typedef struct {            /* 0xFFF8BD14, the shift object, with its context bl
 } gse_bd14_t;
 _Static_assert(offsetof(gse_bd14_t, bd15) == 0x01u && offsetof(gse_bd14_t, bd16) == 0x02u &&
                offsetof(gse_bd14_t, bd17) == 0x03u && offsetof(gse_bd14_t, bd22) == 0x0Eu &&
+               offsetof(gse_bd14_t, bd1c) == 0x08u && offsetof(gse_bd14_t, bd1d) == 0x09u &&
+               offsetof(gse_bd14_t, bd44) == 0x30u &&
                offsetof(gse_bd14_t, bd2e) == 0x1Au && offsetof(gse_bd14_t, bd30) == 0x1Cu &&
                offsetof(gse_bd14_t, sync) == 0x58u && offsetof(gse_bd14_t, tgear) == 0x59u &&
                offsetof(gse_bd14_t, act3) == 0x5Bu && offsetof(gse_bd14_t, p5) == 0x5Du &&
@@ -433,9 +510,19 @@ static volatile uint8_t g_e69b GSE_PIN(".gse_e69b");        /* 0xFFF8E69B commit
 static volatile int8_t  g_e69f GSE_PIN(".gse_e69f");        /* 0xFFF8E69F the current gear code */
 static volatile int8_t  g_e6a1 GSE_PIN(".gse_e6a1");        /* 0xFFF8E6A1 the gear target */
 static volatile uint8_t g_e6a8[5] GSE_PIN(".gse_e6a8");     /* 0xFFF8E6A8 the engine-state object (0xD4DC2) */
+static volatile gse_e6c1_t g_e6c1 GSE_PIN(".gse_e6c1");    /* 0xFFF8E6C1 / C2 (r04s, 0xDC0F8) */
 static volatile uint8_t g_e6c5 GSE_PIN(".gse_e6c5");        /* 0xFFF8E6C5 the settle counter */
 static volatile uint8_t g_e6ee GSE_PIN(".gse_e6ee");        /* 0xFFF8E6EE */
 static volatile uint8_t g_e6ef GSE_PIN(".gse_e6ef");        /* 0xFFF8E6EF the power-flow request */
+/* r04s (~/tcu_sweep/r04s_port.md, B2 §B): the three element sub-objects
+ * 0xFFF8D0DC / D148 / D1B4 (classes 2 / 3 / 4, 0x6C each, contiguous) and
+ * the nine {idx, blk} cells their +0x58 / +0x5C / +0x60 point to, at the
+ * stock addresses (constructor 0x10D010 from 0x15CEC0; tables 0x5AE28 /
+ * 0x59134 / 0x5739C [O bytes]) */
+static volatile gs_sub_t   g_sub[3]  GSE_PIN(".gse_d0dc");  /* 0xFFF8D0DC, D148, D1B4 */
+static volatile gse_pair_t g_pr58[3] GSE_PIN(".gse_pr58");  /* 0xFFF8CF94 / 9C / A4 */
+static volatile gse_pair_t g_pr5c[3] GSE_PIN(".gse_pr5c");  /* 0xFFF8CF0C / 14 / 1C */
+static volatile gse_pair_t g_pr60[3] GSE_PIN(".gse_pr60");  /* 0xFFF8CE7C / 84 / 8C */
 #define E28  (*(gse_e28e_t *)&g_e28e)
 #define E33  (*(gse_e33c_t *)&g_e33c)
 #define EAC  (*(gse_e4ac_t *)&g_e4ac)
@@ -446,8 +533,41 @@ static volatile uint8_t g_e6ef GSE_PIN(".gse_e6ef");        /* 0xFFF8E6EF the po
 #define V_E6A1 (*(int8_t *)&g_e6a1)
 #define V_E6A8 (*(uint8_t (*)[5])&g_e6a8)
 #define V_E6C5 (*(uint8_t *)&g_e6c5)
+#define E6C   (*(gse_e6c1_t *)&g_e6c1)
 #define V_E6EE (*(uint8_t *)&g_e6ee)
 #define V_E6EF (*(uint8_t *)&g_e6ef)
+#define SUB    (*(gs_sub_t (*)[3])&g_sub)
+/* the {idx, blk} cell a sub-object pointer names. On SH the pointer IS the
+ * cell's address (the cells are pinned at the stock addresses the
+ * constructor stores — linker.ld ASSERTs ADDR == the stock value); on the
+ * host the pointer holds the same stock value and is mapped onto this
+ * instance's cells (any other value: a zero cell — only the host-only
+ * gs_shadow_host_ceca probe, whose local sub-object has no pointers) */
+static gse_pair_t *pr(uint32_t a)
+{
+#if defined(__sh__)
+    return (gse_pair_t *)(uintptr_t)a;
+#else
+    static gse_pair_t z;
+    if (a - GSE_PR58_STOCK < 24u) { return (gse_pair_t *)&g_pr58[(a - GSE_PR58_STOCK) / 8u]; }
+    if (a - GSE_PR5C_STOCK < 24u) { return (gse_pair_t *)&g_pr5c[(a - GSE_PR5C_STOCK) / 8u]; }
+    if (a - GSE_PR60_STOCK < 24u) { return (gse_pair_t *)&g_pr60[(a - GSE_PR60_STOCK) / 8u]; }
+    z.idx = 0u;
+    z.blk = 0u;
+    return &z;
+#endif
+}
+/* the pointer value the constructor stores for cell c of a group */
+static uint32_t pr_addr(volatile gse_pair_t *grp, uint32_t stock, uint8_t c)
+{
+#if defined(__sh__)
+    (void)stock;
+    return (uint32_t)(uintptr_t)&grp[c];
+#else
+    (void)grp;
+    return stock + 8u * (uint32_t)c;
+#endif
+}
 static void gse_zero(volatile void *p, uint32_t n)
 {
     volatile uint8_t *b = (volatile uint8_t *)p;
@@ -512,6 +632,8 @@ static volatile gs_rec_t *rec_at(uint8_t slot, uint8_t i)
 #endif
 
 #if !defined(__sh__)
+static uint8_t s_host_r04s[8][12];  /* r04s: the last 8 starts' reversal inputs */
+static uint8_t s_host_r04s_n;
 static uint8_t s_host_mask;         /* gs_shadow_host_standins */
 static uint8_t s_host_ceca_cls;     /* gs_shadow_host_ceca: the old class test */
 static int16_t s_host_bd76;
@@ -675,9 +797,9 @@ static uint8_t b827a(uint8_t e)
 }
 
 /* ── the per-sub-object helpers (cal: blk58 / blk60 by stock address) ─── */
-static uint32_t b58(const gs_sub_t *s, uint32_t off) { return gsf_fl32(s->blk58 + off); }
-static uint32_t b60(const gs_sub_t *s, uint32_t off) { return gsf_fl32(s->blk60 + off); }
-static uint32_t b5c(const gs_sub_t *s, uint32_t off) { return gsf_fl32(s->blk5c + off); }
+static uint32_t b58(const gs_sub_t *s, uint32_t off) { return gsf_fl32(pr(s->p58)->blk + off); }
+static uint32_t b60(const gs_sub_t *s, uint32_t off) { return gsf_fl32(pr(s->p60)->blk + off); }
+static uint32_t b5c(const gs_sub_t *s, uint32_t off) { return gsf_fl32(pr(s->p5c)->blk + off); }
 
 /* ── THE RELEASE helpers (G4a, 2026-11-19; ~/tcu_sweep/g4a_release_port.md,
  * from the bytes) ──────────────────────────────────────────────────────── */
@@ -756,7 +878,7 @@ static int16_t ea4c(const gs_sub_t *s, uint8_t f5)          /* 0x10EA4C */
 static uint16_t ed1a(const gs_sub_t *s) { return gsf_b6eae(b58(s, 0x50u), (uint16_t)GS_C08); }
 static uint8_t ed4a(const gs_sub_t *s)                       /* 0x10ED4A: D148 +0x16 / +0x20 */
 {
-    if (G.sub[1].f16 == 0u && G.sub[1].eng != 0u) {
+    if (SUB[1].f16 == 0u && SUB[1].eng != 0u) {
         return gsf_fl8(b58(s, 0x58u));
     }
     return 0u;
@@ -766,7 +888,11 @@ static int16_t e52c(const gs_sub_t *s)                       /* 0x10E52C */
     int16_t v = 0;
     if (KB.bd16 == 3u) {
         if (s->cls == 4u) {
-            v = (int16_t)ed4a(s);                            /* BD1C / BD1D: dump 0 */
+            v = (int16_t)ed4a(s);
+            if (KB.bd1c != 0u || KB.bd1d != 0u) {           /* r04s: 0x10E54E..0x10E574 */
+                const int16_t m = (int16_t)gsf_b6d6c(b58(s, 0x54u), KB.bd22);
+                v = (v > m) ? v : m;                         /* 0x104D4C: the larger */
+            }
         } else {
             v = (int16_t)ed1a(s);
             kind_check();
@@ -806,7 +932,10 @@ static int16_t e5ee(const gs_sub_t *s)                       /* 0x10E5EE */
         v = ea1c(s);
     }
     if (s->f1e != 0u && s->cls == 2u) {
-        W.unp_n++;                                           /* +0x1E: never set here */
+        /* r04s (0x10E62C..0x10E64E): a fast reversal's base offset —
+         * *(*(*0xFFF84D44) + 20) = cal 0x1FF1BE = −100 mbar if the gear code
+         * reads −1 (R), else +24 → cal 0x1FF1C0 = 0 */
+        v += (int16_t)gsf_fl16(gsf_fl32(GS_P84D44 + (V_E69F == -1 ? 20u : 24u)));
     }
     /* cls 4: E982A(BC74) = BC74+5 != 0 — BC74 never starts here (stand-in) */
     v += ea4c(s, s->f5);
@@ -939,7 +1068,9 @@ static void d5e4(gs_sub_t *s)
         s->past = 1u;
         s->t_e = 0u;
         if (s->f1e != 0u && s->cls == 2u) {
-            W.unp_n++;
+            /* r04s (0x10D706..0x10D728): cal *(*0xFFF84D44 + 44) (gear code
+             * −1) / + 48 — both 0 in this calibration (0x1FF1CA / 0x1FF1CC) */
+            base = (int16_t)gsf_fl16(gsf_fl32(GS_P84D44 + (V_E69F == -1 ? 44u : 48u)));
         }
         break;
     case 0x0A:
@@ -1015,7 +1146,7 @@ static bool d9b6(gs_sub_t *s)
             if (b822c(s->eng)) {
                 return true;
             }
-            if (cf80(&G.sub[2], s->dur30)) {
+            if (cf80(&SUB[2], s->dur30)) {
                 return true;
             }
         }
@@ -1029,10 +1160,10 @@ static bool d9b6(gs_sub_t *s)
         if (s->f1d == 0u) {
             return true;
         }
-        if (G.sub[2].past != 0u) {          /* D1B5 */
+        if (SUB[2].past != 0u) {          /* D1B5 */
             return true;
         }
-        return G.sub[2].eng == 0u;          /* D1D4 */
+        return SUB[2].eng == 0u;          /* D1D4 */
     case 0x04:
         if (s->tgt56 == 0u) {
             return false;
@@ -1057,7 +1188,7 @@ static bool d9b6(gs_sub_t *s)
     case 0x0C: case 0x0E: case 0x10: case 0x14:
         return false;
     case 0x0F: {
-        const bool wait = G.sub[2].f16 == 0u && G.sub[2].eng != 0u;   /* D1CA / D1D4 */
+        const bool wait = SUB[2].f16 == 0u && SUB[2].eng != 0u;   /* D1CA / D1D4 */
         if (!wait) {
             return true;
         }
@@ -1067,8 +1198,17 @@ static bool d9b6(gs_sub_t *s)
         return b822c(s->eng);
     }
     case 0x11:
-        /* BD1C / BD1D == 0 (dump): the second sub-object's fill condition */
-        return cf80(&G.sub[1], s->dur30);
+        /* r04s (0x10DA40..0x10DAA4): BD1C / BD1D (0xEC6FE, a reversal) */
+        if (KB.bd1c == 0u && KB.bd1d == 0u) {
+            return cf80(&SUB[1], s->dur30);              /* the second sub-object's fill condition */
+        }
+        if ((int32_t)P.cba >= (int32_t)(int16_t)gsf_b6e10(b58(s, 0x5Cu), (int16_t)GS_C1A)) {
+            return true;
+        }
+        if ((int32_t)P.cba >= (int32_t)(uint16_t)gsf_b6eae(b58(s, 0x60u), (uint16_t)GS_C1D)) {
+            return true;
+        }
+        return (int32_t)s->t32 >= (int32_t)s->dur30;   /* 0x10DE34: the timer */
     case 0x12:                              /* 0x10DC4A (G4a) */
         if (KB.bd16 != 4u) {
             break;                          /* 0x10DE34: the timer */
@@ -1078,10 +1218,10 @@ static bool d9b6(gs_sub_t *s)
         }
         /* class 3 (GBR 0xFFF8D0E6): D0E3 (D0DC +7), D0E6 (+0xA) == 0x10E850,
          * D1BB (D1B4 +7), D1BE (+0xA) == 0x10E850 — 0x10E850 of THIS sub */
-        if (G.sub[0].f7 == 0u || G.sub[0].out_p != e850(s)) {
+        if (SUB[0].f7 == 0u || SUB[0].out_p != e850(s)) {
             return false;
         }
-        return G.sub[2].f7 != 0u && G.sub[2].out_p == e850(s);
+        return SUB[2].f7 != 0u && SUB[2].out_p == e850(s);
     case 0x13: {                            /* 0x10DCE8 (G4a) */
         uint8_t part;
         if (s->cls == 3u && GS_C25 == 6) {
@@ -1091,9 +1231,9 @@ static bool d9b6(gs_sub_t *s)
             s->f1f = (uint8_t)((b82e2(s->rel) > 0) ? 0u : 1u);   /* cmp/pl; movrt */
         }
         if (s->cls == 4u) {
-            part = (s->f1f != 0u && G.sub[0].f1f != 0u) ? 1u : 0u;   /* D0FB */
+            part = (s->f1f != 0u && SUB[0].f1f != 0u) ? 1u : 0u;   /* D0FB */
         } else {
-            part = (s->f1f != 0u && G.sub[2].f1f != 0u) ? 1u : 0u;   /* D1D3 */
+            part = (s->f1f != 0u && SUB[2].f1f != 0u) ? 1u : 0u;   /* D1D3 */
         }
         if ((int32_t)b77a0(KB.slip) >= (int32_t)(uint16_t)f26c()) {  /* BD7C */
             return true;
@@ -1276,6 +1416,55 @@ static void eb76(gs_sub_t *s)
     }
 }
 
+/* r04s: 0x106698's prologue and epilogue (slot 35, 0xEB348 → 0xEB382 →
+ * 0xEEB56 → 0x106698(E4AC), every pass whatever BD17 [O bytes]):
+ *   0x89C3D != 0 → +5 = 1 (D-G6-2 forces our 0x89C3D to 0: never — +5 keeps
+ *   GS_E4B1 from boot until the first stop, as before);
+ *   0x106AB6 → 0x106C16 (+7 / +2) and 0x106C4A (+4);
+ *   +9 = 0;
+ *   0x10D10C(D148) (class 3 with +9 and 0x10CDFA(D148, 1)) → 0x1067D6 (+8 =
+ *   0, 0x10D0B4(D148), +5 = 0) — our D148 +9 is never set (the A-only
+ *   engine 0x10D3F4 is not ported): unreachable, ported;
+ *   [0x10CE88 × 3]; then 0x106AC4: +0 = D0DC phase in {0x0B, 0x0C, 0x0E}. */
+static void e6c16(void)                                  /* 0x106C16 */
+{
+    uint8_t s7 = EAC.e4ac7;
+    const int16_t bd7c = KB.slip;
+    if (s7 == 0u &&
+        (uint32_t)(int32_t)(int8_t)GS_PEDAL >= (uint32_t)(int32_t)(int8_t)gsf_fl8(gsf_fl32(GS_P84D44 + 12u))) {
+        s7 = 1u;                                         /* the pedal 0x89CD8 >= cal 0x1FE8D7 (13) */
+        EAC.e4ac7 = 1u;
+    }
+    if (s7 == 0u || bd7c < (int16_t)EAC.e4ac2) {
+        EAC.e4ac2 = (uint16_t)bd7c;                      /* BD7C, then its running minimum */
+    }
+}
+static void e6c4a(void)                                  /* 0x106C4A: kind 1 only */
+{
+    if (EAC.kind == 1u && EAC.e4ac4 == 0u) {
+        W.unp_n++;                                       /* 0x89D1D vs cal (kind 1: unreachable) */
+    }
+}
+static bool d10c(void);
+static void e67d6(void);
+static void e6698_pro(void)
+{
+    if (G.c3d != 0u) {
+        EAC.e4ac5 = 1u;
+    }
+    e6c16();
+    e6c4a();
+    EAC.e4ac9 = 0u;
+    if (d10c()) {
+        e67d6();
+    }
+}
+static void e6698_epi(void)                              /* 0x106AC4 */
+{
+    const uint8_t ph = SUB[0].phase;
+    EAC.e4ac0 = (ph == 0x0Bu || ph == 0x0Cu || ph == 0x0Eu) ? 1u : 0u;
+}
+
 /* 0x10CE88: one step */
 static void ce88(gs_sub_t *s)
 {
@@ -1376,14 +1565,29 @@ static void e67ec(uint8_t a, uint8_t b, uint8_t c)
         EAC.kind = 0u;
     }
     if (a == 0u) {
-        d0b4(&G.sub[0]);
+        d0b4(&SUB[0]);
     }
     if (b == 0u) {
-        d0b4(&G.sub[1]);
+        d0b4(&SUB[1]);
     }
     if (c == 0u) {
-        d0b4(&G.sub[2]);
+        d0b4(&SUB[2]);
     }
+    EAC.e4ac5 = 0u;
+}
+
+/* r04s: 0x10D10C(D148): class 3 with +9 set and 0x10CDFA(D148, 1) */
+static bool cdfa(const gs_sub_t *s, uint8_t p2);
+static bool d10c(void)
+{
+    const gs_sub_t *s = &SUB[1];
+    return s->cls == 3u && s->f9 != 0u && cdfa(s, 1u);
+}
+/* r04s: 0x1067D6(E4AC): the A-only engagement's stop */
+static void e67d6(void)
+{
+    EAC.kind = 0u;
+    d0b4(&SUB[1]);
     EAC.e4ac5 = 0u;
 }
 
@@ -1393,24 +1597,49 @@ static uint8_t d11ec(uint8_t st)
     return (st == 0u || st == 1u || st == 2u || st == 11u || st == 12u) ? (uint8_t)0u : (uint8_t)1u;
 }
 
+/* r04s: 0x10F084 — the third element's offset after a reversal: by E6C2
+ * (1 → *(P+0x58), 2 → +0x54, −1 → +0x50; P = *0xFFF84D44 = 0x56F98) a map
+ * over the temperature byte 0x89C13 (cal 0x1B5324 = −10 at every
+ * temperature for E6C2 = 1; 0x1B5310 / 0x1B52FC = 0), else 0. Read through
+ * 0x10CFB6 (the element's fill time, 0xBA7DC in 0xE47CA) */
+static int16_t f084(void)
+{
+    uint32_t off;
+    switch (E6C.c2) {
+    case 1:  off = 0x58u; break;
+    case 2:  off = 0x54u; break;
+    case -1: off = 0x50u; break;
+    default: return 0;
+    }
+    return (int16_t)gsf_b6e10(gsf_fl32(GS_P84D44 + off), (int16_t)(uint16_t)G.c13);
+}
+
 /* 0x10D130: start one sub-object (pf = the new power flow) */
 static void d130(gs_sub_t *s, uint8_t pf, uint8_t elem, int8_t gear, uint8_t flag)
 {
     const uint32_t gi = (uint32_t)(uint8_t)(gear + 1) * 4u;
     uint32_t v;
 
+    gse_pair_t *q;
+
+    /* r04s: through the sub-object's pointers (0x10D144 `mov.l @(96,r4)`,
+     * 0x10D19C @(88), 0x10D1EA @(92)): `*p = idx` always, `p[1]` = the block
+     * (out of range: the old block kept, after a report) */
     v = gsf_fl32(0x0005DDE0u + gi);                      /* +0x60 */
-    s->idx60 = v;
-    s->blk60 = ((int32_t)v < 0 || (int32_t)v > 8) ? (W.unp_n++, s->blk60)
-             : gsf_fl32(0x00057354u + 4u * 0u /* *0x89C04 = 0 */ + v * 8u);
+    q = pr(s->p60);
+    q->idx = v;
+    q->blk = ((int32_t)v < 0 || (int32_t)v > 8) ? (W.unp_n++, q->blk)
+           : gsf_fl32(0x00057354u + 4u * 0u /* *0x89C04 = 0 */ + v * 8u);
     v = gsf_fl32(0x0005DD90u + gi);                      /* +0x58 */
-    s->idx58 = v;
-    s->blk58 = ((int32_t)v < 0 || (int32_t)v > 8) ? (W.unp_n++, s->blk58)
-             : gsf_fl32(0x0005ADE0u + v * 8u);
+    q = pr(s->p58);
+    q->idx = v;
+    q->blk = ((int32_t)v < 0 || (int32_t)v > 8) ? (W.unp_n++, q->blk)
+           : gsf_fl32(0x0005ADE0u + v * 8u);
     v = gsf_fl32(0x0005DDB8u + gi);                      /* +0x5C */
-    s->idx5c = v;
-    s->blk5c = ((int32_t)v < 0 || (int32_t)v > 8) ? (W.unp_n++, s->blk5c)
-             : gsf_fl32(0x000590ECu + v * 8u);
+    q = pr(s->p5c);
+    q->idx = v;
+    q->blk = ((int32_t)v < 0 || (int32_t)v > 8) ? (W.unp_n++, q->blk)
+           : gsf_fl32(0x000590ECu + v * 8u);
     s->f3d = 0u;
     if (pf == 0u) {
         s->rel = elem;
@@ -1439,10 +1668,20 @@ static void d130(gs_sub_t *s, uint8_t pf, uint8_t elem, int8_t gear, uint8_t fla
                 s->f6 = b827a(s->eng);
                 s->f1d = b822c(s->eng) ? 1u : 0u;
             }
-            s->f1e = 0u;                                 /* flag (param_5) is 0 here */
-            (void)flag;
-            s->f3a = 0;
-            s->f3b = 0u;
+            /* r04s (0x10D338..0x10D38E): +0x1E = flag && E33C+0x12 <=
+             * *(*(*0xFFF84D44) + 16) (cal 0x1FE8D8 = 10; `cmp/hi` on the
+             * sign-extended word); a class-4 sub-object with +0x1E, E6C2 <=
+             * 2, the gear <= 2 and a nonzero power flow gets +0x3A from
+             * 0x10F084, every other start +0x3A = 0 (the word: +0x3B is
+             * its low byte, not a field) */
+            s->f1e = (flag != 0u &&
+                      (uint32_t)(int32_t)(int16_t)E33.t12 <= (uint32_t)gsf_fl8(gsf_fl32(GS_P84D44 + 16u)))
+                     ? 1u : 0u;
+            if (s->f1e != 0u && s->cls == 4u && (int32_t)E6C.c2 <= 2 && (int32_t)gear <= 2 && pf != 0u) {
+                s->f3a = f084();
+            } else {
+                s->f3a = 0;
+            }
             s->f4 = 1u;
         }
         s->step = 0u;
@@ -1465,28 +1704,49 @@ static void e6866(uint8_t p2, uint8_t p3)
 {
     if (p2 == 4u) {
         if (p3 == 3u) {
-            G.sub[0].type = 0u;
-            G.sub[1].type = 1u;
-            G.sub[2].type = 2u;
+            SUB[0].type = 0u;
+            SUB[1].type = 1u;
+            SUB[2].type = 2u;
             return;
         }
-        G.sub[0].type = (EAC.kind == 2u) ? 4u : 3u;
-        G.sub[1].type = 3u;
-        G.sub[2].type = 3u;
+        SUB[0].type = (EAC.kind == 2u) ? 4u : 3u;
+        SUB[1].type = 3u;
+        SUB[2].type = 3u;
         return;
     }
-    G.sub[0].type = 6u;
-    G.sub[1].type = 6u;
-    G.sub[2].type = 6u;
+    SUB[0].type = 6u;
+    SUB[1].type = 6u;
+    SUB[2].type = 6u;
 }
 
-/* 0x106AE6: the kind (flags B10E / B0FE / B10D / E60F: stand-in 0) */
-static uint8_t e6ae6(void)
+/* 0x106AE6(E4AC, gear): the kind (r04s: the whole decision from the bytes
+ * 0x106AE6..0x106C14). +8 = 0; gear > 2 → 0. 0x89C2F == 0: 0xB80D0(E5C2)
+ * (B10E) → 6, else 0xB8054(E5C2) (B0FE) → 1, else +9 → 5, else 0;
+ * 0x89C2F != 0: 0xB80C6(E5C2) (B10D) → 2, else 0xBA19E(E60F) → 7, else 0.
+ * The fill-object flags B10E / B0FE / B10D and E60F are stand-ins 0 (dump
+ * 0); +9 is 0 (cleared by 0x106698's prologue every slot-35 pass, and our
+ * 0x1067EC writes it only for kind 2): the kind is 0 in every reachable
+ * start. Kinds 1 / 2 / 5 / 7 then rewrite the {idx, blk} cell
+ * **0x57138 (0xFFF8CE74) from table 0x530FC[gear + 1] / 0x57120 — a cell
+ * we do not hold (0x106BB6..0x106C0E): counted, not ported */
+static uint8_t e6ae6(int8_t gear)
 {
-    if (G.c2f == 0u) {
-        return (EAC.e4ac9 != 0u) ? 5u : 0u;
+    uint8_t k = 0u;
+    if ((int32_t)gear > 2) {
+        return 0u;
     }
-    return 0u;
+    if (G.c2f == 0u) {
+        /* 0xB80D0 (B10E) / 0xB8054 (B0FE): stand-ins 0 */
+        if (EAC.e4ac9 != 0u) {
+            k = 5u;
+        }
+    } else {
+        /* 0xB80C6 (B10D) / 0xBA19E (E60F): stand-ins 0 */
+    }
+    if (k == 1u || k == 2u || k == 5u || k == 7u) {
+        W.unp_n++;                                       /* the **0x57138 cell (0x106BB6..) */
+    }
+    return k;
 }
 
 /* 0x1066D6: start the engine */
@@ -1496,13 +1756,13 @@ static void e66d6(uint8_t pf, uint8_t e1, uint8_t e2, uint8_t e3, int8_t gear)
     if (pf == 0u) {
         EAC.e4ac6 = 0u;
     }
-    if (GS_E6C1 != pf && GS_E6C1 != 0u) {
+    if (E6C.c1 != pf && E6C.c1 != 0u) {                   /* 0xB83B4(E5C4) = E6C1 */
         flag = 1u;
     }
-    EAC.kind = e6ae6();
-    d130(&G.sub[0], pf, e1, gear, flag);
-    d130(&G.sub[1], pf, e2, gear, flag);
-    d130(&G.sub[2], pf, e3, gear, flag);
+    EAC.kind = e6ae6(gear);
+    d130(&SUB[0], pf, e1, gear, flag);
+    d130(&SUB[1], pf, e2, gear, flag);
+    d130(&SUB[2], pf, e3, gear, flag);
     EAC.e4ac4 = 0u;
     EAC.e4ac7 = 0u;
     EAC.e4ac2 = (uint16_t)KB.slip;                          /* BD7C */
@@ -1654,7 +1914,7 @@ static int16_t aec(void)                                 /* 0x117AEC (p4 = 0) �
 /* slot 34: 0xEBDBC → 0x1175D6 on block A (BD14+0x34 = 0: stand-in) */
 static void prog_pass(void)
 {
-    const uint8_t hold = (KB.bd17 == 4u) ? G.sub[0].f4 : KB.p31;
+    const uint8_t hold = (KB.bd17 == 4u) ? SUB[0].f4 : KB.p31;
     KB.hold28 = hold;
     if (hold != 0u) {
         P.hold_n++;
@@ -1696,12 +1956,43 @@ static void prog_end(void)
 }
 
 /* 0xEB900 + 0xEDC5A (BD14): the shift object enters the garage engagement */
-static void eb900(uint8_t pf, uint8_t e1, uint8_t e2, uint8_t e3, int8_t gear)
+/* r04s: 0xEC6FE(BD14, pf, flag) — BD1C / BD1D = 0; with the start's flag
+ * (0xDDCA2: E6C1 != pf && E6C1 != 0), the last release's third element
+ * BD44 still applied (0xB822C) and 0xB8054(E5C2) = 0 (B0FE: stand-in 0):
+ * BD1C = 1 for forward, BD1D = 1 for reverse */
+static void ec6fe(uint8_t pf, uint8_t flag)
+{
+    KB.bd1c = 0u;
+    KB.bd1d = 0u;
+    if (flag != 0u && KB.bd44 != 0u && b822c(KB.bd44)) {
+        if (pf == 1u) {
+            KB.bd1c = 1u;
+        } else if (pf == 2u) {
+            KB.bd1d = 1u;
+        }
+    }
+}
+
+static void eb900(uint8_t pf, uint8_t e1, uint8_t e2, uint8_t e3, int8_t gear, uint8_t flag)
 {
     KB.bd16 = (e1 == 0u) ? 0u : (pf == 0u ? 4u : 3u);
+    if (e3 != 0u && pf == 0u) {
+        KB.bd44 = e3;                                    /* r04s: 0xEB962..0xEB96E */
+    }
     gsf_set_bd16(KB.bd16);
     e66d6(pf, e1, e2, e3, gear);
     KB.bd15 = (KB.bd16 != 0u) ? 1u : 0u;
+    ec6fe(pf, flag);                                     /* r04s: 0xEB9C2 */
+#if !defined(__sh__)
+    {   /* r04s host witness: every start's reversal inputs (gs_shadow_host_r04s) */
+        uint8_t *h = s_host_r04s[s_host_r04s_n & 7u];
+        h[0] = pf; h[1] = flag; h[2] = E6C.c1; h[3] = (uint8_t)E6C.c2;
+        h[4] = (uint8_t)(E33.t12 > 0xFFu ? 0xFFu : E33.t12); h[5] = KB.bd44;
+        h[6] = (uint8_t)(KB.bd1c | (uint8_t)(KB.bd1d << 1)); h[7] = SUB[0].f1e;
+        h[8] = SUB[2].f1e; h[9] = (uint8_t)SUB[2].f3a; h[10] = (uint8_t)W.passes; h[11] = (uint8_t)(W.passes >> 8);
+        s_host_r04s_n++;
+    }
+#endif
     /* 0xEDC5A → 0xED906 → 0xED988 */
     if (KB.bd16 == 3u || KB.bd16 == 4u) {
         KB.bd17 = 4u;
@@ -1725,9 +2016,13 @@ static void ddca2(uint8_t old, uint8_t pf, int8_t gear)
     if (old == pf) {
         W.unp_n++;                                       /* report 0x373 */
     }
+    if (G.c2f != 0u) {
+        E33.t12 = 0u;                                    /* r04s: 0xDE2FA (0xDDCF6) */
+    }
     E33.n10 = (int16_t)G.cd0;                           /* +0x10 = 0x89CD0 */
     E33.ta = (int16_t)P.cba;                           /* +0xA  = 0x89CBA */
-    eb900(pf, E33.b[0], E33.b[1], E33.b[2], gear);
+    /* r04s: the start's flag (0xDDD0A..0xDDD24: 0xB83B4(E5C4) = E6C1) → 0xEB900 → 0xEC6FE */
+    eb900(pf, E33.b[0], E33.b[1], E33.b[2], gear, (E6C.c1 != pf && E6C.c1 != 0u) ? 1u : 0u);
     /* 0xEEDFC (0xFFF8C190) and 0xE984A (BC74: E6C2 = 3 → not started) */
 }
 
@@ -1767,15 +2062,15 @@ static bool bab6c(uint8_t *cause)
 {
     if (KB.bd16 == 3u) {
         bool d;
-        if (G.sub[0].act == 0u) {
-            d = cdfa(&G.sub[1], 1u) && cdfa(&G.sub[2], 1u);
+        if (SUB[0].act == 0u) {
+            d = cdfa(&SUB[1], 1u) && cdfa(&SUB[2], 1u);
         } else {
-            d = cdfa(&G.sub[0], KB.sync);         /* BD14+0x58 = BD6C (last pass) */
+            d = cdfa(&SUB[0], KB.sync);         /* BD14+0x58 = BD6C (last pass) */
         }
         if (d) {
             /* 2: after the timeout flag (+0x14: the 0x0E ramp, then the
              * +0x54 test or the +0x12 limit), 1: the normal +0x54 test */
-            *cause = (G.sub[0].tmo != 0u) ? 2u : 1u;
+            *cause = (SUB[0].tmo != 0u) ? 2u : 1u;
         }
         return d;
     }
@@ -1792,8 +2087,8 @@ static bool bab6c(uint8_t *cause)
          * = D0DC +0xA != 0) and 0xB822C(0x10CDDC(D0DC)); else done iff
          * (u16) BD8E >= (u16) D0EE (D0DC +0x12) [O 0xEDA64..0xEDA96] (G4a) */
         bool d = true;
-        if (G.sub[0].f7 == 0u || G.sub[0].out_p != 0) {
-            const uint8_t e = (G.sub[0].eng != 0u) ? G.sub[0].eng : G.sub[0].rel;   /* 0x10CDDC */
+        if (SUB[0].f7 == 0u || SUB[0].out_p != 0) {
+            const uint8_t e = (SUB[0].eng != 0u) ? SUB[0].eng : SUB[0].rel;   /* 0x10CDDC */
             if (b822c(e)) {
                 d = false;
             }
@@ -1802,7 +2097,7 @@ static bool bab6c(uint8_t *cause)
             *cause = 5u;
             return true;
         }
-        if (KB.bd8e >= G.sub[0].lim12) {
+        if (KB.bd8e >= SUB[0].lim12) {
             *cause = 6u;
             return true;
         }
@@ -2026,12 +2321,12 @@ static void cfd1a(void)
             h->start_pass = W.passes;
             h->len = 0xFFFFu;
             h->bd8e_end = 0u;
-            h->lim12 = G.sub[0].lim12;
+            h->lim12 = SUB[0].lim12;
             h->n = 0u;
             h->cause = 0u;
             h->gear = V_E69F;
             for (unsigned j = 0u; j < 3u; j++) {
-                h->el[j] = G.sub[j].rel;
+                h->el[j] = SUB[j].rel;
                 h->p26[j] = 0;
             }
         } else if (V_E69B != 0u) {
@@ -2149,7 +2444,7 @@ static uint8_t dc1e2(uint8_t block, int8_t gear, uint8_t e)
 
 static bool e68ac(void)                                  /* 0x1068AC */
 {
-    return G.sub[0].act != 0u || (G.sub[1].act != 0u && G.sub[1].f9 == 0u) || G.sub[2].act != 0u;
+    return SUB[0].act != 0u || (SUB[1].act != 0u && SUB[1].f9 == 0u) || SUB[2].act != 0u;
 }
 
 static void dc4c4(void)
@@ -2166,7 +2461,7 @@ static void dc4c4(void)
         for (uint8_t k = 0u; k < 3u; k++) {
             const uint8_t e = E33.b[k];
             if (e != 0u && RU8(req_obj(e), RO_SET) == 0u) {
-                const gs_sub_t *s = &G.sub[k];
+                const gs_sub_t *s = &SUB[k];
                 const uint8_t pf0 = (G.pf == 0u) ? 1u : 0u;
                 const uint8_t id = (uint8_t)(5u + 2u * k + (pf0 ? 0u : 1u));
                 const uint8_t prio = pf0 ? 1u : 0u;
@@ -2195,6 +2490,37 @@ static void dc4c4(void)
     }
     RU8(GSE_OBJ_SYS, RO_SET) = 0u;
     RU8(GSE_OBJ_WK, RO_SET) = 0u;
+}
+
+/* r04s: 0xDC0F8(E6BF) — slot 42, right after the producer (0xB85C8) and
+ * before the actuators (0xB85C0 → 0xDC076), list 0xA30E2 [O bytes]:
+ *   0x89C30 == E6C1        → E6C2 = the gear code 0x89C2B;
+ *   else if 0x89C30 != 0   → E6C1 = 0x89C30 once the gear's first element
+ *                            (0xDC1C4: role table 0x6312F[gear code])
+ *                            reports applied: 0xE55DC(e) → vtable +0x38 =
+ *                            0xE4DBA (+0x46 == 10000) = our b822c.
+ * E6C1 is never written back to 0 by power flow 0: after a completed D it
+ * holds 1 / 1 through P, after a completed R 2 / −1. Readers: 0x1066D6 and
+ * 0xDDCA2 (the start's flag), 0x10D130 / 0x10F084 (E6C2), BC74's start
+ * 0xE993A (not ported: it needs the pedal 0x89CD8 < 13, GS_PEDAL is 23) */
+static void dc0f8(void)
+{
+    if (G.pf == E6C.c1) {
+        E6C.c2 = V_E69F;                                 /* 0x89C2B */
+    } else if (G.pf != 0u) {
+        const uint8_t e = gsf_fl8((uint32_t)((int32_t)0x0006312F + (int32_t)V_E69F));
+        if (b822c(e)) {
+            E6C.c1 = G.pf;
+        }
+    }
+}
+
+/* r04s: 0x10CFB6(0xFFF8D1B4, e) via 0xBA7DC → 0xEEB22 — D1B4's +0x3A while
+ * D1B4's element (+0x20) is e, else 0. The fill time's term (app/gs_fill.c
+ * RQF_BA7DC_HOOK) */
+int16_t gs_shadow_cfb6(uint8_t elem)
+{
+    return (SUB[2].eng == elem) ? SUB[2].f3a : (int16_t)0;
 }
 
 /* the actuators (0x107BD2 / 0x107FB8 as app/rq_prod.c ports them) */
@@ -2277,16 +2603,16 @@ static void rec_pass(void)
         if (RU16(EO[e], RO_P) != 0u)   { set = (uint8_t)(set | (1u << e)); }
     }
     for (unsigned k = 0u; k < 3u; k++) {
-        if (G.sub[k].out_mode != 0u) { modes = (uint8_t)(modes | (1u << (5u + k))); }
+        if (SUB[k].out_mode != 0u) { modes = (uint8_t)(modes | (1u << (5u + k))); }
     }
     r->pass = (uint16_t)(W.passes - G.rec_t0);
     r->pf = G.pf;
     r->flags = (uint8_t)((V_E6EF & 3u) | (pending() ? 4u : 0u) | (e68ac() ? 8u : 0u) |
-                         (G.sub[0].tmo != 0u ? 0x10u : 0u) | (G.done_now ? 0x20u : 0u) |
+                         (SUB[0].tmo != 0u ? 0x10u : 0u) | (G.done_now ? 0x20u : 0u) |
                          (G.commit_now ? 0x40u : 0u) | (G.c3d != 0u ? 0x80u : 0u));
-    r->ph[0] = G.sub[0].phase;
-    r->ph[1] = G.sub[1].phase;
-    r->ph[2] = G.sub[2].phase;
+    r->ph[0] = SUB[0].phase;
+    r->ph[1] = SUB[1].phase;
+    r->ph[2] = SUB[2].phase;
     r->modes = modes;
     r->reqset = set;
     r->gear = V_E69F;
@@ -2339,20 +2665,20 @@ static void rel_pass(void)
     }
     if (n == 0u) {
         for (unsigned j = 0u; j < 3u; j++) {
-            h->p26[j] = G.sub[j].p26;
+            h->p26[j] = SUB[j].p26;
         }
     }
     r = &g_rel.rec[k][n];
     for (unsigned c = 0u; c < 5u; c++) {
         r->cur[c] = G.cur[SH[c]];
     }
-    r->ph = (uint8_t)(ph2(G.sub[0].phase) | (uint8_t)(ph2(G.sub[1].phase) << 2) |
-                      (uint8_t)(ph2(G.sub[2].phase) << 4));
+    r->ph = (uint8_t)(ph2(SUB[0].phase) | (uint8_t)(ph2(SUB[1].phase) << 2) |
+                      (uint8_t)(ph2(SUB[2].phase) << 4));
     r->fl = (uint8_t)((KB.bd16 == 4u ? 0x01u : 0u) | (G.done_now ? 0x02u : 0u) |
-                      (G.commit_now ? 0x04u : 0u) | (G.sub[0].f1f != 0u ? 0x08u : 0u) |
-                      (G.sub[2].f1f != 0u ? 0x10u : 0u) |
+                      (G.commit_now ? 0x04u : 0u) | (SUB[0].f1f != 0u ? 0x08u : 0u) |
+                      (SUB[2].f1f != 0u ? 0x10u : 0u) |
                       ((int32_t)b77a0(KB.slip) >= (int32_t)(uint16_t)f26c() ? 0x20u : 0u) |
-                      (G.sub[0].out_mode != 0u ? 0x40u : 0u) | (G.sub[2].out_mode != 0u ? 0x80u : 0u));
+                      (SUB[0].out_mode != 0u ? 0x40u : 0u) | (SUB[2].out_mode != 0u ? 0x80u : 0u));
     h->n = (uint8_t)(n + 1u);
 }
 #endif
@@ -2405,9 +2731,14 @@ void gs_shadow_init(void)
     gse_zero(&g_e69f, sizeof g_e69f);
     gse_zero(&g_e6a1, sizeof g_e6a1);
     gse_zero(g_e6a8, sizeof g_e6a8);
+    gse_zero(&g_e6c1, sizeof g_e6c1);                    /* r04s */
     gse_zero(&g_e6c5, sizeof g_e6c5);
     gse_zero(&g_e6ee, sizeof g_e6ee);
     gse_zero(&g_e6ef, sizeof g_e6ef);
+    gse_zero(g_sub, sizeof g_sub);                       /* r04s: the pinned sub-objects */
+    gse_zero(g_pr58, sizeof g_pr58);                     /*       and their {idx, blk} cells */
+    gse_zero(g_pr5c, sizeof g_pr5c);
+    gse_zero(g_pr60, sizeof g_pr60);
     b = (volatile uint8_t *)&g_w;
     for (unsigned i = 0u; i < sizeof g_w; i++) { b[i] = 0u; }
 #if GSE_REC
@@ -2435,12 +2766,24 @@ void gs_shadow_init(void)
     V_E69F = (int8_t)GS_TARGET;
     V_E6A1 = (int8_t)GS_TARGET;
     V_E4A7 = (int8_t)GS_TARGET;
-    G.sub[0].cls = 2u;
-    G.sub[1].cls = 3u;
-    G.sub[2].cls = 4u;
+    SUB[0].cls = 2u;
+    SUB[1].cls = 3u;
+    SUB[2].cls = 4u;
+    for (uint8_t k = 0u; k < 3u; k++) {
+        /* r04s: the constructor 0x10D010's vtable word and pointers (the
+         * cells stay 0 until the first 0x10D130 writes them, as before —
+         * the stock's 0x15CA38 defaults are not ported: nothing of ours
+         * reads a cell before its sub-object's first start) */
+        SUB[k].ramp.vptr = GSE_RAMP_VTBL;
+        SUB[k].f5 = 1u;                                  /* 0x10D064 / 0x10D066: +5 = +6 = 1 */
+        SUB[k].f6 = 1u;
+        SUB[k].p58 = pr_addr(g_pr58, GSE_PR58_STOCK, k);
+        SUB[k].p5c = pr_addr(g_pr5c, GSE_PR5C_STOCK, k);
+        SUB[k].p60 = pr_addr(g_pr60, GSE_PR60_STOCK, k);
+    }
     for (unsigned k = 0u; k < 3u; k++) {
-        d0b4(&G.sub[k]);
-        G.sub[k].type = 6u;
+        d0b4(&SUB[k]);
+        SUB[k].type = 6u;
     }
     EAC.e4ac5 = GS_E4B1;
     /* the shift context at its idle values (dump: long-idle synchronised) */
@@ -2466,6 +2809,9 @@ void gs_shadow_init(void)
         gsf_construct(req_obj(e), 0xFFF84D20u + 4u * (uint32_t)(e - 1u), e);
     }
     s_booted = false;
+#if !defined(__sh__)
+    s_host_r04s_n = 0u;
+#endif
 }
 
 /* the pass head (the live values by value) and the boot-state-1 pass —
@@ -2627,11 +2973,12 @@ void gs_shadow_tick_10ms(const gs_in_t *in)
     KB.bd30 = sat8p1(KB.bd30);
     KB.bd2e = sat16p1(KB.bd2e);
     KB.bd8e = sat16p1(KB.bd8e);                            /* 0x117538(BD6C) → 0xBAE5E(E21E, +0x22) */
+    E33.t12 = sat16p1(E33.t12);                          /* r04s: 0xDE0FE → 0xBAE5E(E21E, E33C+0x12) */
     /* the timers, the time base, the element tick / update */
     EAC.e4ac6 = sat8p1(EAC.e4ac6);
-    cf4e(&G.sub[0]);
-    cf4e(&G.sub[1]);
-    cf4e(&G.sub[2]);
+    cf4e(&SUB[0]);
+    cf4e(&SUB[1]);
+    cf4e(&SUB[2]);
     if (E28.t6 > 0u) { E28.t6--; }
     if (E28.t8 > 0u) { E28.t8--; }
     if (G.c3d != 0u) {
@@ -2691,18 +3038,27 @@ void gs_shadow_tick_10ms(const gs_in_t *in)
     GSE_STAGE(4u);                                       /* slots 31, 32 */
     /* slot 34: 0xEBDBC → 0x1175D6 (block A): sync, rate, BD76 */
     prog_pass();
+    /* slot 34: 0xBAC26 → 0xDDFD8(E33C) — r04s: only its 0xDE2FA (E33C+0x12
+     * = 0 while 0x89C2F != 0); the peaks +0xA / +0x10 and the torque term
+     * +0xE (read by nothing of ours) and E33C+0 not ported */
+    if (G.c2f != 0u) {
+        E33.t12 = 0u;
+    }
     GSE_STAGE(5u);                                       /* slot 34 */
     /* slot 35: 0xEB348 → step (D148, D1B4, D0DC), output (same order) */
-    ce88(&G.sub[1]);
-    ce88(&G.sub[2]);
-    ce88(&G.sub[0]);
-    ceca(&G.sub[1]);
-    ceca(&G.sub[2]);
-    ceca(&G.sub[0]);
+    e6698_pro();                                         /* r04s: 0x106698's prologue */
+    ce88(&SUB[1]);
+    ce88(&SUB[2]);
+    ce88(&SUB[0]);
+    e6698_epi();                                         /* r04s: 0x106AC4 */
+    ceca(&SUB[1]);
+    ceca(&SUB[2]);
+    ceca(&SUB[0]);
     GSE_STAGE(6u);                                       /* slot 35 */
     /* slot 42: the producer + actuators */
     gsf_set_pf(G.pf, G.c2f);
     dc4c4();
+    dc0f8();                                             /* r04s: 0xB85D8 (between 0xB85C8 and 0xB85C0) */
     actuators();
     GSE_STAGE(7u);                                       /* slot 42 */
     rec_pass();
@@ -2717,7 +3073,7 @@ void gs_shadow_tick_10ms(const gs_in_t *in)
                             (G.c3d != 0u ? 4u : 0u) | (e68ac() ? 8u : 0u));
     W.now_gear = V_E69F;
     for (unsigned k = 0u; k < 3u; k++) {
-        W.now_ph[k] = G.sub[k].phase;
+        W.now_ph[k] = SUB[k].phase;
     }
     for (unsigned c = 0u; c < 7u; c++) {
         W.now_cur[c] = G.cur[c];
@@ -2746,7 +3102,7 @@ int16_t  gs_shadow_slip(void)        { return g_bd14.slip; }
 uint16_t gs_shadow_cur(uint8_t ch)   { return ch < 7u ? g_s.cur[ch] : 0xFFFFu; }
 uint8_t  gs_shadow_pf(void)          { return g_s.pf; }
 int8_t   gs_shadow_gear(void)        { return g_e69f; }
-uint8_t  gs_shadow_phase(uint8_t k)  { return k < 3u ? g_s.sub[k].phase : 0xFFu; }
+uint8_t  gs_shadow_phase(uint8_t k)  { return k < 3u ? g_sub[k].phase : 0xFFu; }
 uint8_t  gs_shadow_pending(void)     { return g_e6ee != g_e69b ? 1u : 0u; }
 uint8_t  gs_shadow_e6ef(void)        { return g_e6ef; }
 uint8_t  gs_shadow_ae28(void)        { return g_s.ae28; }
@@ -2773,7 +3129,7 @@ uint32_t gs_shadow_ae28_x(void) { return s_ae28_x; }
 #if !defined(__sh__)
 void gs_shadow_host_sub(uint8_t k, int16_t v[6])
 {
-    const gs_sub_t *s = &G.sub[k < 3u ? k : 0u];
+    const gs_sub_t *s = &SUB[k < 3u ? k : 0u];
     v[0] = s->calc_p;
     v[1] = s->base24;
     v[2] = s->tgt54;
@@ -2800,11 +3156,26 @@ uint8_t gs_shadow_host_ceca(uint8_t cls, uint8_t eng, uint8_t rel, uint8_t f7, i
 
 void gs_shadow_host_rel(uint8_t k, int16_t v[4])
 {
-    const gs_sub_t *s = &G.sub[k < 3u ? k : 0u];
+    const gs_sub_t *s = &SUB[k < 3u ? k : 0u];
     v[0] = s->p26;
     v[1] = s->out_p;
     v[2] = (int16_t)s->f1f;
     v[3] = (int16_t)s->lim12;
+}
+
+/* r04s (host only): start k (0 = the oldest kept) of the last 8: pf, the
+ * start's flag, E6C1, E6C2, E33C+0x12 (sat. 255), BD44, BD1C | BD1D << 1,
+ * D0DC +0x1E, D1B4 +0x1E, D1B4 +0x3A (low byte), the pass (2 bytes);
+ * returns the number of starts so far */
+uint8_t gs_shadow_host_r04s(uint8_t k, uint8_t v[12])
+{
+    const uint8_t n = s_host_r04s_n;
+    const uint8_t have = n < 8u ? n : 8u;
+    if (k < have) {
+        const uint8_t *h = s_host_r04s[(uint8_t)(n - have + k) & 7u];
+        for (unsigned i = 0u; i < 12u; i++) { v[i] = h[i]; }
+    }
+    return n;
 }
 
 void gs_shadow_host_standins(uint8_t mask, int16_t bd76, uint8_t bd30)
@@ -2850,6 +3221,12 @@ const volatile void *gs_shadow_host_state(uint8_t k, uint32_t *n)
     case 20u: *n = 1u;                       return &g_e6c5;
     case 21u: *n = 1u;                       return &g_e6ee;
     case 22u: *n = 1u;                       return &g_e6ef;
+    /* r04s: the pinned sub-objects and their cells */
+    case 23u: *n = (uint32_t)sizeof g_sub;   return g_sub;
+    case 24u: *n = (uint32_t)sizeof g_pr58;  return g_pr58;
+    case 25u: *n = (uint32_t)sizeof g_pr5c;  return g_pr5c;
+    case 26u: *n = (uint32_t)sizeof g_pr60;  return g_pr60;
+    case 27u: *n = (uint32_t)sizeof g_e6c1;  return &g_e6c1;
     default:  *n = 0u;                       return 0;
     }
 }

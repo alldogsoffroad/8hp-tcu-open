@@ -132,6 +132,8 @@ void g6a_stage(unsigned k);
 #define gs_shadow_fillst        gs_cand_fillst
 #define gs_shadow_boot_pass     gs_cand_boot_pass
 #define gs_shadow_ae28_x        gs_cand_ae28_x
+#define gs_shadow_cfb6          gs_cand_cfb6
+#define gs_shadow_host_r04s     gs_cand_host_r04s
 
 /* the fill instance's exports (app/gs_fill.h, app/gs_fill.c) */
 #define gs_fill_cells           gcf_fill_cells

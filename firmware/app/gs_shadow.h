@@ -251,6 +251,8 @@ void gs_shadow_host_standins(uint8_t mask, int16_t bd76, uint8_t bd30);
 /* host only: sub-object k's +0xC, +0x24, +0x54, +0x30, +0x32 and its
  * element's request result +2 */
 void gs_shadow_host_sub(uint8_t k, int16_t v[6]);
+/* r04s: the last 8 starts' reversal inputs (app/gs_engine.c) */
+uint8_t gs_shadow_host_r04s(uint8_t k, uint8_t v[12]);
 /* G6-0: the instance's state block k (0 gs_t, 1 the witnesses, 2 the
  * progress block, 3/4 the recorder slots, 5 the release object, 6 the
  * request objects, 7 the fill cells, 8..10 the per-pass input latches);

@@ -84,6 +84,14 @@ static void gsf_shift_src(uint32_t o);
 static int32_t gsf_e469c_term(uint32_t o, uint8_t p4c, uint8_t p4d, uint8_t p52);
 #endif
 #define RQF_E469C_HOOK(o, a, b, c)  gsf_e469c_term((o), (a), (b), (c))
+/* r04s (~/tcu_sweep/r04s_port.md): 0xE47CA's 0xBA7DC term = 0x10CFB6(D1B4,
+ * e) — the engine's own D1B4 +0x3A, read at call time (written by its
+ * 0x10D130 in the commit pass, read by this fill in the same pass's slot
+ * 42), PLUS the kept A / B stand-in of gs_fill_in_t.ba7dc (1 / 1: the
+ * decode's fit to the dump's fill times, rq_prod.h RQ_M5_BA7DC_AB — the
+ * live term is 0 for A / B in every reachable start: D1B4's element is the
+ * third, C or D). C / D / E have stand-in 0, so their term is the stock's */
+#define RQF_BA7DC_HOOK(o)  ((int32_t)s_in->ba7dc[elem_i(o)] + (int32_t)gs_shadow_cfb6(RQF_U8((o), RO_ELEM)))
 
 #include "app/rq_fill.c"
 

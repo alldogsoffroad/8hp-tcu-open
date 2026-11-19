@@ -37,9 +37,17 @@ window latch (0xFFF87200 + 16); the walk poll / ISR counters and now_ms.
 
 Addresses from nm of THIS build (sh-elf-nm build/sh2a/tcu_app.elf):
 _s_g6a 0xFFF93C08, the candidate's _g_w 0xFFF928BC (r04p; the only _g_w since
-G6c), _s_ae28_x 0xFFF92A98, _s_gsb 0xFFF87220, _s_gsb_win
+G6c), _s_ae28_x 0xFFF9293C (r04s; r04p..r04r 0xFFF92A98), _s_gsb 0xFFF87220, _s_gsb_win
 0xFFF87200, _s_walk_poll_count 0xFFF955BC, _s_walk_isr_count 0xFFF955C0,
 _s_now_ms 0xFFF956A8. Re-check before every use.
+
+r04s (~/tcu_sweep/r04s_port.md): also the element sub-objects at their stock
+addresses (0xFFF8D0DC / D148 / D1B4, 0x6C each: phase, class, element, +0x1E,
++0x3A, the vtable word 0x49FC0 at +0x50, the three cell pointers
+0xFFF8CF94 / CF0C / CE7C + 8·(class − 2)), E6C1 / E6C2 (0xDC0F8), E4B3 (E4AC+7,
+the pedal latch: 01 from the first slot-35 pass, the pedal stand-in 23 >= 13),
+E4AC+0 (D0DC phase in 0x0B/0x0C/0x0E), E33C+0x12 (E34E: passes since 0x89C2F
+read 0, saturating at FFFF) and BD1C / BD1D / BD44 (0xEC6FE / 0xEB900).
 
 CPU (G6b, the bench's CPU stop conditions: scheduler missed_ticks > 0, any ring
 overflow, the walk polled share > 10 %): the candidate's tick by slot group —
@@ -63,9 +71,10 @@ GSB_WIN = 0xFFF87200
 STG = ['head', 's28', 's29', 's30', 's31/32', 's34', 's35', 's42', 'tail']
 SRC = ['LIVE (before the boot pass)', 'CANDIDATE', 'P CONTENT (latched)', 'STALL FENCE (P content)']
 CAND_W = 0xFFF928BC         # r04p (G6c): the candidate's _g_w (r04o 0xFFF928D0)
-AE28X = 0xFFF92A98          # r04p (G6c): _s_ae28_x (r04o 0xFFF92AD8)
+AE28X = 0xFFF9293C          # r04s: _s_ae28_x (r04p..r04r 0xFFF92A98, r04o 0xFFF92AD8)
 # G6c (D-G6-9): the engine's objects at their stock addresses (name, addr, len)
-PINNED = [("E28E st..t8", 0xFFF8E28E, 10), ("E4A7", 0xFFF8E4A7, 1), ("E4AC..E4B5", 0xFFF8E4AC, 10),
+PINNED = [("E28E st..t8", 0xFFF8E28E, 10), ("E33C..E34F", 0xFFF8E33C, 0x14), ("E4A7", 0xFFF8E4A7, 1),
+          ("E4AC..E4B5", 0xFFF8E4AC, 10), ("E6C1/E6C2", 0xFFF8E6C1, 2),
           ("E69B", 0xFFF8E69B, 1), ("E69F", 0xFFF8E69F, 1), ("E6A1", 0xFFF8E6A1, 1), ("E6A8", 0xFFF8E6A8, 5),
           ("E6C5", 0xFFF8E6C5, 1), ("E6EE", 0xFFF8E6EE, 1), ("E6EF", 0xFFF8E6EF, 1),
           ("BD14..BD31", 0xFFF8BD14, 0x1E), ("BD6C..BD8F", 0xFFF8BD6C, 0x24)]
@@ -150,6 +159,35 @@ def show_wit(name, w):
              " ".join("%u" % u16(w, 60 + 2 * c) for c in range(7))))
 
 
+def show_r04s(b):
+    """r04s: the reversal cells and the element sub-objects at their stock addresses."""
+    e6 = read(b, 1, 0xFFF8E6C1, 2)
+    ea = read(b, 1, 0xFFF8E4AC, 10)
+    e3 = read(b, 1, 0xFFF8E33C, 0x14)
+    bd = read(b, 1, 0xFFF8BD14, 0x32)
+    if e6 and ea and e3 and bd:
+        print("  r04s: E6C1 %02X E6C2 %d (0xDC0F8) | E4B3 %02X (pedal latch) E4AC+0 %02X +2 %04X +5 %02X +9 %02X | "
+              "E34E %04X | BD1C %02X BD1D %02X BD44 %02X"
+              % (e6[0], struct.unpack("b", e6[1:2])[0], ea[7], ea[0], u16(ea, 2), ea[5], ea[9], u16(e3, 0x12),
+                 bd[8], bd[9], bd[0x30]))
+    for k, nm in enumerate(("D0DC", "D148", "D1B4")):
+        s = read(b, 1, 0xFFF8D0DC + 0x6C * k, 0x6C)
+        if s is None:
+            print("  sub %s read FAIL" % nm)
+            continue
+        pv = [u32(s, o) for o in (0x58, 0x5C, 0x60)]
+        want = [0xFFF8CF94 + 8 * k, 0xFFF8CF0C + 8 * k, 0xFFF8CE7C + 8 * k]
+        cells = []
+        for a in pv:
+            c = read(b, 1, a, 8) if 0xFFF8CE7C <= a < 0xFFF8CFAC else None
+            cells.append("%08X:%s" % (a, c.hex().upper() if c else "?"))
+        print("  sub %s: phase %02X out_mode %02X cls %u eng %u rel %u act %u +1E %u +3A %d type %u | vtbl %08X (want "
+              "00049FC0) | cells %s%s | +64 %08X +68 %08X"
+              % (nm, s[0x11], s[0x10], s[0x1C], s[0x20], s[0x21], s[0], s[0x1E],
+                 struct.unpack(">h", s[0x3A:0x3C])[0], s[0x15], u32(s, 0x50), " ".join(cells),
+                 "" if pv == want else " (POINTERS NOT THE STOCK CELLS)", u32(s, 0x64), u32(s, 0x68)))
+
+
 def main():
     rounds = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else 1
     recs = "--recs" in sys.argv
@@ -207,6 +245,7 @@ def main():
             v = read(b, 1, a, n)
             pv.append("%s %s" % (nm, v.hex().upper() if v else "?"))
         print("  stock objects (G6c pinned): " + " | ".join(pv))
+        show_r04s(b)
         if wk and nw:
             p, i = u32(wk, 0), u32(wk, 4)
             print("  walk: poll %u isr %u (poll share %.1f %%) now_ms %u" % (p, i, 100.0 * p / max(1, p + i),

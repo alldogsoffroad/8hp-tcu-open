@@ -717,7 +717,11 @@ static uint16_t e47ca(uint32_t o, uint8_t p4c, uint8_t p4d, uint8_t p4, uint8_t 
     if (RQF_U8(o, RO_57) != 0u) {
         r14 += (int32_t)(int16_t)rqf_fl16(cmap(o, 0x50u));
     }
+#if defined(RQF_BA7DC_HOOK)
+    r14 += (int32_t)RQF_BA7DC_HOOK(o);          /* 0xBA7DC (the garage engine's instance, r04s) */
+#else
     r14 += (int32_t)s_in->ba7dc[elem_i(o)];     /* 0xBA7DC */
+#endif
     if (p5b != 0u) {
         r14 += (int32_t)(int16_t)rqf_b6e10(cmap(o, 0x54u), (int16_t)temp());
     }

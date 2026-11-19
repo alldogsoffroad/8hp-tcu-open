@@ -118,6 +118,7 @@ typedef struct {
     unsigned engoff;        /* r04q: 0x108 frames stop (the bench's engine-sim stop) */
     bool nosim;
     bool info;              /* informational: printed, the r04n identity not required */
+    bool rfirst;            /* r04s: R first, then D (lever_at) */
     const neg_t *neg;
     uint32_t anchors[4];    /* negatives: from the base run */
 } scen_t;
@@ -165,6 +166,7 @@ static void run_child(const scen_t *sc, bool g6b, gr_t *g, res_t *res, uint8_t *
         g6a_eng0_from = sc->eng0;
         g6q_engoff_from = sc->engoff;
         g6a_nosim = sc->nosim;
+        g_rfirst = sc->rfirst;                      /* r04s */
         if (sc->neg != NULL) {
             const neg_t *n = sc->neg;
             const uint32_t at = (uint32_t)((int32_t)sc->anchors[n->anchor] + n->from_off);
@@ -188,8 +190,9 @@ static void run_child(const scen_t *sc, bool g6b, gr_t *g, res_t *res, uint8_t *
             (strcmp(getenv("G6C_DUMP_PINNED"), sc->name) == 0 || strcmp(getenv("G6C_DUMP_PINNED"), "*") == 0)) {
             printf("PINRUN %s\n", sc->name);
             /* G6c: the engine's pinned stock objects at the end of the run
-             * (the report's dump comparison) — host_state blocks 11..22 */
-            for (uint8_t k = 11u; k <= 22u; k++) {
+             * (the report's dump comparison) — host_state blocks 11..22,
+             * r04s: + the sub-objects, their cells, E6C1 / E6C2 (23..27) */
+            for (uint8_t k = 11u; k <= 27u; k++) {
                 uint32_t n = 0u;
                 const volatile uint8_t *b = (const volatile uint8_t *)gs_cand_host_state(k, &n);
                 printf("PINNED %u ", k);
@@ -197,6 +200,16 @@ static void run_child(const scen_t *sc, bool g6b, gr_t *g, res_t *res, uint8_t *
                     printf("%02X", b[i]);
                 }
                 printf("\n");
+            }
+            {   /* r04s: every start's reversal inputs (the last 8) */
+                uint8_t v[12];
+                const uint8_t n = gs_cand_host_r04s(0u, v);
+                for (uint8_t k = 0u; k < (n < 8u ? n : 8u); k++) {
+                    (void)gs_cand_host_r04s(k, v);
+                    printf("START pass %u pf %u flag %u E6C1 %u E6C2 %d E34E %u BD44 %u BD1C/1D %u/%u "
+                           "D0DC+1E %u D1B4+1E %u D1B4+3A %d\n", (unsigned)(v[10] | (v[11] << 8)), v[0], v[1], v[2],
+                           (int)(int8_t)v[3], v[4], v[5], v[6] & 1u, v[6] >> 1, v[7], v[8], (int)(int8_t)v[9]);
+                }
             }
         }
         memset(res, 0, sizeof *res);
@@ -316,13 +329,13 @@ static void scenario(const scen_t *sc)
     (void)g_ra;
     run_child(sc, true, &g_gb, &g_rb, g_win[1], g_tks[1]);
     gd = g6c_cmp(sc->name, &g_gb, &g_rb, g_win[1], g_tks[1]);
-    printf("== %s: mode 1 F%u 'U' F%u | (1) vs the golden (r04r: g6r_r04r_test_g6b.tgz): %u differences\n", sc->name, g_rb.m1, g_rb.u,
+    printf("== %s: mode 1 F%u 'U' F%u | (1) vs the golden (r04s: g6s_r04s_test_g6b.tgz): %u differences\n", sc->name, g_rb.m1, g_rb.u,
            gd);
     printf("   (2) wire self-check: passes %u | AGREE %u BOOT %u FENCED %u FSMTAIL %u UNEXP %u | boot window closed at "
-           "pass %u (%u disagreeing) | law checks %u mismatches %u | guard fallbacks %u | ae28_x %u\n",
+           "pass %u (%u disagreeing) | law checks %u mismatches %u | guard fallbacks %u | ae28_x %u | engine unported %u\n",
            (unsigned)c->passes, (unsigned)c->cls_n[0], (unsigned)c->cls_n[1], (unsigned)c->cls_n[2],
            (unsigned)c->cls_n[3], (unsigned)c->cls_n[4], c->boot_close, c->boot_dis, (unsigned)c->law_n,
-           (unsigned)c->law_x, (unsigned)c->guard_x, (unsigned)g_rb.ae28_x);
+           (unsigned)c->law_x, (unsigned)c->guard_x, (unsigned)g_rb.ae28_x, (unsigned)g_rb.cand_unp);
     monitor_line("(2)", &g_rb);
     printf("       commits %u / candidate %u; diag: fault events %u switch-off %u DSM fail %u pend %u "
            "would-reset %u\n", (unsigned)g_rb.sh_commits, (unsigned)g_rb.cand_commits, g_rb.r.fw_set_events,
@@ -546,6 +559,11 @@ int main(void)
         { .name = "engine frames stop in D (0x108 invalid)", .engoff = 300u, .info = true },
         { .name = "plain boot (no frames)", .nosim = true },
         { .name = "D -> R direct (no P between)", .kR = K_P1, .info = true },
+        /* r04s: the reversal's mirror — R, then D with no P between: after
+         * a completed R, E6C1 / E6C2 = 2 / −1; the D start's flag, E33C+0x12
+         * <= 10 and the R release's third element (D, BD44) still applied
+         * → +0x1E, BD1C (0x10E5EE's offset is 0 for D, 0x10F084 0 for E6C2 −1) */
+        { .name = "R -> D direct (no P between)", .kR = K_P1, .info = true, .rfirst = true },
     };
     /* the negatives (G6b form), anchored on the base run's D commit, R commit
      * and D release start (bridge passes) */

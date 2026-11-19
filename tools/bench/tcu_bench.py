@@ -1587,9 +1587,31 @@ GSE_RELH_SIZE = 0x4C        # gse_relh_t (app/gs_engine.c, GSE_REC 0: gs_rel_t u
 GSB_REC_ENTRY = 36          # gsb_rec_t (app/gs_bridge.h)
 GSB_REC_N = 112
 # G6c (D-G6-9): the engine's objects at their stock addresses (app/gs_engine.c gse_*)
-GSE_PINNED = (("E28E", 0xFFF8E28E, 10), ("E4A7", 0xFFF8E4A7, 1), ("E4AC", 0xFFF8E4AC, 10),
-              ("E69B", 0xFFF8E69B, 1), ("E69F", 0xFFF8E69F, 1), ("E6A1", 0xFFF8E6A1, 1), ("E6A8", 0xFFF8E6A8, 5),
-              ("E6C5", 0xFFF8E6C5, 1), ("E6EE", 0xFFF8E6EE, 1), ("E6EF", 0xFFF8E6EF, 1))
+GSE_PINNED = (("E28E", 0xFFF8E28E, 10), ("E33C", 0xFFF8E33C, 0x14), ("E4A7", 0xFFF8E4A7, 1),
+              ("E4AC", 0xFFF8E4AC, 10), ("E69B", 0xFFF8E69B, 1), ("E69F", 0xFFF8E69F, 1), ("E6A1", 0xFFF8E6A1, 1),
+              ("E6A8", 0xFFF8E6A8, 5), ("E6C1", 0xFFF8E6C1, 2), ("E6C5", 0xFFF8E6C5, 1), ("E6EE", 0xFFF8E6EE, 1),
+              ("E6EF", 0xFFF8E6EF, 1))
+# r04s (~/tcu_sweep/r04s_port.md): the element sub-objects at their stock addresses (0x6C each)
+GSE_SUBS = (("D0DC", 0xFFF8D0DC), ("D148", 0xFFF8D148), ("D1B4", 0xFFF8D1B4))
+
+
+def gse_r04s_print(read_retry):
+    """r04s: E6C1 / E6C2 (0xDC0F8), E4B3 (the pedal latch), E34E, BD1C / BD1D / BD44 and the sub-objects."""
+    e6 = read_retry(0xFFF8E6C1, 2)
+    ea = read_retry(0xFFF8E4AC, 10)
+    e3 = read_retry(0xFFF8E33C, 0x14)
+    bd = read_retry(0xFFF8BD14, 0x32)
+    print(f"  r04s: E6C1 {e6[0]:02X} E6C2 {int.from_bytes(e6[1:2], 'big', signed=True)} (0xDC0F8) | E4B3 {ea[7]:02X}"
+          f" (pedal latch) E4AC+0 {ea[0]:02X} +5 {ea[5]:02X} +9 {ea[9]:02X} | E34E {e3[0x12:0x14].hex().upper()}"
+          f" | BD1C {bd[8]:02X} BD1D {bd[9]:02X} BD44 {bd[0x30]:02X}")
+    for k, (nm, a) in enumerate(GSE_SUBS):
+        s = read_retry(a, 0x6C)
+        u32 = lambda o: int.from_bytes(s[o:o + 4], "big")
+        ptr = [u32(o) for o in (0x58, 0x5C, 0x60)]
+        ok = ptr == [0xFFF8CF94 + 8 * k, 0xFFF8CF0C + 8 * k, 0xFFF8CE7C + 8 * k] and u32(0x50) == 0x49FC0
+        print(f"  sub {nm} (pinned): phase {s[0x11]:02X} cls {s[0x1C]} eng {s[0x20]} rel {s[0x21]} +1E {s[0x1E]}"
+              f" +3A {int.from_bytes(s[0x3A:0x3C], 'big', signed=True)} vtbl {u32(0x50):08X} ptrs "
+              + " ".join(f"{x:08X}" for x in ptr) + ("" if ok else "  <-- NOT THE STOCK LAYOUT"))
 
 
 def gse_relh_print(raw, bd8e):
@@ -1715,6 +1737,7 @@ def cmd_gs_check(b, args):
           + " | ".join(f"{nm} {read_retry(a, n).hex().upper()}" for nm, a, n in GSE_PINNED)
           + f" | BD16 {bd[2]:02X} BD17 {bd[3]:02X} BD2E {bd[0x1A:0x1C].hex().upper()} BD30 {bd[0x1C]:02X}"
           f" BD6C {bd[0x58]:02X} BD6D {bd[0x59]:02X} BD76 {bd[0x62:0x64].hex().upper()}")
+    gse_r04s_print(read_retry)
     st = read_retry(gs_addr, GSB_SIZE_G6B)
     for k in (0, 1):
         slot = st[100 + 20 * k:120 + 20 * k]
