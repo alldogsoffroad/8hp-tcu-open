@@ -202,13 +202,43 @@ typedef struct {
     uint32_t unfence_pass;  /* bridge pass of the first fence exit (the boot window's end) */
     uint16_t trip_v;        /* the first latching trip's value */
     uint16_t trip_n;        /* latching trips (each latches; the first is recorded) */
+    /* ── r04q (D-G6-13 / D-G6-14, ~/tcu_sweep/r04q_port.md): THE BOOT
+     * ALLOWANCE and the stall fence's P content (12 bytes: .gsb_state ends
+     * at 0xFFF87300 = .gsb_rel's start) ── */
+    uint8_t  boot_st;       /* GSM_B_*: 0 not yet, 1 all-release row, 2 the target
+                             * element's switch-on fill, 3 used (ended on the P content);
+                             * 0x80 | GSM_BV_* = violated (tripped, GSB_L_IDLE) */
+    uint8_t  boot_calls;    /* boot entries (gs_bridge_boot_pass): 1 per MCU start */
+    uint16_t boot_len;      /* monitor evaluations under the allowance (the entry incl.) */
+    uint32_t boot_p0;       /* bridge pass at the boot entry */
+    uint32_t fence_n;       /* passes the E28E stall fence held the seam (the P content) */
 } gsb_t;
-_Static_assert(sizeof(gsb_t) == 212u, "gsb_t is 212 bytes (tools/bench/witness_g1.py)");
+_Static_assert(sizeof(gsb_t) == 224u, "gsb_t is 224 bytes (tools/bench/witness_g1.py)");
 
-/* G6b: gsb_t.src */
+/* G6b: gsb_t.src. r04q: GSM_S_LIVE is now only the pass BEFORE the
+ * candidate's boot pass (the seam empty: drv_reqlaw.c returns the r03f table
+ * then, D-G6-15); the E28E stall fence (D-G6-14) hands the seam THE P
+ * CONTENT (GSM_S_FENCE, not latched); the boot transient is no longer
+ * fenced (D-G6-13: the boot allowance) */
 #define GSM_S_LIVE    0u
 #define GSM_S_CAND    1u
 #define GSM_S_PCONT   2u
+#define GSM_S_FENCE   3u
+/* r04q: gsb_t.boot_st (the once-per-boot allowance of the E28E boot state) */
+#define GSM_B_NONE    0u        /* the candidate's boot pass not seen yet */
+#define GSM_B_REL     1u        /* the all-release row (E28E 1..3: 0xD0C94 code 2) */
+#define GSM_B_FILL    2u        /* the gear-target element's switch-on fill (E28E 0) */
+#define GSM_B_USED    3u        /* ended on the P content (never again this MCU start) */
+#define GSM_B_VIOL    0x80u     /* | GSM_BV_*: violated, tripped (GSB_L_IDLE), latched */
+#define GSM_BV_TWICE  1u        /* a second boot entry in one MCU start */
+#define GSM_BV_ROW    2u        /* content outside the allowed rows (or E28E off its states) */
+#define GSM_BV_ORDER  3u        /* the all-release row after the fill began */
+#define GSM_BV_LEN    4u        /* still non-P beyond GSB_BOOT_PASSES evaluations */
+#define GSM_BV_ENTRY  5u        /* the boot entry's content is not the all-release row */
+/* the allowance's length bound: evaluations from the boot entry (incl.) */
+#ifndef GSB_BOOT_PASSES
+#  define GSB_BOOT_PASSES  15u
+#endif
 /* G6b: the monitor's own latch bits (gsb_win_t.latch, .noinit, until power-off) */
 #define GSB_L_PERMIT  0x10u     /* a permit failed while the candidate's engine owned non-P content */
 #define GSB_L_SHADOW  0x20u     /* r04o only: candidate != shadow (A..E) on 2 owned non-P passes
@@ -325,10 +355,24 @@ const volatile gsbr_est_t *gs_bridge_rel_est(void);
 
 void gs_bridge_init(bool cold);
 void gs_bridge_tick_10ms(const gsb_in_t *in);
+/* r04q (D-G6-13): the monitor's evaluation of the candidate's boot pass —
+ * app/main.c g6a_boot_pass, right after the candidate's boot pass (bsw/sup/
+ * sup_mode.c, boot state 1): opens the once-per-boot allowance and hands
+ * the seam the candidate's boot content (the all-release row) for the F
+ * stages until the next 10 ms pass; a second call trips */
+void gs_bridge_boot_pass(void);
 #if !defined(__sh__)
 /* host only (GS_G6B builds): the monitor's windows at run time (the
  * negatives): engagement passes, release passes, armed ms, commits */
 void gs_bridge_host_limits(uint16_t eng, uint16_t rel, uint32_t win_ms, uint16_t commits);
+/* r04q host only: the boot allowance's length bound at run time; the
+ * candidate's E28E and A's request mode (0xFF: unchanged) as the monitor
+ * reads them on bridge passes [from, to) */
+void gs_bridge_host_boot_limit(uint16_t passes);
+void gs_bridge_host_inject_boot(uint8_t e28e, uint8_t amode, uint32_t from, uint32_t to);
+#endif
+#if defined(__sh__) && (GSB_BOOT_PASSES != 15u)
+#  error "gs bridge: GSB_BOOT_PASSES is a host-only test override (15 on SH)"
 #endif
 /* true: this build is the G6b monitor (the seam carries the candidate);
  * G6c: a build constant (the r04n bridge form is deleted) */

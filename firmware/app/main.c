@@ -277,6 +277,11 @@ void g6a_boot_pass(void)
     gs_in_t gi;
     gs_in_build(&gi);
     g6a_boot(&gi);
+    /* r04q (D-G6-13): the monitor evaluates the candidate's boot pass at
+     * once (the boot allowance: the seam carries the stock's all-release row
+     * from this pass, then A's switch-on fill), then the boot comparison */
+    gs_bridge_boot_pass();
+    g6a_boot_compare();
 }
 #endif
 

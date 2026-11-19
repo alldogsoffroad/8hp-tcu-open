@@ -1405,7 +1405,23 @@ else()
     # test_g6b run (written by HEAD fff32bd's G6b form, tests/unit/g6c_gold.h)
     file(ARCHIVE_EXTRACT INPUT ${CMAKE_SOURCE_DIR}/tests/unit/golden/g6c_r04o_test_g6b.tgz
         DESTINATION ${CMAKE_BINARY_DIR}/g6c_r04o)
-    set(G6C_GOLD_ENV "G6C_GOLD_IN=${CMAKE_BINARY_DIR}/g6c_r04o/gold")
+    # r04q (D-G6-13/14, ~/tcu_sweep/r04q_port.md): the boot fence is lifted
+    # (the stock boot all-release + A's fill on the wire) and the stall
+    # fence's source is the P content — test_g6b now compares with the r04q
+    # goldens (this build's G6C_GOLD_OUT); g6q_vs_r04p_goldens proves the
+    # r04p -> r04q difference of every run is confined to the boot window
+    # (channel A only) and the stall fence's source label; the strict form
+    # (nothing allowed) must FAIL
+    file(ARCHIVE_EXTRACT INPUT ${CMAKE_SOURCE_DIR}/tests/unit/golden/g6q_r04q_test_g6b.tgz
+        DESTINATION ${CMAKE_BINARY_DIR}/g6q_r04q)
+    set(G6C_GOLD_ENV "G6C_GOLD_IN=${CMAKE_BINARY_DIR}/g6q_r04q/gold")
+    add_test(NAME g6q_vs_r04p_goldens
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6q_gold_diff.py ${CMAKE_BINARY_DIR}/g6c_r04o/gold
+            ${CMAKE_BINARY_DIR}/g6q_r04q/gold --skip-tag candidate____shadow_2_passes__C_fill_)
+    add_test(NAME g6q_vs_r04p_goldens_strict_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6q_gold_diff.py ${CMAKE_BINARY_DIR}/g6c_r04o/gold
+            ${CMAKE_BINARY_DIR}/g6q_r04q/gold --strict --skip-tag candidate____shadow_2_passes__C_fill_)
+    set_tests_properties(g6q_vs_r04p_goldens_strict_negative PROPERTIES WILL_FAIL TRUE)
     add_test(NAME g6b_switch COMMAND test_g6b)
     add_executable(test_g6b_englim ${G6B_SOURCES})
     target_compile_definitions(test_g6b_englim PRIVATE ${G6B_DEFS} GSB_ENG_PASSES=50u G6A_ENGLIM=1)
@@ -1490,6 +1506,12 @@ else()
     add_test(NAME g6b_sh_guard_control
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion -DGS_LIVE_DIR=3 -DGS_G6B=1
             ${CMAKE_SOURCE_DIR}/app/gs_bridge.c)
+    # r04q: the boot allowance's bound is a host-only override (15 on SH)
+    add_test(NAME g6q_sh_guard_bootlen
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_LIVE_DIR=3 -DGS_G6B=1 -DGSB_BOOT_PASSES=5u
+            ${CMAKE_SOURCE_DIR}/app/gs_bridge.c)
+    set_tests_properties(g6q_sh_guard_bootlen PROPERTIES
+        PASS_REGULAR_EXPRESSION "GSB_BOOT_PASSES is a host-only test override")
     add_test(NAME g6b_sh_guard_bypass
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_LIVE_DIR=3 -DGS_G6B=1 -DGSM_HOST_BYPASS
             ${CMAKE_SOURCE_DIR}/app/gs_bridge.c)

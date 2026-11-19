@@ -261,7 +261,7 @@ static unsigned g6c_gold_cmp(const char *name, const gr_t *g, const res_t *r, co
         ed = 1u;
         printf("   G6c golden %s: window file missing\n", name);
     }
-    printf("   G6c vs r04o golden [%s]: frames differ %u (first F%u), ticks differ %u of %u, gsb_t %u B, windows %u B, "
+    printf("   vs the golden [%s]: frames differ %u (first F%u), ticks differ %u of %u, gsb_t %u B, windows %u B, "
            "release %u, end window %u B => %s\n", name, fd, f_first == 0xFFFFFFFFu ? 0u : f_first, td, gtk, bd, wd,
            rd, ed, (fd | td | bd | wd | rd | ed) == 0u ? "IDENTICAL" : "DIFFERENT");
     return fd + td + bd + wd + rd + ed;

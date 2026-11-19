@@ -6,6 +6,11 @@ the candidate (app/gs_cand.c) is the producer of the live A..E currents; the
 seam carries it every pass unless the E28E fence hands back the live producer
 (src LIVE: the boot transient, the engine-stop all-release) or the monitor has
 latched the P content (src PCONT: a violation, until power-off).
+r04q (D-G6-13/14, ~/tcu_sweep/r04q_port.md): no boot fence — the candidate's
+stock boot sequence is carried under the once-per-boot BOOT ALLOWANCE (gsb_t
++212: state, entries, evaluations, entry pass); src LIVE = before the boot pass
+only; the engine-stall fence hands the seam THE P CONTENT (src FENCE, passes
+at +220).
 In G6b the state's "shadow" A..E and the recorder's phases are THE CANDIDATE's;
 "applied" = the seam returned a value (candidate or P content); "would-armed" =
 the candidate's engine on the wire (owning or non-P content).
@@ -13,7 +18,7 @@ the candidate's engine on the wire (owning or non-P content).
 Reads over meas (6 bytes per request; NOT atomic — counters tear between
 blocks; read after the lever sequence, with the bridge idle in P):
   gsb_win_t  20 B at 0xFFF87200 (.gsb_win)   the .noinit windows
-  gsb_t     212 B at 0xFFF87220 (.gsb_state) state, witnesses, slot headers,
+  gsb_t     224 B at 0xFFF87220 (.gsb_state) state, witnesses, slot headers,
                                               the OS-mode-2 witness (0x1418E2),
                                               G6b: the monitor block (+172)
   gsb_rec_t 112 x 36 B at 0xFFF911A0 (.gsb_rec0, the last D; G6c — r04o 0xFFF8BCC0)
@@ -66,8 +71,11 @@ LIVE = [
 WHY = ["IDLE", "DIR", "RAIL", "OS", "RANGE", "PARK", "MON", "DIAG", "RELWIN", "WIN", "ENGT", "COMMITS",
        "AGREE(r04o: cand!=shadow, retired G6c)", "G_RANGE", "G_FIXED", "G_LATCH"]
 LATCH = ["WIN 30s", "ENGT 3.5s", "COMMITS 16", "GUARD bounds/envelope", "PERMIT", "SHADOW", "IDLE non-P", "?"]
-SRC = ["LIVE (E28E fence)", "CAND", "PCONT (latched)"]
-ST_SZ = 212
+SRC = ["LIVE (before the boot pass)", "CAND", "PCONT (latched)", "FENCE (stall: the P content)"]
+BOOT = {0: "not yet", 1: "all-release row", 2: "A's switch-on fill", 3: "used (ended on the P content)"}
+BOOTV = {1: "a second boot entry", 2: "content off the allowed rows", 3: "all-release after the fill",
+         4: "beyond 15 evaluations", 5: "the entry not the all-release row"}
+ST_SZ = 224
 
 
 class A:
@@ -133,10 +141,14 @@ def show_win(d):
 def show_mon(d):
     m = 172
     tp = u32(d, m + 8)
-    print("  G6b MONITOR: seam src now %s | fence %u owns %u non-P %u | passes: candidate %u, live (fence) %u, "
-          "P content %u | fence entries %u exits %u (first exit at bridge pass %u)"
-          % (SRC[d[m]] if d[m] < 3 else "?", d[m + 1], d[m + 2], d[m + 3], u32(d, m + 12), u32(d, m + 16),
-             u32(d, m + 20), u16(d, m + 28), u16(d, m + 30), u32(d, m + 32)))
+    print("  G6b MONITOR: seam src now %s | fence %u owns %u non-P %u | passes: candidate %u, before the boot "
+          "pass %u, P content %u, stall fence %u | stall-fence entries %u exits %u (first exit at bridge pass %u)"
+          % (SRC[d[m]] if d[m] < 4 else "?", d[m + 1], d[m + 2], d[m + 3], u32(d, m + 12), u32(d, m + 16),
+             u32(d, m + 20), u32(d, 220), u16(d, m + 28), u16(d, m + 30), u32(d, m + 32)))
+    b = d[212]
+    print("  r04q BOOT ALLOWANCE: %s | entries %u (want 1) | evaluations %u (<= 15) from bridge pass %u"
+          % (("VIOLATED: " + BOOTV.get(b & 0x7F, "?")) if b & 0x80 else BOOT.get(b, "?"), d[213], u16(d, 214),
+             u32(d, 216)))
     print("  G6b trips %u (want 0): first at pass %s why %s ch %s v %u | shadow-diff passes %u (run %u; retired G6c, 0)"
           % (u16(d, m + 38), "-" if tp == 0xFFFFFFFF else tp, why(u16(d, m + 6)),
              "-" if d[m + 5] == 0xFF else d[m + 5], u16(d, m + 36), u32(d, m + 24), d[m + 4]))

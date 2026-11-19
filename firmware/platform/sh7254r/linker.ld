@@ -453,7 +453,9 @@ SECTIONS
      *   .gsb_win   gsb_win_t (20 B) at 0xFFF87200 — the .noinit windows: NOT
      *              cleared on a warm boot (gs_bridge_init(cold) decides), so
      *              they survive an MCU reset like .noinit; a power-on clears;
-     *   .gsb_state gsb_t (212 B since G6b: + the monitor block) + the TU's zero-initialised data, after it;
+     *   .gsb_state gsb_t (212 B since G6b: + the monitor block; 224 B since r04q: + the boot
+     *              allowance and the stall fence's pass count — ends at 0xFFF87300 = .gsb_rel)
+     *              + the TU's zero-initialised data, after it;
      *              both in the free low RAM 0xFFF87200..0xFFF87800 between
      *              .rng_wit (ASSERTed <= 0xFFF87800) and .tmp_wit (0xFFF87800)
      *              — the stock driving dump holds zeros there;
@@ -471,7 +473,7 @@ SECTIONS
     } > RAM
     ASSERT(__gsb_win_start >= __rng_wit_end && __gsb_win_end <= __gsb_state_start, ".gsb_win overlaps")
     ASSERT(__gsb_state_end <= ADDR(.tmp_wit), ".gsb_state runs into .tmp_wit")
-    ASSERT(SIZEOF(.gsb_win) == 0x14 && SIZEOF(.gsb_state) == 0xD4, ".gsb_*: gsb_win_t / gsb_t are off (witness_g1.py)")
+    ASSERT(SIZEOF(.gsb_win) == 0x14 && SIZEOF(.gsb_state) == 0xE0, ".gsb_*: gsb_win_t / gsb_t are off (witness_g1.py)")
     .gsb_rec0 0xFFF911A0 (NOLOAD) : {
         __gsb_rec0_start = .; KEEP(*(.gsb_rec0)) . = ALIGN(4); __gsb_rec0_end = .;
     } > RAM

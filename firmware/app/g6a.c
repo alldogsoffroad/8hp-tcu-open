@@ -179,7 +179,7 @@ static void compare(void)
                 if (cs != LIVE_ST(ch)) {
                     dms = (uint16_t)(dms | (1u << (8u + ch)));
                 }
-            } else if (src == GSM_S_PCONT && cm != 1u) {
+            } else if ((src == GSM_S_PCONT || src == GSM_S_FENCE) && cm != 1u) {
                 dms = (uint16_t)(dms | (1u << ch));       /* the P content is mode 1 */
             }
             if (cs == 1u || cs == 2u) {
@@ -260,6 +260,13 @@ void g6a_boot(const gs_in_t *gi)
     gs_cand_boot_pass(gi);
     C.boot_us = us16(plat_frt_us() - t0);
     C.booted = 1u;
+}
+
+/* r04q: the boot pass's comparison, AFTER the monitor's boot evaluation
+ * (app/main.c g6a_boot_pass: g6a_boot → gs_bridge_boot_pass → this), so it
+ * sees what the seam hands the F stages from the boot pass on */
+void g6a_boot_compare(void)
+{
     compare();
 }
 

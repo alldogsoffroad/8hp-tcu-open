@@ -63,7 +63,7 @@ CMP_CALL_ALLOW = {
     "gs_cand_init", "gs_cand_boot_pass", "gs_cand_tick_10ms", "gs_cand_cur", "gs_cand_reqmode",
     "gs_cand_fillst", "gs_cand_pf", "gs_cand_phase", "gs_cand_releasing", "gs_cand_wit",
     # this TU's own functions
-    "g6a_init", "g6a_boot", "g6a_tick_10ms", "g6a_task_time", "g6a_state", "wire_cur", "idle_or_rel",
+    "g6a_init", "g6a_boot", "g6a_boot_compare", "g6a_tick_10ms", "g6a_task_time", "g6a_state", "wire_cur", "idle_or_rel",
     "put_rec", "compare", "us16",
     # G6b: the split tick, the stage / time witnesses, the G6b comparison
     "g6a_stage", "g6a_cand_tick", "g6a_compare_10ms", "g6a_time", "compare_g6b",

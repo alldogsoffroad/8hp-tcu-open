@@ -78,6 +78,8 @@ void g6a_boot_pass(void)
         .ae28 = *(const volatile uint8_t *)0xFFF8AE28u,
     };
     g6a_boot(&gi);
+    gs_bridge_boot_pass();          /* r04q: as app/main.c g6a_boot_pass */
+    g6a_boot_compare();
 }
 
 /* a negative: what is injected, where (bridge passes), what must trip */
@@ -91,6 +93,9 @@ typedef struct {
     uint8_t  anchor;        /* A_D_COMMIT, A_R_COMMIT, A_D_REL */
     uint8_t  latch;         /* the expected latch bit */
     int32_t  trip_off;      /* the expected trip pass − (anchor + from_off); −1: not exact */
+    uint8_t  injb;          /* r04q N_INJB: also inject the E28E / A mode the monitor reads */
+    uint8_t  injb_e28e;     /* 0xFF unchanged */
+    uint8_t  injb_am;       /* 0xFF unchanged */
 } neg_t;
 #define N_INJ     1u
 #define N_RELWIN  2u
@@ -98,18 +103,22 @@ typedef struct {
 #define N_REL     4u
 #define N_WIN     5u
 #define N_COMMITS 6u
+#define N_BOOT2   7u        /* r04q: a second boot entry after monitor pass anchor + from_off */
+#define N_BLEN    8u        /* r04q: the boot allowance's bound lowered to len passes */
 #define A_D_COMMIT 0u
 #define A_R_COMMIT 1u
 #define A_D_REL    2u
+#define A_BOOT     3u       /* r04q: the monitor pass of the boot entry (gsb_t.boot_p0) */
 
 typedef struct {
     const char *name;
     unsigned kR, kP1, kP2, parity;
     unsigned eng0;
+    unsigned engoff;        /* r04q: 0x108 frames stop (the bench's engine-sim stop) */
     bool nosim;
     bool info;              /* informational: printed, the r04n identity not required */
     const neg_t *neg;
-    uint32_t anchors[3];    /* negatives: from the base run */
+    uint32_t anchors[4];    /* negatives: from the base run */
 } scen_t;
 
 typedef struct {
@@ -152,12 +161,18 @@ static void run_child(const scen_t *sc, bool g6b, gr_t *g, res_t *res, uint8_t *
         g6a_on = true;
         (void)g6b;                                  /* G6c: the G6b form only */
         g6a_eng0_from = sc->eng0;
+        g6q_engoff_from = sc->engoff;
         g6a_nosim = sc->nosim;
         if (sc->neg != NULL) {
             const neg_t *n = sc->neg;
             const uint32_t at = (uint32_t)((int32_t)sc->anchors[n->anchor] + n->from_off);
+            if (n->injb != 0u) {
+                gs_bridge_host_inject_boot(n->injb_e28e, n->injb_am, at, at + n->len);
+            }
             switch (n->kind) {
-            case N_INJ:     gs_bridge_host_inject(n->ch, n->v, at, at + n->len); break;
+            case N_INJ:     if (n->ch != 0xFFu) { gs_bridge_host_inject(n->ch, n->v, at, at + n->len); } break;
+            case N_BOOT2:   g6q_boot2_at = at; break;
+            case N_BLEN:    gs_bridge_host_boot_limit((uint16_t)n->len); break;
             case N_RELWIN:  g6b_relwin_from = at; g6b_relwin_to = at + n->len; break;
             case N_ENG:     gs_bridge_host_limits(50u, GSB_REL_PASSES, GSB_WIN_MS, GSB_COMMITS_MAX); break;
             case N_REL:     gs_bridge_host_limits(GSB_ENG_PASSES, 50u, GSB_WIN_MS, GSB_COMMITS_MAX); break;
@@ -279,13 +294,14 @@ static gr_t g_gbase;
 static void monitor_line(const char *tag, const res_t *r)
 {
     const gsb_t *b = &r->b;
-    printf("   %s monitor: passes %u | candidate %u live (fence) %u P content %u | fence entries %u exits %u "
+    printf("   %s monitor: passes %u | candidate %u pre-boot %u P content %u | stall-fence entries %u exits %u "
            "(first exit pass %u) | trips %u (first: pass %d why %04X ch %d v %u) latch %02X | armed %u acc %u ms "
-           "commits %u | shadow-diff passes %u | release trips %u\n", tag, (unsigned)b->passes,
+           "commits %u | shadow-diff passes %u | release trips %u | boot %02X (%u eval.)\n", tag, (unsigned)b->passes,
            (unsigned)b->cand_n, (unsigned)b->live_n, (unsigned)b->pc_n, b->fence_ev, b->unfence_n,
            (unsigned)b->unfence_pass, b->trip_n, (b->trip_pass == 0xFFFFFFFFu) ? -1 : (int)b->trip_pass,
            b->trip_why, (b->trip_ch == 0xFFu) ? -1 : (int)b->trip_ch, b->trip_v, r->w.latch,
-           (unsigned)b->armed_n, (unsigned)r->w.acc_ms, r->w.commits, (unsigned)b->shd_n, r->rel_trip_n);
+           (unsigned)b->armed_n, (unsigned)r->w.acc_ms, r->w.commits, (unsigned)b->shd_n, r->rel_trip_n,
+           b->boot_st, b->boot_len);
 }
 
 static void scenario(const scen_t *sc)
@@ -297,7 +313,7 @@ static void scenario(const scen_t *sc)
     (void)g_ra;
     run_child(sc, true, &g_gb, &g_rb, g_win[1], g_tks[1]);
     gd = g6c_cmp(sc->name, &g_gb, &g_rb, g_win[1], g_tks[1]);
-    printf("== %s: mode 1 F%u 'U' F%u | (1) G6c vs the r04o golden: %u differences\n", sc->name, g_rb.m1, g_rb.u,
+    printf("== %s: mode 1 F%u 'U' F%u | (1) vs the golden (r04q: g6q_r04q_test_g6b.tgz): %u differences\n", sc->name, g_rb.m1, g_rb.u,
            gd);
     printf("   (2) wire self-check: passes %u | AGREE %u BOOT %u FENCED %u FSMTAIL %u UNEXP %u | boot window closed at "
            "pass %u (%u disagreeing) | law checks %u mismatches %u | guard fallbacks %u | ae28_x %u\n",
@@ -314,7 +330,7 @@ static void scenario(const scen_t *sc)
     for (unsigned i = 0u; i < c->urec_n; i++) {
         print_rec("UNEX", &c->urec[i]);
     }
-    GCHECK(gd == 0u, "%s: G6c differs from the r04o golden (%u)", sc->name, gd);
+    GCHECK(gd == 0u, "%s: differs from the golden (%u)", sc->name, gd);
     if (sc->info) {
         return;             /* D -> R direct: the golden identity is the whole check */
     }
@@ -336,9 +352,18 @@ static void scenario(const scen_t *sc)
     GCHECK(g_rb.b.trip_n == 0u && g_rb.w.latch == 0u, "%s: the monitor tripped (%u, latch %02X)", sc->name,
            g_rb.b.trip_n, g_rb.w.latch);
 #endif
-    GCHECK(g_rb.b.fence_ev >= 1u && g_rb.b.unfence_n >= 1u && g_rb.b.live_n >= 2u,
-           "%s: the boot fence (entries %u exits %u live passes %u)", sc->name, g_rb.b.fence_ev, g_rb.b.unfence_n,
+    /* r04q (D-G6-13): no boot fence — the boot allowance carried the boot
+     * transient once, ended on the P content within GSB_BOOT_PASSES; the
+     * stall fence only in the stall run (D-G6-14) */
+    printf("   (2) boot allowance: state %02X entries %u evaluations %u (from monitor pass %u) | stall fence entries %u "
+           "exits %u passes %u | pre-boot passes %u\n", g_rb.b.boot_st, g_rb.b.boot_calls, g_rb.b.boot_len,
+           (unsigned)g_rb.b.boot_p0, g_rb.b.fence_ev, g_rb.b.unfence_n, (unsigned)g_rb.b.fence_n,
            (unsigned)g_rb.b.live_n);
+    GCHECK(g_rb.b.boot_st == GSM_B_USED && g_rb.b.boot_calls == 1u && g_rb.b.boot_len >= 2u &&
+           g_rb.b.boot_len <= GSB_BOOT_PASSES, "%s: the boot allowance (state %02X entries %u evaluations %u)",
+           sc->name, g_rb.b.boot_st, g_rb.b.boot_calls, g_rb.b.boot_len);
+    GCHECK(sc->eng0 != 0u || (g_rb.b.fence_ev == 0u && g_rb.b.fence_n == 0u),
+           "%s: a stall fence without a stall (entries %u)", sc->name, g_rb.b.fence_ev);
     GCHECK(g_rb.r.fw_set_events == 0u && g_rb.r.switched_off == 0u && g_rb.r.gfail_tot == 0u &&
            g_rb.r.gpend_tot == 0u && g_rb.r.fatal_tot == 0u, "%s: diagnosis not silent", sc->name);
     if (sc->eng0 != 0u) {
@@ -347,14 +372,14 @@ static void scenario(const scen_t *sc)
         unsigned n = 0u;
         for (unsigned i = 1u; i < g_rb.tk_n; i++) {
             const tick_t *t = &g_tks[1][i], *q = &g_tks[1][i - 1u];
-            if (q->src == GSM_S_LIVE && q->sh[0] == 500u && absd(sp_of(t->st[0]), 8500u) <= 6u &&
+            if (q->src == GSM_S_FENCE && q->sh[0] == 500u && absd(sp_of(t->st[0]), 8500u) <= 6u &&
                 t->frame > g_rb.m1 + sc->eng0) {
                 n++;
             }
         }
         printf("   (3) engine stall: fenced passes with the candidate's A at 500 and the staged A at 8500: %u; "
                "fence entries %u\n", n, g_rb.b.fence_ev);
-        GCHECK(n > 100u && g_rb.b.fence_ev >= 2u, "%s: the engine-stop all-release not fenced (%u, entries %u)",
+        GCHECK(n > 100u && g_rb.b.fence_ev >= 1u, "%s: the engine-stop all-release not fenced (%u, entries %u)",
                sc->name, n, g_rb.b.fence_ev);
     }
 }
@@ -375,6 +400,7 @@ static void negative(const neg_t *n)
     sc.anchors[A_D_COMMIT] = g_base.b.slot[0].t0;
     sc.anchors[A_R_COMMIT] = g_base.b.slot[1].t0;
     sc.anchors[A_D_REL] = g_base.rel_t0[0];
+    sc.anchors[A_BOOT] = g_base.b.boot_p0;
     run_child(&sc, true, &g, &r, win, tks);
     if (n->latch == GSB_L_SHADOW) {
         /* G6c: the candidate != shadow check went with the shadow: the
@@ -475,6 +501,7 @@ int main(void)
         { .name = "P held 0.3 s (R interrupts the release)", .kR = K_P1 + 60u },
         { .name = "lever P 50 ms after D (mid-fill)", .kP1 = K_D + 5u, .kR = K_D + 300u, .kP2 = K_D + 700u },
         { .name = "engine stall in D (0x108 valid 0 rpm)", .eng0 = 300u },
+        { .name = "engine frames stop in D (0x108 invalid)", .engoff = 300u, .info = true },
         { .name = "plain boot (no frames)", .nosim = true },
         { .name = "D -> R direct (no P between)", .kR = K_P1, .info = true },
     };
@@ -498,6 +525,14 @@ int main(void)
         { "park-release window latched mid-D",      N_RELWIN, 0u, 0u, 40, 5, A_D_COMMIT, GSB_L_PERMIT, 0 },
         { "non-P content while idle (A 500 in P)",  N_INJ, 0u, 500u, -10, 1, A_D_COMMIT, GSB_L_IDLE, 0 },
         { "candidate != shadow 2 passes (C fill)",  N_INJ, 4u, 5000u, 3, 4, A_D_COMMIT, GSB_L_SHADOW, 1 },
+        /* r04q (D-G6-13): the boot allowance cannot be abused */
+        { "boot: a second boot entry (allowance twice)", N_BOOT2, 0u, 0u, 30, 0, A_BOOT, GSB_L_IDLE, 0 },
+        { "boot: D off the P content in the window",    N_INJ, 1u, 5000u, 3, 2, A_BOOT, GSB_L_IDLE, 0 },
+        { "boot: the entry with E28E off its boot states", N_INJ, 0xFFu, 0u, 0, 1, A_BOOT, GSB_L_IDLE, 0, 1u, 5u, 0xFFu },
+        { "boot: E28E off its states during the fill",  N_INJ, 0xFFu, 0u, 1, 1, A_BOOT, GSB_L_IDLE, 0, 1u, 5u, 0xFFu },
+        { "boot: the all-release row after the fill began", N_INJ, 0u, 500u, 6, 1, A_BOOT, GSB_L_IDLE, 0, 1u, 2u, 1u },
+        { "boot: the allowance bound lowered to 5",     N_BLEN, 0u, 0u, 0, 5, A_BOOT, GSB_L_IDLE, 4 },
+        { "a non-boot all-release (A 500 after the window)", N_INJ, 0u, 500u, 20, 1, A_BOOT, GSB_L_IDLE, 0 },
     };
 #if defined(G6B_BYPASS)
     /* the monitor bypassed: the bounds negative must NOT be caught (ctest WILL_FAIL) */
@@ -530,8 +565,8 @@ int main(void)
         for (unsigned k = 0u; k < nN; k++) {
             negative(&N[k]);
         }
-        printf("negatives as required: %u of %u (12 caught as r04o + the deleted shadow check not tripping)\n",
-               g_neg_ok, nN);
+        printf("negatives as required: %u of %u (12 caught as r04o + the deleted shadow check not tripping + 7 r04q "
+               "boot-allowance negatives caught)\n", g_neg_ok, nN);
     }
 #endif
     if (g_fails == 0) {

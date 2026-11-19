@@ -1744,15 +1744,18 @@ def cmd_gs_check(b, args):
     u32 = lambda d, o: int.from_bytes(d[o:o + 4], "big")
     u16 = lambda d, o: int.from_bytes(d[o:o + 2], "big")
     tp = u32(m, 8)
-    print(f"  MONITOR: seam now {('LIVE (E28E fence)', 'CANDIDATE', 'P CONTENT (latched)')[m[0]] if m[0] < 3 else m[0]}"
-          f" | passes candidate {u32(m, 12)}, live (fence) {u32(m, 16)}, P content {u32(m, 20)} | fence entries"
+    srcs = ('LIVE (before the boot pass)', 'CANDIDATE', 'P CONTENT (latched)', 'STALL FENCE (P content)')
+    print(f"  MONITOR: seam now {srcs[m[0]] if m[0] < 4 else m[0]}"
+          f" | passes candidate {u32(m, 12)}, pre-boot {u32(m, 16)}, P content {u32(m, 20)},"
+          f" stall fence {u32(st, 220)} | stall-fence entries"
           f" {u16(m, 28)} exits {u16(m, 30)} | trips {u16(m, 38)} (want 0)"
+          f" | boot allowance {st[212]:02X} (03 = used) entries {st[213]} evaluations {u16(st, 214)}"
           + ("" if tp == 0xFFFFFFFF else f" first at pass {tp} why {u16(m, 6):04X} ch {m[5]} v {u16(m, 36)}")
           + f" | latch {w[16]:02X} (want 00) acc {u32(w, 4)} ms commits {u16(w, 12)}")
     return 0
 
 
-GSB_SIZE_G6B = 212          # app/gs_bridge.h gsb_t with the G6b monitor block (+172)
+GSB_SIZE_G6B = 224          # app/gs_bridge.h gsb_t with the G6b monitor block (+172), r04q +12 (+212)
 
 
 def elf_sym_in(elf, name, rng):

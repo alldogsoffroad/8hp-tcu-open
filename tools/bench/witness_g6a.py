@@ -9,7 +9,10 @@ fence's live producer, or the latched P content) -> the wire self-check.
 Classes (one per pass):
   AGREE    wire == candidate (r04o's FSMTAIL passes count here now)
   BOOT     expected: the boot window (the boot fence: the live producer's boot
-           fill on the wire while the candidate's E28E transient runs; <= 16)
+           fill on the wire while the candidate's E28E transient runs; <= 16).
+           r04q (D-G6-13): no boot fence — the candidate's stock boot sequence is
+           on the wire (the boot allowance), so BOOT reads 0 and the window
+           closes at the end of A's fill (pass ~12)
   FENCED   expected: wire != candidate because the monitor fenced (E28E: the
            engine-stop all-release) or latched
   FSMTAIL  retired (never counted since G6c)
@@ -56,7 +59,7 @@ CPU_OFF = 932
 GSB = 0xFFF87220
 GSB_WIN = 0xFFF87200
 STG = ['head', 's28', 's29', 's30', 's31/32', 's34', 's35', 's42', 'tail']
-SRC = ['LIVE (E28E fence)', 'CANDIDATE', 'P CONTENT (latched)']
+SRC = ['LIVE (before the boot pass)', 'CANDIDATE', 'P CONTENT (latched)', 'STALL FENCE (P content)']
 CAND_W = 0xFFF928BC         # r04p (G6c): the candidate's _g_w (r04o 0xFFF928D0)
 AE28X = 0xFFF92A98          # r04p (G6c): _s_ae28_x (r04o 0xFFF92AD8)
 # G6c (D-G6-9): the engine's objects at their stock addresses (name, addr, len)
@@ -179,13 +182,16 @@ def main():
                   + " ".join("%s %u" % (STG[k], u16(cpu, 36 + 2 * k)) for k in range(9)))
             print("  CPU (us) monitor max %u last %u | comparison last %u (retired since G6c: shadow tick %u/%u)"
                   % (u16(cpu, 58), u16(cpu, 60), u16(cpu, 62), u16(cpu, 54), u16(cpu, 56)))
-        mon = read(b, 1, GSB + 172, 40)
+        mon = read(b, 1, GSB + 172, 52)                  # r04q: + the boot allowance, fence_n (+212..223)
         gw = read(b, 1, GSB_WIN, 20)
         if mon and gw:
             tp = u32(mon, 8)
-            print("  MONITOR: seam now %s | candidate %u live (fence) %u P content %u passes | fence entries %u "
+            print("  r04q boot allowance %02X (03 = used, 8x = violated) entries %u (want 1) evaluations %u "
+                  "from pass %u | stall-fence passes %u" % (mon[40], mon[41], u16(mon, 42), u32(mon, 44),
+                                                           u32(mon, 48)))
+            print("  MONITOR: seam now %s | candidate %u pre-boot %u P content %u passes | stall-fence entries %u "
                   "exits %u (first exit pass %u) | trips %u (want 0)%s | latch %02X (want 00) acc %u ms commits %u"
-                  % (SRC[mon[0]] if mon[0] < 3 else mon[0], u32(mon, 12), u32(mon, 16), u32(mon, 20),
+                  % (SRC[mon[0]] if mon[0] < 4 else mon[0], u32(mon, 12), u32(mon, 16), u32(mon, 20),
                      u16(mon, 28), u16(mon, 30), u32(mon, 32), u16(mon, 38),
                      "" if tp == 0xFFFFFFFF else " first at pass %u why %04X ch %u v %u" % (tp, u16(mon, 6), mon[5],
                                                                                       u16(mon, 36)),

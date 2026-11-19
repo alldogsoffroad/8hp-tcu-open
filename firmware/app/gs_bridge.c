@@ -171,11 +171,18 @@ void gs_bridge_host_limits(uint16_t eng, uint16_t rel, uint32_t win_ms, uint16_t
     s_h_win = win_ms;
     s_h_commits = commits;
 }
+static uint16_t s_h_boot = GSB_BOOT_PASSES;
+void gs_bridge_host_boot_limit(uint16_t passes)
+{
+    s_h_boot = passes;
+}
 #  define MON_ENG_PASSES  s_h_eng
 #  define MON_REL_PASSES  s_h_rel
 #  define MON_WIN_MS      s_h_win
 #  define MON_COMMITS_MAX s_h_commits
+#  define MON_BOOT_PASSES s_h_boot
 #else
+#  define MON_BOOT_PASSES GSB_BOOT_PASSES
 #  define MON_ENG_PASSES  GSB_ENG_PASSES
 #  define MON_REL_PASSES  GSB_REL_PASSES
 #  define MON_WIN_MS      GSB_WIN_MS
@@ -195,6 +202,17 @@ void gs_bridge_host_inject(uint8_t ch, uint16_t v, uint32_t from, uint32_t to)
     s_inj_v = v;
     s_inj_from = from;
     s_inj_to = to;
+}
+/* r04q host negatives: the candidate's E28E state and A's request mode /
+ * fill state, as the monitor reads them, on bridge passes [from, to) */
+static uint8_t  s_injb_e28e = 0xFFu, s_injb_am = 0xFFu;
+static uint32_t s_injb_from, s_injb_to;
+void gs_bridge_host_inject_boot(uint8_t e28e, uint8_t amode, uint32_t from, uint32_t to)
+{
+    s_injb_e28e = e28e;
+    s_injb_am = amode;
+    s_injb_from = from;
+    s_injb_to = to;
 }
 #endif
 
@@ -240,8 +258,12 @@ void gs_bridge_init(bool cold)
     zero(&s_gsbr_est, sizeof s_gsbr_est);
     R.rec = 0xFFu;
 #if GS_G6B
-    B.fence = 1u;                       /* G6b: the boot transient is fenced from the start */
-    B.fence_ev = 1u;
+    /* r04q (D-G6-13): no boot fence any more — before the candidate's boot
+     * pass the seam is empty (GSM_S_LIVE: drv_reqlaw.c's r03f table, D-G6-15),
+     * from it the boot allowance (gs_bridge_boot_pass) */
+    B.fence = 0u;
+    B.fence_ev = 0u;
+    B.boot_st = GSM_B_NONE;
     B.trip_pass = 0xFFFFFFFFu;
     B.trip_ch = 0xFFu;
 #endif
@@ -498,7 +520,12 @@ static uint8_t rel_envelope(uint8_t *tch, uint16_t *tv, uint8_t (*reqmode)(uint8
  * its own RAM .gsc_req / .gsc_obj) is THE PRODUCER of the live A..E
  * currents: every pass the seam (drv_gsbr_take, drv_reqlaw.c
  * rq_prod_guarded) carries its currents — unless
- *   (a) THE E28E FENCE (D-G6-4, D-G6-12): the candidate's exception machine
+ *   (a) r04q: THE BOOT FENCE IS LIFTED (D-G6-13): the boot transient is
+ *       carried, bounded by the once-per-boot BOOT ALLOWANCE (mon_tick 3a,
+ *       gs_bridge_boot_pass); THE STALL FENCE (D-G6-14) stays, its source
+ *       the constant P content (GSM_S_FENCE), no longer the live producer.
+ *       The r04p text of (a), for the record:
+ *       THE E28E FENCE (D-G6-4, D-G6-12): the candidate's exception machine
  *       E28E != 0 while its engine owns nothing — the stock's boot transient
  *       (E28E starts at 1, 0xD0C5A: every element released 2..3 passes, then
  *       A refills) and the all-release on an engine stop (0xD0C94 with
@@ -558,10 +585,106 @@ static void mon_trip(uint8_t lbit, uint16_t why, uint8_t ch, uint16_t v)
     }
 }
 
+/* r04q (D-G6-13): which allowed boot row the candidate's A..E content is
+ * (gear target 1st: the target's first element is A, ch 0):
+ *   GSM_B_REL  — the all-release row of 0xD0C94 code 2 (table 0x6314C): A
+ *                500 (mode 1, not filling), D / B / E / C at the P content
+ *                (mode 1, not filling), with E28E in 1..3 (the boot states);
+ *   GSM_B_FILL — A's switch-on per the stock law: E28E 0, A in [500, 8500]
+ *                in the curve law (mode 0) or a fill state (1 / 2), every
+ *                other channel at the P content (mode 1, not filling);
+ *   0          — neither */
+#if !defined(__sh__)
+static bool injb_on(void)
+{
+    return B.passes >= s_injb_from && B.passes < s_injb_to;
+}
+#endif
+static uint8_t mon_e28e(const volatile gs_wit_t *w)
+{
+#if !defined(__sh__)
+    if (injb_on() && s_injb_e28e != 0xFFu) {
+        return s_injb_e28e;
+    }
+#endif
+    return w->e28e;
+}
+static uint8_t boot_row(uint8_t e28e)
+{
+    bool others = true;
+    uint16_t a;
+    uint8_t am, ast;
+    for (uint8_t ch = 1u; ch < 5u; ch++) {
+        uint16_t v;
+        (void)cand_cur_inj(ch, &v);
+        const uint8_t m = gs_cand_reqmode(ch), st = gs_cand_fillst(ch);
+        if (v != GSB_PCONT[ch] || m != 1u || st == 1u || st == 2u) {
+            others = false;
+        }
+    }
+    (void)cand_cur_inj(0u, &a);
+    am = gs_cand_reqmode(0u);
+    ast = gs_cand_fillst(0u);
+#if !defined(__sh__)
+    if (injb_on() && s_injb_am != 0xFFu) {
+        am = s_injb_am;
+        ast = 0u;
+    }
+#endif
+    if (!others) {
+        return 0u;
+    }
+    if (e28e >= 1u && e28e <= 3u && a == GSB_IMIN && am == 1u && ast != 1u && ast != 2u) {
+        return GSM_B_REL;
+    }
+    if (e28e == 0u && a >= GSB_IMIN && a <= GSB_IMAX && (am == 0u || ast == 1u || ast == 2u)) {
+        return GSM_B_FILL;
+    }
+    return 0u;
+}
+
+void gs_bridge_boot_pass(void)
+{
+#if GS_G6B
+    static const uint16_t PC7[7] = DRV_RQ_PCONT_TABLE;
+    const volatile gs_wit_t *w = gs_cand_wit();
+    uint8_t v = 0u;
+
+    B.boot_calls = (uint8_t)(B.boot_calls < 0xFFu ? B.boot_calls + 1u : 0xFFu);
+    if (B.boot_st != GSM_B_NONE) {
+        v = GSM_BV_TWICE;                           /* once per MCU start */
+    } else if (w->passes == 0u || boot_row(mon_e28e(w)) != GSM_B_REL) {
+        v = GSM_BV_ENTRY;
+    }
+    B.boot_p0 = B.passes;
+    B.boot_len = 1u;
+    if (W.latch != 0u) {
+        B.src = GSM_S_PCONT;                        /* a warm reset's carried latch */
+        if (B.boot_st == GSM_B_NONE) {
+            B.boot_st = GSM_B_USED;
+        }
+    } else if (v != 0u) {
+        B.boot_st = (uint8_t)(GSM_B_VIOL | v);
+        mon_trip(GSB_L_IDLE, (uint16_t)(GSB_R_IDLE | GSB_G_FIXED), 0xFFu, v);
+        B.src = GSM_S_PCONT;
+    } else {
+        B.boot_st = GSM_B_REL;
+        B.src = GSM_S_CAND;
+    }
+    B.applied = 1u;
+    for (uint8_t ch = 0u; ch < 5u; ch++) {
+        uint16_t c;
+        (void)cand_cur_inj(ch, &c);
+        B.sh[ch] = c;
+        B.app[ch] = (B.src == GSM_S_CAND) ? c : PC7[ch];
+        B.cur[ch] = B.app[ch];
+    }
+#endif
+}
+
 static void mon_tick(const gsb_in_t *in)
 {
     static const uint16_t PC7[7] = DRV_RQ_PCONT_TABLE;
-    static const uint32_t L_ST[5] = { L_OBJ_A_ST, L_OBJ_D_ST, L_OBJ_B_ST, L_OBJ_E_ST, L_OBJ_C_ST };
     const volatile gs_wit_t *w = gs_cand_wit();
     const uint8_t os = LIVE_U8(L_OS_MODE);
     const uint8_t pf = gs_cand_pf();
@@ -572,7 +695,9 @@ static void mon_tick(const gsb_in_t *in)
     const bool owns = pf != 0u || rel != 0u || gs_cand_pending() != 0u || (w->now_flags & 0x08u) != 0u;
     volatile gsb_slot_t *s = 0;
     uint16_t why = 0u;
-    bool commit_now = false, done_now = false, armed, agree = true, nonp = false, livep = true;
+    bool commit_now = false, done_now = false, armed, agree = true, nonp = false;
+    const bool booted = w->passes != 0u;            /* r04q: the candidate's boot pass ran */
+    uint8_t bootv = 0u;                             /* r04q: a boot-allowance violation (GSM_BV_*) */
     const bool prev_cand = (B.src == GSM_S_CAND) && (B.passes != 0u);
     bool relmode = false;
     uint8_t adirbit = dirbit, src;
@@ -658,12 +783,6 @@ static void mon_tick(const gsb_in_t *in)
                 nonp = true;
             }
         }
-        {
-            const uint8_t lst = LIVE_U8(L_ST[ch]);
-            if (B.lv[ch] != GSB_PCONT[ch] || lst == 1u || lst == 2u) {
-                livep = false;
-            }
-        }
     }
     B.owns = owns ? 1u : 0u;
     B.nonp = nonp ? 1u : 0u;
@@ -724,31 +843,74 @@ static void mon_tick(const gsb_in_t *in)
         why |= GSB_G_LATCH;
     }
 
-    /* 3. the E28E fence (D-G6-4 / D-G6-12): on while E28E != 0 with nothing
-     * owned; off only onto the P content on both sides */
+    /* 3a. r04q (D-G6-13): THE BOOT ALLOWANCE (ours) — opened by the boot
+     * entry (gs_bridge_boot_pass); while open, non-P content is allowed only
+     * as the stock's E28E boot sequence: the all-release row (E28E 1..3),
+     * then the gear-target element's switch-on fill (E28E 0, A only, every
+     * other channel at the P content), within MON_BOOT_PASSES evaluations
+     * of the entry; it ends (for good) on the first P-content pass with
+     * E28E 0. Anything else while open → a violation (GSB_L_IDLE, latched) */
+    if (B.boot_st == GSM_B_REL || B.boot_st == GSM_B_FILL) {
+        if (B.boot_len < 0xFFFFu) {
+            B.boot_len = (uint16_t)(B.boot_len + 1u);
+        }
+        if (owns) {
+            B.boot_st = GSM_B_USED;                 /* the engine owns content: the normal checks */
+        } else if (!nonp && mon_e28e(w) == 0u) {
+            B.boot_st = GSM_B_USED;                 /* ended on the P content */
+        } else if (B.boot_len > MON_BOOT_PASSES) {
+            bootv = GSM_BV_LEN;
+        } else {
+            const uint8_t row = boot_row(mon_e28e(w));
+            if (row == GSM_B_REL && B.boot_st == GSM_B_REL) {
+                /* the all-release row, before the fill */
+            } else if (row == GSM_B_FILL) {
+                B.boot_st = GSM_B_FILL;
+            } else {
+                bootv = (row == GSM_B_REL) ? GSM_BV_ORDER : GSM_BV_ROW;
+            }
+        }
+    }
+
+    /* 3b. the E28E stall fence (D-G6-12 / r04q D-G6-14): on while E28E != 0
+     * with nothing owned (outside the boot allowance); it hands the seam THE
+     * CONSTANT P CONTENT (no longer the live producer); off once E28E is 0
+     * and the candidate's content IS the P content */
     if (B.fence != 0u) {
-        if (w->e28e == 0u && !nonp && livep) {
+        if (w->e28e == 0u && !nonp) {
             B.fence = 0u;
             B.unfence_n = (uint16_t)(B.unfence_n + 1u);
             if (B.unfence_pass == 0u) {
                 B.unfence_pass = B.passes;
             }
         }
-    } else if (w->e28e != 0u && !owns) {
+    } else if (booted && w->e28e != 0u && !owns && B.boot_st != GSM_B_REL && B.boot_st != GSM_B_FILL &&
+               bootv == 0u) {
         B.fence = 1u;
         B.fence_ev = (uint16_t)(B.fence_ev + 1u);
     }
 
     /* 4. the decision */
-    if (B.fence != 0u) {
-        src = GSM_S_LIVE;
-    } else if (W.latch != 0u) {
+    if (W.latch != 0u && booted) {
         src = GSM_S_PCONT;                          /* latched until power-off */
         if (B.trip_n == 0u) {
             /* a window latch (30 s / 3.5 s / 16 commits, a torn window, a
-             * warm boot's carried latch): the first one recorded */
+             * warm boot's carried latch): the first one recorded. r04q:
+             * before the fence (r04p: the fence first — the wire is the P
+             * content either way) */
             mon_trip(0u, why, 0xFFu, W.latch);
         }
+    } else if (!booted) {
+        src = GSM_S_LIVE;                           /* r04q: before the candidate's boot pass (r03f) */
+    } else if (bootv != 0u) {
+        B.boot_st = (uint8_t)(GSM_B_VIOL | bootv);
+        mon_trip(GSB_L_IDLE, (uint16_t)(why | GSB_R_IDLE | GSB_G_FIXED), 0xFFu, bootv);
+        why = (uint16_t)(why | GSB_G_FIXED | GSB_G_LATCH);
+        src = GSM_S_PCONT;
+    } else if (B.boot_st == GSM_B_REL || B.boot_st == GSM_B_FILL) {
+        src = GSM_S_CAND;                           /* r04q: the stock's E28E boot sequence */
+    } else if (B.fence != 0u) {
+        src = GSM_S_FENCE;                          /* r04q: the stall fence's P content */
     } else if (!nonp) {
         src = GSM_S_CAND;                           /* the P content (no permit needed) */
 #if defined(GSM_HOST_BYPASS)
@@ -816,7 +978,9 @@ static void mon_tick(const gsb_in_t *in)
     }
 
     /* 5. the seam's value; armed = the candidate's engine on the wire */
-    armed = (src == GSM_S_CAND) && (owns || nonp);
+    /* r04q: the boot allowance's passes are not the engine's engagement —
+     * not armed, not charged to the 30 s budget */
+    armed = (src == GSM_S_CAND) && (owns || nonp) && B.boot_st != GSM_B_REL && B.boot_st != GSM_B_FILL;
     if (relmode && R.on != 0u && src != GSM_S_CAND) {
         rel_end(GSBR_E_WHY, why);                   /* never re-armed */
     }
@@ -870,12 +1034,14 @@ static void mon_tick(const gsb_in_t *in)
     B.pf = pf;
     B.why = why;
     switch (src) {
-    case GSM_S_CAND:  B.cand_n++; B.applied_n++; break;
-    case GSM_S_PCONT: B.pc_n++;   B.applied_n++; break;
-    default:          B.live_n++;                break;
+    case GSM_S_CAND:  B.cand_n++;  B.applied_n++; break;
+    case GSM_S_PCONT: B.pc_n++;    B.applied_n++; break;
+    case GSM_S_FENCE: B.fence_n++; B.applied_n++; break;
+    default:          B.live_n++;                 break;
     }
     for (uint8_t ch = 0u; ch < 5u; ch++) {
-        B.app[ch] = (src == GSM_S_CAND) ? B.sh[ch] : ((src == GSM_S_PCONT) ? PC7[ch] : 0u);
+        B.app[ch] = (src == GSM_S_CAND) ? B.sh[ch] :
+                    ((src == GSM_S_PCONT || src == GSM_S_FENCE) ? PC7[ch] : 0u);
         B.cur[ch] = (src == GSM_S_LIVE) ? B.lv[ch] : B.app[ch];
     }
 
@@ -929,6 +1095,9 @@ static void mon_tick(const gsb_in_t *in)
     B.passes++;
 }
 #endif /* GS_G6B */
+#if !GS_G6B
+void gs_bridge_boot_pass(void) {}               /* r04q: no monitor, no allowance */
+#endif
 
 /* G6c: the r04n bridge form (GS_G6B 0 with a seam) is deleted; GS_G6B 1 is
  * the monitor, GS_G6B 0 a host build without the seam (no monitor at all) */

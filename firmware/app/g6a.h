@@ -188,6 +188,8 @@ void g6a_init(void);
 /* boot state 1 (bsw/sup/sup_mode.c, after rq_prod_boot_pass): the
  * candidate's boot pass, then comparator pass 0 */
 void g6a_boot(const gs_in_t *gi);
+/* r04q: the boot pass's comparison (after gs_bridge_boot_pass) */
+void g6a_boot_compare(void);
 /* app/main.c: builds the inputs and calls g6a_boot (the weak hook of
  * bsw/sup/sup_mode.c) */
 void g6a_boot_pass(void);

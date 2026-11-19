@@ -1739,8 +1739,14 @@ static void ddc38(void)
     E33.b[2] = 0u;
     e67ec(0u, 0u, 0u);
     prog_end();                                          /* 0xEBB6C → 0x11755E */
-    KB.bd16 = 0u;                                         /* 0xEBB6C [stand-in] */
-    KB.bd17 = 0u;
+    /* r04q (B2, b2_slots_subobj_decode.md §C.2; 0xEBB6C clears only BD15):
+     * BD17 is NOT cleared any more (it keeps 4 — "the three-element engine
+     * owns the shift" — as the stock dump shows after an engagement).
+     * BD16's clear is OURS, not the stock's (the stock leaves BD16 at the
+     * last kind until the next start): kept because our completion test
+     * (bab6c's BD16 branches), the releasing() accessor the monitor reads
+     * (gs_shadow_releasing: BD16 == 4) and the release recorder need it */
+    KB.bd16 = 0u;                                         /* ours (see above) */
     gsf_set_bd16(0u);
 }
 
@@ -2490,13 +2496,102 @@ void gs_shadow_init(void)
 #ifndef GSE_NEG_C3D_HOOK
 #  define GSE_NEG_C3D_HOOK() ((void)0)      /* G6a host negative only (app/gs_cand_bind.h) */
 #endif
+#if defined(GSE_BOOT_ENTRY)
+/* r04q (D-G6-13, ~/tcu_sweep/r04q_port.md; decode b1_e28e_timing_decode.md
+ * §1.1, bytes re-read 0xA2E30..0xA2E72, 0xD01C4..0xD0230, 0x103FD6): the
+ * row-1 list's sub-list 0x4D7B0 ENTRY 16 = 0xA2E30, run by the boot pass
+ * before entry 17 (the producer). Its body, in the stock order:
+ *   0xB6BDC → 0xCFF0E(AE28)        NOT PORTED: the E6F0 object's init
+ *                                  (0x104568 / 0x104712), the 0xBA6F4(E617,
+ *                                  45) hook (E617 0: rts), a consistency
+ *                                  check of E6EE/E69B/CCE4/E69F that only
+ *                                  reports (0xB79E4 id 0x7E) and 0xD12E8
+ *                                  (E2A2) — none of them is read by the
+ *                                  holder / producer / engine we port;
+ *   0xB6BE4(1) → 0xCFFDE(1)        param 1: 0xD0C5A (E28E = 1, flags |= 4)
+ *                                  INSTEAD OF the step 0xD093A; its other
+ *                                  init calls (0x104008, 0xCFE56, 0x103EC0,
+ *                                  0x104A0E, 0xD13C6, 0x103B0E) re-initialise
+ *                                  the power-flow cells our gse_init has
+ *                                  just set — no candidate code runs between
+ *                                  init and this pass (the tick returns in
+ *                                  OS mode 0), so they are at their init
+ *                                  values here: only 0xD0C5A is ported;
+ *   0xB6BEC → 0xD01C4 (slot 31)    0x103DE2(E6EE); r = 0xCFD1A(E69B); if r:
+ *                                  0x103DE2(E6EE); 0x104A28(E4A6) — ported
+ *                                  as the bytes (the conditional second
+ *                                  0x103DE2, unlike our cyclic slot 31);
+ *   0xB6BF4 → 0xD01E6 (slot 32)    0x103B36(CCE4, 1) + 0xD140C (+ the
+ *                                  conditional 0x103B36(CCE4, 0)) = our
+ *                                  r3cec; 0x103FD6(E6EF) (ported below:
+ *                                  E69C 0 and E28E not idle → E6EF 0);
+ *                                  0x103DE2; r = 0xCFD1A; if r: 0x103DE2;
+ *                                  **0xD0BAA (E28E 1 → 2)**; 0xBA6F4(E617,
+ *                                  47): E617 0 → rts, not ported;
+ *   0xBAC0E → 0xEAC2C(E3EC), 0xBAC1E → 0xDD954(E33C), 0xB85D0 → 0xDBEE8,
+ *   0xB85B0 → 0xDC086, 0xB85B8(0) → 0xDC35E(E6BF, 0)
+ *                                  NOT PORTED (b2_slots_subobj_decode.md:
+ *                                  > 1300 rpm forward-drive enable — 0
+ *                                  here; the gear-pair coordinator — idle
+ *                                  with a constant gear code; the E6BF
+ *                                  object's inits; 0xDC35E(0) clears the
+ *                                  settle counter E6C5, already 0 from
+ *                                  gse_init): no effect at the boot pass.
+ * At the boot pass E6EE = E69B = 0 (nothing pending), E6EF = 0, E4A7 =
+ * E6A1 = E69F = the target: every call but 0xD0C5A and 0xD0BAA is a no-op
+ * here; they are ported so the composition is the stock's. Result: E28E is
+ * 2 when entry 17's producer runs (ONE released producer pass, the stock's
+ * count; r04p held two). */
+static void r3fd6(void)                                  /* 0x103FD6 (E6EF) */
+{
+    if (G.e69c0 == 0u) {                                 /* E69C == 0 */
+        if (d0d52()) {
+            V_E6EF = 0u;                                 /* E28E not idle (0xD0D52) */
+        } else {
+            W.unp_n++;                                   /* 0xD0D66 → 0x103F56: not ported
+                                                          * (unreachable here: E28E = 1) */
+        }
+    }
+}
+static void row1_e16(void)                               /* 0xA2E30 */
+{
+    E28.st = 1u;                                         /* 0xCFFDE(1) → 0xD0C5A */
+    E28.f4 = (uint8_t)(E28.f4 | 4u);
+    /* 0xD01C4 */
+    r3de2();
+    G.commit_now = 0u;
+    cfd1a();
+    if (G.commit_now != 0u) {
+        r3de2();
+    }
+    r4a28();
+    /* 0xD01E6 */
+    r3cec();
+    r3fd6();
+    r3de2();
+    G.commit_now = 0u;
+    cfd1a();
+    if (G.commit_now != 0u) {
+        r3de2();
+    }
+    d0baa();                                             /* E28E 1 → 2 */
+}
+#  define GSE_ROW1_E16()   row1_e16()
+#  define GSE_BOOT_WIT()   (W.e28e = E28.st)             /* the monitor reads it from this pass on */
+#else
+#  define GSE_ROW1_E16()   ((void)0)                     /* instance 1 (host reference): r04l's */
+#  define GSE_BOOT_WIT()   ((void)0)
+#endif
 #define GSE_BOOT_PASS()                                                         \
-    /* the boot-state-1 pass: 0xE5602, then the producer + actuators */         \
+    /* the boot-state-1 pass: 0xE5602, (r04q) row-1 entry 16, then the        \
+     * producer + actuators (entry 17) */                                       \
     s_booted = true;                                                            \
     gsf_e5602();                                                                \
     d4dc2();                                                                    \
+    GSE_ROW1_E16();                                                             \
     dc4c4();                                                                    \
     actuators();                                                                \
+    GSE_BOOT_WIT();                                                             \
     W.passes++
 
 #if defined(GSE_AE28_IN)

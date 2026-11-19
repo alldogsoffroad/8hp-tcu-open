@@ -76,10 +76,13 @@ static bool g6a_on = true;
 static bool g6a_on;
 #endif
 static unsigned g6a_eng0_from;  /* frames after the mode-1 switch: 0x108 valid at 0 rpm (0 = never) */
+static unsigned g6q_engoff_from;/* r04q: frames after the mode-1 switch: 0x108 no longer sent (0 = never) —
+                                 * the bench's engine-sim stop (0x108 invalid) */
 static bool g6a_nosim;          /* no lever / brake / engine frames at all (the plain boot) */
 static unsigned g6a_m1;         /* the mode-1 frame of the current run */
 #if defined(G6B_TEST)
 static uint32_t g6b_relwin_from = 0xFFFFFFFFu, g6b_relwin_to;   /* test_g6b.c: forced RELWIN passes */
+static uint32_t g6q_boot2_at = 0xFFFFFFFFu;     /* r04q: a second boot entry after this monitor pass */
 #endif
 #if defined(G6A_HOSTTIME)
 /* scratch CPU-cost model (not a ctest): host ns of the shadow's tick (0) and
@@ -114,6 +117,8 @@ void g6a_boot_pass(void)
         .ae28 = *(const volatile uint8_t *)0xFFF8AE28u,
     };
     g6a_boot(&gi);
+    gs_bridge_boot_pass();          /* r04q: as app/main.c g6a_boot_pass */
+    g6a_boot_compare();
 }
 #endif
 
@@ -202,6 +207,8 @@ typedef struct {
                              * first engagement after the D → P release */
     bool gold_full;         /* G4a golden: every frame identical to HEAD (else
                              * every frame BEFORE c3_frame) */
+    unsigned bw_beg, bw_end;/* r04q: the frames of the monitor's boot entry and of the
+                             * boot allowance's end (gsb_t.boot_st USED) */
     run_r_t r;
 } gr_t;
 
@@ -303,6 +310,9 @@ static void task10(gr_t *g, unsigned p)
     d[1] = (uint8_t)rpm;
     d[2] = 0x1Fu;
     d[3] = 0xFFu;
+#if defined(G6A_TEST)
+    if (g6q_engoff_from == 0u || g->m1 == 0u || p < g->m1 + g6q_engoff_from)
+#endif
     g_send(CAN_BUS1, 0x108u, 8u, true, d);          /* engine 700 */
     }
 
@@ -357,6 +367,12 @@ static void task10(gr_t *g, unsigned p)
                 .cyc = drv_job_tx(DRV_CYC),
             };
             gs_bridge_tick_10ms(&bi);
+#if defined(G6B_TEST)
+            /* r04q negative: a second boot entry (the allowance used twice) */
+            if (gs_bridge_state()->passes == g6q_boot2_at) {
+                gs_bridge_boot_pass();
+            }
+#endif
         }
 #if defined(G6A_TEST)
         if (g6a_on) {
@@ -596,6 +612,15 @@ static void run_g(gr_t *g)
         h = fnv64(h, park_slot11_hold());
         g->hw[p - 1u] = h;
         g->h[p - 1u] = g_hash_window(h);
+#if defined(G6A_TEST) && GS_G6B
+        if (g->bw_beg == 0u && gs_bridge_state()->boot_calls != 0u) {
+            g->bw_beg = p;
+        }
+        if (g->bw_end == 0u && (gs_bridge_state()->boot_st == GSM_B_USED ||
+                                (gs_bridge_state()->boot_st & GSM_B_VIOL) != 0u)) {
+            g->bw_end = p;
+        }
+#endif
         g->relon[p - 1u] = (uint8_t)((g->bridge && gs_bridge_rel()->on != 0u) ? 1u : 0u);
         if (getenv("GSB_DUMP_FRAME") != NULL && (unsigned)atoi(getenv("GSB_DUMP_FRAME")) == p &&
             g->parity == 0u && getenv("GSB_DUMP_RUN") != NULL && strcmp(getenv("GSB_DUMP_RUN"), g->name) == 0) {
@@ -1022,6 +1047,39 @@ static bool in_rel_window(const gr_t *g, unsigned f /* 1-based */)
     return false;
 }
 
+#if defined(G6B_GATE)
+/* r04q (D-G6-13, ~/tcu_sweep/r04q_port.md): THE BOOT-WINDOW CARVE-OUT of the
+ * r04n / r04k gate goldens. The boot fence is lifted: the candidate's stock
+ * boot sequence (A 500 for one producer pass, then A's switch-on fill one
+ * pass later than the live producer's) reaches the wire, so against these
+ * goldens (r04p's wire) a WIRE difference is allowed only in the frames of
+ * the boot allowance [bw_beg, bw_end], and a cell-window-only difference
+ * (A's filtered feedback duty 0xFFF93420 and the candidate's A request
+ * object settle) only in [bw_beg, bw_end + G6Q_SETTLE]. Every other frame
+ * keeps the old rule. The per-word identity of the rest of the wire is
+ * test_g6b's (the staged A..E words per tick vs the r04p goldens,
+ * tests/unit/g6q_gold_diff.py). */
+#  define G6Q_SETTLE 300u
+static unsigned g6q_cw_n[16], g6q_ww_n[16], g6q_cw_last[16];
+static bool g6q_boot_frame(const gr_t *g, unsigned k, unsigned f, bool wire)
+{
+    if (g->bw_beg == 0u || g->bw_end == 0u || f < g->bw_beg) {
+        return false;
+    }
+    if (wire ? (f <= g->bw_end) : (f <= g->bw_end + G6Q_SETTLE)) {
+        if (k < 16u) {
+            if (wire) {
+                g6q_ww_n[k]++;
+            } else {
+                g6q_cw_n[k]++;
+                g6q_cw_last[k] = f;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+#endif
 static unsigned gold_check(const char *path, const gr_t *g, unsigned k, bool exact)
 {
     static const char *lp;
@@ -1072,12 +1130,26 @@ static unsigned gold_check(const char *path, const gr_t *g, unsigned k, bool exa
             }
             found++;
             if (g->h[v[i].f - 1u] != v[i].h || (v[i].has_w && g->hw[v[i].f - 1u] != v[i].hw)) {
+#if defined(G6B_GATE)
+                const bool wd = v[i].has_w && g->hw[v[i].f - 1u] != v[i].hw;
+                if (g6q_boot_frame(g, k, v[i].f, wd)) {
+                    continue;
+                }
+#endif
                 if (diff == 0u) { first = v[i].f; }
                 diff++;
             }
         }
         printf("   GOLDEN exact (G4b trace): run %u '%s': %u frames compared, %u differ (first F%u)\n", k,
                g->name, found, diff, first);
+#if defined(G6B_GATE)
+        printf("   r04q boot-window carve-out (exact): boot entry F%u, allowance end F%u: wire-differing frames "
+               "inside it %u, cell-only %u (last F%u)\n", g->bw_beg, g->bw_end, k < 16u ? g6q_ww_n[k] : 0u,
+               k < 16u ? g6q_cw_n[k] : 0u, k < 16u ? g6q_cw_last[k] : 0u);
+        if (k < 16u) {
+            g6q_ww_n[k] = g6q_cw_n[k] = g6q_cw_last[k] = 0u;
+        }
+#endif
         return diff + (GFRAMES - found);
     }
     {
@@ -1102,6 +1174,11 @@ static unsigned gold_check(const char *path, const gr_t *g, unsigned k, bool exa
             }
             if (first_rel == 0u || f < first_rel) {
                 if (g->h[f - 1u] != v[i].h) {
+#if defined(G6B_GATE)
+                    if (g6q_boot_frame(g, k, f, g->hw[f - 1u] != v[i].hw)) {
+                        continue;
+                    }
+#endif
                     pre++;
                 }
                 continue;
@@ -1123,6 +1200,14 @@ static unsigned gold_check(const char *path, const gr_t *g, unsigned k, bool exa
                "release frame F%u %u differ; WIRE differs in %u frames inside the %u release-window frames, "
                "%u outside (first F%u); cell-window-only differences %u (F%u..F%u)\n", k, g->name, found,
                first_rel, pre, wire_in, relf, wire_out, wo_first, cell_only, co_first, co_last);
+#if defined(G6B_GATE)
+        printf("   r04q boot-window carve-out (reference): boot entry F%u, allowance end F%u: wire-differing frames "
+               "inside it %u, cell-only %u (last F%u)\n", g->bw_beg, g->bw_end, k < 16u ? g6q_ww_n[k] : 0u,
+               k < 16u ? g6q_cw_n[k] : 0u, k < 16u ? g6q_cw_last[k] : 0u);
+        if (k < 16u) {
+            g6q_ww_n[k] = g6q_cw_n[k] = g6q_cw_last[k] = 0u;
+        }
+#endif
         return pre + wire_out + (GFRAMES - found) + ((first_rel == 0u) ? 1u : 0u) + ((wire_in == 0u) ? 1u : 0u);
     }
 }
