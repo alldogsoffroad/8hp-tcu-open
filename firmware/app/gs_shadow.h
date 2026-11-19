@@ -245,6 +245,11 @@ void gs_shadow_host_standins(uint8_t mask, int16_t bd76, uint8_t bd30);
 /* host only: sub-object k's +0xC, +0x24, +0x54, +0x30, +0x32 and its
  * element's request result +2 */
 void gs_shadow_host_sub(uint8_t k, int16_t v[6]);
+/* G6-0: the instance's state block k (0 gs_t, 1 the witnesses, 2 the
+ * progress block, 3/4 the recorder slots, 5 the release object, 6 the
+ * request objects, 7 the fill cells, 8..10 the per-pass input latches);
+ * NULL past the last block (tests/unit/gs_dual.c) */
+const volatile void *gs_shadow_host_state(uint8_t k, uint32_t *n);
 #else
 #  if defined(GS_SHADOW_HOST_HOOKS)
 #    error "gs_shadow: the host stand-in overrides do not exist on SH builds"

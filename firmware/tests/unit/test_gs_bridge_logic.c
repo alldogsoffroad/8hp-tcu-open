@@ -44,6 +44,16 @@
 #include "safety/kl15.h"
 #include "safety/park_mon.h"
 #include "tests/unit/stub_plat.h"
+#if defined(GS_DUAL)
+/* G6-0 (~/tcu_sweep/g6_0_port.md): instance 2 of the engine template (the
+ * candidate) driven beside the shadow through every abort case */
+#include "tests/unit/gs_dual.h"
+#  define DUAL_INIT()     gs_dual_init()
+#  define DUAL_TICK(g)    gs_dual_tick(g)
+#else
+#  define DUAL_INIT()     ((void)0)
+#  define DUAL_TICK(g)    ((void)0)
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -133,6 +143,7 @@ static void tick(void)
             .cyc = drv_job_tx(DRV_CYC),
         };
         gs_shadow_tick_10ms(&gi);
+        DUAL_TICK(&gi);
         gs_bridge_tick_10ms(&bi);
     }
     drv_rq_request_set(7u, park_slot7_release());
@@ -170,6 +181,7 @@ static void boot(bool cold)
     CELL_SUPPLY_RAW = 13366u;
     rq_prod_boot_pass();
     gs_shadow_init();
+    DUAL_INIT();
     gs_bridge_init(cold);
     gs_bridge_host_inject(0xFFu, 0u, 0u, 0u);
     memset(&C, 0, sizeof C);
@@ -248,6 +260,7 @@ static void test_m2(void)
     const volatile gsb_m2_t *m;
     memset((void *)(uintptr_t)0xFFF80000u, 0, 0x16000u);
     gs_shadow_init();
+    DUAL_INIT();
     gs_bridge_init(true);
     m = &gs_bridge_state()->m2;
     CELL_OS_MODE = 1u;
@@ -592,6 +605,7 @@ static void rel_warm_reset(void)
     o = follow_release(1u, 30u, 0);
     CHECK(o.applied == 30u, "release warm reset: bridged before (%u)", o.applied);
     gs_shadow_init();
+    DUAL_INIT();
     gs_bridge_init(false);
     tick();
     CHECK(gs_bridge_state()->applied == 0u && staged_P(), "release warm reset: the P content at once");
@@ -843,6 +857,7 @@ static void abort_warm_reset(void)
      * live modules keep running here — the wire's view of the reset is the
      * bridge's disarm) */
     gs_shadow_init();
+    DUAL_INIT();
     gs_bridge_init(false);
     CHECK(gs_bridge_win()->acc_ms == acc && gs_bridge_win()->commits == 1u && gs_bridge_win()->warm == 1u,
           "warm reset: the windows carried (acc %u/%u commits %u)", (unsigned)gs_bridge_win()->acc_ms,
@@ -1005,6 +1020,12 @@ int main(void)
     abort_budget();
     abort_commits();
 #endif
+#endif
+#if defined(GS_DUAL)
+    gs_dual_report("test_gs_bridge_logic");
+    CHECK(gs_dual_passes() > 1000u, "gs_dual: only %u passes compared", gs_dual_passes());
+    CHECK(gs_dual_bad() == 0u, "gs_dual: %u passes where the candidate differs from the shadow",
+          gs_dual_bad());
 #endif
     if (s_fail == 0) {
         printf("test_gs_bridge_logic: ok\n");

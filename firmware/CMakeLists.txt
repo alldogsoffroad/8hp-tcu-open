@@ -629,6 +629,35 @@ else()
     add_executable(test_gs_shadow_faithful ${GS_TEST_SOURCES})
     target_compile_definitions(test_gs_shadow_faithful PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=0)
     add_test(NAME gs_shadow_faithful COMMAND test_gs_shadow_faithful)
+    # G6-0 (2026-11-19, ~/tcu_sweep/g6_0_port.md): the engine is a TEMPLATE
+    # (app/gs_engine.c) compiled twice — instance 1 = app/gs_shadow.c (the
+    # shadow, today's RAM and symbols, the only one in the SH image) and
+    # instance 2 = app/gs_cand.c + app/gs_cand_fill.c (the future G6a
+    # candidate, HOST-ONLY here, its own request objects and fill instance).
+    # gs_dual: instance 2 driven with instance 1's gs_in_t every pass of every
+    # scenario of test_gs_shadow (the gs-check P D P R P with sims, the
+    # engagements, the 120-pass releases, the release interruptions) and of
+    # test_gs_bridge_logic (every abort case, G1 and GS_LIVE_DIR 3): every
+    # state byte and output identical. Negatives (must FAIL): the candidate's
+    # fill instance bound one object off its engine; the candidate bound onto
+    # instance 1's request objects.
+    set(GS_DUAL_SOURCES app/gs_cand.c app/gs_cand_fill.c tests/unit/gs_dual.c)
+    add_executable(test_gs_dual ${GS_TEST_SOURCES} ${GS_DUAL_SOURCES})
+    target_compile_definitions(test_gs_dual PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=1 GS_DUAL=1)
+    add_test(NAME gs_dual_identity COMMAND test_gs_dual)
+    add_executable(test_gs_dual_faithful ${GS_TEST_SOURCES} ${GS_DUAL_SOURCES})
+    target_compile_definitions(test_gs_dual_faithful PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=0 GS_DUAL=1)
+    add_test(NAME gs_dual_identity_faithful COMMAND test_gs_dual_faithful)
+    add_executable(test_gs_dual_neg_fill ${GS_TEST_SOURCES} ${GS_DUAL_SOURCES})
+    target_compile_definitions(test_gs_dual_neg_fill PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=1 GS_DUAL=1
+        GSC_NEG_FILL_SHIFT=1)
+    add_test(NAME gs_dual_neg_fill_binding COMMAND test_gs_dual_neg_fill)
+    set_tests_properties(gs_dual_neg_fill_binding PROPERTIES WILL_FAIL TRUE)
+    add_executable(test_gs_dual_neg_alias ${GS_TEST_SOURCES} ${GS_DUAL_SOURCES})
+    target_compile_definitions(test_gs_dual_neg_alias PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=1 GS_DUAL=1
+        GSC_NEG_ALIAS=1)
+    add_test(NAME gs_dual_neg_alias_binding COMMAND test_gs_dual_neg_alias)
+    set_tests_properties(gs_dual_neg_alias_binding PROPERTIES WILL_FAIL TRUE)
     add_executable(test_gs_cal tests/unit/test_gs_cal.c app/gs_cal.c)
     target_compile_definitions(test_gs_cal PRIVATE "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"")
     add_test(NAME gs_cal_bytes COMMAND test_gs_cal)
@@ -656,7 +685,10 @@ else()
     add_test(NAME gs_shadow_scan_shadow
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/gs_shadow_scan.py shadow
             ${CMAKE_SOURCE_DIR}/app/gs_shadow.c ${CMAKE_SOURCE_DIR}/app/gs_fill.c
-            ${CMAKE_SOURCE_DIR}/app/gs_shadow.h ${CMAKE_SOURCE_DIR}/app/gs_fill.h)
+            ${CMAKE_SOURCE_DIR}/app/gs_shadow.h ${CMAKE_SOURCE_DIR}/app/gs_fill.h
+            ${CMAKE_SOURCE_DIR}/app/gs_engine.c ${CMAKE_SOURCE_DIR}/app/gs_cand.c
+            ${CMAKE_SOURCE_DIR}/app/gs_cand_fill.c ${CMAKE_SOURCE_DIR}/app/gs_cand.h
+            ${CMAKE_SOURCE_DIR}/app/gs_cand_bind.h)
     add_test(NAME gs_shadow_scan_shadow_negative
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/gs_shadow_scan.py shadow
             ${CMAKE_SOURCE_DIR}/tests/unit/gs_scan_fixture_shadow.c)
@@ -677,6 +709,17 @@ else()
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_FORCED=2 ${GS_SH_SRC})
     add_test(NAME gs_sh_guard_r37
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_R37=1 ${CMAKE_SOURCE_DIR}/app/gs_shadow.c)
+    # G6-0: the template does not compile alone; the candidate is host-only
+    add_test(NAME gs_sh_guard_engine_alone
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${CMAKE_SOURCE_DIR}/app/gs_engine.c)
+    add_test(NAME gs_sh_guard_cand
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${CMAKE_SOURCE_DIR}/app/gs_cand.c)
+    add_test(NAME gs_sh_guard_cand_fill
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${CMAKE_SOURCE_DIR}/app/gs_cand_fill.c)
+    set_tests_properties(gs_sh_guard_engine_alone PROPERTIES
+        PASS_REGULAR_EXPRESSION "gs_engine.c is the garage engine TEMPLATE")
+    set_tests_properties(gs_sh_guard_cand gs_sh_guard_cand_fill PROPERTIES
+        PASS_REGULAR_EXPRESSION "the G6a candidate is host-only in G6-0")
     set_tests_properties(gs_sh_guard_output PROPERTIES
         PASS_REGULAR_EXPRESSION "the garage shadow is read-only: an output path may not include gs_shadow.h")
     set_tests_properties(gs_sh_guard_live PROPERTIES
@@ -1283,6 +1326,16 @@ else()
     add_executable(test_gs_bridge_live ${GSB_LOGIC_SOURCES})
     target_compile_definitions(test_gs_bridge_live PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=1 GS_LIVE_DIR=3)
     add_test(NAME gs_bridge_live_aborts COMMAND test_gs_bridge_live)
+    # G6-0: the candidate beside the shadow through every abort case
+    add_executable(test_gs_dual_bridge_logic ${GSB_LOGIC_SOURCES} app/gs_cand.c app/gs_cand_fill.c
+        tests/unit/gs_dual.c)
+    target_compile_definitions(test_gs_dual_bridge_logic PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=1 GS_DUAL=1)
+    add_test(NAME gs_dual_bridge_logic COMMAND test_gs_dual_bridge_logic)
+    add_executable(test_gs_dual_bridge_live ${GSB_LOGIC_SOURCES} app/gs_cand.c app/gs_cand_fill.c
+        tests/unit/gs_dual.c)
+    target_compile_definitions(test_gs_dual_bridge_live PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=1 GS_LIVE_DIR=3
+        GS_DUAL=1)
+    add_test(NAME gs_dual_bridge_live_aborts COMMAND test_gs_dual_bridge_live)
     add_executable(test_gs_bridge_mut ${GSB_LOGIC_SOURCES})
     target_compile_definitions(test_gs_bridge_mut PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=1 GSB_HOST_MUT_TABLE=1)
     add_test(NAME gs_bridge_table_mutation_trips COMMAND test_gs_bridge_mut)
