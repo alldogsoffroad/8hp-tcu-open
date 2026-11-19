@@ -168,9 +168,9 @@
  * .tmp_940e0 (the fault code / mask cells are drv_temp.c's own). */
 #define CELL_TMP_FWORD      (*(volatile uint16_t *)0xFFF93914u) /* 0x7BF8C: the fault word */
 #define CELL_TMP_PUB_E0     (*(volatile uint8_t  *)0xFFF940E0u) /* 0x7C100: 0x940E2 ? 0xFF : 0x940FE */
-#define CELL_TMP_PUB_E2     (*(volatile uint8_t  *)0xFFF940E2u) /* that source's fault flags (not produced: stand-in) */
+#define CELL_TMP_PUB_E2     (*(volatile uint8_t  *)0xFFF940E2u) /* the die's failed flags (0x7C01E; stage 2b live, else stand-in 0x80) */
 #define CELL_TMP_PUB_E3     (*(volatile uint8_t  *)0xFFF940E3u) /* 0x7C100: 0x940E5 ? 0xFF : 0x94101 */
-#define CELL_TMP_PUB_E5     (*(volatile uint8_t  *)0xFFF940E5u) /* that source's fault flags (not produced: stand-in) */
+#define CELL_TMP_PUB_E5     (*(volatile uint8_t  *)0xFFF940E5u) /* the board's failed flags (0x7C0B6; stage 2b live, else stand-in 0x80) */
 #define CELL_TMP_PUB_E6     (*(volatile uint8_t  *)0xFFF940E6u) /* 0x7C100: 0x940E8 ? 0xFF : 0x94102 — THE fluid byte */
 #define CELL_TMP_PUB_E7     (*(volatile uint8_t  *)0xFFF940E7u) /* 0x7BF8C: the tested mask (0x87) */
 #define CELL_TMP_PUB_E8     (*(volatile uint8_t  *)0xFFF940E8u) /* 0x7BF8C: the fluid sensor's fault flags */

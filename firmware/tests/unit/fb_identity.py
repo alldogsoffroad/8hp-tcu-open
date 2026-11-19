@@ -11,7 +11,13 @@ hook; its stderr must show it ran its valid, not-ready and 0x8001 paths.
 --tsel-live, stage 2a: the second build writes the selection's cells through
 the real output path (TSEL_LIVE); both builds hash the window without those
 cells (TEST_ODIAG_EXCL2A), and the live cells must equal the shadow's results
-after every hub pass.)
+after every hub pass.
+--tsel2b, stage 2b: both builds run 0x7C100 and the safety layer
+(TEST_ODIAG_TMP); the second writes the fault flags (TSEL_LIVE_FLAGS); both
+hash the window without the flags and their direct consumers
+(TEST_ODIAG_EXCL2B); the second build's stderr must show the stock's healthy
+flag state, the 0x8001 window's failed flag, and E9C8 never off the limited
+fluid byte.)
 
 Runs both with --full (tests/unit/test_odiag.c: parts 1-4, an exact hash of
 the whole cell window + every bus-A word + the cadence witnesses per output
@@ -61,6 +67,23 @@ def main():
         ml = re.search(r"tsel_live checked (\d+) mism (\d+)", b.stderr)
         if not ml or int(ml.group(1)) == 0 or int(ml.group(2)) != 0:
             print("FAIL: the live cells do not carry the selection (%s)" % b.stderr.strip())
+            ok = False
+    if "--tsel2b" in sys.argv[3:]:
+        # stage 2b (2026-11-19): the flags live, 0x7C100 and the safety layer
+        # run in both builds; the second build must end in the stock's
+        # healthy flag state (the dump's E1 0x68 / E4 0xE0, E2 = E5 = 0, the
+        # die / board bytes published), the seeded 0x8001 window must have
+        # raised the board's failed flag (e5 > 0), the die never failed, D2
+        # and D7 never set (D3 only in that window), the direct fluid path
+        # (E998 status 0) taken, and E9C8 never off the limited fluid byte
+        mb = re.search(r"tsel2b flags (\w+) (\w+) (\w+) (\w+) bytes (\w+) (\w+) d2 (\d+) d3 (\d+) d7 (\d+) "
+                       r"e9c8 (\w+) st (\d+) c13 (\w+) passes (\d+) e5 (\d+) e2 (\d+) d2n (\d+) d3n (\d+) "
+                       r"d7n (\d+) st0n (\d+) e9c8bad (\d+)", b.stderr)
+        want = ("68", "00", "E0", "00")
+        if not mb or mb.groups()[0:4] != want or mb.group(5) == "FF" or mb.group(6) == "FF" \
+                or int(mb.group(14)) == 0 or int(mb.group(15)) != 0 or int(mb.group(16)) != 0 \
+                or int(mb.group(18)) != 0 or int(mb.group(19)) == 0 or int(mb.group(20)) != 0:
+            print("FAIL: stage 2b end state / paths (%s)" % b.stderr.strip())
             ok = False
     print("feedback shadow identity: %d output ticks, %d lines, %s; %s" %
           (ticks, len(la), "identical" if not bad and len(la) == len(lb) else "DIFFERENT",

@@ -13,6 +13,13 @@ stay 0 from init; STAGE 2a (TSEL_LIVE): they carry the shadow's selection
 (bsw/drv/drv_tsel.c), and the reply gate 0x9095B (0x0F after boot), the
 diagnosis bounds 0x93510 / 0x93524, the tested bits 0x94944, the estimates
 0x93394 and the fault words 0x93004 / 0x94930 (ch 0..4) are printed too.
+STAGE 2b (TSEL_LIVE_FLAGS, ~/tcu_sweep/temp_stage2b_port.md): the fault
+flags 0x940E1 / E2 / E4 / E5 must equal the shadow's E1 / E2 / E4 / E5
+(+0x36..+0x39), and the line "2b" prints their direct consumers — 0x7C100's
+bytes 0x940E0 / 0x940E3 (the die / board byte, not 0xFF), the safety
+layer's ED20 gather +0xB8..+0xBD and D2 / D3 / D5 / D7, E998's gather
++0x2C..+0x2F, THE fluid byte +0x30 / status +0x32 and the second output
++0x34 / +0x35, and 0x89C13.
 
     witness_temps.py [rounds] [--raw]
 
@@ -48,6 +55,16 @@ EXTRA = [
     ("UB 0x93510[0..4]", 0xFFF93510, 10), ("LB 0x93524[0..4]", 0xFFF93524, 10),
     ("tested 0x94944[0..4]", 0xFFF94944, 10), ("est 0x93394[0..4]", 0xFFF93394, 10),
     ("fw 0x93004[0..4]", 0xFFF93004, 10), ("latched 0x94930[0..4]", 0xFFF94930, 10),
+]
+
+# stage 2b (2026-11-19): the flags' direct consumers. Healthy bench: E0..E5 =
+# die byte, 68, 00, board byte, E0, 00; ED20 +B8..BD = die, 00, board, 00,
+# fluid, 00; D2 / D3 / D5 / D7 = 0; E998 +2C..2F = board, fluid, 00, 00,
+# +30 = the limited fluid byte, +32 = 0, +34 = the board byte, +35 = 0
+STAGE2B = [
+    ("0x940E0..E8", 0xFFF940E0, 9),
+    ("ED20 +B8..BD", 0xFFF8EDD8, 6), ("ED20 +D2..D7", 0xFFF8EDF2, 6),
+    ("E998 +2C..35", 0xFFF8E9C4, 10), ("0x89C13", 0xFFF89C13, 1),
 ]
 
 
@@ -167,7 +184,7 @@ def main():
             v = read(b, 1, a, n)
             live.append("%s %s" % (name, v.hex() if v is not None else "??"))
         print("  LIVE (stage 2a: must equal the shadow's 0x22/0x24/0x1A/0x08/0x26.. fields; "
-              "0x940E1/E2/E4/E5 stay the stand-ins): " + " | ".join(live))
+              "stage 2b: 0x940E1/E2/E4/E5 = the shadow's REP E1/E2/E4/E5): " + " | ".join(live))
         ex = []
         for name, a, n in EXTRA:
             v = read(b, 1, a, n)
@@ -176,6 +193,11 @@ def main():
             else:
                 ex.append("%s %s" % (name, v.hex() if v is not None else "??"))
         print("  2a: " + " | ".join(ex))
+        t2b = []
+        for name, a, n in STAGE2B:
+            v = read(b, 1, a, n)
+            t2b.append("%s %s" % (name, v.hex(" ") if v is not None else "??"))
+        print("  2b (flags = the shadow's E1/E2/E4/E5 above): " + " | ".join(t2b))
         time.sleep(1.0)
     b.shutdown()
     print("witness done", flush=True)

@@ -153,9 +153,35 @@ static uint64_t fnv64(uint64_t h, uint32_t v)
     return h;
 }
 
+#if defined(GSB_HASH_FLAGS_AS_2A)
+/* STAGE 2b (2026-11-19, ~/tcu_sweep/temp_stage2b_port.md): this harness
+ * runs the temperature hub with the fault flags 0x940E1 / E2 / E4 / E5 live
+ * (TSEL_LIVE_FLAGS, the image's configuration); the goldens were written at
+ * stage 2a, when nothing in this harness wrote them (no drv_temp_init: all
+ * four 0). The hash reads them as that 0 — every OTHER cell, every bus-A
+ * word and the park demands must still match the goldens byte for byte —
+ * and counts the frames in which the live flags held the stock's tested
+ * masks (E1 0x60 / 0x68 — 0x68 once the die's comparators agree — and E4
+ * 0xE0), so the mask cannot hide an absent writer. */
+static unsigned long g_flags_live_n;
+static uint8_t g_flags_last[4];
+static unsigned long g_flags_nz_n;
+#endif
 static uint64_t g_hash_window(uint64_t h)
 {
     const volatile uint8_t *p = (const volatile uint8_t *)(uintptr_t)0xFFF80000u;
+#if defined(GSB_HASH_FLAGS_AS_2A)
+    if ((p[0x140E1u] & 0x60u) == 0x60u && p[0x140E4u] == 0xE0u) {
+        g_flags_live_n++;
+    }
+    if ((p[0x140E1u] | p[0x140E2u] | p[0x140E4u] | p[0x140E5u]) != 0u) {
+        g_flags_nz_n++;
+        g_flags_last[0] = p[0x140E1u];
+        g_flags_last[1] = p[0x140E2u];
+        g_flags_last[2] = p[0x140E4u];
+        g_flags_last[3] = p[0x140E5u];
+    }
+#endif
     for (uint32_t a = 0u; a < 0x16000u; a++) {
         const uint32_t abs = 0xFFF80000u + a;
         if ((abs >= GS_REQ_BASE && abs < GS_REQ_BASE + GS_REQ_SIZE) ||
@@ -163,6 +189,12 @@ static uint64_t g_hash_window(uint64_t h)
             (abs >= 0xFFF91440u && abs < 0xFFF92400u)) {
             continue;                       /* the garage shadow's own RAM */
         }
+#if defined(GSB_HASH_FLAGS_AS_2A)
+        if (abs == 0xFFF940E1u || abs == 0xFFF940E2u || abs == 0xFFF940E4u || abs == 0xFFF940E5u) {
+            h = (h ^ 0u) * 0x100000001B3ull;
+            continue;
+        }
+#endif
         h = (h ^ p[a]) * 0x100000001B3ull;
     }
     return h;
@@ -743,6 +775,14 @@ static void run_fresh_g(gr_t *g, bool verbose)
             GCHECK(g->modes_bad == 0u, "law modes != 3 on A..Sys: %u", g->modes_bad);
 #endif
         }
+#if defined(GSB_HASH_FLAGS_AS_2A)
+        /* in the child (the run's own process): the live flags were there */
+        printf("   stage 2b: %lu of the hashed frames carried the tested masks (E1 0x60/0x68, E4 0xE0); "
+               "%lu any flag; last E1 %02X E2 %02X E4 %02X E5 %02X\n", g_flags_live_n, g_flags_nz_n,
+               g_flags_last[0], g_flags_last[1], g_flags_last[2], g_flags_last[3]);
+        GCHECK(g_flags_live_n > 1000u, "stage 2b: the live flags never reached the tested masks (%lu)",
+               g_flags_live_n);
+#endif
         g->fails = (unsigned)g_fails;
         if (write(fd[1], g, sizeof *g) != (ssize_t)sizeof *g) {
             _exit(3);

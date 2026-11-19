@@ -39,8 +39,9 @@ void drv_temp_tick(void);
  * 10 ms in modes 1..3) */
 void drv_temp_pub_tick(void);
 
-/* the stand-in of the two temperature sources this firmware does not
- * produce (0x940E2 / 0x940E5 held nonzero = "faulted", drv_temp_init) */
+/* the stand-in of the die / board fault flags 0x940E2 / 0x940E5 (held
+ * nonzero = "faulted" by drv_temp_init) in every build WITHOUT
+ * TSEL_LIVE_FLAGS (bsw/drv/drv_tsel.h; stage 2b makes them live) */
 #define TMP_STANDIN_SRC_FAULTED 0x80u
 
 /* the unsigned curve 0x8ED20 → 0x8ED60 ({ n, x[n], y[n] }, round half up) */

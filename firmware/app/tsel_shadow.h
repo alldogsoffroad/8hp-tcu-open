@@ -33,7 +33,9 @@
  * STAGE 2a (2026-11-18): under TSEL_LIVE (bsw/drv/drv_tsel.h — the SH
  * application) the hook hands the results by value to bsw/drv/drv_tsel.c,
  * which writes 0x9393A / 0x940FC / 0x94170 / 0x940FF / 0x940FE / 0x94101 and
- * the die / board cells; the fault flags stay stand-ins (stage 2b).
+ * the die / board cells. STAGE 2b (2026-11-19, TSEL_LIVE_FLAGS): the same
+ * call also writes the fault flags 0x940E1 / E2 / E4 / E5 from e1 / e2 / e4
+ * / e5 (~/tcu_sweep/temp_stage2b_port.md); the shadow itself stays as it is.
  *
  * The SHADOW runs all of that into ITS OWN struct (tsel_t, linker section
  * .tsel_shadow at 0xFFF87C40, ours): it writes NOT 0x9393A, NOT 0x940FC,

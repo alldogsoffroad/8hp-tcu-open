@@ -1,4 +1,5 @@
-/* drv_tsel.c — the selected ECU temperature, live (stage 2a; drv_tsel.h).
+/* drv_tsel.c — the selected ECU temperature, live (stage 2a; drv_tsel.h),
+ * and (stage 2b, TSEL_LIVE_FLAGS) the die / board fault flags.
  * Output path (TCU_OUTPUT_PATH): the values are handed in by value from the
  * temperature hub hook (app/tsel_live.c); this TU knows only the stock
  * cells. Compiled for the code-flash application and the host; empty in the
@@ -16,6 +17,11 @@ void drv_tsel_apply(drv_tsel_val_t v)
     C_S16(0xFFF9393Eu) = v.t_brd;
     C_U8(0xFFF94100u) = v.st_brd;
     C_U8(0xFFF94101u) = v.b_brd;
+#if DRV_TSEL_FLAGS
+    /* 0x88DA8's tail → 0x7C0B6 (0x7C0D2..0x7C0E0): tested, failed */
+    C_U8(0xFFF940E4u) = v.e4;
+    C_U8(0xFFF940E5u) = v.e5;
+#endif
     /* 0x88BD0 → 0x8DB5A: the die (0x93ABA / 0x9415E) */
     C_S16(0xFFF93ABAu) = v.t_die;
     C_U8(0xFFF9415Eu) = v.st_die;
@@ -27,6 +33,11 @@ void drv_tsel_apply(drv_tsel_val_t v)
     C_U8(0xFFF940FCu) = v.st_sel;
     C_U8(0xFFF94170u) = v.src;
     C_U8(0xFFF940FFu) = v.b_sel;
+#if DRV_TSEL_FLAGS
+    /* 0x88BD0's tail → 0x7C01E (0x7C056..0x7C07E): tested, failed */
+    C_U8(0xFFF940E1u) = v.e1;
+    C_U8(0xFFF940E2u) = v.e2;
+#endif
 }
 
 #endif

@@ -12,6 +12,8 @@
  *   SH_GUARD_TSEL_RAMLIVE      TSEL_LIVE=1 in a RAM-app (or loader) build
  *                              (drv_tsel.h: "for the code-flash application
  *                              only")
+ *   SH_GUARD_TSEL_RAMFLAGS     TSEL_LIVE_FLAGS=1 (stage 2b) in a RAM-app build
+ *   SH_GUARD_TSEL_FLAGSNOLIVE  TSEL_LIVE_FLAGS=1 with TSEL_LIVE=0 (2b needs 2a)
  *   SH_GUARD_TSEL_LIVE_<hdr>   the shadow translation unit includes a live
  *                              header (sup_cells.h, drv_cells.h, drv_temp.h,
  *                              drv_odiag.h, platform.h) */
@@ -27,6 +29,16 @@
 #elif defined(SH_GUARD_TSEL_RAMLIVE)
 #define TCU_RAM_APP 1
 #define TSEL_LIVE 1
+#include "bsw/drv/drv_tsel.h"
+#include "app/tsel_shadow.h"
+#elif defined(SH_GUARD_TSEL_RAMFLAGS)
+#define TCU_RAM_APP 1
+#define TSEL_LIVE_FLAGS 1
+#include "bsw/drv/drv_tsel.h"
+#include "app/tsel_shadow.h"
+#elif defined(SH_GUARD_TSEL_FLAGSNOLIVE)
+#define TSEL_LIVE 0
+#define TSEL_LIVE_FLAGS 1
 #include "bsw/drv/drv_tsel.h"
 #include "app/tsel_shadow.h"
 #elif defined(SH_GUARD_TSEL_LIVE_CELLS)

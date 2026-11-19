@@ -153,6 +153,44 @@ static int excl2a(uint32_t a)
            a == 0xFFF9415Eu || a == 0xFFF94170u;
 }
 #endif
+#if defined(TEST_ODIAG_EXCL2B)
+/* STAGE 2b (2026-11-19, ~/tcu_sweep/temp_stage2b_port.md): the four fault
+ * flags bsw/drv/drv_tsel.c now writes and their DIRECT consumers in this
+ * harness (TEST_ODIAG_TMP: 0x7C100 and the safety layer's two temperature
+ * objects) — excluded from the window hash of both builds
+ * (tsel2b_identity). Found by a byte-for-byte window diff of the two builds
+ * (ODIAG_WINDOW_DUMP), and it is exactly the expected set:
+ *   0x940E1 / E2 / E4 / E5   the flags (0x7C01E / 0x7C0B6)
+ *   0x940E0 / E3             0x7C100: the die / board byte instead of 0xFF
+ *   ED20 +0xB8..+0xBB        the gathered E0 / E2 / E3 / E5
+ *   ED20 +0xC4 / +0xC5       0x14A4F0's copy of +0xBA (and its complement)
+ *   ED20 +0xD2..+0xD4, +0xD7 / +0xD8   0x14B34A's D2 / D3 / D7 → 0 (+ compl.)
+ *   E998 +0x2C / +0x2F       the gathered E3 / E5
+ *   E998 +0x34 / +0x35       0x1405FA / 0x140416's second output and status
+ * E998 +0x30 (0xFFF8E9C8, THE fluid byte) and everything downstream of it
+ * (0x89C57 / 0x89CD2 / 0x89C13, the fill, the law, the wire) are NOT in the
+ * set: they must hash identical. */
+static int excl2b(uint32_t a)
+{
+    return a == 0xFFF940E0u || a == 0xFFF940E1u || a == 0xFFF940E2u ||
+           a == 0xFFF940E3u || a == 0xFFF940E4u || a == 0xFFF940E5u ||
+           (a >= 0xFFF8EDD8u && a <= 0xFFF8EDDBu) ||          /* ED20 +0xB8..+0xBB */
+           a == 0xFFF8EDE4u || a == 0xFFF8EDE5u ||            /* ED20 +0xC4 / +0xC5 */
+           (a >= 0xFFF8EDF2u && a <= 0xFFF8EDF4u) ||          /* ED20 +0xD2..+0xD4 */
+           a == 0xFFF8EDF7u || a == 0xFFF8EDF8u ||            /* ED20 +0xD7 / +0xD8 */
+           a == 0xFFF8E9C4u || a == 0xFFF8E9C7u ||            /* E998 +0x2C / +0x2F */
+           a == 0xFFF8E9CCu || a == 0xFFF8E9CDu;              /* E998 +0x34 / +0x35 */
+}
+#endif
+#if defined(TEST_ODIAG_TMP)
+/* the fluid-byte chain's consumers of 0x940E0..E8 at their firmware slots:
+ * 0x7C100 in the supervisor tick after the hub, the safety layer's 10 /
+ * 30 / 100 ms parts in the 10 ms task (main.c) */
+#include "bsw/drv/drv_temp.h"
+#include "bsw/drv/drv_cells.h"
+#include "app/tmp_chain.h"
+static unsigned long s_t2b_e9c8_bad, s_t2b_n, s_t2b_e5, s_t2b_e2, s_t2b_d3, s_t2b_d2, s_t2b_d7, s_t2b_st0;
+#endif
 #if defined(TEST_ODIAG_TSEL) && TSEL_LIVE
 static unsigned long s_tl_n, s_tl_mism;
 /* the live cells carry this pass's shadow results (the real output path) */
@@ -174,10 +212,20 @@ static void tsel_live_check(void)
         *(volatile uint8_t *)(uintptr_t)0xFFF94170u != t->s170) {
         s_tl_mism++;
     }
-    /* the fault flags stay untouched (stage 2b) */
+#if TSEL_LIVE_FLAGS
+    /* stage 2b: the fault flags carry this pass's 0x7C01E / 0x7C0B6 results */
+    if (*(volatile uint8_t *)(uintptr_t)0xFFF940E1u != t->e1 ||
+        *(volatile uint8_t *)(uintptr_t)0xFFF940E2u != t->e2 ||
+        *(volatile uint8_t *)(uintptr_t)0xFFF940E4u != t->e4 ||
+        *(volatile uint8_t *)(uintptr_t)0xFFF940E5u != t->e5) {
+        s_tl_mism++;
+    }
+#else
+    /* the tested flags stay untouched (stage 2a: no writer) */
     if (*(volatile uint8_t *)(uintptr_t)0xFFF940E1u != 0u || *(volatile uint8_t *)(uintptr_t)0xFFF940E4u != 0u) {
         s_tl_mism++;
     }
+#endif
 }
 #endif
 
@@ -407,6 +455,10 @@ static void boot(void)
     pa7_shadow_init();
     pa7_hook_range_init();
 #endif
+#if defined(TEST_ODIAG_TMP)
+    drv_temp_init();                    /* main.c order: 0x88A50, then the safety objects */
+    tmp_chain_init();
+#endif
 #if defined(TEST_ODIAG_TSEL)
     tsel_accum();
     tsel_hook_init();
@@ -433,6 +485,36 @@ static void out_tick(void)
      * excluded set, so the identity must FAIL */
     *(volatile uint8_t *)(uintptr_t)0xFFF940E2u = tsel_shadow_state()->s0fc;
 #endif
+#endif
+#if defined(TEST_ODIAG_TMP)
+    /* the fluid byte as 0x887D8 leaves it (0x94102: the seeded fluid, 574 =
+     * 35.9 °C → 0x4C) and its fault flags clear, then 0x7C100 */
+    CELL_TMP_BYTE_SEL = (uint8_t)((stub.ms < 500u) ? 0u : 0x4Cu);
+    drv_temp_pub_tick();
+#if defined(TEST_ODIAG_T2B_LEAK)
+    /* NEGATIVE CONTROL (ctest tsel2b_identity_negative_leak): the board byte
+     * leaks into THE fluid byte 0xFFF8E9C8 (outside the excluded set) */
+    *(volatile uint8_t *)(uintptr_t)0xFFF8E9C8u = CELL_TMP_PUB_E3;
+#endif
+    s_t2b_n++;
+    if (CELL_TMP_PUB_E5 != 0u) {
+        s_t2b_e5++;
+    }
+    if (CELL_TMP_PUB_E2 != 0u) {
+        s_t2b_e2++;
+    }
+    if (*(volatile uint8_t *)(uintptr_t)0xFFF8EDF2u != 0u) {
+        s_t2b_d2++;                     /* ED20 +0xD2 */
+    }
+    if (*(volatile uint8_t *)(uintptr_t)0xFFF8EDF3u != 0u) {
+        s_t2b_d3++;                     /* ED20 +0xD3 */
+    }
+    if (*(volatile uint8_t *)(uintptr_t)0xFFF8EDF7u != 0u) {
+        s_t2b_d7++;                     /* ED20 +0xD7 */
+    }
+    if (*(volatile uint8_t *)(uintptr_t)0xFFF8E9CAu == 0u) {
+        s_t2b_st0++;                    /* E998 +0x32: the direct (fluid) path */
+    }
 #endif
 #if defined(TEST_ODIAG_TSEL_NEG)
     /* NEGATIVE CONTROL (ctest tsel_shadow_identity_negative): the shadow's
@@ -483,6 +565,11 @@ static void out_tick(void)
                 continue;
             }
 #endif
+#if defined(TEST_ODIAG_EXCL2B)
+            if (excl2b(0xFFF80000u + a)) {
+                continue;
+            }
+#endif
             h = (h ^ p[a]) * 0x100000001B3ull;
         }
         for (unsigned k = 0u; k < stub_log_n; k++) {
@@ -529,6 +616,21 @@ static void step_ms(uint32_t t)
         out_tick();
     }
     if (t % 10u == 5u) {                /* the 10 ms task */
+#if defined(TEST_ODIAG_TMP)
+        {
+            /* main.c: the temperature byte's 10 / 30 / 100 ms parts, in OS
+             * mode 0 until the bench's mode-1 switch (+0.67 s, r02w) — mode
+             * 0 re-initialises ED20 every pass, so the fluid's arrival at
+             * 500 ms is no jump (as on the target) */
+            const uint8_t m = (uint8_t)(t < 670u ? 0u : 1u);
+            tmp_chain_task_10ms(m);
+            tmp_chain_task_slow(m);
+        }
+        if (*(volatile uint8_t *)(uintptr_t)0xFFF8E9CAu == 0u &&
+            *(volatile uint8_t *)(uintptr_t)0xFFF8E9C8u != *(volatile uint8_t *)(uintptr_t)0xFFF8EDE2u) {
+            s_t2b_e9c8_bad++;           /* status 0 must mean the limited fluid byte (ED20 +0xC2) */
+        }
+#endif
         rq_prod_task_10ms(1u);
 #if defined(TEST_ODIAG_PA7)
         pa7_hook_range(1u);
@@ -956,6 +1058,20 @@ int main(int argc, char **argv)
 #if TSEL_LIVE
         fprintf(stderr, "tsel_live checked %lu mism %lu\n", s_tl_n, s_tl_mism);
 #endif
+#endif
+#if defined(TEST_ODIAG_TMP)
+        /* stage 2b (tsel2b_identity): the flags, 0x7C100's bytes and the
+         * safety layer at the end of part 4, and how many passes saw a
+         * failed flag / D3 set (the seeded 0x8001 window) */
+        fprintf(stderr, "tsel2b flags %02X %02X %02X %02X bytes %02X %02X d2 %u d3 %u d7 %u e9c8 %02X st %u "
+                "c13 %02X passes %lu e5 %lu e2 %lu d2n %lu d3n %lu d7n %lu st0n %lu e9c8bad %lu\n",
+                *(volatile uint8_t *)(uintptr_t)0xFFF940E1u, *(volatile uint8_t *)(uintptr_t)0xFFF940E2u,
+                *(volatile uint8_t *)(uintptr_t)0xFFF940E4u, *(volatile uint8_t *)(uintptr_t)0xFFF940E5u,
+                CELL_TMP_PUB_E0, CELL_TMP_PUB_E3,
+                *(volatile uint8_t *)(uintptr_t)0xFFF8EDF2u, *(volatile uint8_t *)(uintptr_t)0xFFF8EDF3u,
+                *(volatile uint8_t *)(uintptr_t)0xFFF8EDF7u, *(volatile uint8_t *)(uintptr_t)0xFFF8E9C8u,
+                *(volatile uint8_t *)(uintptr_t)0xFFF8E9CAu, *(volatile uint8_t *)(uintptr_t)0xFFF89C13u,
+                s_t2b_n, s_t2b_e5, s_t2b_e2, s_t2b_d2, s_t2b_d3, s_t2b_d7, s_t2b_st0, s_t2b_e9c8_bad);
 #endif
         printf("%s (%d failures)\n", fails == 0 ? "PASS" : "FAIL", fails);
         return fails == 0 ? 0 : 1;

@@ -905,18 +905,50 @@ else()
         TEST_ODIAG_TSEL_SEED=1 TEST_ODIAG_EXCL2A=1)
     add_executable(test_odiag_tsel_live ${ODIAG_TSEL_SOURCES} app/tsel_live.c bsw/drv/drv_tsel.c)
     target_compile_definitions(test_odiag_tsel_live PRIVATE DRV_RQ_USE_PRODUCER=1 TEST_ODIAG_FBS=1
-        TEST_ODIAG_TSEL_SEED=1 TEST_ODIAG_TSEL=1 TEST_ODIAG_EXCL2A=1 TSEL_LIVE=1 FBS_T_ECU_LIVE=1)
+        TEST_ODIAG_TSEL_SEED=1 TEST_ODIAG_TSEL=1 TEST_ODIAG_EXCL2A=1 TSEL_LIVE=1 FBS_T_ECU_LIVE=1
+        TSEL_LIVE_FLAGS=0)
     add_test(NAME tsel_live_identity
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fb_identity.py
             $<TARGET_FILE:test_odiag_tselbase_x> $<TARGET_FILE:test_odiag_tsel_live> --tsel --tsel-live)
     add_executable(test_odiag_tsel_live_neg ${ODIAG_TSEL_SOURCES} app/tsel_live.c bsw/drv/drv_tsel.c)
     target_compile_definitions(test_odiag_tsel_live_neg PRIVATE DRV_RQ_USE_PRODUCER=1 TEST_ODIAG_FBS=1
         TEST_ODIAG_TSEL_SEED=1 TEST_ODIAG_TSEL=1 TEST_ODIAG_EXCL2A=1 TSEL_LIVE=1 FBS_T_ECU_LIVE=1
-        TEST_ODIAG_TSEL_LIVE_NEG=1)
+        TSEL_LIVE_FLAGS=0 TEST_ODIAG_TSEL_LIVE_NEG=1)
     add_test(NAME tsel_live_identity_negative
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fb_identity.py
             $<TARGET_FILE:test_odiag_tselbase_x> $<TARGET_FILE:test_odiag_tsel_live_neg> --tsel --tsel-live)
     set_tests_properties(tsel_live_identity_negative PROPERTIES WILL_FAIL TRUE)
+    # STAGE 2b (2026-11-19, ~/tcu_sweep/temp_stage2b_port.md): HEAD's
+    # stage-2a build (TSEL_LIVE=1, the flags at the 0x80 stand-in) against the
+    # stage-2b one (TSEL_LIVE_FLAGS=1), both running 0x7C100 and the safety
+    # layer at their slots (TEST_ODIAG_TMP); the window hash excludes ONLY
+    # the four flags and their direct consumers (TEST_ODIAG_EXCL2B, listed in
+    # test_odiag.c) — the fluid byte 0xFFF8E9C8, 0x89C13, the fill, the law
+    # and every bus-A word must stay identical; the 2b build must end in the
+    # stock's healthy flag state. Negatives: the stand-ins (TSEL_LIVE_FLAGS=0)
+    # in the second build; a leak of the board byte into 0xFFF8E9C8.
+    set(ODIAG_T2B_SOURCES ${ODIAG_TSEL_SOURCES} app/tsel_live.c bsw/drv/drv_tsel.c
+        bsw/drv/drv_temp.c app/tmp_chain.c safety/tmp_safe.c)
+    set(ODIAG_T2B_DEFS DRV_RQ_USE_PRODUCER=1 TEST_ODIAG_FBS=1 TEST_ODIAG_TSEL_SEED=1 TEST_ODIAG_TSEL=1
+        TEST_ODIAG_TMP=1 TEST_ODIAG_EXCL2B=1 TSEL_LIVE=1 FBS_T_ECU_LIVE=1)
+    add_executable(test_odiag_tsel2a_t ${ODIAG_T2B_SOURCES})
+    target_compile_definitions(test_odiag_tsel2a_t PRIVATE ${ODIAG_T2B_DEFS} TSEL_LIVE_FLAGS=0)
+    add_executable(test_odiag_tsel2b_t ${ODIAG_T2B_SOURCES})
+    target_compile_definitions(test_odiag_tsel2b_t PRIVATE ${ODIAG_T2B_DEFS} TSEL_LIVE_FLAGS=1)
+    add_test(NAME tsel2b_identity
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fb_identity.py
+            $<TARGET_FILE:test_odiag_tsel2a_t> $<TARGET_FILE:test_odiag_tsel2b_t> --tsel --tsel-live --tsel2b)
+    add_test(NAME tsel2b_identity_negative_standin
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fb_identity.py
+            $<TARGET_FILE:test_odiag_tsel2a_t> $<TARGET_FILE:test_odiag_tsel2a_t> --tsel --tsel-live --tsel2b)
+    set_tests_properties(tsel2b_identity_negative_standin PROPERTIES WILL_FAIL TRUE)
+    add_executable(test_odiag_tsel2b_leak ${ODIAG_T2B_SOURCES})
+    target_compile_definitions(test_odiag_tsel2b_leak PRIVATE ${ODIAG_T2B_DEFS} TSEL_LIVE_FLAGS=1
+        TEST_ODIAG_T2B_LEAK=1)
+    add_test(NAME tsel2b_identity_negative_leak
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fb_identity.py
+            $<TARGET_FILE:test_odiag_tsel2a_t> $<TARGET_FILE:test_odiag_tsel2b_leak> --tsel --tsel-live --tsel2b)
+    set_tests_properties(tsel2b_identity_negative_leak PROPERTIES WILL_FAIL TRUE)
     add_executable(test_odiag_tsel_neg ${ODIAG_TSEL_SOURCES})
     target_compile_definitions(test_odiag_tsel_neg PRIVATE DRV_RQ_USE_PRODUCER=1 TEST_ODIAG_FBS=1
         TEST_ODIAG_TSEL_SEED=1 TEST_ODIAG_TSEL=1 TEST_ODIAG_TSEL_NEG=1)
@@ -965,6 +997,16 @@ else()
     add_test(NAME tsel_sh_guard_ramlive COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_TSEL_RAMLIVE ${TSEL_SH_SRC})
     set_tests_properties(tsel_sh_guard_ramlive PROPERTIES
         PASS_REGULAR_EXPRESSION "TSEL_LIVE is for the code-flash application only")
+    # stage 2b: the live flags need stage 2a, and never in the RAM app
+    add_test(NAME tsel_sh_guard_ramflags COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_TSEL_RAMFLAGS ${TSEL_SH_SRC})
+    set_tests_properties(tsel_sh_guard_ramflags PROPERTIES
+        PASS_REGULAR_EXPRESSION "TSEL_LIVE_FLAGS is for the code-flash application only")
+    add_test(NAME tsel_sh_guard_flagsnolive COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_TSEL_FLAGSNOLIVE ${TSEL_SH_SRC})
+    set_tests_properties(tsel_sh_guard_flagsnolive PROPERTIES
+        PASS_REGULAR_EXPRESSION "TSEL_LIVE_FLAGS \\(stage 2b\\) needs TSEL_LIVE")
+    add_test(NAME tsel_sh_guard_drvtemp_tu
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion -I${CMAKE_SOURCE_DIR}/platform
+            ${CMAKE_SOURCE_DIR}/bsw/drv/drv_temp.c)
     add_test(NAME tsel_sh_guard_live_tu
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/tsel_live.c)
     add_test(NAME tsel_sh_guard_drvtsel_tu
@@ -1012,6 +1054,22 @@ else()
         bsw/sup/sup_ctrl.c bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_token.c
         app/tsel_shadow.c app/tsel_hook.c tests/unit/stub_plat.c)
     add_test(NAME j3seed COMMAND test_j3seed)
+    # STAGE 2b (2026-11-19, ~/tcu_sweep/temp_stage2b_port.md): the die /
+    # board fault flags live — the dump's flags and consumers, the fluid-
+    # sensor failure (0x89C13 → the board byte, the stock's 0x1405FA rule),
+    # fault injection with the stock's 600 / 40 ms holds. The stand-in build
+    # (TSEL_LIVE_FLAGS=0) must FAIL.
+    set(TSEL2B_SOURCES tests/unit/test_tsel2b.c app/tsel_shadow.c app/tsel_hook.c app/tsel_live.c
+        bsw/drv/drv_tsel.c bsw/drv/drv_temp.c app/tmp_chain.c safety/tmp_safe.c tests/unit/stub_plat.c)
+    add_executable(test_tsel2b ${TSEL2B_SOURCES})
+    target_compile_definitions(test_tsel2b PRIVATE TSEL_LIVE=1 TSEL_LIVE_FLAGS=1
+        "TCU_STOCK_DUMP=\"${TCU_STOCK_DUMP}\"")
+    add_test(NAME tsel2b COMMAND test_tsel2b)
+    add_executable(test_tsel2b_neg_standin ${TSEL2B_SOURCES})
+    target_compile_definitions(test_tsel2b_neg_standin PRIVATE TSEL_LIVE=1 TSEL_LIVE_FLAGS=0
+        "TCU_STOCK_DUMP=\"${TCU_STOCK_DUMP}\"")
+    add_test(NAME tsel2b_neg_standin COMMAND test_tsel2b_neg_standin)
+    set_tests_properties(tsel2b_neg_standin PROPERTIES WILL_FAIL TRUE)
     add_executable(test_j3seed_live tests/unit/test_j3seed.c
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_walk.c bsw/sup/sup_batch.c
         bsw/sup/sup_ctrl.c bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_token.c
@@ -1184,16 +1242,29 @@ else()
         ${GSB_GOLD}/gsb_live_g2_temps_head_bccfb9d.txt ${GSB_GOLD}/gsb_live_g2_temps_ref_r04k.txt)
     add_executable(test_gs_bridge_g2_temps_live ${GSB_CHAIN_SOURCES} app/tsel_shadow.c
         app/tsel_live.c bsw/drv/drv_tsel.c)
+    # stage 2b (2026-11-19): TSEL_LIVE=1 now brings the fault flags live too
+    # (TSEL_LIVE_FLAGS defaults to it — the image's configuration); the
+    # stage-2a goldens are kept, the four flag cells hashed at their 2a value
+    # 0 (GSB_HASH_FLAGS_AS_2A, test_gs_bridge_chain.c), everything else exact
     target_compile_definitions(test_gs_bridge_g2_temps_live PRIVATE ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3
-        DIAG_TEMPS=1 TSEL_LIVE=1 FBS_T_ECU_LIVE=1)
+        DIAG_TEMPS=1 TSEL_LIVE=1 FBS_T_ECU_LIVE=1 GSB_HASH_FLAGS_AS_2A=1)
     add_test(NAME gs_bridge_g2_gate_bounds_live COMMAND test_gs_bridge_g2_temps_live
         ${GSB_GOLD}/gsb_live_g2_temps_live_ref_r04k.txt ${GSB_GOLD}/gsb_live_g2_temps_live_g4b.txt)
     add_executable(test_gs_bridge_g2_temps_live_norel ${GSB_CHAIN_SOURCES} app/tsel_shadow.c
         app/tsel_live.c bsw/drv/drv_tsel.c)
     target_compile_definitions(test_gs_bridge_g2_temps_live_norel PRIVATE ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3
-        DIAG_TEMPS=1 TSEL_LIVE=1 FBS_T_ECU_LIVE=1 GSB_HOST_NO_REL_BRIDGE=1)
+        DIAG_TEMPS=1 TSEL_LIVE=1 FBS_T_ECU_LIVE=1 GSB_HOST_NO_REL_BRIDGE=1 GSB_HASH_FLAGS_AS_2A=1)
     add_test(NAME gs_bridge_g2_temps_live_r04k_ref COMMAND test_gs_bridge_g2_temps_live_norel
         ${GSB_GOLD}/gsb_live_g2_temps_live_head_bccfb9d.txt ${GSB_GOLD}/gsb_live_g2_temps_live_ref_r04k.txt)
+    # stage 2b negative: the same build WITHOUT the 2a mask must FAIL against
+    # the exact golden (the flags really are written in this harness)
+    add_executable(test_gs_bridge_g2_temps_live2b_nomask ${GSB_CHAIN_SOURCES} app/tsel_shadow.c
+        app/tsel_live.c bsw/drv/drv_tsel.c)
+    target_compile_definitions(test_gs_bridge_g2_temps_live2b_nomask PRIVATE ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3
+        DIAG_TEMPS=1 TSEL_LIVE=1 FBS_T_ECU_LIVE=1)
+    add_test(NAME gs_bridge_g2_temps_live2b_nomask_negative COMMAND test_gs_bridge_g2_temps_live2b_nomask
+        ${GSB_GOLD}/gsb_live_g2_temps_live_ref_r04k.txt ${GSB_GOLD}/gsb_live_g2_temps_live_g4b.txt)
+    set_tests_properties(gs_bridge_g2_temps_live2b_nomask_negative PROPERTIES WILL_FAIL TRUE)
     # the bridge's logic on test_gs_shadow's light harness: the OS-mode-2
     # witness, the .noinit windows, the guard negatives (G1: recorded, the
     # wire never moves), and — GS_LIVE_DIR 3, host only — every abort of the

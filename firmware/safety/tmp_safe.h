@@ -3,6 +3,13 @@
  * (the application getter 0x140050), ported from the bytes
  * (~/tcu_sweep/temp_byte_live_port.md):
  *
+ * The die / board fault flags 0x940E2 / 0x940E5 gathered here (+0xB9 /
+ * +0xBB, +0x2F) are the 0x80 "faulted" stand-in unless TSEL_LIVE_FLAGS
+ * (stage 2b: the SH application) makes them the stock's live 0x7C01E /
+ * 0x7C0B6 results — then D2 / D3 / D7 read 0 on a healthy unit (the dump's)
+ * and a fluid-sensor failure falls back to the BOARD byte (0x1405FA, status
+ * 1), not to 0x82.
+ *
  *   object 0xFFF8E998 ("E998", cal descriptor 0x648E0: +4 → 0x195DB7 = 0x00,
  *                      +8 → 0x195DB8 = 0x82)
  *     +0x2C..+0x2F  gathered 0x940E3 / 0x940E6 / 0x940E8 / 0x940E5
@@ -32,8 +39,11 @@
  * that compares it with the integer channel and halts on a mismatch
  * (0x148ACC, 0x148B6C, the 0x14A6E8 / 0x1402F0 fatal paths); the cross-
  * plausibility monitors 0x14AE38 / 0x14AF70 / 0x14B27A (they compare the
- * fluid byte with the two temperature sources this firmware does not
- * produce — their flags +0xCB..+0xCE / +0xD0 hold the dump's 0); the
+ * fluid byte with the die / board bytes 0x940E0 / 0x940E3 — published since
+ * stage 2b, ~/tcu_sweep/temp_stage2b_port.md — and the stock writes their
+ * flags to the EEPROM record 0xFFF82EF4 + 0x76.. at 0x14A9BC..0x14AAC8:
+ * NOT PORTED; +0xCB..+0xCE / +0xD0 hold the dump's 0); the 0x14A6E8 tail
+ * that writes +0xCC/CD/CE/D5/D2/D3 into that record (not ported); the
  * +0xCC..+0xD7 start values 0x14A4F0 copies from 0xFFF82EF4 + 0x76..0x82
  * (stand-in 0, the dump's); 0x1404C8 / 0x1402F0's +0x36..+0x3A bytes.
  */

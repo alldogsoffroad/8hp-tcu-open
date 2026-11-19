@@ -25,6 +25,7 @@
  */
 #include "bsw/drv/drv_temp.h"
 #include "bsw/drv/drv_cells.h"
+#include "bsw/drv/drv_tsel.h"       /* DRV_TSEL_FLAGS (stage 2b) */
 #include "bsw/sup/sup_cells.h"
 #include "platform.h"
 
@@ -368,14 +369,22 @@ void drv_temp_init(void)
     for (uint32_t a = 0xFFF940E0u; a <= 0xFFF940E8u; a++) {
         *(volatile uint8_t *)(uintptr_t)a = 0u;
     }
-    /* STAND-IN (ours): the second (0x94101, 0x88DA8 from 0x9393E) and third
-     * (0x940FE) temperature bytes are not produced by this firmware; their
-     * fault flags 0x940E5 / 0x940E2 are held nonzero ("faulted"), so 0x7C100
-     * publishes 0xFF for them and the safety layer's conditioning takes its
-     * own both-invalid substitute (cal 0x195DB8 = 0x82, 90 °C) if the fluid
-     * sensor fails — never a 0x00 (−40 °C) byte from an absent source */
+#if !DRV_TSEL_FLAGS
+    /* STAND-IN (ours, stage 2a and every build without TSEL_LIVE_FLAGS):
+     * the fault flags 0x940E5 (board, 0x88DA8 → 0x7C0B6) and 0x940E2 (die,
+     * 0x88BD0 → 0x7C01E) are held nonzero ("faulted"), so 0x7C100 publishes
+     * 0xFF for both bytes and the safety layer's conditioning takes its own
+     * both-invalid substitute (cal 0x195DB8 = 0x82, 90 °C) if the fluid
+     * sensor fails — never a byte from a source the build does not run */
     CELL_TMP_PUB_E2 = TMP_STANDIN_SRC_FAULTED;
     CELL_TMP_PUB_E5 = TMP_STANDIN_SRC_FAULTED;
+#else
+    /* STAGE 2b (TSEL_LIVE_FLAGS, ~/tcu_sweep/temp_stage2b_port.md): the
+     * flags are the shadow's 0x7C01E / 0x7C0B6 results, written by the
+     * temperature hub (bsw/drv/drv_tsel.c); here they start 0, the stock's
+     * cleared RAM (no initialised-data entry, and the init hub's
+     * 0x7C086(0x62) / 0x7C0E8(0x160) never report) — the loop above */
+#endif
     CELL_CNT_TMP_HOLD = CAL_TMP_HOLD;                   /* 0x8D57C */
     CELL_CNT_TMP_START = CAL_TMP_START;
     CELL_TMP_CODE = TMP_CODE_STANDIN;

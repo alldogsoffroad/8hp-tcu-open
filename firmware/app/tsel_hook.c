@@ -10,7 +10,8 @@
  *                       0x7CB6E): 0x88DA8 and 0x88BD0 around the fluid's
  *                       0x887D8; 5 ms in mode 0, the 10 ms part in modes 1..3.
  *
- * STAGE 2a (TSEL_LIVE, bsw/drv/drv_tsel.h — the SH application): after the
+ * STAGE 2a / 2b (TSEL_LIVE / TSEL_LIVE_FLAGS, bsw/drv/drv_tsel.h — the SH
+ * application; 2b adds the fault flags 0x940E1/E2/E4/E5): after the
  * init and after every pass the results go live through tsel_live_apply()
  * (app/tsel_live.c → bsw/drv/drv_tsel.c); this file still writes nothing.
  *
