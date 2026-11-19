@@ -184,6 +184,16 @@ static void run_child(const scen_t *sc, bool g6b, gr_t *g, res_t *res, uint8_t *
             }
         }
         run_g(g);
+#if defined(SM_TEST)
+        {
+            const volatile sm_t *sm = sm_shadow_state();
+            fprintf(stderr, "SM run '%s': passes %u walks %u lookups %u err %u a697 %u a0aa %u ce8 %u "
+                    "skip_mode %u arb_skip %u corr %u conf %u\n", sc->name, (unsigned)sm->pass_n,
+                    (unsigned)sm->walk_n, (unsigned)sm->lookup_n, (unsigned)sm->err_n, (unsigned)sm->a697,
+                    (unsigned)sm->a0aa, (unsigned)sm->ce8, (unsigned)sm->skip_mode_n,
+                    (unsigned)sm->arb_skip_n, (unsigned)sm->corr_n, (unsigned)sm->conf_n);
+        }
+#endif
         if (getenv("G6C_DUMP_PINNED") != NULL &&
             (strcmp(getenv("G6C_DUMP_PINNED"), sc->name) == 0 || strcmp(getenv("G6C_DUMP_PINNED"), "*") == 0)) {
             printf("PINRUN %s\n", sc->name);

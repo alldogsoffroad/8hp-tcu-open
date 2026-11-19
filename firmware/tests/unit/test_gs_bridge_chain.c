@@ -53,6 +53,13 @@
 #include "io/vehicle/vehicle.h"
 #include "safety/kl15.h"
 #include "safety/park_mon.h"
+#if defined(SM_TEST)
+/* THE SHIFT-MAP SHADOW's live identity (2026-11-19, ~/tcu_sweep/sm_shadow_port.md):
+ * the shadow at main.c's 30 ms slot (app/tmp_chain.c: modes 1..3, every 3rd
+ * 10 ms tick from the first mode-1 tick, after the rest of task_10ms) */
+#include "app/sm_shadow.h"
+static uint8_t s_sm_ph, s_sm_on;
+#endif
 
 #include <sys/wait.h>
 #include <unistd.h>
@@ -420,6 +427,25 @@ static void task10(gr_t *g, unsigned p)
 #endif
     }
     drv_rq_request_set(7u, park_slot7_release());   /* ch 7: the park release (SH: DRV_RQ_PSET) */
+#if defined(SM_TEST)
+    if (mode < 1u || mode > 3u) {
+        s_sm_on = 0u;
+    } else {
+        if (s_sm_on == 0u) {
+            s_sm_on = 1u;
+            s_sm_ph = 0u;
+        }
+        if (s_sm_ph == 0u) {
+            const vehicle_in_t *sv = vehicle_in();
+            sm_hook_feed(0u, 0u, (uint16_t)sv->pedal, (sv->q_pedal == Q_OK) ? 1u : 0u, mode);
+#if defined(SM_NEG_LEAK)
+            /* the negative: a leak of the shadow's target into the live 0x89CE8 */
+            *(volatile uint8_t *)(uintptr_t)0xFFF89CE8u = (uint8_t)(0x50u + sm_shadow_state()->a697);
+#endif
+        }
+        s_sm_ph = (uint8_t)(s_sm_ph + 1u >= 3u ? 0u : s_sm_ph + 1u);
+    }
+#endif
 }
 
 /* applied runs: the staged words after each 10 ms tick */
@@ -459,6 +485,11 @@ static void run_g(gr_t *g)
 #endif
     rr_reset(r);
     G6R_REPLICA_INIT();             /* r04r: the retired holder's init (r04q: the end of drv_rq_init) */
+#if defined(SM_TEST)
+    sm_hook_init();                 /* app/main.c's shadow init block */
+    s_sm_on = 0u;
+    s_sm_ph = 0u;
+#endif
 #if defined(DIAG_TEMPS)
     for (unsigned d = 0u; d < 2u; d++) {
         for (unsigned q = 0u; q < 2u; q++) {

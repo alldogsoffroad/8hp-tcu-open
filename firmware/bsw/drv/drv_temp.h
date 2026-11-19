@@ -23,6 +23,9 @@
 #if defined(TCU_TSEL_SHADOW_TU)
 #error "the temperature-selection shadow is read-only: it may not include a live header (drv_temp.h)"
 #endif
+#if defined(TCU_SM_SHADOW_TU)
+#error "the shift-map shadow is read-only: it may not include a live header (drv_temp.h)"
+#endif
 
 #include <stdint.h>
 

@@ -18,6 +18,9 @@
 #if defined(TCU_TSEL_SHADOW_TU)
 #error "the temperature-selection shadow is read-only: it may not include a live header (drv_cells.h)"
 #endif
+#if defined(TCU_SM_SHADOW_TU)
+#error "the shift-map shadow is read-only: it may not include a live header (drv_cells.h)"
+#endif
 
 /* THE FEEDBACK SHADOW IS READ-ONLY (app/fb_shadow.c defines TCU_FB_SHADOW_TU):
  * it may not include a live output header */
