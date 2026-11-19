@@ -28,6 +28,14 @@ source scans.
                                 EEPROM dirty flag 0xFFF85175 / lock cells
                                 0xFFF85174..76 as a literal (objdump -s of
                                 the data/literal sections)
+  g6a_scan.py image NM ELF      G5b (D-G5-7): no defined symbol of the WHOLE
+  g6a_scan.py image --nm-text FILE   image names one of the stock routines
+                                above (STOCK_FORBIDDEN) or a mode-2-only
+                                function kept out (MODE2_FORBIDDEN: 0xE9340,
+                                0xBCAD6, 0xF02EA / 0xF0D5C / 0xF0728, the WK
+                                lock-up list 0xE0FE4 / 0xE105C / 0xE106E /
+                                0xDEA5E, 0xD46A0, 0xCA65C, 0xD8122 / 0xD8C3A,
+                                0xDD2C4) - any symbol containing the hex
   g6a_scan.py retired NM ELF    r04r: no defined symbol of the retired live
   g6a_scan.py retired --nm-text FILE   holder (rq_prod_*, its own fill's
                                 rqf_*, its recorder / witnesses) in the image
@@ -98,6 +106,14 @@ NM_ALLOW_RE = [r"^gs_cand_", r"^gcf_", r"^__[a-z0-9_]+$", r"^_?_?gsc_obj_(start|
 STOCK_FORBIDDEN = ["e8bfa", "e8cf6", "d229e", "f71ec", "a2028", "a1712", "bddb0", "bd84e",
                    "6ab8e", "71594", "720c8", "b79e4", "a0e70", "6865c"]
 LIT_FORBIDDEN = [0xFFF85174, 0xFFF85175, 0xFFF85176]
+# G5b (2026-11-19, ~/tcu_sweep/g5b_port.md, D-G5-7): the stock's mode-2-only
+# functions stay out of the image (with STOCK_FORBIDDEN's 0xE8CF6 / 0xD229E /
+# 0xE8BFA / 0xF71EC): the bulk-save hook 0xE9340, the record write-back
+# 0xBCAD6, the ratio / slip monitor 0xF02EA (+ 0xF0D5C, 0xF0728), the WK
+# lock-up active list 0xE0FE4 / 0xE105C / 0xE106E and its engagement SM
+# 0xDEA5E, 0xD46A0, 0xCA65C, the restart sequencer 0xD8122 / 0xD8C3A, 0xDD2C4
+MODE2_FORBIDDEN = ["e9340", "bcad6", "f02ea", "f0d5c", "f0728", "e0fe4", "e105c", "e106e", "dea5e",
+                   "d46a0", "ca65c", "d8122", "d8c3a", "dd2c4"]
 
 
 def strip(txt):
@@ -191,6 +207,18 @@ def scan_link(nm, objs, bad):
                 bad.append("%s: holds the EEPROM cell 0x%08X as a literal" % (o, lit))
 
 
+def scan_image(lines, src, bad):
+    for ln in lines:
+        p = ln.split()
+        if len(p) < 3 or p[1] in ("U", "w", "v"):
+            continue
+        name = p[2].lower()
+        for k in STOCK_FORBIDDEN + MODE2_FORBIDDEN:
+            if k in name:
+                bad.append("%s: defines %s (the stock routine 0x%s must stay out: EEPROM / NVM / mode-2-only)"
+                           % (src, p[2], k.upper()))
+
+
 # r04r (~/tcu_sweep/r04r_port.md): THE RETIRED HOLDER STAYS OUT OF THE IMAGE.
 # `retired NM ELF` (POST_BUILD of tcu_app.elf) / `retired --nm-text FILE`
 # (the fixtures): no defined symbol of the live holder (app/rq_prod.c) or of
@@ -212,13 +240,16 @@ def scan_retired(lines, src, bad):
 def main():
     mode = sys.argv[1]
     bad = []
-    if mode == "retired":
+    if mode in ("retired", "image"):
         if sys.argv[2] == "--nm-text":
             lines = open(sys.argv[3]).read().splitlines()
         else:
             lines = subprocess.run([sys.argv[2], sys.argv[3]], capture_output=True, text=True,
                                    check=True).stdout.splitlines()
-        scan_retired(lines, sys.argv[3], bad)
+        if mode == "retired":
+            scan_retired(lines, sys.argv[3], bad)
+        else:
+            scan_image(lines, sys.argv[3], bad)
         n = 1
     elif mode == "link":
         scan_link(sys.argv[2], sys.argv[3:], bad)

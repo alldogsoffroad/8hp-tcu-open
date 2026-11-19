@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stddef.h>
 
 #define G6C_SH_REQ_LO   0xFFF911A0u     /* the shadow's request objects (host absolute RAM) */
 #define G6C_SH_REQ_HI   0xFFF91440u
@@ -188,7 +189,7 @@ static unsigned g6c_gold_cmp(const char *name, const gr_t *g, const res_t *r, co
             unsigned k;
             unsigned long long hw, h;
             if (sscanf(line, "F %u %llX %llX", &k, &hw, &h) == 3 && k < GFRAMES) {
-#if defined(G6R_NOREP)
+#if defined(G6R_NOREP) && !defined(G5B_HASH_MASK)
                 h = g->h[k];                /* r04r: the cell hash not compared per frame (above) */
 #endif
                 if (g->hw[k] != hw || g->h[k] != h) {
@@ -225,6 +226,16 @@ static unsigned g6c_gold_cmp(const char *name, const gr_t *g, const res_t *r, co
         } else if (line[0] == 'B') {
             gsb_t b = r->b;
             size_t first;
+#if defined(G5B_HASH_MASK)
+            /* G5b: the monitor's 0x1418E2 witness (gsb_t.m2) is the cross-
+             * check of the live selector now (GS_M2_XCHECK: +8 = the live
+             * mode, the previous pass's E9FF, the disagreement count) — its
+             * 32 bytes are checked by test_g6b's G5b block, not here */
+            if (bm_hi <= bm_lo) {
+                bm_lo = offsetof(gsb_t, m2);
+                bm_hi = bm_lo + sizeof(gsb_m2_t);
+            }
+#endif
             /* the masked bytes compared as the golden's */
             if (bm_hi > bm_lo) {
                 for (size_t i = bm_lo; i < bm_hi && i < sizeof b; i++) {
@@ -273,7 +284,12 @@ static unsigned g6c_gold_cmp(const char *name, const gr_t *g, const res_t *r, co
                 if (abs >= G6C_SH_REQ_LO && abs < G6C_SH_REQ_HI) {
                     continue;               /* the deleted shadow's request objects */
                 }
-#if defined(G6R_NOREP)
+#if defined(G5B_HASH_MASK)
+                if (g5b_masked(abs)) {
+                    continue;               /* G5b: the OS-mode cells (masked in both builds) */
+                }
+#endif
+#if defined(G6R_NOREP) && !defined(G5B_HASH_MASK)
                 if (g6r_holder_cell(abs)) {
                     if (gw[i] != win[i]) {
                         g6r_holder_bytes_differ++;
@@ -301,7 +317,10 @@ static unsigned g6c_gold_cmp(const char *name, const gr_t *g, const res_t *r, co
         ed = 1u;
         printf("   G6c golden %s: window file missing\n", name);
     }
-#if defined(G6R_NOREP)
+#if defined(G6R_NOREP) && defined(G5B_HASH_MASK)
+    (void)g6r_holder_cell;          /* G5b: both sides of the comparison run without the holder */
+#endif
+#if defined(G6R_NOREP) && !defined(G5B_HASH_MASK)
     printf("   r04r no-replica [%s]: the retired holder's cells differing from the golden at the end: %lu B "
            "(not compared); per-frame cell hash not compared, wire hash compared\n", name, g6r_holder_bytes_differ);
     g6r_holder_bytes_differ = 0u;

@@ -179,10 +179,13 @@ def show_state(d):
                  none(u16(d, o + 6)), why(u16(d, o + 8)), none(u16(d, o + 10)), d[o + 18],
                  none(u16(d, o + 12)), u16(d, o + 14), d[o + 19]))
     m = 140
-    print("  OS-mode-2 witness (0x1418E2, NOT applied): req %u app %u | live os %u E9FF %u 9584A %u | eng %u st %u "
-          "| tur %u st %u | supply %u | n %u n2 %u first2 %u changes %u"
+    # G5b (r04u+): the selector is LIVE (firmware/safety/os_sel.c, witness_g5.py); this block is the
+    # monitor's independent cross-check of it (GS_M2_XCHECK): app = the live applied mode, E9FF the
+    # last sample, "disagree" = passes whose request differed from the live 0x95483 (must stay 0)
+    print("  OS-mode-2 cross-check (0x1418E2): req %u app %u | live os %u E9FF %u 9584A %u | eng %u st %u "
+          "| tur %u st %u | supply %u | n %u n2 %u first2 %u changes %u | disagree %u"
           % (d[m], d[m + 1], d[m + 2], d[m + 3], d[m + 4], u16(d, m + 8), d[m + 5], u16(d, m + 10), d[m + 6],
-             u16(d, m + 12), u32(d, m + 16), u32(d, m + 20), u32(d, m + 24), u32(d, m + 28)))
+             u16(d, m + 12), u32(d, m + 16), u32(d, m + 20), u32(d, m + 24), u32(d, m + 28), u16(d, m + 14)))
 
 
 def show_rec(k, d, n):

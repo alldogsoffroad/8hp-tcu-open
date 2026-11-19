@@ -48,6 +48,7 @@
 #include "app/park_law.h"
 #if !defined(TCU_RAM_APP)
 #include "app/g6a.h"
+#include "safety/os_sel.h"
 #endif
 
 /* Shaft assignment of the speed channels (spec 02 section 4.1), the stock calibration's routing:
@@ -296,6 +297,13 @@ static void task_10ms(void)
 {
 #if !defined(TCU_RAM_APP)
     const uint32_t t_task0 = plat_frt_us();         /* G6a: the task's duration witness */
+    /* G5b (safety/os_sel.c, ~/tcu_sweep/g5b_port.md): the OS mode at the
+     * task's start selects the stock's 10 ms task object (modes 1..3: the
+     * pre-hook 0x68EA8, slot 0's selector 0x1418E2, slot 26's flags, the
+     * post-hook 0x68EFE). The mode cannot change inside this task: the
+     * apply (0x66E06) runs in the 5 ms batch (bsw/sup/sup_batch.c) */
+    const uint8_t os0 = sup_mode();
+    os_sel_echo_10ms(os0);                          /* pre-hook 0x6D6E0 → 0x68EA8 */
 #endif
     /* M5-1: the stock 10 ms list (modes 1..3) runs the element tick and
      * update (entry 29) and the producer + actuators (entry 43) before
@@ -311,6 +319,26 @@ static void task_10ms(void)
 #endif
     sensors_update_10ms();
     vehicle_update_10ms();
+#if !defined(TCU_RAM_APP)
+    {
+        /* G5b: THE MODE SELECTOR 0x1418E2 (10 ms slot 0 0x14F34C, after the
+         * engine conditioning 0x13BF66 / 0x1507BE and BEFORE the terminal-15
+         * machine 0x140B80 — it reads E9FF from the previous pass), on our
+         * inputs by value; it writes the request 0x95483 only */
+        const vehicle_in_t *v = vehicle_in();
+        const sensors_in_t *sn = sensors_in();
+        const os_sel_in_t si = {
+            .eng = (uint16_t)v->engine_speed,
+            .eng_valid = (v->q_engine_speed == Q_OK) ? 1u : 0u,
+            .tur_ok = (sn->q_turbine_speed == Q_OK) ? 1u : 0u,
+            .tur = gs_rpm(sn->turbine_speed, sn->q_turbine_speed),
+            .sup = *(const volatile uint16_t *)0xFFF94F86u,    /* 0x8D8DE's supply (0x96066) */
+            .e9ff = kl15_e9ff(),
+            .pad = 0u,
+        };
+        os_sel_tick_10ms(os0, &si);
+    }
+#endif
     /* THE TERMINAL-15 STATE (safety/kl15.c, 0x140B80): the stock runs it
      * every 10 ms in modes 0..3 (0x133C4E / 0x14F34C, slot 0 of the 10 ms
      * list), after the CAN receive and before the range chain (slot 3) —
@@ -339,6 +367,13 @@ static void task_10ms(void)
         pa7_hook_range(sup_mode());
 #endif
     }
+#if !defined(TCU_RAM_APP)
+    /* G5b: slot 26 (0xA2EAC / 0xA2EA4 / 0xA2EB4) — the one-hot mode flags
+     * 0x89C3C..3E / 0x89C53..55, before 0xB912C (slot 27, park_tick). Live
+     * cells; nothing of ours reads them yet (the engine's c3d stays forced
+     * 0, D-G5-6; park_law keeps its own c3c from the mode below) */
+    os_sel_flags_10ms(os0);
+#endif
     park_set_os_mode(sup_mode());   /* 0x89C3C for the fault-reaction park request */
     park_tick_10ms();
 #if !defined(TCU_RAM_APP)    /* the RAM application carries no shadow (its 64 KB limit) */
@@ -391,6 +426,9 @@ static void task_10ms(void)
      * after the 10 ms task (lower priority) */
     tmp_chain_task_slow(sup_mode());
 #if !defined(TCU_RAM_APP)
+    /* G5b: the post-hook 0x6D6EC → 0x68EFE — 0x93B5E = the request; the
+     * next 5 ms batch's 0x6F0B4 takes it, 0x66E06 applies it at its tail */
+    os_sel_handoff_10ms(os0);
     g6a_task_time(sup_mode(), plat_frt_us() - t_task0);
 #endif
 }
@@ -503,6 +541,9 @@ int main(void)
     vehicle_init();
     park_init();
     kl15_init();                        /* the terminal-15 object 0xFFF8E9D4 (0x140B30) */
+#if !defined(TCU_RAM_APP)
+    os_sel_init();                      /* G5b: the selector object, 0x93B56, the mode flags */
+#endif
     rng_chain_init();                   /* the range: the 0x9B228 one-shot (init arbiter → D6D6) */
 #if !defined(TCU_RAM_APP)
     /* the garage bridge, G1 (its own RAM; its windows survive a warm reset) */

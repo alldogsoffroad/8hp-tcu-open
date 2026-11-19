@@ -316,11 +316,29 @@ static uint8_t cyc_idx(uint8_t ch)
 #define M2_TUR_MIN  100u        /* cal 0x195F66 ([1]) */
 #define M2_SUP_MAX  17000u      /* cal 0x195F68 ([2]) */
 #define M2_SUP_MIN  6000u       /* cal 0x195F6A ([3]) */
+/* G5b (2026-11-19, ~/tcu_sweep/g5b_port.md, D-G5-8): the live selector is
+ * safety/os_sel.c; this stays an INDEPENDENT, counted cross-check of it (no
+ * latch, no output). With GS_M2_XCHECK (the code-flash application and the
+ * G5b host tests — the builds that link os_sel.c) it models the stock's
+ * inputs as the live path sees them: +8 = the applied OS mode (0x68EA8's
+ * echo of 0x848CF at the task head), E9FF = the PREVIOUS pass's (0x1418E2
+ * runs before 0x140B80; this pass's kl15 already ran when the monitor runs),
+ * and counts the passes whose request differs from the live 0x95483
+ * (os_sel.h OS_SEL_OBJ +7, read as a const volatile literal) in m2.pad. */
+#if !defined(GS_M2_XCHECK)
+#  define GS_M2_XCHECK 0
+#endif
+#define L_OSSEL_REQ  0xFFF95F83u    /* u8 the live request 0x95483 (os_sel.h OS_SEL_OBJ + 7) */
 static void m2_pass(const gsb_in_t *in, uint8_t os)
 {
     volatile gsb_m2_t *m = &B.m2;
     uint8_t cur, req;
     bool spd;
+#if GS_M2_XCHECK
+    const uint8_t e9ff_prev = m->e9ff;
+
+    m->e9ff = LIVE_U8(L_E9FF);      /* sampled every pass (mode 0 too): next pass's "previous" */
+#endif
 
     if (os < 1u || os > 3u) {
         return;                     /* 0x14F34C runs in the 10 ms lists of modes 1..3 */
@@ -337,9 +355,16 @@ static void m2_pass(const gsb_in_t *in, uint8_t os)
     m->tur = in->tur_rpm;
     m->tur_st = (uint8_t)((in->tur_ok != 0u) ? 0u : 1u);
     m->sup = LIVE_U16(L_SUPPLY);
-    m->e9ff = LIVE_U8(L_E9FF);
     m->f584a = 1u;                  /* 0x14DC70 stand-in: no reaction 0x38, no overvoltage start */
+#if GS_M2_XCHECK
+    m->app = os;                    /* +8: the applied mode (the live echo of 0x848CF) */
+    cur = os;
+    const uint8_t e9 = e9ff_prev;
+#else
+    m->e9ff = LIVE_U8(L_E9FF);
     cur = m->app;                   /* 0x1418EC: +7 = +8 first */
+    const uint8_t e9 = m->e9ff;
+#endif
     req = cur;
     /* engine: mov.w (sign-extended) cmp/hs 150 — u16 >= 150; turbine:
      * movu.w cmp/ge 100; E7EC / +6: tst */
@@ -347,7 +372,7 @@ static void m2_pass(const gsb_in_t *in, uint8_t os)
           ((uint32_t)m->tur >= M2_TUR_MIN && m->tur_st == 0u);
     m->spd_ok = spd ? 1u : 0u;
     if (cur == 1u) {
-        if ((int8_t)m->e9ff == 2) {
+        if ((int8_t)e9 == 2) {
             if (m->f584a == 0u) {
                 req = 3u;
             } else if (spd && m->sup > M2_SUP_MIN && m->sup < M2_SUP_MAX) {
@@ -355,14 +380,14 @@ static void m2_pass(const gsb_in_t *in, uint8_t os)
             }
         }
     } else if (cur == 2u) {
-        if ((int8_t)m->e9ff == 4) {
+        if ((int8_t)e9 == 4) {
             req = 1u;
         }
-        if (m->f584a == 0u && (int8_t)m->e9ff == 2) {
+        if (m->f584a == 0u && (int8_t)e9 == 2) {
             req = 3u;
         }
     } else if (cur == 3u) {
-        if ((int8_t)m->e9ff == 4 || m->f584a == 1u) {
+        if ((int8_t)e9 == 4 || m->f584a == 1u) {
             req = 1u;
         }
     } else {
@@ -378,9 +403,16 @@ static void m2_pass(const gsb_in_t *in, uint8_t os)
             m->first2 = B.passes;
         }
     }
+#if GS_M2_XCHECK
+    /* the cross-check: this pass's request against the live selector's */
+    if (req != LIVE_U8(L_OSSEL_REQ) && m->pad < 0xFFFFu) {
+        m->pad = (uint16_t)(m->pad + 1u);
+    }
+#else
     /* +8 ← the request as if applied: 0x95483 → 0x68EFE → 0x93B5E → 0x6F0B4
      * → 0x66E06 → 0x68EA8 (one pass later in this model [I]) */
     m->app = req;
+#endif
 }
 
 /* ── the slot (the recorder header) ──────────────────────────────────── */

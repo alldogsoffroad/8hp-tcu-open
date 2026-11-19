@@ -1,0 +1,6 @@
+# G5b: a fixture of the whole-image mode-2 / EEPROM scan (tests/unit/g6a_scan.py image) - an r04t-like nm excerpt with ONE kept-out mode-2-only function linked (the ratio / slip monitor 0xF02EA); the scan must FAIL on it
+00067e70 T _gcf_107c3e
+00064ac8 T _gs_cand_cur
+0006a1c0 T _os_sel_tick_10ms
+0006b000 T _m2_f02ea_state
+fff95f7c B _tcu_rq_retired_pad

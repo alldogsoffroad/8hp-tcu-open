@@ -53,6 +53,10 @@ set(CORE_SOURCES
     safety/park_mon.c
     safety/park_pair.c
     safety/kl15.c
+    # G5b (~/tcu_sweep/g5b_port.md): the OS-mode request path (0x1418E2,
+    # 0x68EA8, 0x68EFE, slot 26) — no .bss / .data (fixed addresses), so the
+    # link order moves nothing; empty in the RAM application
+    safety/os_sel.c
     safety/tmp_safe.c
     app/bench_dump.c
     app/flash_entry.c
@@ -131,6 +135,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     # flashed application (bsw/drv/drv_gsbr.h; 0 = off, 3 = D and R)
     set(GS_LIVE_DIR 3 CACHE STRING "garage bridge stage of tcu_app.elf (0 off / 3 D and R)")
     target_compile_definitions(tcu_app.elf PRIVATE GS_LIVE_DIR=${GS_LIVE_DIR})
+    # G5b (~/tcu_sweep/g5b_port.md, D-G5-8): the monitor's 0x1418E2 witness
+    # becomes a counted cross-check of the live selector (safety/os_sel.c)
+    target_compile_definitions(tcu_app.elf PRIVATE GS_M2_XCHECK=1)
     # G6b (2026-11-19, ~/tcu_sweep/g6b_port.md): THE SWITCH — the seam carries
     # the candidate (the stock engine + holder, its own RAM) under the monitor
     # (bsw/drv/drv_gsbr.h GS_G6B; 1 needs GS_LIVE_DIR 3; SH asserts it)
@@ -151,6 +158,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
             CMakeFiles/tcu_app.elf.dir/app/g6a.c.obj
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6c_sections.py ${SH_OBJDUMP} tcu_app.elf
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py retired ${SH_NM} tcu_app.elf
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py image ${SH_NM} tcu_app.elf
         COMMAND ${CMAKE_OBJCOPY} -O ihex --remove-section=.bss tcu_app.elf tcu_app.hex
         COMMAND ${CMAKE_SIZE} tcu_app.elf
         COMMENT "G6a link-map scan; G6c RAM-section overlap scan; writing application block as Intel HEX (load addresses)")
@@ -566,6 +574,15 @@ else()
     # park request 0x89CF2 and the DSM terminal re-cycle; park_mon silent
     add_executable(test_keyoff tests/unit/test_keyoff.c ${RNG_TEST_SOURCES})
     add_test(NAME keyoff COMMAND test_keyoff)
+    # G5b (2026-11-19, ~/tcu_sweep/g5b_port.md): THE OS-MODE REQUEST PATH
+    # (safety/os_sel.c: 0x1418E2, 0x68EA8, 0x68EFE, slot 26) with
+    # bsw/sup/sup_mode.c's 0x6F0B4 / 0x66E06, the real CAN receive and kl15:
+    # the law against the decode's table, plain boot (mode 1), sims from
+    # power-on (mode 2, latched), the sim after boot, a stray frame, key-off
+    # / key-on, the turbine term, the supply limits
+    add_executable(test_os_sel tests/unit/test_os_sel.c safety/os_sel.c bsw/sup/sup_mode.c ${RNG_TEST_SOURCES})
+    target_compile_definitions(test_os_sel PRIVATE SUP_L3_HOLD_SEQ_L=0)
+    add_test(NAME g5b_os_sel COMMAND test_os_sel)
     # ... "the only output effect is the park demands": the whole 10 ms
     # output path (request producer + fill → request law → bus-A cyclic /
     # config words, group-A slots) traced over the r03s scenarios and
@@ -1497,6 +1514,39 @@ else()
         GSB_ENG_PASSES=50u G6A_ENGLIM=1)
     add_test(NAME g6r_switch_norep_englim COMMAND test_g6b_norep_englim)
     set_tests_properties(g6r_switch_norep g6r_switch_norep_englim PROPERTIES ENVIRONMENT "${G6C_GOLD_ENV}")
+    # G5b (2026-11-19, ~/tcu_sweep/g5b_port.md): THE OS MODE LIVE ON THE REAL
+    # CHAIN — test_g6b_norep (the image's configuration) with app/main.c's
+    # selector / echo / slot-26 flags / hand-off (G5B_SEL, safety/os_sel.c)
+    # and the monitor's cross-check (GS_M2_XCHECK); every run of test_g6b +
+    # two G5b runs (the 0x108 sim started after boot, one stray frame)
+    # (G5B_SCEN). Compared with the r04t goldens (written by HEAD 986dfc3's
+    # test_g6b_norep with the same harness and the same mask, G5B_HASH_MASK:
+    # the OS-mode cells and the selector object, gsb_t.m2): every bus-A word
+    # and the park demands per frame (the wire), every OTHER byte of the
+    # cell window per frame and at the end, every tick, gsb_t, the windows,
+    # the release header — identical. Plus per run: the live mode (2 at the
+    # first mode-1 batch with the sims, latched; 1 without), the flags, the
+    # m2 cross-check with zero disagreeing passes.
+    file(ARCHIVE_EXTRACT INPUT ${CMAKE_SOURCE_DIR}/tests/unit/golden/g5b_r04t_test_g6b.tgz
+        DESTINATION ${CMAKE_BINARY_DIR}/g5b_r04t)
+    set(G5B_SOURCES ${G6B_NOREP_SOURCES} safety/os_sel.c)
+    set(G5B_DEFS ${G6B_DEFS} G6R_HOLDER_REPLICA=0 G6R_NOREP=1 G5B_SEL=1 G5B_SCEN=1 G5B_HASH_MASK=1
+        GS_M2_XCHECK=1)
+    add_executable(test_g5b ${G5B_SOURCES})
+    target_compile_definitions(test_g5b PRIVATE ${G5B_DEFS})
+    add_test(NAME g5b_wire_vs_r04t COMMAND test_g5b)
+    add_executable(test_g5b_englim ${G5B_SOURCES})
+    target_compile_definitions(test_g5b_englim PRIVATE ${G5B_DEFS} GSB_ENG_PASSES=50u G6A_ENGLIM=1)
+    add_test(NAME g5b_wire_vs_r04t_englim COMMAND test_g5b_englim)
+    # the negative: a mode-2-dependent output (park_law's c3c fed "mode 3"
+    # while the OS mode is 2: the aux park request turns the park outputs
+    # off) must FAIL the same comparison
+    add_executable(test_g5b_neg ${G5B_SOURCES})
+    target_compile_definitions(test_g5b_neg PRIVATE ${G5B_DEFS} G5B_NEG_MODE2_PARK=1)
+    add_test(NAME g5b_wire_vs_r04t_negative COMMAND test_g5b_neg)
+    set_tests_properties(g5b_wire_vs_r04t_negative PROPERTIES WILL_FAIL TRUE)
+    set_tests_properties(g5b_wire_vs_r04t g5b_wire_vs_r04t_englim g5b_wire_vs_r04t_negative PROPERTIES
+        ENVIRONMENT "G6C_GOLD_IN=${CMAKE_BINARY_DIR}/g5b_r04t/gold")
     # THE SHIFT-MAP SHADOW (2026-11-19, ~/tcu_sweep/sm_shadow_port.md): the
     # stock's shift target (30 ms entries 5 / 14 / 15 / 16 → A697 / A0AA /
     # 0x89CE8) as a read-only shadow (app/sm_shadow.c). sm_shadow: the dump
@@ -1597,6 +1647,16 @@ else()
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py retired --nm-text
             ${CMAKE_SOURCE_DIR}/tests/unit/g6r_retired_fixture_nm.txt)
     set_tests_properties(g6r_scan_retired_negative PROPERTIES WILL_FAIL TRUE)
+    # G5b (D-G5-7): the whole-image scan for the EEPROM / NVM routines and
+    # the mode-2-only functions kept out (POST_BUILD of tcu_app.elf); its
+    # fixtures (the ok one is the retired-holder ok fixture: a clean excerpt)
+    add_test(NAME g5b_scan_image_ok
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py image --nm-text
+            ${CMAKE_SOURCE_DIR}/tests/unit/g6r_retired_fixture_ok.txt)
+    add_test(NAME g5b_scan_image_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py image --nm-text
+            ${CMAKE_SOURCE_DIR}/tests/unit/g5b_image_fixture_nm.txt)
+    set_tests_properties(g5b_scan_image_negative PROPERTIES WILL_FAIL TRUE)
     add_executable(test_g6b_bypass ${G6B_SOURCES})
     target_compile_definitions(test_g6b_bypass PRIVATE ${G6B_DEFS} GSM_HOST_BYPASS=1 G6B_BYPASS=1)
     add_test(NAME g6b_monitor_bypass_negative COMMAND test_g6b_bypass)

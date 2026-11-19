@@ -336,6 +336,15 @@ SECTIONS
      * +0x35) and 0xFFF8ED20 (+0xB8..+0xD8), 0x7BF8C's fault word and the
      * published bytes 0x940E0..0x940E8 (0x93AE8/EA lie in .pks_eval) */
     .tmp_89c57 0xFFF89C57 (NOLOAD) : { . += 0x01; } > RAM  /* 0x89C57                 */
+    /* G5b (2026-11-19, ~/tcu_sweep/g5b_port.md; safety/os_sel.c): slot 26's
+     * one-hot OS-mode flags at the stock addresses (GBR 0x89C3C +0 / +1 /
+     * +2 and +0x17 / +0x18 / +0x19), cleared by os_sel_init. Free in the
+     * r04t map (nm + the section list); the neighbours are asserted below */
+    .os_flg1 0xFFF89C3C (NOLOAD) : { . += 0x03; } > RAM   /* 0x89C3C..0x89C3E        */
+    .os_flg2 0xFFF89C53 (NOLOAD) : { . += 0x03; } > RAM   /* 0x89C53..0x89C55        */
+    ASSERT(ADDR(.os_flg1) >= ADDR(.m5_in2) + SIZEOF(.m5_in2) &&
+           ADDR(.os_flg2) >= ADDR(.os_flg1) + SIZEOF(.os_flg1) &&
+           ADDR(.os_flg2) + SIZEOF(.os_flg2) <= ADDR(.tmp_89c57), ".os_flg1 / .os_flg2 overlap a neighbour")
     .tmp_89cd2 0xFFF89CD2 (NOLOAD) : { . += 0x01; } > RAM  /* 0x89CD2                 */
     .tmp_e9c4  0xFFF8E9C4 (NOLOAD) : { . += 0x0A; } > RAM  /* 0x8E9C4..0x8E9CD        */
     .tmp_edd8  0xFFF8EDD8 (NOLOAD) : { . += 0x21; } > RAM  /* 0x8EDD8..0x8EDF8        */
@@ -643,6 +652,9 @@ SECTIONS
     /* house rule (matches linker_ram.ld): never leave less than 4 KB of
      * stack below 0xFFFA0000 */
     ASSERT(__noinit_end <= 0xFFF9F000, "application data leaves less than 4 KB of stack")
+    /* G5b (safety/os_sel.c OS_SEL_OBJ): the selector object 0xFFF9547C lives
+     * in r04r's retired .bss pad — which must stay where r04r put it */
+    ASSERT(_tcu_rq_retired_pad == 0xFFF95F7C && SIZEOF(.bss) > 0, "the retired pad moved: safety/os_sel.h OS_SEL_OBJ")
 
     .app_tail : { KEEP(*(.app_tail)) } > APPTAIL
     .app_end : { KEEP(*(.app_end)) } > APPEND

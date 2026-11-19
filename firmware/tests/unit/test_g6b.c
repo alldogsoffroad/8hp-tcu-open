@@ -119,6 +119,11 @@ typedef struct {
     bool nosim;
     bool info;              /* informational: printed, the r04n identity not required */
     bool rfirst;            /* r04s: R first, then D (lever_at) */
+#if defined(G5B_SCEN)
+    unsigned engon;         /* G5b: 0x108 only from m1 + engon (the sim started after boot) */
+    unsigned engone;        /* G5b: ONE 0x108 frame at m1 + engone (a stray frame) */
+    unsigned keyoff, keyon; /* G5b: 0x112 off from m1 + keyoff, on again from m1 + keyon */
+#endif
     const neg_t *neg;
     uint32_t anchors[4];    /* negatives: from the base run */
 } scen_t;
@@ -167,6 +172,12 @@ static void run_child(const scen_t *sc, bool g6b, gr_t *g, res_t *res, uint8_t *
         g6q_engoff_from = sc->engoff;
         g6a_nosim = sc->nosim;
         g_rfirst = sc->rfirst;                      /* r04s */
+#if defined(G5B_SCEN)
+        g5b_engon_from = sc->engon;
+        g5b_eng_one = sc->engone;
+        g5b_keyoff_from = sc->keyoff;
+        g5b_keyon_from = sc->keyon;
+#endif
         if (sc->neg != NULL) {
             const neg_t *n = sc->neg;
             const uint32_t at = (uint32_t)((int32_t)sc->anchors[n->anchor] + n->from_off);
@@ -330,6 +341,68 @@ static void monitor_line(const char *tag, const res_t *r)
            b->boot_st, b->boot_len);
 }
 
+#if defined(G5B_SEL)
+/* G5b (~/tcu_sweep/g5b_port.md): THE LIVE OS MODE in every run — the mode
+ * cells and the selector at the end of the run (the end window), the entry
+ * frame, the latch, the slot-26 flags and the monitor's cross-check (gsb_t
+ * m2: zero disagreeing passes). The wire / cell identity with r04t is the
+ * golden comparison (the G5b-masked HEAD goldens). */
+static unsigned g5b_runs, g5b_m2_runs;
+#define W8(w, a) ((w)[(uint32_t)(a) - 0xFFF80000u])
+static void g5b_check(const char *name, bool sims, unsigned engon, unsigned engone, unsigned keyoff,
+                      unsigned keyon, const gr_t *g, const res_t *r, const uint8_t *w)
+{
+    const uint8_t mode = W8(w, 0xFFF93B33u), req = W8(w, OS_SEL_OBJ + 7u), app = W8(w, OS_SEL_OBJ + 8u);
+    const uint8_t r5e = W8(w, 0xFFF93B5Eu), echo = W8(w, OS_SEL_ECHO_LAST);
+    const uint8_t f3c = W8(w, OS_FLG_C3C), f3d = W8(w, OS_FLG_C3D), f3e = W8(w, OS_FLG_C3E);
+    const uint8_t f53 = W8(w, OS_FLG_C53), f54 = W8(w, OS_FLG_C54), f55 = W8(w, OS_FLG_C55);
+    uint32_t n, n2;
+    memcpy(&n, &w[OS_SEL_OBJ + 0x10u - 0xFFF80000u], 4u);
+    memcpy(&n2, &w[OS_SEL_OBJ + 0x14u - 0xFFF80000u], 4u);
+    const bool want2 = sims;
+    /* the mode-2 entry: the 5 ms batch 1 ms after the first mode-1 10 ms task
+     * that saw a valid 0x108 >= 150 rpm (the harness's frames are 5 ms, the
+     * 10 ms task runs on every second one) */
+    const unsigned at = (g->g5b_e1 > g->g5b_t1) ? g->g5b_e1 : g->g5b_t1;
+    (void)engon;
+    (void)engone;
+    bool ok;
+    g5b_runs++;
+    if (want2) {
+        /* key-off: E9FF 2 → 3 → 4 over two 10 ms tasks, the selector reads
+         * it one task later, the batch applies: mode 1 within 3 tasks (6
+         * frames); key-on: E9FF 4 → 1 → 2, then the selector: 2 within 6 */
+        const bool ko = keyoff == 0u ||
+                        (g->g5b_back1 > g->m1 + keyoff && g->g5b_back1 <= g->m1 + keyoff + 6u &&
+                         g->g5b_again2 > g->m1 + keyon && g->g5b_again2 <= g->m1 + keyon + 6u);
+        ok = mode == 2u && req == 2u && app == 2u && r5e == 2u && echo == 2u && at != 0u && g->g5b_h2 == at &&
+             g->g5b_b2 != 0u && g->g5b_m2 == g->g5b_b2 && ko &&
+             (keyoff != 0u || g->g5b_drop == 0u) && g->g5b_max == 2u && f3e == 1u && f53 == 1u && f3c == 0u && f3d == 0u &&
+             f54 == 0u && f55 == 0u;
+        if (ok) {
+            g5b_m2_runs++;
+        }
+    } else {
+        ok = mode == 1u && req == 1u && app == 1u && r5e == 1u && echo == 1u && g->g5b_m2 == 0u &&
+             g->g5b_max == 1u && n2 == 0u && f3d == 1u && f55 == 1u && f3c == 0u && f3e == 0u && f53 == 0u &&
+             f54 == 0u;
+    }
+    ok = ok && r->b.m2.pad == 0u && r->b.m2.n != 0u && n != 0u;
+    printf("   G5b [%s]: mode 1 F%u (first mode-1 task F%u, first 0x108 in it F%u), 2 handed over by the task of "
+           "F%u (want %s F%u), applied by the batch of F%u, mode 2 F%u, drops %u, max %u | end: mode %u req %u echo +8 %u "
+           "0x93B5E %u last %u flags 3C/3D/3E %u%u%u 53/54/55 %u%u%u | selector passes %u (2: %u) | m2 "
+           "cross-check passes %u disagreeing %u => %s\n", name, g->m1, g->g5b_t1, g->g5b_e1, g->g5b_h2,
+           want2 ? "" : "never, not", want2 ? at : 0u, g->g5b_b2, g->g5b_m2, g->g5b_drop, g->g5b_max, mode, req,
+           app, r5e, echo, f3c, f3d, f3e, f53, f54, f55,
+           (unsigned)n, (unsigned)n2, (unsigned)r->b.m2.n, (unsigned)r->b.m2.pad, ok ? "AS REQUIRED" : "WRONG");
+    if (keyoff != 0u) {
+        printf("   G5b [%s]: key-off at F%u → mode 1 at F%u; key-on at F%u → mode 2 at F%u\n", name,
+               g->m1 + keyoff, g->g5b_back1, g->m1 + keyon, g->g5b_again2);
+    }
+    GCHECK(ok, "G5b %s: the live OS mode", name);
+}
+#endif
+
 static void scenario(const scen_t *sc)
 {
     const g6a_t *c = &g_rb.c;
@@ -339,8 +412,13 @@ static void scenario(const scen_t *sc)
     (void)g_ra;
     run_child(sc, true, &g_gb, &g_rb, g_win[1], g_tks[1]);
     gd = g6c_cmp(sc->name, &g_gb, &g_rb, g_win[1], g_tks[1]);
+#if defined(G5B_HASH_MASK)
+    printf("== %s: mode 1 F%u 'U' F%u | (1) vs the golden (r04t, G5b-masked: g5b_r04t_test_g6b.tgz): %u "
+           "differences\n", sc->name, g_rb.m1, g_rb.u, gd);
+#else
     printf("== %s: mode 1 F%u 'U' F%u | (1) vs the golden (r04s: g6s_r04s_test_g6b.tgz): %u differences\n", sc->name, g_rb.m1, g_rb.u,
            gd);
+#endif
     printf("   (2) wire self-check: passes %u | AGREE %u BOOT %u FENCED %u FSMTAIL %u UNEXP %u | boot window closed at "
            "pass %u (%u disagreeing) | law checks %u mismatches %u | guard fallbacks %u | ae28_x %u | engine unported %u\n",
            (unsigned)c->passes, (unsigned)c->cls_n[0], (unsigned)c->cls_n[1], (unsigned)c->cls_n[2],
@@ -357,6 +435,15 @@ static void scenario(const scen_t *sc)
         print_rec("UNEX", &c->urec[i]);
     }
     GCHECK(gd == 0u, "%s: differs from the golden (%u)", sc->name, gd);
+#if defined(G5B_SEL)
+    g5b_check(sc->name, !sc->nosim,
+#  if defined(G5B_SCEN)
+              sc->engon, sc->engone, sc->keyoff, sc->keyon,
+#  else
+              0u, 0u, 0u, 0u,
+#  endif
+              &g_gb, &g_rb, g_win[1]);
+#endif
     if (sc->info) {
         return;             /* D -> R direct: the golden identity is the whole check */
     }
@@ -574,6 +661,17 @@ int main(void)
          * <= 10 and the R release's third element (D, BD44) still applied
          * → +0x1E, BD1C (0x10E5EE's offset is 0 for D, 0x10F084 0 for E6C2 −1) */
         { .name = "R -> D direct (no P between)", .kR = K_P1, .info = true, .rfirst = true },
+#if defined(G5B_SCEN)
+        /* G5b (~/tcu_sweep/g5b_port.md): the 0x108 shapes of the bench —
+         * the engine sim started 1 s after the mode-1 switch, and a single
+         * stray frame 0.5 s after it (the rest of the gs-check unchanged) */
+        { .name = "G5b: engine sim starts 1 s after mode 1", .info = true, .engon = 100u },
+        { .name = "G5b: one stray 0x108 frame 0.5 s after mode 1", .info = true, .engone = 50u },
+        /* key-off in D (0x112 code 4 → 0 at m1 + 3 s, after the D engagement
+         * completed), key-on 1.5 s later: mode 2 → 1 → 2 (the engine sim
+         * still running); the wire is r04t's (key-off auto-P included) */
+        { .name = "G5b: key-off in D, key-on 1.5 s later", .info = true, .keyoff = 300u, .keyon = 450u },
+#endif
     };
     /* the negatives (G6b form), anchored on the base run's D commit, R commit
      * and D release start (bridge passes) */
@@ -630,6 +728,9 @@ int main(void)
         const scen_t base = { .name = "base gs-check (G6b, the negatives' reference)" };
         run_child(&base, true, &g_gbase, &g_base, win, tks);
         GCHECK(g6c_cmp(base.name, &g_gbase, &g_base, win, tks) == 0u, "base: differs from the r04o golden");
+#if defined(G5B_SEL)
+        g5b_check(base.name, true, 0u, 0u, 0u, 0u, &g_gbase, &g_base, win);
+#endif
         printf("== base: D commit pass %u, R commit pass %u, D release start pass %u\n",
                (unsigned)g_base.b.slot[0].t0, (unsigned)g_base.b.slot[1].t0, (unsigned)g_base.rel_t0[0]);
         for (unsigned k = 0u; k < nN; k++) {
@@ -643,6 +744,9 @@ int main(void)
         printf("r04r WK / Sys guard runs as required: %u of 2\n", g_supply_ok);
 #endif
     }
+#endif
+#if defined(G5B_SEL)
+    printf("G5b: %u runs checked, %u entered mode 2 as required\n", g5b_runs, g5b_m2_runs);
 #endif
     if (g_fails == 0) {
         printf("test_g6b: ok\n");

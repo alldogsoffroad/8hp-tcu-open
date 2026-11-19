@@ -53,6 +53,10 @@
 #include "io/vehicle/vehicle.h"
 #include "safety/kl15.h"
 #include "safety/park_mon.h"
+#if defined(G5B_SEL)
+#include "safety/os_sel.h"
+static bool g5b_h2_pending;     /* G5b: a hand-off of 2 not yet seen by a 5 ms batch */
+#endif
 #if defined(SM_TEST)
 /* THE SHIFT-MAP SHADOW's live identity (2026-11-19, ~/tcu_sweep/sm_shadow_port.md):
  * the shadow at main.c's 30 ms slot (app/tmp_chain.c: modes 1..3, every 3rd
@@ -86,6 +90,18 @@ static unsigned g6a_eng0_from;  /* frames after the mode-1 switch: 0x108 valid a
 static unsigned g6q_engoff_from;/* r04q: frames after the mode-1 switch: 0x108 no longer sent (0 = never) —
                                  * the bench's engine-sim stop (0x108 invalid) */
 static bool g6a_nosim;          /* no lever / brake / engine frames at all (the plain boot) */
+#if defined(G5B_SCEN)
+/* G5b (~/tcu_sweep/g5b_port.md): two 0x108 shapes (frames after the mode-1
+ * switch; 0 = off) — the engine sim started after boot (no 0x108 before),
+ * and ONE stray 0x108 frame (no 0x108 before or after) */
+static unsigned g5b_engon_from;
+static unsigned g5b_eng_one;    /* the frame is sent at the first 10 ms task at or after m1 + this */
+static bool g5b_one_done;
+/* key-off / key-on (frames after the mode-1 switch; 0 = no 0x112 at all):
+ * 0x112 code 4 (ignition on) from power-on, code 0 (off: the keyoff-check
+ * path) from m1 + off, code 4 again from m1 + on */
+static unsigned g5b_keyoff_from, g5b_keyon_from;
+#endif
 static unsigned g6a_m1;         /* the mode-1 frame of the current run */
 #if defined(G6B_TEST)
 static uint32_t g6b_relwin_from = 0xFFFFFFFFu, g6b_relwin_to;   /* test_g6b.c: forced RELWIN passes */
@@ -251,6 +267,17 @@ typedef struct {
     unsigned bw_beg, bw_end;/* r04q: the frames of the monitor's boot entry and of the
                              * boot allowance's end (gsb_t.boot_st USED) */
     run_r_t r;
+#if defined(G5B_SEL)
+    unsigned g5b_m2;        /* G5b: the frame the OS mode became 2 (0 = never) */
+    unsigned g5b_drop;      /* G5b: batch passes with the mode != 2 after it */
+    unsigned g5b_max;       /* G5b: the highest OS mode seen */
+    unsigned g5b_t1;        /* G5b: the frame of the first mode-1 10 ms task */
+    unsigned g5b_e1;        /* G5b: the frame of the first 0x108 sent by a mode-1..3 task */
+    unsigned g5b_h2;        /* G5b: the frame of the 10 ms task that first handed 2 to 0x93B5E */
+    unsigned g5b_b2;        /* G5b: the frame of the first 5 ms batch after it */
+    unsigned g5b_back1;     /* G5b: the frame mode 1 came back (key-off) */
+    unsigned g5b_again2;    /* G5b: the frame mode 2 came back after that (key-on) */
+#endif
 } gr_t;
 
 static uint64_t fnv64(uint64_t h, uint32_t v)
@@ -274,6 +301,21 @@ static uint64_t fnv64(uint64_t h, uint32_t v)
 static unsigned long g_flags_live_n;
 static uint8_t g_flags_last[4];
 static unsigned long g_flags_nz_n;
+#endif
+#if defined(G5B_HASH_MASK)
+/* G5b (~/tcu_sweep/g5b_port.md): THE OS-MODE CELLS — the only RAM G5b may
+ * change: the mode cells of bsw/sup/sup_mode.c (0x848CF, 0x93B33, 0x93B34,
+ * 0x93B5B..0x93B5E), the echo's last-seen 0x93B56, the six slot-26 flags
+ * and the selector object in r04r's retired pad (0xFFF95F7C..9B). The HEAD
+ * goldens (r04t) are written by a HEAD build with the SAME mask, so every
+ * other byte of the window is compared, per frame and at the end. */
+static int g5b_masked(uint32_t abs)
+{
+    return abs == 0xFFF848CFu || abs == 0xFFF93B33u || abs == 0xFFF93B34u || abs == 0xFFF93B56u ||
+           (abs >= 0xFFF93B5Bu && abs <= 0xFFF93B5Eu) ||
+           (abs >= 0xFFF89C3Cu && abs <= 0xFFF89C3Eu) || (abs >= 0xFFF89C53u && abs <= 0xFFF89C55u) ||
+           (abs >= 0xFFF95F7Cu && abs < 0xFFF95F9Cu);
+}
 #endif
 static uint64_t g_hash_window(uint64_t h)
 {
@@ -313,6 +355,11 @@ static uint64_t g_hash_window(uint64_t h)
             continue;
         }
 #endif
+#if defined(G5B_HASH_MASK)
+        if (g5b_masked(abs)) {
+            continue;                       /* G5b: the OS-mode cells (masked in BOTH builds) */
+        }
+#endif
         h = (h ^ p[a]) * 0x100000001B3ull;
     }
     return h;
@@ -327,6 +374,12 @@ static void task10(gr_t *g, unsigned p)
     const uint8_t mode = sup_mode();
     const uint8_t lev = lever_at(p, g->m1);
     uint8_t d[8];
+#if defined(G5B_SEL)
+    os_sel_echo_10ms(mode);         /* G5b: app/main.c's task head (0x68EA8) */
+    if (mode == 1u && g->g5b_t1 == 0u) {
+        g->g5b_t1 = p;              /* G5b: the first mode-1 10 ms task */
+    }
+#endif
 #if defined(G6A_TEST)
     unsigned rpm = 700u;
     g6a_m1 = g->m1;
@@ -351,18 +404,74 @@ static void task10(gr_t *g, unsigned p)
     d[1] = (uint8_t)rpm;
     d[2] = 0x1Fu;
     d[3] = 0xFFu;
-#if defined(G6A_TEST)
-    if (g6q_engoff_from == 0u || g->m1 == 0u || p < g->m1 + g6q_engoff_from)
+#if defined(G5B_SCEN)
+    if (g5b_keyoff_from != 0u) {
+        const bool off = g->m1 != 0u && p >= g->m1 + g5b_keyoff_from &&
+                         !(g5b_keyon_from != 0u && p >= g->m1 + g5b_keyon_from);
+        memset(d, 0, sizeof d);
+        d[0] = off ? 0u : 4u;
+        g_send(CAN_BUS1, 0x112u, 2u, false, d);     /* the ignition status */
+    }
 #endif
-    g_send(CAN_BUS1, 0x108u, 8u, true, d);          /* engine 700 */
+    {
+        bool send108 = true;
+#if defined(G5B_SCEN)
+        if (g5b_engon_from != 0u) {
+            send108 = g->m1 != 0u && p >= g->m1 + g5b_engon_from;
+        }
+        if (g5b_eng_one != 0u) {
+            send108 = g->m1 != 0u && p >= g->m1 + g5b_eng_one && !g5b_one_done;
+            if (send108) {
+                g5b_one_done = true;
+            }
+        }
+#endif
+#if defined(G6A_TEST)
+        if (!(g6q_engoff_from == 0u || g->m1 == 0u || p < g->m1 + g6q_engoff_from)) {
+            send108 = false;
+        }
+#endif
+        if (send108) {
+            g_send(CAN_BUS1, 0x108u, 8u, true, d);  /* engine 700 */
+#if defined(G5B_SEL)
+            if (mode >= 1u && g->g5b_e1 == 0u) {
+                g->g5b_e1 = p;                      /* G5b: the first 0x108 a mode-1..3 task sent */
+            }
+#endif
+        }
+    }
     }
 
     G6R_REPLICA_10MS(mode);         /* r04r: the retired holder (replica only, see above) */
     vehicle_update_10ms();
     *(volatile uint16_t *)(uintptr_t)KL15_SRC_CELL = 13206u;
+#if defined(G5B_SEL)
+    {
+        /* G5b: app/main.c's selector 0x1418E2, before kl15 (this harness's
+         * turbine: 0 rpm, quality ok — as the monitor's input below) */
+        const vehicle_in_t *v5 = vehicle_in();
+        const os_sel_in_t si = {
+            .eng = (uint16_t)v5->engine_speed,
+            .eng_valid = (v5->q_engine_speed == Q_OK) ? 1u : 0u,
+            .tur_ok = 1u,
+            .tur = 0u,
+            .sup = *(const volatile uint16_t *)0xFFF94F86u,
+            .e9ff = kl15_e9ff(),
+            .pad = 0u,
+        };
+        os_sel_tick_10ms(mode, &si);
+    }
+#endif
     kl15_tick_10ms();
     rng_chain_tick_10ms(mode, 1u, 1u);
+#if defined(G5B_SEL)
+    os_sel_flags_10ms(mode);        /* G5b: slot 26 */
+#endif
+#if defined(G5B_NEG_MODE2_PARK)
+    park_set_os_mode(mode == 2u ? 3u : mode);   /* G5b negative: a mode-2-dependent output */
+#else
     park_set_os_mode(mode);
+#endif
     park_tick_10ms();
     {
         const vehicle_in_t *v = vehicle_in();
@@ -447,6 +556,13 @@ static void task10(gr_t *g, unsigned p)
 #endif
         }
         s_sm_ph = (uint8_t)(s_sm_ph + 1u >= 3u ? 0u : s_sm_ph + 1u);
+    }
+#endif
+#if defined(G5B_SEL)
+    os_sel_handoff_10ms(mode);      /* G5b: app/main.c's task tail (0x68EFE) */
+    if (CELL_OS_REQ_APP == 2u && g->g5b_h2 == 0u) {
+        g->g5b_h2 = p;              /* G5b: the first hand-off of a 2 to 0x93B5E */
+        g5b_h2_pending = true;
     }
 #endif
 }
@@ -596,6 +712,28 @@ static void run_g(gr_t *g)
                     r->sw_frame = p;
                     g->m1 = p;
                 }
+#if defined(G5B_SEL)
+                if (g5b_h2_pending) {
+                    g->g5b_b2 = p;          /* G5b: the first 5 ms batch after that hand-off */
+                    g5b_h2_pending = false;
+                }
+                /* G5b: the mode-2 entry frame, and any drop after it */
+                if (CELL_OS_MODE == 2u && g->g5b_m2 == 0u) {
+                    g->g5b_m2 = p;
+                }
+                if (g->g5b_m2 != 0u && CELL_OS_MODE != 2u) {
+                    g->g5b_drop++;
+                    if (g->g5b_back1 == 0u) {
+                        g->g5b_back1 = p;   /* G5b: back to mode 1 (key-off) */
+                    }
+                }
+                if (g->g5b_back1 != 0u && CELL_OS_MODE == 2u && g->g5b_again2 == 0u) {
+                    g->g5b_again2 = p;      /* G5b: mode 2 again (key-on) */
+                }
+                if (CELL_OS_MODE > g->g5b_max) {
+                    g->g5b_max = CELL_OS_MODE;
+                }
+#endif
                 if (drv_out_wit()->law_n != law0) {
                     law0 = drv_out_wit()->law_n;
                     r->passes++;

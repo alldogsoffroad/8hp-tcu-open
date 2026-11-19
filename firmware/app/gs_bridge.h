@@ -141,7 +141,7 @@ typedef struct {
     uint16_t eng;           /* +4: E90E (held while invalid) */
     uint16_t tur;           /* E7E8 */
     uint16_t sup;           /* 0x96066 ← 0x93920 ← 0x94F86 (mV) */
-    uint16_t pad;
+    uint16_t pad;           /* G5b (GS_M2_XCHECK): passes whose request != the live 0x95483 (os_sel.c) */
     uint32_t n;             /* passes (OS modes 1..3) */
     uint32_t n2;            /* passes requesting 2 */
     uint32_t first2;        /* bridge pass of the first request 2 (0 = never) */
