@@ -5,6 +5,10 @@
 #include "safety/tmp_safe.h"
 
 extern void tmp_chain_hook_100ms(void) __attribute__((weak));
+/* the 30 ms list 0x4D940 runs the shift target (entries 5 / 14 / 15 / 16)
+ * before 0xB9646 (entry 19): main.c hands it the read-only shift-map shadow
+ * (app/sm_shadow.h) */
+extern void tmp_chain_hook_30ms(void) __attribute__((weak));
 
 #if defined(TCU_RAM_APP)
 /* not in the RAM application (no temperature acquisition there) */
@@ -84,6 +88,9 @@ void tmp_chain_task_slow(uint8_t os_mode)
         s_ph100 = 0u;
     }
     if (s_ph30 == 0u) {
+        if (tmp_chain_hook_30ms) {
+            tmp_chain_hook_30ms();          /* entries 5 / 14 / 15 / 16 (main.c: the shift-map shadow) */
+        }
         tmp_chain_b9646();                  /* 30 ms: 0x4D940 entry 19 0xA318A */
     }
     if (s_ph100 == 0u) {

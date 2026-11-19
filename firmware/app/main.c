@@ -44,6 +44,7 @@
 #include "app/fb_shadow.h"
 #include "app/pa7_shadow.h"
 #include "app/tsel_shadow.h"
+#include "app/sm_shadow.h"
 #include "app/park_law.h"
 #if !defined(TCU_RAM_APP)
 #include "app/g6a.h"
@@ -401,6 +402,16 @@ void tmp_chain_hook_100ms(void)
     park_pair_g98_100ms();
 }
 
+#if !defined(TCU_RAM_APP)
+/* the stock's 30 ms list 0x4D940 (modes 1..3): the shift target, entries 5 /
+ * 14 / 15 / 16, before 0xB9646 — the READ-ONLY shift-map shadow
+ * (app/sm_shadow.c, its own RAM .sm_shadow; it writes nothing live) */
+void tmp_chain_hook_30ms(void)
+{
+    sm_hook_30ms();
+}
+#endif
+
 /* ── 100 ms: heartbeat ─────────────────────────────────────────────────── */
 static can_frame_t s_hb;
 static void task_100ms(void)
@@ -512,6 +523,8 @@ int main(void)
     /* the read-only ECU-temperature shadow (app/tsel_shadow.c, its own RAM):
      * the stock's init hub 0x832AC (0x88BAC, 0x88D98) */
     tsel_hook_init();
+    /* the read-only shift-map shadow (app/sm_shadow.c, its own RAM) */
+    sm_hook_init();
 #endif
     park_pair_init();                   /* park sensor: 0x141B1C (safety layer) */
     sensors_init(&s_sensors_cfg);

@@ -49,6 +49,7 @@ set(CORE_SOURCES
     app/fb_shadow.c app/fb_cal.c app/fb_hook.c
     app/pa7_shadow.c app/pa7_hook.c bsw/drv/drv_pa7.c
     app/tsel_shadow.c app/tsel_hook.c app/tsel_live.c bsw/drv/drv_tsel.c
+    app/sm_shadow.c app/sm_cal.c app/sm_hook.c
     safety/park_mon.c
     safety/park_pair.c
     safety/kl15.c
@@ -1496,6 +1497,97 @@ else()
         GSB_ENG_PASSES=50u G6A_ENGLIM=1)
     add_test(NAME g6r_switch_norep_englim COMMAND test_g6b_norep_englim)
     set_tests_properties(g6r_switch_norep g6r_switch_norep_englim PROPERTIES ENVIRONMENT "${G6C_GOLD_ENV}")
+    # THE SHIFT-MAP SHADOW (2026-11-19, ~/tcu_sweep/sm_shadow_port.md): the
+    # stock's shift target (30 ms entries 5 / 14 / 15 / 16 → A697 / A0AA /
+    # 0x89CE8) as a read-only shadow (app/sm_shadow.c). sm_shadow: the dump
+    # cells, standstill, the decode's §7 sweeps, the step limits, invariants;
+    # sm_cal_bytes: every cal copy against the image; _neg_MAP (one map cell
+    # +1) must FAIL. sm_identity: test_g6b_norep (the image's configuration,
+    # the r04r goldens: every bus-A word, the park demands, the cell window,
+    # every tick) with the shadow at main.c's 30 ms slot must pass unchanged
+    # and show the shadow ran; the leak negative (the shadow's target written
+    # into the live 0x89CE8) must FAIL. The scans and the SH compile checks.
+    set(SM_TEST_SOURCES tests/unit/test_sm_shadow.c app/sm_shadow.c app/sm_cal.c)
+    add_executable(test_sm_shadow ${SM_TEST_SOURCES})
+    target_compile_definitions(test_sm_shadow PRIVATE _POSIX_C_SOURCE=200809L
+        "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"" "TCU_STOCK_DUMP=\"${TCU_STOCK_DUMP}\"")
+    add_test(NAME sm_shadow COMMAND test_sm_shadow)
+    add_test(NAME sm_cal_bytes COMMAND test_sm_shadow --cal)
+    set_tests_properties(sm_cal_bytes PROPERTIES SKIP_RETURN_CODE 77)
+    add_executable(test_sm_shadow_neg_MAP ${SM_TEST_SOURCES})
+    target_compile_definitions(test_sm_shadow_neg_MAP PRIVATE _POSIX_C_SOURCE=200809L SM_NEG_MAP=1
+        "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"" "TCU_STOCK_DUMP=\"${TCU_STOCK_DUMP}\"")
+    add_test(NAME sm_shadow_neg_MAP COMMAND test_sm_shadow_neg_MAP)
+    set_tests_properties(sm_shadow_neg_MAP PROPERTIES WILL_FAIL TRUE)
+    add_executable(test_g6b_norep_sm ${G6B_NOREP_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_hook.c)
+    target_compile_definitions(test_g6b_norep_sm PRIVATE ${G6B_DEFS} G6R_HOLDER_REPLICA=0 G6R_NOREP=1
+        SM_TEST=1 SM_HOOK_NO_GATHER=1)
+    add_test(NAME sm_identity COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/sm_identity.py
+        $<TARGET_FILE:test_g6b_norep_sm>)
+    add_executable(test_g6b_norep_smleak ${G6B_NOREP_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_hook.c)
+    target_compile_definitions(test_g6b_norep_smleak PRIVATE ${G6B_DEFS} G6R_HOLDER_REPLICA=0 G6R_NOREP=1
+        SM_TEST=1 SM_HOOK_NO_GATHER=1 SM_NEG_LEAK=1)
+    add_test(NAME sm_identity_negative_leak COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/sm_identity.py
+        $<TARGET_FILE:test_g6b_norep_smleak>)
+    # the replica form (test_g6b: the retired holder replayed so the per-frame
+    # cell-window hash is compared too, not only the wire and the end window)
+    add_executable(test_g6b_sm ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_hook.c)
+    target_compile_definitions(test_g6b_sm PRIVATE ${G6B_DEFS} SM_TEST=1 SM_HOOK_NO_GATHER=1)
+    add_test(NAME sm_identity_cells COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/sm_identity.py
+        $<TARGET_FILE:test_g6b_sm>)
+    add_executable(test_g6b_smleak ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_hook.c)
+    target_compile_definitions(test_g6b_smleak PRIVATE ${G6B_DEFS} SM_TEST=1 SM_HOOK_NO_GATHER=1
+        SM_NEG_LEAK=1)
+    add_test(NAME sm_identity_cells_negative_leak COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/sm_identity.py
+        $<TARGET_FILE:test_g6b_smleak>)
+    set_tests_properties(sm_identity_cells_negative_leak PROPERTIES WILL_FAIL TRUE)
+    set_tests_properties(sm_identity sm_identity_negative_leak sm_identity_cells sm_identity_cells_negative_leak
+        PROPERTIES ENVIRONMENT "${G6C_GOLD_ENV}")
+    set_tests_properties(sm_identity_negative_leak PROPERTIES WILL_FAIL TRUE)
+    set(SM_OUTPUT_PATHS ${TSEL_OUTPUT_PATHS}
+        ${CMAKE_SOURCE_DIR}/app/gs_cand.c ${CMAKE_SOURCE_DIR}/app/gs_engine.c ${CMAKE_SOURCE_DIR}/app/gs_bridge.c
+        ${CMAKE_SOURCE_DIR}/app/g6a.c ${CMAKE_SOURCE_DIR}/app/rng_chain.c ${CMAKE_SOURCE_DIR}/app/park.c
+        ${CMAKE_SOURCE_DIR}/app/park_law.c ${CMAKE_SOURCE_DIR}/app/tmp_chain.c)
+    add_test(NAME sm_shadow_scan_outputs
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/sm_shadow_scan.py outputs ${SM_OUTPUT_PATHS})
+    add_test(NAME sm_shadow_scan_outputs_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/sm_shadow_scan.py outputs
+            ${CMAKE_SOURCE_DIR}/tests/unit/sm_scan_fixture_output.c)
+    add_test(NAME sm_shadow_scan_shadow
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/sm_shadow_scan.py shadow
+            ${CMAKE_SOURCE_DIR}/app/sm_shadow.c ${CMAKE_SOURCE_DIR}/app/sm_shadow.h
+            ${CMAKE_SOURCE_DIR}/app/sm_cal.c ${CMAKE_SOURCE_DIR}/app/sm_cal.h)
+    add_test(NAME sm_shadow_scan_shadow_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/sm_shadow_scan.py shadow
+            ${CMAKE_SOURCE_DIR}/tests/unit/sm_scan_fixture_shadow.c)
+    add_test(NAME sm_shadow_scan_hook
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/sm_shadow_scan.py hook ${CMAKE_SOURCE_DIR}/app/sm_hook.c)
+    add_test(NAME sm_shadow_scan_hook_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/sm_shadow_scan.py hook
+            ${CMAKE_SOURCE_DIR}/tests/unit/sm_scan_fixture_hook.c)
+    set_tests_properties(sm_shadow_scan_outputs_negative sm_shadow_scan_shadow_negative
+        sm_shadow_scan_hook_negative PROPERTIES WILL_FAIL TRUE)
+    set(SM_SH_SRC ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard_sm.c)
+    add_test(NAME sm_sh_guard_control COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${SM_SH_SRC})
+    add_test(NAME sm_sh_guard_shadow
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/sm_shadow.c)
+    add_test(NAME sm_sh_guard_cal
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/sm_cal.c)
+    add_test(NAME sm_sh_guard_hook
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform -Wall -Wextra -Wconversion
+            ${CMAKE_SOURCE_DIR}/app/sm_hook.c)
+    foreach(g OUTPUT OUTCAL OUTTU)
+        add_test(NAME sm_sh_guard_${g} COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform
+            -DSH_GUARD_SM_${g} ${SM_SH_SRC})
+        set_tests_properties(sm_sh_guard_${g} PROPERTIES
+            PASS_REGULAR_EXPRESSION "the shift-map shadow is read-only: an output path may not include")
+    endforeach()
+    foreach(hdr sup_cells drv_cells drv_odiag drv_temp platform)
+        add_test(NAME sm_sh_guard_live_${hdr} COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform
+            -DSH_GUARD_SM_LIVE_${hdr} ${SM_SH_SRC})
+        set_tests_properties(sm_sh_guard_live_${hdr} PROPERTIES
+            PASS_REGULAR_EXPRESSION "the shift-map shadow is read-only: it may not include a live header")
+    endforeach()
     # r04r: the retired holder stays out of the image (the POST_BUILD scan of
     # tcu_app.elf runs the same rule on the real link map); its fixtures
     add_test(NAME g6r_scan_retired_ok

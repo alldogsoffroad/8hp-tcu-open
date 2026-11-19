@@ -344,7 +344,20 @@ SECTIONS
     .m5_rec  0xFFF86000 (NOLOAD) : {
         __m5_rec_start = .; *(.m5_rec) . = ALIGN(4); __m5_rec_end = .;
     } > RAM
-    ASSERT(__m5_rec_end <= 0xFFF86A00, ".m5_rec overflow")
+    ASSERT(__m5_rec_end <= 0xFFF86800, ".m5_rec overflow (its upper 0x200 B is .sm_shadow since 2026-11-19)")
+    /* THE SHIFT-MAP SHADOW (app/sm_shadow.c, ours — not stock cells;
+     * 2026-11-19, ~/tcu_sweep/sm_shadow_port.md): struct sm_t (0x120) at
+     * 0xFFF86800, in the retired M5 recorder's window (.m5_rec, empty since
+     * r04r) below .fb_shadow 0xFFF86A00 — stock RAM the driving dump holds
+     * all zero (0xFFF85400..0xFFF88100). The TU's zero-initialised statics
+     * land here too, so .bss does not move. Cleared by sm_shadow_init. */
+    .sm_shadow 0xFFF86800 (NOLOAD) : {
+        __sm_shadow_start = .; *(.sm_shadow) *sm_shadow.c.obj(.bss .bss.* COMMON)
+        . = ALIGN(4); __sm_shadow_end = .;
+    } > RAM
+    ASSERT(__sm_shadow_start >= __m5_rec_end, ".sm_shadow overlaps .m5_rec")
+    ASSERT(__sm_shadow_end <= 0xFFF86A00, ".sm_shadow runs into .fb_shadow")
+    ASSERT(__sm_shadow_start == 0xFFF86800 && SIZEOF(.sm_shadow) == 0x120, ".sm_shadow: sm_t is off 0xFFF86800 (witness_sm.py)")
     .m5_wit 0xFFF84D40 (NOLOAD) : {
         __m5_wit_start = .; *(.m5_wit) . = ALIGN(4); __m5_wit_end = .;
     } > RAM
@@ -547,7 +560,7 @@ SECTIONS
         __fb_shadow_start = .; *(.fb_shadow) *fb_shadow.c.obj(.bss .bss.* COMMON)
         . = ALIGN(4); __fb_shadow_end = .;
     } > RAM
-    ASSERT(__fb_shadow_start >= __m5_rec_end, ".fb_shadow overlaps .m5_rec")
+    ASSERT(__fb_shadow_start >= __m5_rec_end && __fb_shadow_start >= __sm_shadow_end, ".fb_shadow overlaps .m5_rec / .sm_shadow")
     ASSERT(__fb_shadow_end <= ADDR(.rng_wit), ".fb_shadow runs into .rng_wit")
     ASSERT(__fb_shadow_start == 0xFFF86A00 && SIZEOF(.fb_shadow) == 0x34C, ".fb_shadow: fbs_t is off 0xFFF86A00 (witness_fbshadow.py)")
 
