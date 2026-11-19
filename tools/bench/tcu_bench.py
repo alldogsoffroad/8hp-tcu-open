@@ -1603,9 +1603,9 @@ def cmd_gs_check(b, args):
     the bridged-release recorder (_s_gsbr / _s_gsbr_est) is printed at the end."""
     b.start_drain()     # keep the Teensy ports drained (lever-sim gaps, 2026-11-17)
 
-    w_addr, w_size = elf_sym(args.elf, "_g_w")
+    w_addr, w_size = elf_sym(args.elf, "_g_w", G6A_CAND_RAM)      # the shadow's, not the G6a candidate's
     r_slots = [elf_sym(args.elf, "_g_rec0"), elf_sym(args.elf, "_g_rec1")]
-    rel_addr, rel_size = elf_sym(args.elf, "_g_rel")
+    rel_addr, rel_size = elf_sym(args.elf, "_g_rel", G6A_CAND_RAM)
     if rel_size != GS_REL_SIZE:
         sys.exit(f"_g_rel {rel_size:#x}: not the gs_rel_t layout this tool expects (G4a) - rebuild?")
     if w_size != GS_WIT_SIZE or any(sz != GS_REC_N * GS_REC_ENTRY for _, sz in r_slots):
@@ -1762,15 +1762,24 @@ RCM_G109, RCM_G98, RCM_U_FAILED, RCM_U_TESTED = 0x02, 0x03, 0x00, 0x01
 RCM_U_FAIL, RCM_U_PASS, RCM_SKIP, RCM_FM_MS, RCM_FM109, RCM_FM98 = 0x14, 0x18, 0x1C, 0x20, 0x24, 0x4C
 
 
-def elf_sym(elf, name):
-    """(address, size) of a symbol from sh-elf-nm -S."""
+def elf_sym(elf, name, skip=None):
+    """(address, size) of a symbol from sh-elf-nm -S. skip = (lo, hi): ignore a
+    symbol of that name inside [lo, hi) (G6a: the candidate, instance 2 of the
+    garage engine template, has statics of the same names as the shadow's in
+    .gsc_req/.gsc_obj 0xFFF925C0..0xFFF92C68)."""
     import subprocess
     out = subprocess.run(["sh-elf-nm", "-S", elf], capture_output=True, text=True, check=True).stdout
     for l in out.splitlines():
         f = l.split()
         if len(f) == 4 and f[3] == name:
-            return int(f[0], 16), int(f[1], 16)
+            a = int(f[0], 16)
+            if skip is not None and skip[0] <= a < skip[1]:
+                continue
+            return a, int(f[1], 16)
     sys.exit(f"symbol {name} not found in {elf} - rebuild?")
+
+
+G6A_CAND_RAM = (0xFFF925C0, 0xFFF92C68)     # the G6a candidate's block (linker.ld .gsc_req/.gsc_obj)
 
 
 class ChainCells:

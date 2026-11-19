@@ -411,6 +411,38 @@ SECTIONS
     ASSERT(__gs_rel_end <= ADDR(.rng_893e0), ".gs_rel runs into .rng_893e0")
     ASSERT(SIZEOF(.gs_rel) == 0xC04, ".gs_rel: gs_rel_t is off (tcu_bench.py gs-check)")
 
+    /* G6a — THE CANDIDATE (app/gs_cand.c + app/gs_cand_fill.c, instance 2 of
+     * the garage engine template; ours, not stock cells; 2026-11-19,
+     * ~/tcu_sweep/g6a_port.md): its request objects (7 x 0x60, addressed by
+     * number: app/gs_cand_bind.h GSC_REQ_BASE) and every static of both
+     * candidate TUs (no recorders: GSE_REC 0) in 0xFFF925C0..0xFFF92C68 —
+     * stock RAM the driving dump holds all zero (0xFFF925BE..0xFFF92C68)
+     * and no code of ours names (literal scan at the port), between
+     * .sup_era and .pks_mon. Cleared by gs_cand_init (__gsc_obj_start..end;
+     * NOLOAD is not cleared by start.S); .bss does not move. */
+    .gsc_req 0xFFF925C0 (NOLOAD) : { __gsc_req_start = .; . += 0x2A0; __gsc_req_end = .; } > RAM
+    .gsc_obj 0xFFF92860 (NOLOAD) : {
+        __gsc_obj_start = .; *(.gsc_obj)
+        *gs_cand.c.obj(.bss .bss.* COMMON) *gs_cand_fill.c.obj(.bss .bss.* COMMON)
+        . = ALIGN(4); __gsc_obj_end = .;
+    } > RAM
+    ASSERT(__gsc_req_start == 0xFFF925C0 && __gsc_req_end == __gsc_obj_start,
+           ".gsc_req is off app/gs_cand_bind.h GSC_REQ_BASE")
+    ASSERT(__gsc_req_start >= ADDR(.sup_era) + SIZEOF(.sup_era), ".gsc_req overlaps .sup_era")
+    ASSERT(__gsc_obj_end <= 0xFFF92C68, ".gsc_obj leaves the dump's zero run (0xFFF925BE..0xFFF92C68)")
+    ASSERT(__gsc_obj_end <= ADDR(.pks_mon), ".gsc_obj runs into .pks_mon")
+    /* G6a — THE COMPARATOR (app/g6a.c; ours): g6a_t (0x3A4) in
+     * 0xFFF93C08..0xFFF94000 — the dump's zero run 0xFFF93C04..0xFFF94006,
+     * no code of ours names it (literal scan at the port), after .sup_fsm
+     * and below .tmp_940e0. Cleared by g6a_init. */
+    .g6a 0xFFF93C08 (NOLOAD) : {
+        __g6a_start = .; KEEP(*(.g6a)) *g6a.c.obj(.bss .bss.* COMMON) . = ALIGN(4); __g6a_end = .;
+    } > RAM
+    ASSERT(__g6a_start >= ADDR(.sup_fsm) + SIZEOF(.sup_fsm) && __g6a_end <= 0xFFF94000,
+           ".g6a overlaps .sup_fsm or leaves the dump's zero run")
+    ASSERT(__g6a_end <= ADDR(.tmp_940e0), ".g6a runs into .tmp_940e0")
+    ASSERT(SIZEOF(.g6a) == 0x3A4, ".g6a: g6a_t is off (tools/bench/witness_g6a.py)")
+
     /* THE GARAGE BRIDGE, STAGE G1 (app/gs_bridge.c; ours — not stock cells;
      * 2026-11-18, ~/tcu_sweep/garage_g1_port.md). Four NOLOAD objects:
      *   .gsb_win   gsb_win_t (20 B) at 0xFFF87200 — the .noinit windows: NOT

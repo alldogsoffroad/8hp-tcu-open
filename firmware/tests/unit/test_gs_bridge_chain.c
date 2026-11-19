@@ -57,6 +57,30 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#if defined(G6A_TEST)
+/* G6a (2026-11-19, ~/tcu_sweep/g6a_port.md): tests/unit/test_g6a.c includes
+ * this harness with the candidate + comparator ticked as app/main.c ticks
+ * them (after the bridge, its boot pass at boot state 1 through
+ * sup_mode.c's weak hook); g6a_on selects the run with / without them */
+#include "app/g6a.h"
+static bool g6a_on;
+static unsigned g6a_eng0_from;  /* frames after the mode-1 switch: 0x108 valid at 0 rpm (0 = never) */
+static bool g6a_nosim;          /* no lever / brake / engine frames at all (the plain boot) */
+static unsigned g6a_m1;         /* the mode-1 frame of the current run */
+#if defined(G6A_HOSTTIME)
+/* scratch CPU-cost model (not a ctest): host ns of the shadow's tick (0) and
+ * the candidate + comparator (1), per pass */
+#include <time.h>
+static struct timespec g6a_ts0;
+static double g6a_ns_sum[2], g6a_ns_max[2];
+static unsigned g6a_ns_n[2];
+#define G6A_T0() timespec_get(&g6a_ts0, TIME_UTC)
+#define G6A_T1(k) do { struct timespec t1_; timespec_get(&t1_, TIME_UTC); \
+    const double d_ = (double)(t1_.tv_sec - g6a_ts0.tv_sec) * 1e9 + (double)(t1_.tv_nsec - g6a_ts0.tv_nsec); \
+    g6a_ns_sum[k] += d_; g6a_ns_n[k]++; if (d_ > g6a_ns_max[k]) { g6a_ns_max[k] = d_; } } while (0)
+#endif
+#endif
+
 static sensors_in_t g_z;
 const sensors_in_t *sensors_in(void) { return &g_z; }
 
@@ -189,6 +213,11 @@ static uint64_t g_hash_window(uint64_t h)
             (abs >= 0xFFF91440u && abs < 0xFFF92400u)) {
             continue;                       /* the garage shadow's own RAM */
         }
+#if defined(G6A_TEST)
+        if (abs >= 0xFFF925C0u && abs < 0xFFF92860u) {
+            continue;                       /* G6a: the candidate's own request objects (.gsc_req) */
+        }
+#endif
 #if defined(GSB_HASH_FLAGS_AS_2A)
         if (abs == 0xFFF940E1u || abs == 0xFFF940E2u || abs == 0xFFF940E4u || abs == 0xFFF940E5u) {
             h = (h ^ 0u) * 0x100000001B3ull;
@@ -209,6 +238,17 @@ static void task10(gr_t *g, unsigned p)
     const uint8_t mode = sup_mode();
     const uint8_t lev = lever_at(p, g->m1);
     uint8_t d[8];
+#if defined(G6A_TEST)
+    unsigned rpm = 700u;
+    g6a_m1 = g->m1;
+    if (g6a_eng0_from != 0u && g->m1 != 0u && p >= g->m1 + g6a_eng0_from) {
+        rpm = 0u;                                   /* the engine stalls: 0x108 valid, 0 rpm */
+    }
+    if (!g6a_nosim)
+#else
+    const unsigned rpm = 700u;
+#endif
+    {
     {
         const uint8_t l[5] = { lev, 0, 0, 0, 0 };
         g_send(CAN_BUS1, 0x2EAu, 5u, true, l);
@@ -218,11 +258,12 @@ static void task10(gr_t *g, unsigned p)
     d[0] = 0x04u;                                   /* brake on */
     g_send(CAN_BUS1, 0x140u, 8u, true, d);
     memset(d, 0, sizeof d);
-    d[0] = (uint8_t)(700u >> 8);
-    d[1] = (uint8_t)700u;
+    d[0] = (uint8_t)(rpm >> 8);
+    d[1] = (uint8_t)rpm;
     d[2] = 0x1Fu;
     d[3] = 0xFFu;
     g_send(CAN_BUS1, 0x108u, 8u, true, d);          /* engine 700 */
+    }
 
     rq_prod_task_10ms(mode);
     vehicle_update_10ms();
@@ -244,8 +285,17 @@ static void task10(gr_t *g, unsigned p)
             .eng_valid = (v->q_engine_speed == Q_OK) ? 1u : 0u,
             .out_rpm = 0u,
             .tur_rpm = 0u,
+#if defined(G6A_TEST)
+            .ae28 = *(const volatile uint8_t *)0xFFF8AE28u,   /* app/main.c gs_in_build */
+#endif
         };
+#if defined(G6A_HOSTTIME)
+        G6A_T0();
+#endif
         gs_shadow_tick_10ms(&gi);
+#if defined(G6A_HOSTTIME)
+        G6A_T1(0);
+#endif
         if (g->bridge) {
             const gsb_in_t bi = {
                 .mon_faults = park_mon_faults(),
@@ -258,6 +308,17 @@ static void task10(gr_t *g, unsigned p)
             };
             gs_bridge_tick_10ms(&bi);
         }
+#if defined(G6A_TEST)
+        if (g6a_on) {
+#if defined(G6A_HOSTTIME)
+            G6A_T0();
+#endif
+            g6a_tick_10ms(&gi);                     /* app/main.c: after the bridge */
+#if defined(G6A_HOSTTIME)
+            G6A_T1(1);
+#endif
+        }
+#endif
     }
     drv_rq_request_set(7u, park_slot7_release());   /* ch 7: the park release (SH: DRV_RQ_PSET) */
 }
@@ -316,6 +377,11 @@ static void run_g(gr_t *g)
     drv_rq_request_set(7u, 0u);
     gs_shadow_init();
     gs_bridge_init(true);
+#if defined(G6A_TEST)
+    if (g6a_on) {
+        g6a_init();                                 /* app/main.c: after gs_bridge_init */
+    }
+#endif
     g_tk_n = 0u;
     observe(&prev);
     law0 = drv_out_wit()->law_n;
@@ -991,6 +1057,7 @@ static unsigned gold_check(const char *path, const gr_t *g, unsigned k, bool exa
     }
 }
 
+#if !defined(GSB_CHAIN_NO_MAIN)
 int main(int argc, char **argv)
 {
     const char *gold = (argc > 1) ? argv[1] : NULL;
@@ -1127,3 +1194,4 @@ int main(int argc, char **argv)
     return g_fails != 0;
 #endif
 }
+#endif /* !GSB_CHAIN_NO_MAIN */

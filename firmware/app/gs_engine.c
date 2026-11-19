@@ -17,6 +17,30 @@
  * that the request objects are named GSE_OBJ_* (gs_fill.h) and a host-only
  * state accessor (gs_shadow_host_state) is appended.
  *
+ * G6a (2026-11-19, ~/tcu_sweep/g6a_port.md): the binding also chooses
+ *   GSE_SEC_OBJ/REC/PRG/RC1/REL  the SH sections of the statics (default:
+ *                                instance 1's .gs_obj / .gs_rec / .gs_prog /
+ *                                .gs_rec1 / .gs_rel — unchanged strings, so
+ *                                instance 1's object code is r04m's);
+ *   GSE_REC 0                    no recorders (no g_rec0/1, the release
+ *                                object reduced to its header gs_rel_t up to
+ *                                .rec): the candidate's RAM budget;
+ *   GSE_AE28_IN                  the direction request AE28 is the LIVE
+ *                                0xFFF8AE28 by value (gs_in_t.ae28; the G6b
+ *                                form: one 0xCFFDE, park_law's), the
+ *                                template's own table lookup kept as a
+ *                                cross-check counter;
+ *   GSE_BOOT_ENTRY               an explicit boot-state-1 pass entry
+ *                                (gs_shadow_boot_pass, the G6b slot: row-1
+ *                                list entries 12 / 17 in OS mode 0, as
+ *                                app/rq_prod.c's rq_prod_boot_pass);
+ *   GSE_CLEAR_BEGIN/END          linker symbols of the binding's whole RAM
+ *                                block, cleared by init (NOLOAD RAM is not
+ *                                cleared by start.S: the fill instance's
+ *                                statics — 0x89CF8 time base, rec_frac,
+ *                                counters, the host-negative flag
+ *                                s_e469c_off — start defined).
+ *
  * (r04l) a READ-ONLY shadow of the stock's GARAGE ENGAGEMENT, ported
  * from the bytes of the pristine image (sh-elf-objdump -b binary -m sh2a
  * -EB; flash address = file offset; literal pools resolved) with the Ghidra
@@ -112,6 +136,13 @@
 #define TCU_GS_SHADOW_TU 1
 #include "app/gs_shadow.h"
 #include "app/gs_fill.h"
+#include <stddef.h>
+#ifndef GSE_REC
+#  define GSE_REC 1
+#endif
+#if defined(GSE_BOOT_ENTRY) && (GS_FORCED != 1)
+#error "gs_cand: the G6a candidate runs D-G6-2 (0x89C3D forced 0) and D-G6-3 (gear target 1st): GS_FORCED must be 1"
+#endif
 
 #if defined(TCU_RAM_APP)
 
@@ -173,11 +204,18 @@ _Static_assert(GS_C06 == 0u && GS_C08 == 0u && GS_C10 == 0u && GS_C1A == 0 &&
 
 /* ── RAM: OUR block (not stock cells) ─────────────────────────────────── */
 #if defined(__sh__)
-#  define GS_OBJ __attribute__((section(".gs_obj")))
-#  define GS_REC __attribute__((section(".gs_rec")))
-#  define GS_PRG __attribute__((section(".gs_prog")))   /* the tail of .gs_obj */
-#  define GS_RC1 __attribute__((section(".gs_rec1")))   /* the tail of .gs_obj */
-#  define GS_REL __attribute__((section(".gs_rel")))    /* G4a: the release (0xFFF8872C) */
+#  ifndef GSE_SEC_OBJ                                   /* instance 1 (G6a: binding-chosen) */
+#    define GSE_SEC_OBJ ".gs_obj"
+#    define GSE_SEC_REC ".gs_rec"
+#    define GSE_SEC_PRG ".gs_prog"
+#    define GSE_SEC_RC1 ".gs_rec1"
+#    define GSE_SEC_REL ".gs_rel"
+#  endif
+#  define GS_OBJ __attribute__((section(GSE_SEC_OBJ)))
+#  define GS_REC __attribute__((section(GSE_SEC_REC)))
+#  define GS_PRG __attribute__((section(GSE_SEC_PRG)))  /* the tail of .gs_obj */
+#  define GS_RC1 __attribute__((section(GSE_SEC_RC1)))  /* the tail of .gs_obj */
+#  define GS_REL __attribute__((section(GSE_SEC_REL)))  /* G4a: the release (0xFFF8872C) */
 #else
 #  define GS_OBJ
 #  define GS_REC
@@ -302,6 +340,7 @@ typedef struct {
 static volatile gs_t g_s GS_OBJ;
 static volatile gs_wit_t g_w GS_OBJ;
 static volatile gs_prog_t g_p GS_PRG;
+#if GSE_REC
 /* the recorder: slot 0 fills .gs_rec, slot 1 the tail of .gs_obj (each
  * region alone is too small for 2 × 112 × 28 bytes) */
 static volatile gs_rec_t g_rec0[GS_REC_N] GS_REC;
@@ -310,14 +349,50 @@ static volatile gs_rec_t g_rec1[GS_REC_N] GS_RC1;
  * zero-initialised static may be added to this TU: its .bss lies in
  * .gs_obj BEFORE .gs_prog / .gs_rec1, which must not move) */
 static volatile gs_rel_t g_rel GS_REL;
+#define GSE_REL_SIZE ((uint32_t)sizeof g_rel)
 #define G   (*(gs_t *)&g_s)
 #define R   (*(gs_rel_t *)&g_rel)
+#else
+/* GSE_REC 0 (G6a, the candidate's RAM budget): no recorders; the release
+ * object is its header only — gse_relh_t = gs_rel_t up to .rec (BD8E, the
+ * counters, the two slot headers the completion writes), asserted field for
+ * field; .rec is never touched. */
+typedef struct {                /* gs_rel_t without .rec — field for field */
+    uint16_t bd8e;
+    uint8_t  on;
+    uint8_t  last;
+    uint32_t rel_passes;
+    uint32_t starts;
+    uint32_t unp_n;
+    uint32_t c3_n;
+    uint32_t e896_n;
+    uint32_t idle_n;
+    gs_rslot_t slot[2];
+} gse_relh_t;
+_Static_assert(sizeof(gse_relh_t) == offsetof(gs_rel_t, rec) &&
+               offsetof(gse_relh_t, on) == offsetof(gs_rel_t, on) &&
+               offsetof(gse_relh_t, last) == offsetof(gs_rel_t, last) &&
+               offsetof(gse_relh_t, rel_passes) == offsetof(gs_rel_t, rel_passes) &&
+               offsetof(gse_relh_t, starts) == offsetof(gs_rel_t, starts) &&
+               offsetof(gse_relh_t, unp_n) == offsetof(gs_rel_t, unp_n) &&
+               offsetof(gse_relh_t, c3_n) == offsetof(gs_rel_t, c3_n) &&
+               offsetof(gse_relh_t, e896_n) == offsetof(gs_rel_t, e896_n) &&
+               offsetof(gse_relh_t, idle_n) == offsetof(gs_rel_t, idle_n) &&
+               offsetof(gse_relh_t, slot) == offsetof(gs_rel_t, slot),
+               "gs engine: gse_relh_t is gs_rel_t up to .rec");
+static volatile gse_relh_t g_rel GS_REL;
+#define GSE_REL_SIZE ((uint32_t)sizeof g_rel)
+#define G   (*(gs_t *)&g_s)
+#define R   (*(gse_relh_t *)&g_rel)
+#endif
 #define W   (*(gs_wit_t *)&g_w)
 #define P   (*(gs_prog_t *)&g_p)
+#if GSE_REC
 static volatile gs_rec_t *rec_at(uint8_t slot, uint8_t i)
 {
     return slot == 0u ? &g_rec0[i] : &g_rec1[i];
 }
+#endif
 
 #if !defined(__sh__)
 static uint8_t s_host_mask;         /* gs_shadow_host_standins */
@@ -2054,6 +2129,9 @@ static void actuators(void)
 }
 
 /* ── the recorder (ours) ───────────────────────────────────────────────── */
+#if !GSE_REC
+static void rec_pass(void) { }
+#else
 static void rec_pass(void)
 {
     static const uint32_t EO[5] = { GSE_OBJ_A, GSE_OBJ_B, GSE_OBJ_C, GSE_OBJ_D, GSE_OBJ_E };
@@ -2098,8 +2176,18 @@ static void rec_pass(void)
     r->bd76 = G.bd76;
     W.rec_n[slot] = (uint8_t)(n + 1u);
 }
+#endif
 
 /* ── the release recorder (G4a, ours) ──────────────────────────────────── */
+#if !GSE_REC
+static void rel_pass(void)                  /* the counters only (no recorder) */
+{
+    if (G.bd16 == 4u) {
+        R.rel_passes++;
+        W.rel_n++;
+    }
+}
+#else
 static uint8_t ph2(uint8_t ph)
 {
     return (ph >= 0x12u && ph <= 0x14u) ? (uint8_t)(ph - 0x12u) : 3u;
@@ -2144,6 +2232,7 @@ static void rel_pass(void)
                       (G.sub[0].out_mode != 0u ? 0x40u : 0u) | (G.sub[2].out_mode != 0u ? 0x80u : 0u));
     h->n = (uint8_t)(n + 1u);
 }
+#endif
 
 /* ── the fill inputs of the shadow instance ────────────────────────────── */
 static void fill_bind(void)
@@ -2170,18 +2259,31 @@ static bool s_booted;
 
 void gs_shadow_init(void)
 {
-    volatile uint8_t *b = (volatile uint8_t *)&g_s;
+    volatile uint8_t *b;
+#if defined(GSE_CLEAR_BEGIN) && defined(__sh__)
+    {
+        /* G6a: the binding's whole NOLOAD block (this TU's and its fill
+         * instance's statics), which start.S does not clear */
+        extern uint8_t GSE_CLEAR_BEGIN[], GSE_CLEAR_END[];
+        for (volatile uint8_t *q = GSE_CLEAR_BEGIN; q < (volatile uint8_t *)GSE_CLEAR_END; q++) {
+            *q = 0u;
+        }
+    }
+#endif
+    b = (volatile uint8_t *)&g_s;
     for (unsigned i = 0u; i < sizeof g_s; i++) { b[i] = 0u; }
     b = (volatile uint8_t *)&g_w;
     for (unsigned i = 0u; i < sizeof g_w; i++) { b[i] = 0u; }
+#if GSE_REC
     b = (volatile uint8_t *)g_rec0;
     for (unsigned i = 0u; i < sizeof g_rec0; i++) { b[i] = 0u; }
     b = (volatile uint8_t *)g_rec1;
     for (unsigned i = 0u; i < sizeof g_rec1; i++) { b[i] = 0u; }
+#endif
     b = (volatile uint8_t *)&g_p;
     for (unsigned i = 0u; i < sizeof g_p; i++) { b[i] = 0u; }
     b = (volatile uint8_t *)&g_rel;
-    for (unsigned i = 0u; i < sizeof g_rel; i++) { b[i] = 0u; }
+    for (unsigned i = 0u; i < GSE_REL_SIZE; i++) { b[i] = 0u; }
     R.on = 0xFFu;
     R.last = 0xFFu;
     R.bd8e = 0xFFFFu;                                    /* dump: long idle */
@@ -2230,39 +2332,69 @@ void gs_shadow_init(void)
     s_booted = false;
 }
 
+/* the pass head (the live values by value) and the boot-state-1 pass —
+ * macros, so that instance 1's tick compiles to r04m's object code and the
+ * G6a boot entry (GSE_BOOT_ENTRY) runs exactly the same text */
+#define GSE_TICK_HEAD(in)                                                       \
+    s_park_model = (in)->park_model;                                            \
+    s_park_req_in = (in)->park_req;                                             \
+    G.done_now = 0u;                                                            \
+    G.commit_now = 0u;                                                          \
+    /* slot 26: the one-hot mode flag */                                        \
+    G.c3d = GS_FORCED ? 0u : (((in)->os_mode == 1u) ? 1u : 0u);                 \
+    /* slot 27: 0xB912C (0x13BF66: E90E held while 0x108 is invalid) */         \
+    G.rngd = (in)->rngd;                                                        \
+    if ((in)->eng_valid != 0u && (in)->eng_speed != 0xFFFFu) {                  \
+        G.cd0 = (in)->eng_speed;                                                \
+        G.d06 = 0u;                                                             \
+    } else {                                                                    \
+        G.d06 = 2u;                                                             \
+    }                                                                           \
+    G.c13 = (in)->temp;                                                         \
+    G.cd2_now = (in)->cd2;                                                      \
+    P.cb8 = (in)->out_rpm;                  /* 0x89CB8 (stand-in: live sensor) */ \
+    P.cba = (in)->tur_rpm;                  /* 0x89CBA (stand-in: live sensor) */ \
+    GSE_NEG_C3D_HOOK();                                                         \
+    fill_bind();                                                                \
+    gsf_set_pf(G.pf, G.c2f)
+#ifndef GSE_NEG_C3D_HOOK
+#  define GSE_NEG_C3D_HOOK() ((void)0)      /* G6a host negative only (app/gs_cand_bind.h) */
+#endif
+#define GSE_BOOT_PASS()                                                         \
+    /* the boot-state-1 pass: 0xE5602, then the producer + actuators */         \
+    s_booted = true;                                                            \
+    gsf_e5602();                                                                \
+    d4dc2();                                                                    \
+    dc4c4();                                                                    \
+    actuators();                                                                \
+    W.passes++
+
+#if defined(GSE_AE28_IN)
+static volatile uint32_t s_ae28_x;      /* live AE28 != the template's own 0x63445 lookup */
+#endif
+
+#if defined(GSE_BOOT_ENTRY)
+/* G6a: the boot-state-1 pass at ITS slot (app/main.c → bsw/sup/sup_mode.c,
+ * row-1 list entries 12 / 17, OS mode 0 — right after app/rq_prod.c's
+ * rq_prod_boot_pass), not at the first mode-1 tick as instance 1 does */
+void gs_shadow_boot_pass(const gs_in_t *in)
+{
+    if (s_booted) {
+        return;
+    }
+    GSE_TICK_HEAD(in);
+    GSE_BOOT_PASS();
+}
+#endif
+
 void gs_shadow_tick_10ms(const gs_in_t *in)
 {
     if (in->os_mode < 1u || in->os_mode > 3u) {
         return;                                          /* the stock's lists: modes 1..3 */
     }
-    s_park_model = in->park_model;
-    s_park_req_in = in->park_req;
-    G.done_now = 0u;
-    G.commit_now = 0u;
-    /* slot 26: the one-hot mode flag */
-    G.c3d = GS_FORCED ? 0u : ((in->os_mode == 1u) ? 1u : 0u);
-    /* slot 27: 0xB912C (0x13BF66: E90E held while 0x108 is invalid) */
-    G.rngd = in->rngd;
-    if (in->eng_valid != 0u && in->eng_speed != 0xFFFFu) {
-        G.cd0 = in->eng_speed;
-        G.d06 = 0u;
-    } else {
-        G.d06 = 2u;
-    }
-    G.c13 = in->temp;
-    G.cd2_now = in->cd2;
-    P.cb8 = in->out_rpm;                                 /* 0x89CB8 (stand-in: live sensor) */
-    P.cba = in->tur_rpm;                                 /* 0x89CBA (stand-in: live sensor) */
-    fill_bind();
-    gsf_set_pf(G.pf, G.c2f);
+    GSE_TICK_HEAD(in);
     if (!s_booted) {
-        /* the boot-state-1 pass: 0xE5602, then the producer + actuators */
-        s_booted = true;
-        gsf_e5602();
-        d4dc2();
-        dc4c4();
-        actuators();
-        W.passes++;
+        GSE_BOOT_PASS();
         return;
     }
     /* slot 28: 0xEC0E0 — BD30 / BD2E (+= *0xFFF8E220 = 1), then 0x106848 */
@@ -2287,6 +2419,24 @@ void gs_shadow_tick_10ms(const gs_in_t *in)
     /* slot 29: 0xB986C */
     d4dc2();
     /* slot 30: 0xCFFDE */
+#if defined(GSE_AE28_IN)
+    {
+        /* G6a (the G6b form): the LIVE direction request (park_law's
+         * 0xCFFDE, one 0xFFF8AE28), by value; the template's own lookup on
+         * the same 0x89CDC kept only as a cross-check */
+        uint8_t own = G.ae28;
+        if (G.rngd <= 8u) {
+            const uint8_t x = gsf_fl8(0x00063445u + G.rngd);
+            if (x != 0xFFu) {
+                own = x;
+            }
+        }
+        if (own != in->ae28) {
+            s_ae28_x++;
+        }
+        G.ae28 = in->ae28;
+    }
+#else
     if (G.rngd <= 8u) {
         const uint8_t x = gsf_fl8(0x00063445u + G.rngd);
         if (x != 0xFFu) {
@@ -2295,6 +2445,7 @@ void gs_shadow_tick_10ms(const gs_in_t *in)
     } else {
         W.unp_n++;                                       /* report 0x7E */
     }
+#endif
     d093a();
     r3f56();
     d15a6();
@@ -2342,11 +2493,17 @@ void gs_shadow_tick_10ms(const gs_in_t *in)
 }
 
 const volatile gs_wit_t *gs_shadow_wit(void) { return &g_w; }
-const volatile gs_rel_t *gs_shadow_rel(void) { return &g_rel; }
+const volatile gs_rel_t *gs_shadow_rel(void) { return (const volatile gs_rel_t *)(const volatile void *)&g_rel; }
 uint8_t gs_shadow_releasing(void)    { return g_s.bd16 == 4u ? 1u : 0u; }
 const volatile gs_rec_t *gs_shadow_rec(uint8_t slot, uint8_t i)
 {
+#if GSE_REC
     return (slot < GS_REC_SLOTS && i < GS_REC_N) ? rec_at(slot, i) : 0;
+#else
+    (void)slot;
+    (void)i;
+    return 0;                                            /* GSE_REC 0: no recorder */
+#endif
 }
 int16_t  gs_shadow_bd76(void)        { return g_s.bd76; }
 uint8_t  gs_shadow_bd30(void)        { return g_s.bd30; }
@@ -2368,6 +2525,16 @@ uint8_t  gs_shadow_reqmode(uint8_t ch)
     static const uint32_t EO[5] = { GSE_OBJ_A, GSE_OBJ_D, GSE_OBJ_B, GSE_OBJ_E, GSE_OBJ_C };
     return ch < 5u ? RU8(EO[ch], RO_MODE) : 0xFFu;
 }
+/* G6a: the fill-FSM state +0x34 of the request object behind channel ch
+ * (0..4 = A D B E C); 0xFF otherwise (the comparator, app/g6a.c) */
+uint8_t  gs_shadow_fillst(uint8_t ch)
+{
+    static const uint32_t EO[5] = { GSE_OBJ_A, GSE_OBJ_D, GSE_OBJ_B, GSE_OBJ_E, GSE_OBJ_C };
+    return ch < 5u ? RU8(EO[ch], RO_ST) : 0xFFu;
+}
+#if defined(GSE_AE28_IN)
+uint32_t gs_shadow_ae28_x(void) { return s_ae28_x; }
+#endif
 
 #if !defined(__sh__)
 void gs_shadow_host_sub(uint8_t k, int16_t v[6])
@@ -2424,9 +2591,13 @@ const volatile void *gs_shadow_host_state(uint8_t k, uint32_t *n)
     case 0u:  *n = (uint32_t)sizeof g_s;     return &g_s;
     case 1u:  *n = (uint32_t)sizeof g_w;     return &g_w;
     case 2u:  *n = (uint32_t)sizeof g_p;     return &g_p;
+#if GSE_REC
     case 3u:  *n = (uint32_t)sizeof g_rec0;  return g_rec0;
     case 4u:  *n = (uint32_t)sizeof g_rec1;  return g_rec1;
-    case 5u:  *n = (uint32_t)sizeof g_rel;   return &g_rel;
+#else
+    case 3u:  case 4u: *n = 0u;              return &g_s;   /* GSE_REC 0: none */
+#endif
+    case 5u:  *n = GSE_REL_SIZE;             return &g_rel;
     case 6u:  *n = GS_REQ_SIZE;              return (const volatile void *)(uintptr_t)GSE_REQ_BASE;
     case 7u:  *n = (uint32_t)sizeof gs_fill_cells; return &gs_fill_cells;
     case 8u:  *n = 1u;                       return &s_park_model;

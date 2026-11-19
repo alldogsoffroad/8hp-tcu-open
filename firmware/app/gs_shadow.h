@@ -73,6 +73,11 @@ typedef struct {
      * read 0 on the dry bench (shafts at rest). */
     uint16_t out_rpm;       /* → shadow 0x89CB8 (sensors output speed) */
     uint16_t tur_rpm;       /* → shadow 0x89CBA (sensors turbine speed) */
+    /* G6a (2026-11-19, ~/tcu_sweep/g6a_port.md): the LIVE direction request
+     * 0xFFF8AE28 (park_law's 0xCFFDE) — read only by a binding built with
+     * GSE_AE28_IN (the G6a candidate, the G6b form); instance 1 recomputes
+     * its own from rngd and ignores it */
+    uint8_t  ae28;
 } gs_in_t;
 
 /* one recorder entry = one 10 ms pass from a nonzero commit (28 bytes) */
@@ -202,6 +207,7 @@ uint8_t  gs_shadow_e6ef(void);
 uint8_t  gs_shadow_ae28(void);
 uint8_t  gs_shadow_d0f(void);               /* 0x89D0F engine running */
 uint8_t  gs_shadow_reqmode(uint8_t ch);     /* request mode +7 behind ch 0..4 (A D B E C) */
+uint8_t  gs_shadow_fillst(uint8_t ch);      /* G6a: fill-FSM state +0x34 behind ch 0..4 */
 
 /* the synchronisation progress of the shift context (block A 0xFFF8BD6C) */
 int16_t  gs_shadow_bd76(void);              /* 0xFFF8BD76 */

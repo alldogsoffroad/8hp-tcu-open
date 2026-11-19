@@ -45,6 +45,9 @@
 #include "app/pa7_shadow.h"
 #include "app/tsel_shadow.h"
 #include "app/park_law.h"
+#if !defined(TCU_RAM_APP)
+#include "app/g6a.h"
+#endif
 
 /* Shaft assignment of the speed channels (spec 02 section 4.1), the stock calibration's routing:
  * channel 0 = TIF12 -> stock signal B (0xFFF93048), channel 1 = TIF13 -> signal A (0xFFF93044).
@@ -241,10 +244,47 @@ static uint16_t gs_rpm(rpm_t r, quality_t q)
 {
     return (q == Q_OK && r > 0) ? (uint16_t)r : 0u;
 }
+
+/* THE GARAGE ENGINE'S LIVE INPUTS, BY VALUE (app/gs_shadow.h gs_in_t): the
+ * shadow, the bridge and the G6a candidate (app/g6a.c) take the same set */
+static void gs_in_build(gs_in_t *gi)
+{
+    const vehicle_in_t *v = vehicle_in();
+    const sensors_in_t *sn = sensors_in();
+    const gs_in_t g = {
+        .os_mode = sup_mode(),
+        .rngd = *(const volatile uint8_t *)0xFFF89CDCu,     /* park_law's 0x89CDC */
+        .park_model = park_law_state(),
+        .park_req = park_law_request(),
+        .temp = *(const volatile uint8_t *)0xFFF89C13u,     /* tmp_chain's 0x89C13 */
+        .cd2 = *(const volatile uint8_t *)0xFFF89CD2u,      /* tmp_chain's 0x89CD2 */
+        .eng_speed = (uint16_t)v->engine_speed,
+        .eng_valid = (v->q_engine_speed == Q_OK) ? 1u : 0u,
+        /* the shift context's speeds (0x89CB8 / 0x89CBA stand-ins): our
+         * live output / turbine sensors, 0 when invalid or negative */
+        .out_rpm = gs_rpm(sn->output_speed, sn->q_output_speed),
+        .tur_rpm = gs_rpm(sn->turbine_speed, sn->q_turbine_speed),
+        /* G6a: park_law's 0xCFFDE direction request (the candidate's AE28) */
+        .ae28 = *(const volatile uint8_t *)0xFFF8AE28u,
+    };
+    *gi = g;
+}
+
+/* G6a (app/g6a.c): the candidate's boot-state-1 pass — bsw/sup/sup_mode.c
+ * calls it (weak) right after app/rq_prod.c's rq_prod_boot_pass */
+void g6a_boot_pass(void)
+{
+    gs_in_t gi;
+    gs_in_build(&gi);
+    g6a_boot(&gi);
+}
 #endif
 
 static void task_10ms(void)
 {
+#if !defined(TCU_RAM_APP)
+    const uint32_t t_task0 = plat_frt_us();         /* G6a: the task's duration witness */
+#endif
     /* M5-1: the stock 10 ms list (modes 1..3) runs the element tick and
      * update (entry 29) and the producer + actuators (entry 43) before
      * the bus-A cyclic below reads 0xFFF84B78 through the law */
@@ -292,22 +332,9 @@ static void task_10ms(void)
         /* THE GARAGE-ENGAGEMENT SHADOW (app/gs_shadow.c): READ-ONLY — it gets
          * the live values BY VALUE, after 0xB912C (park_tick: 0x89CDC) as the
          * stock's slots 27..42 follow it, and writes only its own RAM */
-        const vehicle_in_t *v = vehicle_in();
         const sensors_in_t *sn = sensors_in();
-        const gs_in_t gi = {
-            .os_mode = sup_mode(),
-            .rngd = *(const volatile uint8_t *)0xFFF89CDCu,     /* park_law's 0x89CDC */
-            .park_model = park_law_state(),
-            .park_req = park_law_request(),
-            .temp = *(const volatile uint8_t *)0xFFF89C13u,     /* tmp_chain's 0x89C13 */
-            .cd2 = *(const volatile uint8_t *)0xFFF89CD2u,      /* tmp_chain's 0x89CD2 */
-            .eng_speed = (uint16_t)v->engine_speed,
-            .eng_valid = (v->q_engine_speed == Q_OK) ? 1u : 0u,
-            /* the shift context's speeds (0x89CB8 / 0x89CBA stand-ins): our
-             * live output / turbine sensors, 0 when invalid or negative */
-            .out_rpm = gs_rpm(sn->output_speed, sn->q_output_speed),
-            .tur_rpm = gs_rpm(sn->turbine_speed, sn->q_turbine_speed),
-        };
+        gs_in_t gi;
+        gs_in_build(&gi);
         gs_shadow_tick_10ms(&gi);
         {
             /* THE GARAGE BRIDGE, STAGE G1 (app/gs_bridge.c): computed and
@@ -325,6 +352,12 @@ static void task_10ms(void)
             };
             gs_bridge_tick_10ms(&bi);
         }
+        /* G6a (app/g6a.c, ~/tcu_sweep/g6a_port.md): THE CANDIDATE — the
+         * merged producer in its G6b form on its OWN RAM — at its G6b slot
+         * (after park_tick), then the comparison with what the F stage that
+         * follows takes (the bridge's value or the live producer's through
+         * the guard). Read-only: it writes nothing live. */
+        g6a_tick_10ms(&gi);
     }
 #endif
     bench_tick_10ms();
@@ -338,6 +371,9 @@ static void task_10ms(void)
      * slew limit → 0xFFF8E9C8) tasks of modes 1..3, on this tick when due,
      * after the 10 ms task (lower priority) */
     tmp_chain_task_slow(sup_mode());
+#if !defined(TCU_RAM_APP)
+    g6a_task_time(sup_mode(), plat_frt_us() - t_task0);
+#endif
 }
 
 /* the stock's 100 ms safety slice 0x13204A → 0x14F7EA also runs the park
@@ -443,6 +479,9 @@ int main(void)
     gs_shadow_init();                   /* the read-only garage-engagement shadow (its own RAM) */
     /* the garage bridge, G1 (its own RAM; its windows survive a warm reset) */
     gs_bridge_init(plat_boot_index() <= 1u);
+    /* G6a: the candidate (its RAM cleared) and the comparator, before the
+     * boot-state-1 pass (sup_mode_background) runs the candidate's boot */
+    g6a_init();
     /* the read-only PWM-feedback shadow (app/fb_shadow.c, its own RAM):
      * cells cleared, then the Timer-D0 window sampler armed (vector 216,
      * level 6) — the stock arms it in its init batch (0x90010) */

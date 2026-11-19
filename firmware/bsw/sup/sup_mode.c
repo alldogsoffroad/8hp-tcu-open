@@ -153,6 +153,12 @@ extern void rq_prod_boot_pass(void) __attribute__((weak));
 /* the temperature byte's boot pass (app/tmp_chain.c): row-1 entries 0
  * (0x14F32C) and 6 (0xA2D88), before the producer's entry 17 */
 extern void tmp_chain_boot_pass(void) __attribute__((weak));
+#if !defined(TCU_RAM_APP)
+/* G6a (app/main.c → app/g6a.c, ~/tcu_sweep/g6a_port.md): the read-only
+ * candidate's boot pass at the same slot, after the live producer's; weak,
+ * so the supervisor tests link without it (the RAM application has none) */
+extern void g6a_boot_pass(void) __attribute__((weak));
+#endif
 
 void sup_mode_background(void)
 {
@@ -178,6 +184,11 @@ void sup_mode_background(void)
         if (rq_prod_boot_pass) {
             rq_prod_boot_pass();
         }
+#if !defined(TCU_RAM_APP)
+        if (g6a_boot_pass) {
+            g6a_boot_pass();
+        }
+#endif
         row1_7db70();
         CELL_OS_STATE = 2u;
     } else if (CELL_OS_STATE == 2u) {

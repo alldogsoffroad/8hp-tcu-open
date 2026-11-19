@@ -1,12 +1,15 @@
 /* gs_cand.h — the API of INSTANCE 2 of the garage engine template (the G6a
- * CANDIDATE, app/gs_cand.c; HOST-ONLY in G6-0, ~/tcu_sweep/g6_0_port.md).
+ * CANDIDATE, app/gs_cand.c; ~/tcu_sweep/g6_0_port.md, g6a_port.md).
  * The same functions as app/gs_shadow.h's, renamed gs_cand_*; the types are
  * gs_shadow.h's. */
 #ifndef TCU_APP_GS_CAND_H
 #define TCU_APP_GS_CAND_H
 
-#if defined(__sh__)
-#error "gs_cand: the G6a candidate is host-only in G6-0 (the SH image carries instance 1 only)"
+#if defined(TCU_OUTPUT_PATH)
+#error "the garage shadow is read-only: an output path may not include gs_cand.h"
+#endif
+#if defined(TCU_RAM_APP) || defined(TCU_LOADER)
+#error "gs_cand: the G6a candidate is for the code-flash application only (not the RAM application or the loader)"
 #endif
 
 #include "app/gs_shadow.h"
@@ -26,6 +29,11 @@ uint8_t  gs_cand_e6ef(void);
 uint8_t  gs_cand_ae28(void);
 uint8_t  gs_cand_d0f(void);
 uint8_t  gs_cand_reqmode(uint8_t ch);
+uint8_t  gs_cand_fillst(uint8_t ch);
+/* G6a (the SH form, app/gs_cand_bind.h GSC_SH_FORM): the boot-state-1 pass
+ * at its own slot, and the live-AE28 cross-check counter */
+void     gs_cand_boot_pass(const gs_in_t *in);
+uint32_t gs_cand_ae28_x(void);
 int16_t  gs_cand_bd76(void);
 uint8_t  gs_cand_bd30(void);
 uint8_t  gs_cand_sync(void);

@@ -37,9 +37,13 @@
 #define RQ_OBJ_SYS  GSE_OBJ_SYS
 #define RQ_OBJ_WK   GSE_OBJ_WK
 
-/* the shadow's fill cells (.gs_obj) */
+/* the shadow's fill cells (.gs_obj; G6a: the binding's GSE_SEC_OBJ) */
 #if defined(__sh__) && !defined(TCU_RAM_APP)
-volatile gs_fill_cells_t gs_fill_cells __attribute__((section(".gs_obj")));
+#  ifndef GSE_SEC_OBJ
+#    define GSE_SEC_OBJ ".gs_obj"
+#    define GSE_SEC_PRG ".gs_prog"
+#  endif
+volatile gs_fill_cells_t gs_fill_cells __attribute__((section(GSE_SEC_OBJ)));
 #else
 volatile gs_fill_cells_t gs_fill_cells;
 #endif
@@ -87,13 +91,23 @@ static uint8_t s_bd16;
 /* the 2026-11-18 additions live in .gs_prog (the tail of .gs_obj), so that
  * no earlier shadow symbol moves */
 #if defined(__sh__)
-#  define GSF_PRG __attribute__((section(".gs_prog")))
+#  define GSF_PRG __attribute__((section(GSE_SEC_PRG)))
 #else
 #  define GSF_PRG
 #endif
 static volatile uint32_t s_ge469c GSF_PRG;  /* the term evaluated nonzero */
 static uint8_t s_pf GSF_PRG, s_c2f GSF_PRG; /* the shadow's 0x89C30 / 0x89C2F */
-static uint8_t s_e469c_off GSF_PRG;         /* host negative test: the old stand-in 0 */
+/* host negative test only: the old stand-in 0. ON THE TARGET THIS FLAG IS
+ * NEVER READ (2026-11-19, ~/tcu_sweep/g6a_port.md): it sits in NOLOAD RAM
+ * that nothing clears, and the bench read 0xBB there on r04m — so every
+ * build r04a..r04m ran the shadow (and, from r04i, the bridged wire) without
+ * the 0xE469C garage fill-time term (third element 9 fill passes instead of
+ * the stock's 11). Kept as a `used` symbol so no later RAM symbol moves. */
+#if defined(__sh__)
+static uint8_t s_e469c_off GSF_PRG __attribute__((used));
+#else
+static uint8_t s_e469c_off GSF_PRG;
+#endif
 
 void gsf_bind_in(const gs_fill_in_t *in)
 {
@@ -164,9 +178,11 @@ static int32_t gsf_e469c_term(uint32_t o, uint8_t p4c, uint8_t p4d, uint8_t p52)
     } else {
         v = gsf_e469c(o, p4c, p4d);
     }
+#if !defined(__sh__)
     if (s_e469c_off != 0u) {
         return 0;
     }
+#endif
     if (v != 0) {
         s_ge469c++;
     }

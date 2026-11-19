@@ -102,6 +102,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         platform/sh7254r/plat_adcmux.c
         platform/sh7254r/libc_min.c
         ${CORE_SOURCES}
+        # G6a (2026-11-19, ~/tcu_sweep/g6a_port.md): the read-only CANDIDATE
+        # (instance 2 of the garage engine template, its own RAM .gsc_req /
+        # .gsc_obj) and the comparator (.g6a) — code-flash application only
+        app/gs_cand.c app/gs_cand_fill.c app/g6a.c
     )
     # keep GCC from turning the memset/memcpy loops into calls to themselves
     set_source_files_properties(platform/sh7254r/libc_min.c PROPERTIES
@@ -127,10 +131,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     target_link_libraries(tcu_app.elf PRIVATE gcc)
     add_dependencies(tcu_app.elf tcu_flasher_bin)
     set_target_properties(tcu_app.elf PROPERTIES LINK_DEPENDS ${LDSCRIPT})
+    # G6a: the link-map scan of the candidate and the comparator (no EEPROM /
+    # NVM / DSM / event-log / fatal path; tests/unit/g6a_scan.py) — the image
+    # is refused if it fails
+    string(REPLACE "objcopy" "nm" SH_NM ${CMAKE_OBJCOPY})
     add_custom_command(TARGET tcu_app.elf POST_BUILD
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py link ${SH_NM}
+            CMakeFiles/tcu_app.elf.dir/app/gs_cand.c.obj CMakeFiles/tcu_app.elf.dir/app/gs_cand_fill.c.obj
+            CMakeFiles/tcu_app.elf.dir/app/g6a.c.obj
         COMMAND ${CMAKE_OBJCOPY} -O ihex --remove-section=.bss tcu_app.elf tcu_app.hex
         COMMAND ${CMAKE_SIZE} tcu_app.elf
-        COMMENT "Writing application block as Intel HEX (load addresses)")
+        COMMENT "G6a link-map scan; writing application block as Intel HEX (load addresses)")
 
     # ---- Data-flash loader (spec 18): code flash at 0x40000, written with the Teensy flasher ----
     set(LD_LDSCRIPT ${CMAKE_SOURCE_DIR}/loader/ld_link.ld)
@@ -190,7 +201,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         COMMENT "RAM application and its data-flash image tcu_app_df.bin")
 else()
     # ---- Host build: simulator and unit tests ------------------------------
-    add_executable(tcu_sim platform/host/plat_host.c ${CORE_SOURCES})
+    add_executable(tcu_sim platform/host/plat_host.c ${CORE_SOURCES}
+        app/gs_cand.c app/gs_cand_fill.c app/g6a.c)
+    target_compile_definitions(tcu_sim PRIVATE GSC_G6A=1)   # the image's candidate form
 
     enable_testing()
     add_executable(test_sched tests/unit/test_sched.c bsw/sched/sched.c)
@@ -712,14 +725,34 @@ else()
     # G6-0: the template does not compile alone; the candidate is host-only
     add_test(NAME gs_sh_guard_engine_alone
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${CMAKE_SOURCE_DIR}/app/gs_engine.c)
+    # G6a: the candidate compiles for SH (its SH form) under -Werror; refused
+    # in the RAM application, with GS_FORCED 0, with a host negative, and
+    # included by an output path; the comparator compiles for SH
     add_test(NAME gs_sh_guard_cand
-        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${CMAKE_SOURCE_DIR}/app/gs_cand.c)
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/gs_cand.c)
     add_test(NAME gs_sh_guard_cand_fill
-        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${CMAKE_SOURCE_DIR}/app/gs_cand_fill.c)
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/gs_cand_fill.c)
+    add_test(NAME g6a_sh_guard_cmp
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform -Wall -Wextra -Wconversion
+            ${CMAKE_SOURCE_DIR}/app/g6a.c)
+    add_test(NAME g6a_sh_guard_cand_ram
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DTCU_RAM_APP ${CMAKE_SOURCE_DIR}/app/gs_cand.c)
+    add_test(NAME g6a_sh_guard_cand_forced
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_FORCED=0 ${CMAKE_SOURCE_DIR}/app/gs_cand.c)
+    add_test(NAME g6a_sh_guard_cand_neg
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGSC_NEG_C3D=1 ${CMAKE_SOURCE_DIR}/app/gs_cand.c)
+    add_test(NAME g6a_sh_guard_output
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DTCU_OUTPUT_PATH ${CMAKE_SOURCE_DIR}/app/g6a.c)
     set_tests_properties(gs_sh_guard_engine_alone PROPERTIES
         PASS_REGULAR_EXPRESSION "gs_engine.c is the garage engine TEMPLATE")
-    set_tests_properties(gs_sh_guard_cand gs_sh_guard_cand_fill PROPERTIES
-        PASS_REGULAR_EXPRESSION "the G6a candidate is host-only in G6-0")
+    set_tests_properties(g6a_sh_guard_cand_ram PROPERTIES
+        PASS_REGULAR_EXPRESSION "the G6a candidate is for the code-flash application only")
+    set_tests_properties(g6a_sh_guard_cand_forced PROPERTIES
+        PASS_REGULAR_EXPRESSION "GS_FORCED must be 1")
+    set_tests_properties(g6a_sh_guard_cand_neg PROPERTIES
+        PASS_REGULAR_EXPRESSION "the binding negatives are host-only tests")
+    set_tests_properties(g6a_sh_guard_output PROPERTIES
+        PASS_REGULAR_EXPRESSION "the G6a candidate is read-only: an output path may not include g6a.h")
     set_tests_properties(gs_sh_guard_output PROPERTIES
         PASS_REGULAR_EXPRESSION "the garage shadow is read-only: an output path may not include gs_shadow.h")
     set_tests_properties(gs_sh_guard_live PROPERTIES
@@ -1308,6 +1341,64 @@ else()
     add_test(NAME gs_bridge_g2_temps_live2b_nomask_negative COMMAND test_gs_bridge_g2_temps_live2b_nomask
         ${GSB_GOLD}/gsb_live_g2_temps_live_ref_r04k.txt ${GSB_GOLD}/gsb_live_g2_temps_live_g4b.txt)
     set_tests_properties(gs_bridge_g2_temps_live2b_nomask_negative PROPERTIES WILL_FAIL TRUE)
+    # G6a (2026-11-19, ~/tcu_sweep/g6a_port.md): THE DUAL-RUN on the real
+    # chain — the candidate (instance 2 in its SH form, GSC_G6A) and the
+    # comparator ticked as app/main.c ticks them, every scenario run without
+    # and with them: (1) every bus-A word, the park demands and the cell
+    # window identical, the only differing window bytes inside .gsc_req;
+    # (2) 0 UNEXPECTED disagreements, the boot window <= 16 passes, the
+    # law's 0x94ED4 = the predicted wire value, the guard replica silent.
+    # test_g6a_englim: the bridge's engagement limit trips mid-engagement
+    # (FENCED, never UNEXPECTED). Negatives: G6A_NEG 1 (the candidate
+    # perturbed inside its own RAM: the comparator must flag UNEXPECTED,
+    # the identity must hold) and G6A_NEG 2 (the candidate bound onto the
+    # live request objects: the identity must fail) — each passes only
+    # when its defect is caught.
+    set(G6A_SOURCES ${GSB_CHAIN_SOURCES} app/gs_cand.c app/gs_cand_fill.c app/g6a.c)
+    list(REMOVE_ITEM G6A_SOURCES tests/unit/test_gs_bridge_chain.c)
+    list(APPEND G6A_SOURCES tests/unit/test_g6a.c)
+    set(G6A_DEFS ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3 GSC_G6A=1)
+    add_executable(test_g6a ${G6A_SOURCES})
+    target_compile_definitions(test_g6a PRIVATE ${G6A_DEFS})
+    add_test(NAME g6a_dual_run COMMAND test_g6a)
+    add_executable(test_g6a_englim ${G6A_SOURCES})
+    target_compile_definitions(test_g6a_englim PRIVATE ${G6A_DEFS} GSB_ENG_PASSES=50u G6A_ENGLIM=1)
+    add_test(NAME g6a_dual_run_englim COMMAND test_g6a_englim)
+    add_executable(test_g6a_neg_perturb ${G6A_SOURCES})
+    target_compile_definitions(test_g6a_neg_perturb PRIVATE ${G6A_DEFS} G6A_NEG=1 GSC_NEG_C3D=1)
+    add_test(NAME g6a_neg_perturbed_candidate COMMAND test_g6a_neg_perturb)
+    # the read-only frame of the candidate and the comparator: the source
+    # scans (outputs may not name them, the comparator only reads) and THE
+    # LINK-MAP SCAN of their objects (every undefined symbol in the allowed
+    # set; no EEPROM / NVM / DSM / event-log / fatal routine; no EEPROM-cell
+    # literal) — each with a negative fixture; the SH image runs the same
+    # link scan as a POST_BUILD step of tcu_app.elf
+    set(G6A_OUTPUT_PATHS ${GS_OUTPUT_PATHS} ${CMAKE_SOURCE_DIR}/bsw/sup/sup_mode.c
+        ${CMAKE_SOURCE_DIR}/bsw/sup/sup_batch.c ${CMAKE_SOURCE_DIR}/app/gs_bridge.c)
+    add_test(NAME g6a_scan_outputs
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py outputs ${G6A_OUTPUT_PATHS})
+    add_test(NAME g6a_scan_outputs_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py outputs
+            ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan_fixture_output.c)
+    set_tests_properties(g6a_scan_outputs_negative PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME g6a_scan_cmp
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py cmp ${CMAKE_SOURCE_DIR}/app/g6a.c)
+    add_test(NAME g6a_scan_cmp_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py cmp
+            ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan_fixture_cmp.c)
+    set_tests_properties(g6a_scan_cmp_negative PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME g6a_scan_link
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py link nm
+            ${CMAKE_BINARY_DIR}/CMakeFiles/test_g6a.dir/app/gs_cand.c.o
+            ${CMAKE_BINARY_DIR}/CMakeFiles/test_g6a.dir/app/gs_cand_fill.c.o
+            ${CMAKE_BINARY_DIR}/CMakeFiles/test_g6a.dir/app/g6a.c.o)
+    add_library(g6a_link_fixture OBJECT tests/unit/g6a_scan_fixture_link.c)
+    add_test(NAME g6a_scan_link_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py link nm $<TARGET_OBJECTS:g6a_link_fixture>)
+    set_tests_properties(g6a_scan_link_negative PROPERTIES WILL_FAIL TRUE)
+    add_executable(test_g6a_neg_livewrite ${G6A_SOURCES})
+    target_compile_definitions(test_g6a_neg_livewrite PRIVATE ${G6A_DEFS} G6A_NEG=2 GSC_NEG_LIVE_ALIAS=0xFFF8B7C8u)
+    add_test(NAME g6a_neg_live_write COMMAND test_g6a_neg_livewrite)
     # the bridge's logic on test_gs_shadow's light harness: the OS-mode-2
     # witness, the .noinit windows, the guard negatives (G1: recorded, the
     # wire never moves), and — GS_LIVE_DIR 3, host only — every abort of the
