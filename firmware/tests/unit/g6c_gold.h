@@ -35,6 +35,35 @@
 #define G6C_SH_REQ_LO   0xFFF911A0u     /* the shadow's request objects (host absolute RAM) */
 #define G6C_SH_REQ_HI   0xFFF91440u
 
+/* r04r (~/tcu_sweep/r04r_port.md): G6R_NOREP — the harness WITHOUT the
+ * retired holder's replica (G6R_HOLDER_REPLICA 0: the image's configuration)
+ * against goldens written WITH it. The wire hash (every bus-A word + the
+ * park demands) must be identical on every frame; the cell-window hash
+ * cannot be (the holder's own stock cells are no longer written), so it is
+ * not compared per frame — instead the end-of-run window must be identical
+ * OUTSIDE the retired holder's cells, listed here (every one a literal
+ * address app/rq_prod.c / app/rq_fill.c write: the current array 0x84B78
+ * + complements, the actuator objects 0x8B154, the request objects 0x8B7C8,
+ * the write-only input mirrors 0x89C2B / 0x89C30 / 0x89CF5 / 0x8BCB0 /
+ * 0x89D10, the fill cells 0x851A2..5 and 0x8E384). Ticks, gsb_t, the
+ * windows and the release header are compared exactly. */
+static const uint32_t G6R_HOLDER_CELLS[][2] = {
+    { 0xFFF84B78u, 0xFFF84BA8u }, { 0xFFF8B154u, 0xFFF8B23Cu }, { 0xFFF8B7C8u, 0xFFF8B9C8u },
+    { 0xFFF89C2Bu, 0xFFF89C2Cu }, { 0xFFF89C30u, 0xFFF89C31u }, { 0xFFF89CF5u, 0xFFF89CF6u },
+    { 0xFFF8BCB0u, 0xFFF8BCB2u }, { 0xFFF89D10u, 0xFFF89D11u }, { 0xFFF851A2u, 0xFFF851A6u },
+    { 0xFFF8E384u, 0xFFF8E385u },
+};
+static int g6r_holder_cell(uint32_t abs)
+{
+    for (unsigned k = 0u; k < sizeof G6R_HOLDER_CELLS / sizeof G6R_HOLDER_CELLS[0]; k++) {
+        if (abs >= G6R_HOLDER_CELLS[k][0] && abs < G6R_HOLDER_CELLS[k][1]) {
+            return 1;
+        }
+    }
+    return 0;
+}
+static unsigned long g6r_holder_bytes_differ;   /* G6R_NOREP: the holder cells that differ (info) */
+
 static void g6c_tag(char *out, size_t n, const char *name)
 {
     size_t k = 0u;
@@ -159,6 +188,9 @@ static unsigned g6c_gold_cmp(const char *name, const gr_t *g, const res_t *r, co
             unsigned k;
             unsigned long long hw, h;
             if (sscanf(line, "F %u %llX %llX", &k, &hw, &h) == 3 && k < GFRAMES) {
+#if defined(G6R_NOREP)
+                h = g->h[k];                /* r04r: the cell hash not compared per frame (above) */
+#endif
                 if (g->hw[k] != hw || g->h[k] != h) {
                     fd++;
                     if (f_first == 0xFFFFFFFFu) {
@@ -241,6 +273,14 @@ static unsigned g6c_gold_cmp(const char *name, const gr_t *g, const res_t *r, co
                 if (abs >= G6C_SH_REQ_LO && abs < G6C_SH_REQ_HI) {
                     continue;               /* the deleted shadow's request objects */
                 }
+#if defined(G6R_NOREP)
+                if (g6r_holder_cell(abs)) {
+                    if (gw[i] != win[i]) {
+                        g6r_holder_bytes_differ++;
+                    }
+                    continue;               /* r04r: the retired holder's cells (no longer written) */
+                }
+#endif
                 if (gw[i] != win[i]) {
                     if (ed == 0u) {
                         lo = abs;
@@ -261,6 +301,11 @@ static unsigned g6c_gold_cmp(const char *name, const gr_t *g, const res_t *r, co
         ed = 1u;
         printf("   G6c golden %s: window file missing\n", name);
     }
+#if defined(G6R_NOREP)
+    printf("   r04r no-replica [%s]: the retired holder's cells differing from the golden at the end: %lu B "
+           "(not compared); per-frame cell hash not compared, wire hash compared\n", name, g6r_holder_bytes_differ);
+    g6r_holder_bytes_differ = 0u;
+#endif
     printf("   vs the golden [%s]: frames differ %u (first F%u), ticks differ %u of %u, gsb_t %u B, windows %u B, "
            "release %u, end window %u B => %s\n", name, fd, f_first == 0xFFFFFFFFu ? 0u : f_first, td, gtk, bd, wd,
            rd, ed, (fd | td | bd | wd | rd | ed) == 0u ? "IDENTICAL" : "DIFFERENT");

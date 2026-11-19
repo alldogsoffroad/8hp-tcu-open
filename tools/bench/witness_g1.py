@@ -14,6 +14,10 @@ at +220).
 In G6b the state's "shadow" A..E and the recorder's phases are THE CANDIDATE's;
 "applied" = the seam returned a value (candidate or P content); "would-armed" =
 the candidate's engine on the wire (owning or non-P content).
+r04r (~/tcu_sweep/r04r_port.md): the live holder is retired — the engine is the
+sole producer of ch 0..6 (WK / Sys through the seam, the law passing only 500);
+"agree / disagree" now compare the candidate with the CONSTANT P CONTENT (the
+seam's fallback; 0 before the boot pass), no longer with the holder's 0x84B78.
 
 Reads over meas (6 bytes per request; NOT atomic — counters tear between
 blocks; read after the lever sequence, with the bridge idle in P):
@@ -24,8 +28,10 @@ blocks; read after the lever sequence, with the bridge idle in P):
   gsb_rec_t 112 x 36 B at 0xFFF911A0 (.gsb_rec0, the last D; G6c — r04o 0xFFF8BCC0)
   gsb_rec_t 112 x 36 B at 0xFFF8EE00 (.gsb_rec1, the last R; G6c — r04o 0xFFF89D20)
 plus, for comparison, LIVE cells the bridge must never change (D6D6, the park
-model, the OS mode, seq2 / letter, the live producer's A..E 0x84B78, the fault
-word 0x93004 A..E).
+model, the OS mode, seq2 / letter, the law's gated current 0x94ED4 for A D B E C
+WK Sys, the fault word 0x93004 A..E). r04r: the live holder (app/rq_prod.c) is
+retired — 0xFFF84B78 is no longer written (stock RAM, stale until power-off);
+the engine produces ch 0..6, and the law's 0x94ED4 shows what reached the law.
 
     witness_g1.py [rounds] [--rec N] [--quick] [--raw]
 
@@ -66,7 +72,7 @@ RECSZ = 36
 LIVE = [
     ("D6D6", 0xFFF8D6D6, 1), ("park model BC70", 0xFFF8BC70, 1), ("OS mode 0x93B33", 0xFFF93B33, 1),
     ("seq2 0x94FD0", 0xFFF94FD0, 1), ("letter 0x90944", 0xFFF90944, 1),
-    ("producer A..E 0x84B78", 0xFFF84B78, 10), ("fault word A..E 0x93004", 0xFFF93004, 10),
+    ("law current A D B E C WK Sys 0x94ED4", 0xFFF94ED4, 14), ("fault word A..E 0x93004", 0xFFF93004, 10),
 ]
 WHY = ["IDLE", "DIR", "RAIL", "OS", "RANGE", "PARK", "MON", "DIAG", "RELWIN", "WIN", "ENGT", "COMMITS",
        "AGREE(r04o: cand!=shadow, retired G6c)", "G_RANGE", "G_FIXED", "G_LATCH"]

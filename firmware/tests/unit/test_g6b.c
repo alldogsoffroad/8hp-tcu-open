@@ -60,6 +60,7 @@
 
 void g6a_boot_pass(void)
 {
+    G6R_REPLICA_BOOT();             /* r04r: the retired holder's boot pass (r04q: just before) */
     if (!g6a_on) {
         return;
     }
@@ -131,6 +132,7 @@ typedef struct {
     uint8_t  pad;
     uint16_t relev, relref;
     uint32_t cand_commits, sh_commits, ae28_x, cand_unp;
+    uint32_t m5_guard;      /* r04r: drv_reqlaw.c's guard fallbacks (drv_rq_m5_guard_n) */
     run_r_t  r;
     unsigned m1, u, tk_n;
 } res_t;
@@ -211,6 +213,7 @@ static void run_child(const scen_t *sc, bool g6b, gr_t *g, res_t *res, uint8_t *
         res->sh_commits = gs_cand_wit()->commits;   /* G6c: no shadow */
         res->ae28_x = gs_cand_ae28_x();
         res->cand_unp = gs_cand_wit()->unp_n;
+        res->m5_guard = drv_rq_m5_guard_n();
         res->r = g->r;
         res->m1 = g->m1;
         res->u = g->r.u_frame;
@@ -313,7 +316,7 @@ static void scenario(const scen_t *sc)
     (void)g_ra;
     run_child(sc, true, &g_gb, &g_rb, g_win[1], g_tks[1]);
     gd = g6c_cmp(sc->name, &g_gb, &g_rb, g_win[1], g_tks[1]);
-    printf("== %s: mode 1 F%u 'U' F%u | (1) vs the golden (r04q: g6q_r04q_test_g6b.tgz): %u differences\n", sc->name, g_rb.m1, g_rb.u,
+    printf("== %s: mode 1 F%u 'U' F%u | (1) vs the golden (r04r: g6r_r04r_test_g6b.tgz): %u differences\n", sc->name, g_rb.m1, g_rb.u,
            gd);
     printf("   (2) wire self-check: passes %u | AGREE %u BOOT %u FENCED %u FSMTAIL %u UNEXP %u | boot window closed at "
            "pass %u (%u disagreeing) | law checks %u mismatches %u | guard fallbacks %u | ae28_x %u\n",
@@ -492,6 +495,45 @@ static void negative(const neg_t *n)
     GCHECK(ok, "NEG %s not caught as required", n->name);
 }
 
+/* r04r (~/tcu_sweep/r04r_port.md): THE WK / Sys GUARD. The engine supplies
+ * ch 5 / 6 through the seam since r04r; drv_reqlaw.c passes only the
+ * compile-time 500 (D-G6-10). The engine's Sys (ch 6) is injected at 8500
+ * and WK (ch 5) at 0 at the seam (gs_bridge_host_inject: drv_gsbr_take's
+ * candidate value) for 20 passes each, in D: the wire must stay the base
+ * run's on EVERY frame (the guard holds 500), the guard must count every
+ * substituted pass, and the monitor must not trip (WK / Sys are not its
+ * channels). */
+static unsigned g_supply_ok;
+static void supply_guard(uint8_t ch, uint16_t v, int32_t off)
+{
+    const neg_t n = { "supply", N_INJ, ch, v, off, 20u, A_D_COMMIT, 0u, 0, 0u, 0xFFu, 0xFFu };
+    scen_t sc = { .name = (ch == 6u) ? "r04r: Sys 8500 at the seam for 20 passes in D"
+                                     : "r04r: WK 0 at the seam for 20 passes in D", .neg = &n };
+    gr_t g;
+    res_t r;
+    static uint8_t win[WIN_N];
+    static tick_t tks[GFRAMES];
+    unsigned hw_bad = 0u;
+    sc.anchors[A_D_COMMIT] = g_base.b.slot[0].t0;
+    run_child(&sc, true, &g, &r, win, tks);
+    for (unsigned f = 0u; f < GFRAMES; f++) {
+        if (g.hw[f] != g_gbase.hw[f]) {
+            hw_bad++;
+        }
+    }
+    {
+        const bool ok = hw_bad == 0u && r.m5_guard >= 20u && r.m5_guard <= 40u && g_base.m5_guard == 0u &&
+                        r.b.trip_n == 0u && r.w.latch == 0u;
+        printf("== %s: wire frames differing from the base %u | guard fallbacks %u (base %u) | monitor trips %u "
+               "latch %02X => %s\n", sc.name, hw_bad, (unsigned)r.m5_guard, (unsigned)g_base.m5_guard, r.b.trip_n,
+               r.w.latch, ok ? "HELD AT 500" : "NOT HELD");
+        if (ok) {
+            g_supply_ok++;
+        }
+        GCHECK(ok, "%s: the WK / Sys guard", sc.name);
+    }
+}
+
 int main(void)
 {
     static const scen_t S[] = {
@@ -567,6 +609,11 @@ int main(void)
         }
         printf("negatives as required: %u of %u (12 caught as r04o + the deleted shadow check not tripping + 7 r04q "
                "boot-allowance negatives caught)\n", g_neg_ok, nN);
+#if !defined(G6B_BYPASS)
+        supply_guard(6u, 8500u, 30);
+        supply_guard(5u, 0u, 60);
+        printf("r04r WK / Sys guard runs as required: %u of 2\n", g_supply_ok);
+#endif
     }
 #endif
     if (g_fails == 0) {

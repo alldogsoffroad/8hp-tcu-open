@@ -17,6 +17,8 @@ Classes (one per pass):
            engine-stop all-release) or latched
   FSMTAIL  retired (never counted since G6c)
   UNEXP    the seam carried the candidate and the wire differs — must be 0
+r04r (~/tcu_sweep/r04r_port.md): the live holder is retired; the wire replica
+now covers WK / Sys (ch 5 / 6) from the engine through the 500-only guard.
 Retired fields (always 0 since G6c): cand != shadow, the shadow's tick time,
 the records' shadow phases. Also printed: the engine's objects at their stock
 addresses (D-G6-9): E28E, E4A7, E4AC, E69B, E69F, E6A1, E6A8, E6C5, E6EE,

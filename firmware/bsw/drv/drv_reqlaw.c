@@ -37,7 +37,7 @@
 _Static_assert(DRV_RQ_REQUEST_SOURCE == 0,
                "drv_reqlaw: SH builds carry no solenoid request source");
 #endif
-#if DRV_RQ_USE_PRODUCER
+#if DRV_RQ_USE_PRODUCER && !GS_G6B
 #include "bsw/drv/drv_rqprod.h"
 #endif
 
@@ -181,43 +181,62 @@ bool drv_rq_fill_ok(uint8_t ch, uint8_t st, uint16_t v)
            v >= DRV_RQ_FILL_MIN && v <= DRV_RQ_FILL_MAX;
 }
 
+#if GS_G6B
+/* r04r (2026-11-19, ~/tcu_sweep/r04r_port.md): THE LIVE HOLDER IS RETIRED.
+ * The stock engine (the candidate, app/gs_cand.c: engine + holder + the
+ * actuator laws in the stock 10 ms slot order) is the SOLE producer of
+ * channels 0..6; app/rq_prod.c (the old holder-only 0xDC4C4 with the M5-0
+ * compile-time inputs) is no longer in the image (a host-only reference).
+ * Every pass the seam (drv_gsbr_take, app/gs_bridge.c) hands this law the
+ * monitor's decision — the candidate, or the latched / stall-fence P content
+ * — for ch 0..6, from the candidate's boot pass on:
+ *   - ch 0..4 (A D B E C): the widened guard, as r04o..r04q: any current in
+ *     the stock clamp [i_min 500, i_max 8500] (0xB7786) passes, anything
+ *     else → the P content, counted;
+ *   - ch 5 / 6 (WK / Sys): the engine's 0xDC4C4 sends Sys (source 0x15) and
+ *     WK (source 0x16) through 0x10809C — 500 each with the reaction-50 /
+ *     WK-off stand-ins (gs_engine.c GS_LINEP / GS_SYSMODE, D-G6-10). The
+ *     guard passes ONLY the P content's compile-time 500 (DRV_RQ_PCONT_WK /
+ *     _SYS): any other engine value → 500, counted. The wire's WK / Sys
+ *     cannot leave 500 on this build.
+ * Before the boot pass (the seam empty) the r03f table, uncounted (D-G6-15;
+ * r04q: until rq_prod_started(), the old holder's boot pass, which ran in
+ * the same row-1 call just before the candidate's — the seam's first value
+ * comes from gs_bridge_boot_pass in that call, no F stage in between). */
+#define RQ_ENG_NCH  7u          /* ch 0..6: A D B E C WK Sys */
+#if GS_LIVE_DIR != 0            /* always here: G6b needs the seam (drv_gsbr.h) */
+static uint16_t rq_prod_guarded(uint8_t ch)
+{
+    static const uint16_t R03F[RQ_ENG_NCH] = DRV_RQ_R03F_TABLE;
+    static const uint16_t PCONT[RQ_ENG_NCH] = DRV_RQ_PCONT_TABLE;
+    uint16_t v;
+    if (!drv_gsbr_take(ch, &v)) {
+        return R03F[ch];                /* before the engine's boot pass: r03n's wire (uncounted) */
+    }
+    if (ch < 5u) {
+        if (v >= DRV_RQ_FILL_MIN && v <= DRV_RQ_FILL_MAX) {
+            return v;
+        }
+    } else if (v == PCONT[ch]) {
+        return v;
+    }
+    s_m5_guard_n++;                     /* never in a sound build */
+    return PCONT[ch];
+}
+#endif /* GS_LIVE_DIR != 0 */
+_Static_assert(DRV_RQ_PCONT_WK == 500u && DRV_RQ_PCONT_SYS == 500u,
+               "drv_reqlaw: WK / Sys stay the compile-time 500 (D-G6-10)");
+#else
+/* the holder-fed form (host M5 reference tests only since r04r; the image's
+ * r03n..r04n form): app/rq_prod.c's channel 0..6 current through the guard;
+ * the r03f table before its boot pass and as the fallback */
 static uint16_t rq_prod_guarded(uint8_t ch)
 {
     static const uint16_t R03F[RQ_PROD_NCH] = DRV_RQ_R03F_TABLE;
-#if GS_G6B
-    /* G6b: the guard's fallback is THE P CONTENT (bsw/drv/drv_gsbr.h: block 0,
-     * gear target 1st — the content the monitor latches), no longer the r03f
-     * gear-3 table (B 8500 / A 500, right only for M5-1a) */
-    static const uint16_t FALLBACK[RQ_PROD_NCH] = DRV_RQ_PCONT_TABLE;
-#else
-#  define FALLBACK R03F
-#endif
     uint16_t v;
     if (!rq_prod_started()) {
         return R03F[ch];                /* before the boot pass: r03n's wire (uncounted, not a fallback) */
     }
-#if GS_LIVE_DIR != 0
-    /* THE SEAM (ours; bsw/drv/drv_gsbr.h, app/gs_bridge.c). r04i..r04n: while
-     * the bridge is armed, channels 0..4 take the garage shadow's current.
-     * G6b (GS_G6B 1, the image): every pass the monitor hands channels 0..4
-     * THE CANDIDATE's current (the producer of the live A..E currents) or,
-     * latched, the P content — false only while the E28E fence hands the
-     * live producer back (its value then takes the path below). THE WIDENED
-     * GUARD: a seam value is any current in the stock clamp [i_min 500,
-     * i_max 8500] (0xB7786) — the engine's mode-0 values (fill, phase 4,
-     * the lock hold, the ramps, the release) pass only through here, i.e.
-     * only while the monitor permits them; anything else → the fallback,
-     * counted. Compiled only with GS_LIVE_DIR != 0. */
-    if (ch < 5u && drv_gsbr_take(ch, &v)) {
-        if (v >= DRV_RQ_FILL_MIN && v <= DRV_RQ_FILL_MAX) {
-            return v;
-        }
-        s_m5_guard_n++;                 /* never in a sound build */
-#if GS_G6B
-        return FALLBACK[ch];
-#endif
-    }
-#endif
     v = rq_prod_ch(ch);
     if (v == 500u || v == 8500u) {
         return v;
@@ -226,16 +245,18 @@ static uint16_t rq_prod_guarded(uint8_t ch)
         return v;
     }
     s_m5_guard_n++;
-    return FALLBACK[ch];
+    return R03F[ch];
 }
-#if !GS_G6B
-#  undef FALLBACK
-#endif
+#endif /* GS_G6B (r04r) */
 #endif
 
 static inline uint16_t rq_request(uint8_t ch)
 {
-#if DRV_RQ_USE_PRODUCER
+#if DRV_RQ_USE_PRODUCER && GS_G6B
+    if (ch < RQ_ENG_NCH && rq_prod_on()) {
+        return rq_prod_guarded(ch);
+    }
+#elif DRV_RQ_USE_PRODUCER
     if (ch < RQ_PROD_NCH && rq_prod_on()) {
         return rq_prod_guarded(ch);
     }
@@ -785,7 +806,7 @@ void drv_rq_init(void)
     s_rq_f238_n = 0u;
     s_m5_guard_n = 0u;
     drv_od_init();                      /* the output diagnosis' cells */
-#if DRV_RQ_USE_PRODUCER
-    rq_prod_init();                     /* M5-0: 0xD9CF8 + the objects */
+#if DRV_RQ_USE_PRODUCER && !GS_G6B
+    rq_prod_init();                     /* M5-0: 0xD9CF8 + the objects (r04r: not on the image) */
 #endif
 }

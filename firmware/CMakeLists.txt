@@ -38,8 +38,11 @@ set(CORE_SOURCES
     app/park_law.c
     app/park.c
     app/rng_chain.c
-    app/rq_prod.c
-    app/rq_fill.c
+    # r04r (~/tcu_sweep/r04r_port.md): the live holder (app/rq_prod.c +
+    # its fill app/rq_fill.c) is retired from the applications; this pad
+    # takes their place in the link so .bss / .noinit do not move. Both
+    # stay as the host reference of the M5 tests (listed per test below).
+    app/rq_retired.c
     app/rq_fill_cal.c
     app/tmp_chain.c
     app/gs_cal.c app/gs_bridge.c
@@ -146,6 +149,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
             CMakeFiles/tcu_app.elf.dir/app/gs_cand.c.obj CMakeFiles/tcu_app.elf.dir/app/gs_cand_fill.c.obj
             CMakeFiles/tcu_app.elf.dir/app/g6a.c.obj
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6c_sections.py ${SH_OBJDUMP} tcu_app.elf
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py retired ${SH_NM} tcu_app.elf
         COMMAND ${CMAKE_OBJCOPY} -O ihex --remove-section=.bss tcu_app.elf tcu_app.hex
         COMMAND ${CMAKE_SIZE} tcu_app.elf
         COMMENT "G6a link-map scan; G6c RAM-section overlap scan; writing application block as Intel HEX (load addresses)")
@@ -757,6 +761,20 @@ else()
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DTCU_OUTPUT_PATH ${CMAKE_SOURCE_DIR}/app/g6a.c)
     set_tests_properties(gs_sh_guard_engine_alone PROPERTIES
         PASS_REGULAR_EXPRESSION "gs_engine.c is the garage engine TEMPLATE")
+    # r04r (~/tcu_sweep/r04r_port.md): the retired holder cannot come back into
+    # the code-flash application (GS_G6B): app/rq_prod.c and its own fill
+    # app/rq_fill.c refuse to compile there; the RAM-app form (empty) and the
+    # host reference still compile (the M5 tests and these controls)
+    add_test(NAME g6r_sh_guard_holder
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_G6B=1 ${CMAKE_SOURCE_DIR}/app/rq_prod.c)
+    add_test(NAME g6r_sh_guard_holder_fill
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_G6B=1 ${CMAKE_SOURCE_DIR}/app/rq_fill.c)
+    set_tests_properties(g6r_sh_guard_holder PROPERTIES
+        PASS_REGULAR_EXPRESSION "the live holder is retired from the code-flash application since r04r")
+    set_tests_properties(g6r_sh_guard_holder_fill PROPERTIES
+        PASS_REGULAR_EXPRESSION "the live holder's fill instance is retired from the code-flash application since r04r")
+    add_test(NAME g6r_sh_guard_holder_ram_control
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_G6B=1 -DTCU_RAM_APP ${CMAKE_SOURCE_DIR}/app/rq_prod.c)
     set_tests_properties(g6a_sh_guard_cand_ram PROPERTIES
         PASS_REGULAR_EXPRESSION "the G6a candidate is for the code-flash application only")
     set_tests_properties(g6a_sh_guard_cand_forced PROPERTIES
@@ -1414,7 +1432,29 @@ else()
     # (nothing allowed) must FAIL
     file(ARCHIVE_EXTRACT INPUT ${CMAKE_SOURCE_DIR}/tests/unit/golden/g6q_r04q_test_g6b.tgz
         DESTINATION ${CMAKE_BINARY_DIR}/g6q_r04q)
-    set(G6C_GOLD_ENV "G6C_GOLD_IN=${CMAKE_BINARY_DIR}/g6q_r04q/gold")
+    # r04r (~/tcu_sweep/r04r_port.md): the live holder is retired from the
+    # image (the engine is the sole producer of ch 0..6). test_g6b now
+    # compares with the r04r goldens (written by this build, the harness
+    # replaying the retired holder so its cells hold r04q's values:
+    # G6R_HOLDER_REPLICA 1). g6r_vs_r04q_goldens proves the r04q -> r04r
+    # difference of every run is ONLY gsb_t's agree_n / disagree_n (the
+    # agreement witness's reference is the P content now; their sum
+    # identical) — every frame (wire AND cell hash), tick, window, release
+    # header and the end-of-run window byte-identical; strict must FAIL.
+    # test_g6b_norep: the image's configuration (no holder at all) against
+    # the same goldens — the wire hash identical on every frame, the end
+    # window identical outside the holder's cells (tests/unit/g6c_gold.h
+    # G6R_NOREP), every tick / gsb_t / window / release header exact.
+    file(ARCHIVE_EXTRACT INPUT ${CMAKE_SOURCE_DIR}/tests/unit/golden/g6r_r04r_test_g6b.tgz
+        DESTINATION ${CMAKE_BINARY_DIR}/g6r_r04r)
+    set(G6C_GOLD_ENV "G6C_GOLD_IN=${CMAKE_BINARY_DIR}/g6r_r04r/gold")
+    add_test(NAME g6r_vs_r04q_goldens
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6r_gold_diff.py ${CMAKE_BINARY_DIR}/g6q_r04q/gold
+            ${CMAKE_BINARY_DIR}/g6r_r04r/gold)
+    add_test(NAME g6r_vs_r04q_goldens_strict_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6r_gold_diff.py ${CMAKE_BINARY_DIR}/g6q_r04q/gold
+            ${CMAKE_BINARY_DIR}/g6r_r04r/gold --strict)
+    set_tests_properties(g6r_vs_r04q_goldens_strict_negative PROPERTIES WILL_FAIL TRUE)
     add_test(NAME g6q_vs_r04p_goldens
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6q_gold_diff.py ${CMAKE_BINARY_DIR}/g6c_r04o/gold
             ${CMAKE_BINARY_DIR}/g6q_r04q/gold --skip-tag candidate____shadow_2_passes__C_fill_)
@@ -1427,6 +1467,26 @@ else()
     target_compile_definitions(test_g6b_englim PRIVATE ${G6B_DEFS} GSB_ENG_PASSES=50u G6A_ENGLIM=1)
     add_test(NAME g6b_switch_englim COMMAND test_g6b_englim)
     set_tests_properties(g6b_switch g6b_switch_englim PROPERTIES ENVIRONMENT "${G6C_GOLD_ENV}")
+    # r04r: the image's configuration — no holder linked, no replica
+    set(G6B_NOREP_SOURCES ${G6B_SOURCES})
+    list(REMOVE_ITEM G6B_NOREP_SOURCES app/rq_prod.c app/rq_fill.c)
+    add_executable(test_g6b_norep ${G6B_NOREP_SOURCES})
+    target_compile_definitions(test_g6b_norep PRIVATE ${G6B_DEFS} G6R_HOLDER_REPLICA=0 G6R_NOREP=1)
+    add_test(NAME g6r_switch_norep COMMAND test_g6b_norep)
+    add_executable(test_g6b_norep_englim ${G6B_NOREP_SOURCES})
+    target_compile_definitions(test_g6b_norep_englim PRIVATE ${G6B_DEFS} G6R_HOLDER_REPLICA=0 G6R_NOREP=1
+        GSB_ENG_PASSES=50u G6A_ENGLIM=1)
+    add_test(NAME g6r_switch_norep_englim COMMAND test_g6b_norep_englim)
+    set_tests_properties(g6r_switch_norep g6r_switch_norep_englim PROPERTIES ENVIRONMENT "${G6C_GOLD_ENV}")
+    # r04r: the retired holder stays out of the image (the POST_BUILD scan of
+    # tcu_app.elf runs the same rule on the real link map); its fixtures
+    add_test(NAME g6r_scan_retired_ok
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py retired --nm-text
+            ${CMAKE_SOURCE_DIR}/tests/unit/g6r_retired_fixture_ok.txt)
+    add_test(NAME g6r_scan_retired_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py retired --nm-text
+            ${CMAKE_SOURCE_DIR}/tests/unit/g6r_retired_fixture_nm.txt)
+    set_tests_properties(g6r_scan_retired_negative PROPERTIES WILL_FAIL TRUE)
     add_executable(test_g6b_bypass ${G6B_SOURCES})
     target_compile_definitions(test_g6b_bypass PRIVATE ${G6B_DEFS} GSM_HOST_BYPASS=1 G6B_BYPASS=1)
     add_test(NAME g6b_monitor_bypass_negative COMMAND test_g6b_bypass)

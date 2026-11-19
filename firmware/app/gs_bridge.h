@@ -155,7 +155,7 @@ typedef struct {
     uint32_t armed_n;       /* would-armed passes */
     uint32_t applied_n;     /* applied passes (0 in G1) */
     uint32_t take_n;        /* seam reads that returned a value (0 in G1) */
-    uint32_t agree_n;       /* unarmed passes, shadow A..E == live A..E */
+    uint32_t agree_n;       /* unarmed passes, candidate A..E == lv (r04r: the P content) */
     uint32_t disagree_n;    /* unarmed passes that disagree */
     uint32_t last_dis;      /* the last disagreeing unarmed pass */
     uint32_t sh_commits;    /* the shadow's commit count last seen */
@@ -176,7 +176,9 @@ typedef struct {
     uint8_t  slot_cur;      /* the slot of the last nonzero commit (0xFF none) */
     uint8_t  back_pend;     /* waiting for agreement after a disarm */
     uint16_t sh[5];         /* the shadow's A..E currents this pass */
-    uint16_t lv[5];         /* the live producer's A..E (0xFFF84B78, complement-checked) */
+    uint16_t lv[5];         /* the reference A..E: r04o..r04q the live producer's 0xFFF84B78;
+                             * r04r (the holder retired) the P content after the boot pass,
+                             * 0 before — the agree / disagree witnesses only */
     uint16_t cur[5];        /* the would-be A..E currents */
     uint16_t app[5];        /* the applied A..E (the seam; 0 when not applied) */
     gsb_slot_t slot[2];

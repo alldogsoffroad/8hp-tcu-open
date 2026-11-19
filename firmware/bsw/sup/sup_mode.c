@@ -147,9 +147,13 @@ static void row1_7db70(void)
     CELL_MOD_ALL = all;
 }
 
+#if !(defined(GS_G6B) && GS_G6B)
 /* M5-1: the request producer's boot pass (app/rq_prod.c); weak, so the
- * supervisor tests and the RAM application link without it */
+ * supervisor tests and the RAM application link without it. r04r: not in
+ * the code-flash application (GS_G6B) — the holder is retired, the engine's
+ * boot pass (g6a_boot_pass below) is the producer's */
 extern void rq_prod_boot_pass(void) __attribute__((weak));
+#endif
 /* the temperature byte's boot pass (app/tmp_chain.c): row-1 entries 0
  * (0x14F32C) and 6 (0xA2D88), before the producer's entry 17 */
 extern void tmp_chain_boot_pass(void) __attribute__((weak));
@@ -181,9 +185,11 @@ void sup_mode_background(void)
         if (tmp_chain_boot_pass) {
             tmp_chain_boot_pass();
         }
+#if !(defined(GS_G6B) && GS_G6B)
         if (rq_prod_boot_pass) {
             rq_prod_boot_pass();
         }
+#endif
 #if !defined(TCU_RAM_APP)
         if (g6a_boot_pass) {
             g6a_boot_pass();

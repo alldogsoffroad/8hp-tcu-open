@@ -14,6 +14,9 @@
  * current) while the bridge is applied, else the live producer's
  * 0xFFF84B78 through the guard (500 / 8500, a fill-state value in
  * [500, 8500], else the r03f table). It writes ONLY its own RAM (.g6a).
+ * r04r (~/tcu_sweep/r04r_port.md): the live holder is retired — the wire
+ * source is the seam alone (the candidate / the P content, WK / Sys through
+ * the 500-only guard), the r03f table before the candidate's boot pass.
  *
  * CLASSES (one per comparator pass; disagreement = any current, mode or
  * state differs between the candidate and the wire source):
@@ -185,7 +188,8 @@ _Static_assert(sizeof(g6a_t) == 164u + 32u * (G6A_REC_N + G6A_UREC_N) + 76u, "g6
 /* main init, after gs_bridge_init: the candidate's init (its RAM cleared)
  * and the comparator's */
 void g6a_init(void);
-/* boot state 1 (bsw/sup/sup_mode.c, after rq_prod_boot_pass): the
+/* boot state 1 (bsw/sup/sup_mode.c; r04q: after rq_prod_boot_pass, r04r: the
+ * holder retired, this is the producer's boot pass): the
  * candidate's boot pass, then comparator pass 0 */
 void g6a_boot(const gs_in_t *gi);
 /* r04q: the boot pass's comparison (after gs_bridge_boot_pass) */

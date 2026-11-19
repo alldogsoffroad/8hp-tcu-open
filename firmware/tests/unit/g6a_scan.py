@@ -28,6 +28,9 @@ source scans.
                                 EEPROM dirty flag 0xFFF85175 / lock cells
                                 0xFFF85174..76 as a literal (objdump -s of
                                 the data/literal sections)
+  g6a_scan.py retired NM ELF    r04r: no defined symbol of the retired live
+  g6a_scan.py retired --nm-text FILE   holder (rq_prod_*, its own fill's
+                                rqf_*, its recorder / witnesses) in the image
 Exit 1 ("G6a read-only violation") on any hit.
 """
 import re
@@ -46,13 +49,14 @@ MONITOR_FILE = "app/gs_bridge.c"
 MONITOR_READS = {"gs_cand_wit", "gs_cand_pf", "gs_cand_releasing", "gs_cand_pending", "gs_cand_cur",
                  "gs_cand_reqmode", "gs_cand_fillst", "gs_cand_phase"}
 
-CMP_INCLUDES = {"app/g6a.h", "app/gs_cand.h", "app/gs_bridge.h", "bsw/drv/drv_rqprod.h",
+CMP_INCLUDES = {"app/g6a.h", "app/gs_cand.h", "app/gs_bridge.h",
                 "bsw/drv/drv_reqlaw.h", "bsw/drv/drv_jobs.h", "platform/platform.h",
                 # G6b: GS_G6B and the P content (DRV_RQ_PCONT_TABLE), macros only
                 "bsw/drv/drv_gsbr.h"}
 CMP_CALL_ALLOW = {
-    # the live path, read getters only
-    "rq_prod_started", "rq_prod_ch", "rq_prod_fill_state", "drv_rq_fill_ok", "drv_out_wit",
+    # the live path, read getters only (r04r: the retired holder's getters
+    # rq_prod_started / rq_prod_ch / rq_prod_fill_state are gone)
+    "drv_out_wit",
     "gs_bridge_state", "plat_frt_us",
     # G6b: the monitor's mode getter (read-only)
     "gs_bridge_g6b",
@@ -80,7 +84,7 @@ NM_ALLOW = {
     # the candidate's const calibration (app/gs_cal.c lookup, app/rq_fill_cal.c blobs)
     "gs_cal_lookup", "RQF_BLOBS",
     # the comparator's allowed getters (above) and libc/libgcc helpers
-    "rq_prod_started", "rq_prod_ch", "rq_prod_fill_state", "drv_rq_fill_ok", "drv_out_wit",
+    "drv_out_wit",
     "gs_bridge_state", "plat_frt_us",
     # G6b: the monitor's mode getter; the candidate's stage marks (app/g6a.c)
     "gs_bridge_g6b", "g6a_stage",
@@ -187,10 +191,36 @@ def scan_link(nm, objs, bad):
                 bad.append("%s: holds the EEPROM cell 0x%08X as a literal" % (o, lit))
 
 
+# r04r (~/tcu_sweep/r04r_port.md): THE RETIRED HOLDER STAYS OUT OF THE IMAGE.
+# `retired NM ELF` (POST_BUILD of tcu_app.elf) / `retired --nm-text FILE`
+# (the fixtures): no defined symbol of the live holder (app/rq_prod.c) or of
+# its own fill instance (app/rq_fill.c compiled as itself: rqf_*, not the
+# engine's renamed gcf_*) may be in the image.
+RETIRED_RE = [r"^_?rq_prod_", r"^_?rqf_", r"^_?s_m5_(rec|pass|unp_n|f19a_n|f19f_n|f1c4_n)", r"^_?s_fill_live$"]
+
+
+def scan_retired(lines, src, bad):
+    for ln in lines:
+        p = ln.split()
+        if len(p) < 3 or p[1] in ("U", "w", "v"):
+            continue
+        name = p[2]
+        if any(re.match(r, name) for r in RETIRED_RE):
+            bad.append("%s: defines %s (the retired live holder is back in the image)" % (src, name))
+
+
 def main():
     mode = sys.argv[1]
     bad = []
-    if mode == "link":
+    if mode == "retired":
+        if sys.argv[2] == "--nm-text":
+            lines = open(sys.argv[3]).read().splitlines()
+        else:
+            lines = subprocess.run([sys.argv[2], sys.argv[3]], capture_output=True, text=True,
+                                   check=True).stdout.splitlines()
+        scan_retired(lines, sys.argv[3], bad)
+        n = 1
+    elif mode == "link":
         scan_link(sys.argv[2], sys.argv[3:], bad)
         n = len(sys.argv) - 3
     else:

@@ -38,6 +38,9 @@
 #include "app/rq_prod.h"
 #include "bsw/drv/drv_rqprod.h"
 
+#if defined(__sh__) && !defined(TCU_RAM_APP) && defined(GS_G6B) && GS_G6B
+#  error "rq_prod.c: the live holder is retired from the code-flash application since r04r (~/tcu_sweep/r04r_port.md) - the stock engine (instance 2 of the garage engine template) is the sole producer; this file is a host reference"
+#endif
 #if defined(TCU_RAM_APP)
 /* the RAM application keeps the r03f constants (its 64 KB limit) */
 #else

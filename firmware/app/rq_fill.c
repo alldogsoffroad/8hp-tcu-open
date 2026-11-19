@@ -39,6 +39,13 @@
 #define TCU_OUTPUT_PATH 1
 #include "app/rq_fill.h"
 
+/* r04r (~/tcu_sweep/r04r_port.md): compiled AS ITSELF this file is the
+ * retired live holder's fill instance — a host reference since r04r; the
+ * image compiles it only through app/gs_cand_fill.c (the engine's fill) */
+#if defined(__sh__) && !defined(TCU_RAM_APP) && defined(GS_G6B) && GS_G6B && !defined(RQF_SHADOW_INSTANCE)
+#  error "rq_fill.c: the live holder's fill instance is retired from the code-flash application since r04r - the image compiles it only as the engine's fill (instance 2)"
+#endif
+
 #if !defined(TCU_RAM_APP)
 
 static const rqf_in_t *s_in;

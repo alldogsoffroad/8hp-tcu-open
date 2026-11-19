@@ -1,0 +1,3 @@
+# r04r: the positive fixture of the retired-holder link scan - the engine's own symbols (instance 2 + its fill, renamed gcf_*) are allowed
+00067e70 T _gcf_107c3e
+00064ac8 T _gs_cand_cur

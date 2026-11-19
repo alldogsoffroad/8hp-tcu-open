@@ -233,9 +233,13 @@ static void task_sup_monitor(void)
     sup_monitor_poll();
 }
 
+#if !(defined(GS_G6B) && GS_G6B)
 /* M5-1: the stock request producer's 10 ms chain (app/rq_prod.c): weak, so
- * the RAM application (no producer) links without it */
+ * the RAM application (no producer) links without it. r04r: the code-flash
+ * application (GS_G6B) has no holder any more — the engine (app/gs_cand.c)
+ * is the sole producer of ch 0..6 (~/tcu_sweep/r04r_port.md) */
 extern void rq_prod_task_10ms(uint8_t os_mode) __attribute__((weak));
+#endif
 
 /* ── 10 ms: application tasks ──────────────────────────────────────────── */
 #if !defined(TCU_RAM_APP)
@@ -271,7 +275,9 @@ static void gs_in_build(gs_in_t *gi)
 }
 
 /* G6a (app/g6a.c): the candidate's boot-state-1 pass — bsw/sup/sup_mode.c
- * calls it (weak) right after app/rq_prod.c's rq_prod_boot_pass */
+ * calls it (weak) at row-1 entry 17's slot (r04q: right after app/rq_prod.c's
+ * rq_prod_boot_pass; r04r: the holder is retired, this IS the producer's
+ * boot pass, and the seam's first value starts the wire's producer content) */
 void g6a_boot_pass(void)
 {
     gs_in_t gi;
@@ -297,9 +303,11 @@ static void task_10ms(void)
      * ED20 re-initialisation (0x132DCE); modes 1..3 → 0xB986C, the latch of
      * 0x89C13, entry 29 — before the producer (entry 43) reads it */
     tmp_chain_task_10ms(sup_mode());
+#if !(defined(GS_G6B) && GS_G6B)
     if (rq_prod_task_10ms) {
         rq_prod_task_10ms(sup_mode());
     }
+#endif
     sensors_update_10ms();
     vehicle_update_10ms();
     /* THE TERMINAL-15 STATE (safety/kl15.c, 0x140B80): the stock runs it

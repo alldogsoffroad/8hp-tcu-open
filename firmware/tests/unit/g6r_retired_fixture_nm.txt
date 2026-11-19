@@ -1,0 +1,9 @@
+# r04r: a fixture of the retired-holder link scan (tests/unit/g6a_scan.py retired) - excerpt of sh-elf-nm of the r04q image (HEAD 130793e), which still linked the holder; the scan must FAIL on it
+00067e70 T _gcf_107c3e
+00064ac8 T _gs_cand_cur
+000579ac T _rqf_107c3e
+000546ec T _rq_prod_boot_pass
+00054850 T _rq_prod_ch
+00054768 T _rq_prod_task_10ms
+fff86810 b _s_fill_live
+fff86010 b _s_m5_rec

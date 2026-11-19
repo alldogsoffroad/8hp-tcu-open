@@ -98,10 +98,41 @@ static unsigned g6a_ns_n[2];
 #endif
 #endif
 
+/* r04r (~/tcu_sweep/r04r_port.md): THE RETIRED LIVE HOLDER, REPLAYED. The
+ * image no longer links app/rq_prod.c (the engine is the sole producer of
+ * ch 0..6; nothing reads the holder's cells). With G6R_HOLDER_REPLICA 1
+ * (the default) this harness still runs it at its r04q slots — init right
+ * after drv_rq_init (rr_reset), its boot pass just before the candidate's
+ * (g6a_boot_pass), its 10 ms pass at the top of task10 — ONLY so that its
+ * stock cells (0xFFF84B78.., 0xFFF8B154.., 0xFFF8B7C8.., the input mirrors,
+ * the fill cells) hold the values the r04q goldens' cell-window hashes saw:
+ * every other cell, every bus-A word, the park demands, the monitor's ticks
+ * and windows can then be compared with those goldens byte for byte. Its
+ * outputs reach nothing (drv_reqlaw.c's r04r guard does not read it).
+ * G6R_HOLDER_REPLICA 0: the image's configuration (no holder at all) —
+ * the wire hash must still equal the r04q goldens on every frame. */
+#ifndef G6R_HOLDER_REPLICA
+#  define G6R_HOLDER_REPLICA 1
+#endif
+#if G6R_HOLDER_REPLICA && GS_G6B
+#  define G6R_REPLICA_INIT()  rq_prod_init()
+#  define G6R_REPLICA_BOOT()  rq_prod_boot_pass()
+#  define G6R_REPLICA_10MS(m) rq_prod_task_10ms(m)
+#elif GS_G6B
+#  define G6R_REPLICA_INIT()  ((void)0)
+#  define G6R_REPLICA_BOOT()  ((void)0)
+#  define G6R_REPLICA_10MS(m) ((void)(m))
+#else
+#  define G6R_REPLICA_INIT()  ((void)0)     /* drv_rq_init runs it (the holder-fed form) */
+#  define G6R_REPLICA_BOOT()  ((void)0)     /* bsw/sup/sup_mode.c runs it */
+#  define G6R_REPLICA_10MS(m) rq_prod_task_10ms(m)
+#endif
+
 #if defined(G6B_GATE)
 /* the candidate's boot pass at boot state 1 (app/main.c g6a_boot_pass) */
 void g6a_boot_pass(void)
 {
+    G6R_REPLICA_BOOT();             /* r04r: the retired holder's boot pass (r04q: just before) */
     const vehicle_in_t *v = vehicle_in();
     const gs_in_t gi = {
         .os_mode = sup_mode(),
@@ -316,7 +347,7 @@ static void task10(gr_t *g, unsigned p)
     g_send(CAN_BUS1, 0x108u, 8u, true, d);          /* engine 700 */
     }
 
-    rq_prod_task_10ms(mode);
+    G6R_REPLICA_10MS(mode);         /* r04r: the retired holder (replica only, see above) */
     vehicle_update_10ms();
     *(volatile uint16_t *)(uintptr_t)KL15_SRC_CELL = 13206u;
     kl15_tick_10ms();
@@ -427,6 +458,7 @@ static void run_g(gr_t *g)
     r->fc_mode = g->fc_mode;
 #endif
     rr_reset(r);
+    G6R_REPLICA_INIT();             /* r04r: the retired holder's init (r04q: the end of drv_rq_init) */
 #if defined(DIAG_TEMPS)
     for (unsigned d = 0u; d < 2u; d++) {
         for (unsigned q = 0u; q < 2u; q++) {

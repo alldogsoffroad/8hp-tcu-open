@@ -120,18 +120,10 @@ _Static_assert(DRV_RQ_PCONT_A == GSB_PIN && DRV_RQ_PCONT_D == GSB_PIN && DRV_RQ_
 #define L_FW         0xFFF93004u    /* u16 [10] the fault word */
 #define L_CCLS       0xFFF93A42u    /* u8 [10] the channel class */
 #define L_OST        0xFFF93A38u    /* u8 [10] the off-test state */
-#define L_PROD       0xFFF84B78u    /* u16 [12] the live producer's currents */
-#define L_PROD_C     0xFFF84B90u    /* u16 [12] their complements */
 #define L_EST        0xFFF93394u    /* u16 [10] the real-feedback estimate */
 #define L_ROUND      0xFFF9090Au    /* u8 the 0x90118 rounding offset */
 #define L_E9FF       0xFFF8E9FFu    /* u8 the terminal-15 state (kl15) */
 #define L_SUPPLY     0xFFF94F86u    /* u16 the supply (0x8D8DE output) */
-/* G6b: the live request objects' fill state +0x34 (A D B E C; rq_fill.h RQ_OBJ_*) */
-#define L_OBJ_A_ST   0xFFF8B7FCu
-#define L_OBJ_D_ST   0xFFF8B91Cu
-#define L_OBJ_B_ST   0xFFF8B85Cu
-#define L_OBJ_E_ST   0xFFF8B97Cu
-#define L_OBJ_C_ST   0xFFF8B8BCu
 
 /* ── RAM: OUR objects (not stock cells) ───────────────────────────────── */
 #if defined(__sh__)
@@ -555,6 +547,11 @@ static uint8_t rel_envelope(uint8_t *tch, uint16_t *tv, uint8_t (*reqmode)(uint8
  *       in .noinit until power-off (a warm reset carries it; the candidate
  *       keeps running underneath, read-only from then on — the wire never
  *       returns to it).
+ * r04r (~/tcu_sweep/r04r_port.md): THE LIVE HOLDER IS RETIRED — the engine
+ * is the sole producer; the seam (drv_gsbr_take) also hands WK / Sys
+ * (ch 5 / 6: the candidate's own current, the P content's 500 while latched /
+ * fenced) and its first value (gs_bridge_boot_pass) starts the producer
+ * content on the wire. Nothing here reads the holder's cells any more.
  * A non-P pass that passes every check, and every P-content pass, carries the
  * candidate. Passes whose content IS the P content need no permit: the wire
  * would be the P content either way. */
@@ -767,13 +764,17 @@ static void mon_tick(const gsb_in_t *in)
     }
     R.rel_prev = rel;
 
-    /* the candidate's, the live producer's and the shadow's A..E */
+    /* the candidate's A..E and the reference content. r04r: the live holder
+     * (app/rq_prod.c, 0xFFF84B78) is retired — gsb_t.lv, the agreement
+     * witness's reference, is now the content the seam falls back to: the
+     * constant P content once the candidate's boot pass ran, 0 before it
+     * (the retired holder's cleared array read 0 there). Witness only:
+     * agree / disagree / back_at; no decision reads it. */
     for (uint8_t ch = 0u; ch < 5u; ch++) {
         uint16_t v;
-        const uint16_t lv = LIVE_U16(L_PROD + 2u * ch);
         (void)cand_cur_inj(ch, &v);
         B.sh[ch] = v;
-        B.lv[ch] = (lv == (uint16_t)~LIVE_U16(L_PROD_C + 2u * ch)) ? lv : 0xFFFFu;
+        B.lv[ch] = booted ? GSB_PCONT[ch] : 0u;
         if (v != B.lv[ch]) {
             agree = false;
         }
@@ -1142,14 +1143,32 @@ bool gs_bridge_table(uint8_t pf, uint8_t *move_mask, uint16_t fixed[5])
 }
 
 #if GS_LIVE_DIR != 0
-/* THE SEAM (drv_gsbr.h; host G2 / G3 dry-run builds only in G1) */
+/* THE SEAM (drv_gsbr.h). r04r: ch 0..6 — the live holder is retired, the
+ * engine is the sole producer. A..E: the monitor's applied value (counted
+ * in take_n, as r04o..r04q). WK / Sys (ch 5 / 6): the candidate's own
+ * 0xDC4C4 → 0x10809C current while the seam carries the candidate, the P
+ * content's 500 while it is latched / fenced (drv_reqlaw.c passes only 500
+ * for these two). false = before the candidate's boot pass (the seam
+ * empty: the r03f table, D-G6-15) */
 bool drv_gsbr_take(uint8_t ch, uint16_t *v)
 {
-    if (ch < 5u && B.applied != 0u) {
+    if (B.applied == 0u) {
+        return false;
+    }
+    if (ch < 5u) {
         *v = B.app[ch];
         B.take_n++;
         return true;
     }
+#if GS_G6B
+    if (ch == 5u || ch == 6u) {
+        static const uint16_t PC7[7] = DRV_RQ_PCONT_TABLE;
+        uint16_t c;
+        (void)cand_cur_inj(ch, &c);
+        *v = (B.src == GSM_S_CAND) ? c : PC7[ch];
+        return true;
+    }
+#endif
     return false;
 }
 #endif

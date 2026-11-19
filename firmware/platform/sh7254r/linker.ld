@@ -4,6 +4,9 @@
 OUTPUT_FORMAT("elf32-sh")
 OUTPUT_ARCH(sh)
 ENTRY(_start)
+/* r04r (~/tcu_sweep/r04r_port.md): the retired holder's .bss span, kept as
+ * a pad so .bss / .noinit do not move (app/rq_retired.c) — a GC root */
+EXTERN(_tcu_rq_retired_pad)
 
 MEMORY
 {

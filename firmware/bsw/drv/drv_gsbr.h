@@ -88,7 +88,13 @@ _Static_assert(GS_G6B == 1, "gs bridge: G6b - on SH builds a live seam carries t
 /* the seam (host G2/G3 dry-run builds only in G1): true and *v = the
  * bridged current (0.1 mA, already inside the bridge's guard) for channel
  * ch 0..4 while the bridge is armed for the shadow's direction; false = the
- * live producer's value stands */
+ * live producer's value stands.
+ * r04r (~/tcu_sweep/r04r_port.md): THE LIVE HOLDER IS RETIRED — the seam
+ * answers ch 0..6 from the candidate's boot pass on (A..E the monitor's
+ * value; WK / Sys the candidate's 0x10809C current, or the P content's 500
+ * while latched / fenced — drv_reqlaw.c passes only 500 for those two);
+ * false = before the candidate's boot pass (the law takes the r03f table,
+ * D-G6-15). The seam's first true is the start of the producer content. */
 bool drv_gsbr_take(uint8_t ch, uint16_t *v);
 /* G6b: true = this pass's seam value comes from the candidate or the P
  * content (the monitor decided), false = the E28E fence: the live producer */

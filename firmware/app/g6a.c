@@ -7,21 +7,22 @@
  * READ-ONLY: this TU writes only its own object (.g6a, s_g6a) and, through
  * the candidate's API, the candidate's own RAM (.gsc_req / .gsc_obj). It
  * READS the live path through getters and const volatile literals only:
- *   rq_prod_started / rq_prod_ch / rq_prod_fill_state   (app/rq_prod.c)
- *   drv_rq_fill_ok, DRV_RQ_R03F_TABLE                   (the guard, replicated)
+ *   DRV_RQ_R03F_TABLE, DRV_RQ_PCONT_TABLE, DRV_RQ_FILL_MIN / MAX
+ *                                                       (the guard, replicated)
  *   drv_out_wit()->law_n                                (law passes)
- *   gs_bridge_state()->applied / ->app[]                (the seam's value —
+ *   gs_bridge_state()->applied / ->src / ->app[]        (the seam's value —
  *       NOT drv_gsbr_take, which counts its reads)
  *   gs_cand_* (the engine; G6c: the shadow, instance 1, is deleted)
- *   0xFFF8B7C8.. (+7 mode, +0x34 state of the live request objects),
  *   0xFFF94ED4 (the law's gated current), 0xFFF94FD0 (seq2), plat_frt_us.
+ * r04r (~/tcu_sweep/r04r_port.md): the live holder (app/rq_prod.c) is
+ * retired — its getters and its request objects 0xFFF8B7C8.. are no longer
+ * read; the replica below is drv_reqlaw.c's r04r rq_prod_guarded().
  * ctest g6a_scan_cmp holds this TU to that list (no other call, no store
  * through a literal address, no CELL_ / PCELL_ macro).
  */
 #include "app/g6a.h"
 #include "app/gs_cand.h"
 #include "app/gs_bridge.h"
-#include "bsw/drv/drv_rqprod.h"
 #include "bsw/drv/drv_reqlaw.h"
 #include "bsw/drv/drv_jobs.h"
 #include "bsw/drv/drv_gsbr.h"      /* G6b: GS_G6B, the P content (DRV_RQ_PCONT_TABLE) */
@@ -36,12 +37,9 @@
 static volatile g6a_t s_g6a G6A_SEC;
 #define C   (*(g6a_t *)&s_g6a)
 
-/* the live request objects behind ch 0..4 (A D B E C; rq_fill.h RQ_OBJ_*) */
-static const uint32_t LIVE_OBJ[5] = { 0xFFF8B7C8u, 0xFFF8B8E8u, 0xFFF8B828u, 0xFFF8B948u, 0xFFF8B888u };
 #define LRD8(a)     (*(const volatile uint8_t *)(uintptr_t)(a))
 #define LRD16(a)    (*(const volatile uint16_t *)(uintptr_t)(a))
-#define LIVE_MODE(ch)   LRD8(LIVE_OBJ[ch] + 0x07u)
-#define LIVE_ST(ch)     LRD8(LIVE_OBJ[ch] + 0x34u)
+#define G6A_NCH     7u          /* ch 0..6: A D B E C WK Sys */
 #define LAW_I(ch)       LRD16(0xFFF94ED4u + 2u * (uint32_t)(ch))   /* 0x94ED4[ch] gated current */
 #define SEQ2_0          LRD8(0xFFF94FD0u)                         /* seq2 state, channel 0 */
 
@@ -59,48 +57,41 @@ void g6a_init(void)
     C.magic = G6A_MAGIC;
 }
 
-/* the wire source this pass: what rq_prod_guarded() (drv_reqlaw.c) returns
- * to the F stage after this 10 ms task, replicated without its counters */
+/* the wire source this pass: what rq_prod_guarded() (drv_reqlaw.c, the r04r
+ * form) returns to the F stage after this 10 ms task, replicated without its
+ * counters: before the candidate's boot pass (the seam empty) the r03f
+ * table; then the seam's value — A..E the monitor's applied value through
+ * the widened guard, WK / Sys the candidate's current (or the P content's
+ * while latched / fenced) through the 500-only guard */
 static uint16_t wire_cur(uint8_t ch, bool applied, const volatile gsb_t *b, bool *guard)
 {
-    static const uint16_t R03F[RQ_PROD_NCH] = DRV_RQ_R03F_TABLE;
-#if GS_G6B
-    static const uint16_t FALLBACK[RQ_PROD_NCH] = DRV_RQ_PCONT_TABLE;   /* G6b: the P content */
-#else
-    static const uint16_t *const FALLBACK = R03F;
-#endif
-    uint16_t v;
-#if !DRV_RQ_USE_PRODUCER
-    /* a host build whose law does not take the producer (tcu_sim): no
+    static const uint16_t R03F[G6A_NCH] = DRV_RQ_R03F_TABLE;
+#if !DRV_RQ_USE_PRODUCER || !GS_G6B
+    /* a host build whose law does not take the engine (tcu_sim): no
      * meaningful wire value — the comparison is the SH configuration's */
     (void)applied;
     (void)b;
     (void)guard;
-    (void)v;
     return R03F[ch];
 #else
-    if (!rq_prod_started()) {
+    static const uint16_t PCONT[G6A_NCH] = DRV_RQ_PCONT_TABLE;
+    uint16_t v;
+    if (!applied) {
         return R03F[ch];
     }
-    if (ch < 5u && applied) {
+    if (ch < 5u) {
         v = b->app[ch];
         if (v >= DRV_RQ_FILL_MIN && v <= DRV_RQ_FILL_MAX) {
             return v;
         }
-#if GS_G6B
-        *guard = true;
-        return FALLBACK[ch];                             /* G6b: the widened guard's fallback */
-#endif
-    }
-    v = rq_prod_ch(ch);
-    if (v == 500u || v == 8500u) {
-        return v;
-    }
-    if (v != RQ_PROD_INVALID && drv_rq_fill_ok(ch, rq_prod_fill_state(ch), v)) {
-        return v;
+    } else {
+        v = (b->src == GSM_S_CAND) ? gs_cand_cur(ch) : PCONT[ch];
+        if (v == PCONT[ch]) {
+            return v;
+        }
     }
     *guard = true;
-    return FALLBACK[ch];
+    return PCONT[ch];
 #endif
 }
 
@@ -143,7 +134,7 @@ static void compare(void)
     const volatile gsb_t *b = gs_bridge_state();
     const bool applied = b->applied != 0u;
     const uint8_t src = b->src;
-    const bool started = rq_prod_started();
+    const bool started = applied;                        /* r04r: the seam's first value = the start */
     uint16_t cand[7], wire[7];
     uint8_t dcur = 0u, filling = 0u;
     uint16_t dms = 0u;
@@ -163,7 +154,7 @@ static void compare(void)
         }
         C.prev_law = ln;
     }
-    for (uint8_t ch = 0u; ch < 7u; ch++) {
+    for (uint8_t ch = 0u; ch < G6A_NCH; ch++) {
         cand[ch] = gs_cand_cur(ch);
         wire[ch] = wire_cur(ch, applied, b, &guard);
         C.prev_app[ch] = wire[ch];
@@ -172,15 +163,14 @@ static void compare(void)
         }
         if (ch < 5u) {
             const uint8_t cm = gs_cand_reqmode(ch), cs = gs_cand_fillst(ch);
-            if (src == GSM_S_LIVE) {
-                if (cm != LIVE_MODE(ch)) {
-                    dms = (uint16_t)(dms | (1u << ch));
-                }
-                if (cs != LIVE_ST(ch)) {
-                    dms = (uint16_t)(dms | (1u << (8u + ch)));
-                }
-            } else if ((src == GSM_S_PCONT || src == GSM_S_FENCE) && cm != 1u) {
-                dms = (uint16_t)(dms | (1u << ch));       /* the P content is mode 1 */
+            if (src != GSM_S_CAND && cm != 1u) {
+                /* the P content (latched / the stall fence) and, before the
+                 * boot pass (src LIVE: the seam empty), the r03f table are
+                 * mode-1 content. r04r: the LIVE case read the retired
+                 * holder's request objects; compare() never runs before the
+                 * boot pass (g6a_boot_compare follows it, the 10 ms compare
+                 * is modes 1..3), so the case is unreachable either way */
+                dms = (uint16_t)(dms | (1u << ch));
             }
             if (cs == 1u || cs == 2u) {
                 filling = 1u;
