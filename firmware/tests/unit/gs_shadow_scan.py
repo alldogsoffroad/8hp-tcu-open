@@ -18,7 +18,9 @@ import sys
 OUT_PATTERNS = [
     r"gs_shadow", r"gs_fill", r"gs_cal", r"\bgsf_", r"\bGS_OBJ_", r"\bGS_REQ_",
     r"\bgs_in_t\b", r"\bgs_rec_t\b", r"\bgs_wit_t\b", r"0[xX][fF]{3}911[aA]0",
-    r"\.gs_(req|obj|rec)\b",
+    r"\.gs_(req|obj|rec|rel)\b",
+    # G4a (2026-11-19): the release object .gs_rel (0xFFF8872C) and its types
+    r"\bgs_rel_t\b", r"\bgs_rrec_t\b", r"\bgs_rslot_t\b", r"0[xX][fF]{3}8872[cC]",
 ]
 SHADOW_PATTERNS = [
     # live headers

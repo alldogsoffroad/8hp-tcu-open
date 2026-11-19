@@ -74,6 +74,7 @@ _Static_assert(GSB_D_MOVE1 < 5u && GSB_SH_MUT_CH < 5u && GSB_R_MOVE1 < 5u && GSB
 _Static_assert(GSB_D_MOVE == 0x14u && GSB_R_MOVE == 0x06u,
                "gs bridge: D moves only B and C, R moves only B and D");
 #define GSB_PIN     8500u           /* every fixed channel, both directions */
+#define GSB_IMIN_P  500u            /* B released in the P content (cal 0x1FEF6C) */
 #if defined(GSB_HOST_MUT_TABLE) && !defined(__sh__)
 #  define GSB_PIN_D_E 500u          /* host negative: E pinned at 500 in D */
 #else
@@ -81,6 +82,10 @@ _Static_assert(GSB_D_MOVE == 0x14u && GSB_R_MOVE == 0x06u,
 #endif
 static const uint16_t GSB_FIX_D[5] = { GSB_PIN, GSB_PIN, 0u, GSB_PIN_D_E, 0u };
 static const uint16_t GSB_FIX_R[5] = { GSB_PIN, 0u, 0u, GSB_PIN, GSB_PIN };
+/* the P content (block 0, gear code 1 or −1: A applied; B released 500,
+ * D / E / C released normally-open 8500) — the live content while the
+ * shadow releases (G4a) */
+static const uint16_t GSB_PCONT[5] = { GSB_PIN, GSB_PIN, GSB_IMIN_P, GSB_PIN, GSB_PIN };
 #define GSB_IMIN    500u            /* 0xB7786 clamp, cal 0x1FEF6C */
 #define GSB_IMAX    8500u           /* cal 0x1FEF6E */
 
@@ -323,6 +328,7 @@ void gs_bridge_tick_10ms(const gsb_in_t *in)
     const uint8_t dirbit = (pf == 1u) ? 1u : ((pf == 2u) ? 2u : 0u);
     const uint16_t *fix = (pf == 2u) ? GSB_FIX_R : GSB_FIX_D;
     const uint8_t move = (pf == 2u) ? GSB_R_MOVE : GSB_D_MOVE;
+    const uint8_t rel = gs_shadow_releasing();
     volatile gsb_slot_t *s = 0;
     uint16_t why = 0u;
     bool commit_now = false, done_now = false, armed, applied, agree = true;
@@ -370,7 +376,15 @@ void gs_bridge_tick_10ms(const gsb_in_t *in)
         s = &B.slot[B.slot_cur];
     }
 
-    /* the shadow's and the live producer's A..E */
+    /* the shadow's and the live producer's A..E. G4a (2026-11-19,
+     * ~/tcu_sweep/g4a_release_port.md): the shadow now runs the stock's
+     * 1.2 s RELEASE (BD16 = 4) after a power-flow-0 commit, which this
+     * stage does NOT bridge — the live content in those passes is the P
+     * content. So while the shadow releases, the agreement compares the
+     * live producer against the P content (what HEAD's instant-release
+     * shadow showed in the same passes), keeping the arm entry, the
+     * back-to-P witness and the live path exactly as before; the release
+     * never arms (RANGE / IDLE: power flow 0). */
     for (uint8_t ch = 0u; ch < 5u; ch++) {
         uint16_t v = gs_shadow_cur(ch);
         const uint16_t lv = LIVE_U16(L_PROD + 2u * ch);
@@ -381,7 +395,7 @@ void gs_bridge_tick_10ms(const gsb_in_t *in)
 #endif
         B.sh[ch] = v;
         B.lv[ch] = (lv == (uint16_t)~LIVE_U16(L_PROD_C + 2u * ch)) ? lv : 0xFFFFu;
-        if (B.sh[ch] != B.lv[ch]) {
+        if (((rel != 0u) ? GSB_PCONT[ch] : B.sh[ch]) != B.lv[ch]) {
             agree = false;
         }
     }
@@ -498,6 +512,13 @@ void gs_bridge_tick_10ms(const gsb_in_t *in)
         B.last_dis = B.passes;
         B.agree_run = 0u;
     }
+#if defined(GSB_HOST_NEG_REL_ARM) && !defined(__sh__)
+    /* host NEGATIVE only (ctest gs_bridge_g2_gold_neg, WILL_FAIL): a bridge
+     * that applies the shadow's release — the live golden must catch it */
+    if (rel != 0u) {
+        applied = true;
+    }
+#endif
     if (applied) {
         B.applied_n++;
     }

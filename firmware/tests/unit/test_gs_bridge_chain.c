@@ -81,6 +81,15 @@ static void g_send(can_bus_t bus, uint16_t id, uint8_t dlc, bool prot, const uin
 #define K_P2    1060u           /* P */
 
 /* lever code (1 P 2 R 4 D) at frame p, mode-1 frame m1 (0 = not yet) */
+/* the R step of the current run (G4a: a short P hold interrupts the
+ * shadow's 1.2 s release; default K_R) */
+static unsigned g_kR = K_R, g_kP1 = K_P1, g_kP2 = K_P2;
+/* the lower bound of the shadow's normal completion (check_slot). G4a: when
+ * the P hold between D and R is shorter than the shadow's release (1.2 s)
+ * plus B's release ramp in its fill FSM (≈ 0.8 s) — the default runs (1 s)
+ * and shortP (0.3 s) — the stock's R engagement starts with B not yet
+ * released and completes earlier (pass 84; HEAD's instant release: 93) */
+static unsigned g_done_lo = 90u;
 static uint8_t lever_at(unsigned p, unsigned m1)
 {
     unsigned k;
@@ -88,8 +97,8 @@ static uint8_t lever_at(unsigned p, unsigned m1)
         return 1u;
     }
     k = p - m1;
-    if (k >= K_D && k < K_P1) { return 4u; }
-    if (k >= K_R && k < K_P2) { return 2u; }
+    if (k >= K_D && k < g_kP1) { return 4u; }
+    if (k >= g_kR && k < g_kP2) { return 2u; }
     return 1u;
 }
 
@@ -100,6 +109,8 @@ typedef struct {
     unsigned sat_ms;
     unsigned sat_from;      /* 0: SAT from power-on; else from frame m1 + sat_from */
     unsigned parity;
+    unsigned kR;            /* 0: K_R; else the R step (frames after the mode-1 switch) */
+    unsigned kP1, kP2;      /* 0: K_P1 / K_P2; else the first / second P step */
     bool info;
     uint8_t fc_mode;        /* DIAG_TEMPS: 0x940FC forced */
     /* results (child → parent) */
@@ -111,6 +122,10 @@ typedef struct {
     unsigned modes_bad;             /* applied: ch 0..6 law mode != 3 after A's fill */
     uint32_t armed_n, applied_n, take_n, guard_n;
     uint64_t h[GFRAMES];
+    unsigned c3_frame;      /* the frame of the shadow's third commit (0 → R): the
+                             * first engagement after the D → P release */
+    bool gold_full;         /* G4a golden: every frame identical to HEAD (else
+                             * every frame BEFORE c3_frame) */
     run_r_t r;
 } gr_t;
 
@@ -211,6 +226,10 @@ static void run_g(gr_t *g)
     run_r_t *r = &g->r;
 
     memset(r, 0, sizeof *r);
+    g_kR = (g->kR != 0u) ? g->kR : K_R;
+    g_kP1 = (g->kP1 != 0u) ? g->kP1 : K_P1;
+    g_kP2 = (g->kP2 != 0u) ? g->kP2 : K_P2;
+    g_done_lo = ((g_kR - g_kP1) < 400u) ? 80u : 90u;
     r->name = g->name;
     r->real = g->real;
     r->sat_ms = (g->sat_from != 0u) ? 0u : g->sat_ms;
@@ -349,6 +368,9 @@ static void run_g(gr_t *g)
         h = fnv64(h, park_slot11_hold());
         g->h[p - 1u] = g_hash_window(h);
         stub_log_n = 0u;
+        if (g->c3_frame == 0u && gs_shadow_wit()->commits >= 3u) {
+            g->c3_frame = p;
+        }
     }
     g->u = r->u_frame;
     g->armed_n = g->bridge ? gs_bridge_state()->armed_n : 0u;
@@ -393,7 +415,7 @@ static void check_slot(uint8_t k, bool applied_build, bool print)
            s->arm_off, why_str(s->off_why), s->done_at, s->done_cause, s->back_at, s->armed_n, s->guard_n);
     GCHECK(s->pf == (uint8_t)(k + 1u) && s->n == GSB_REC_N, "slot %u: pf %u n %u", k, s->pf, s->n);
     GCHECK(s->arm_on == 0u, "slot %u: the would-arm window opens at the commit pass (arm_on %u)", k, s->arm_on);
-    GCHECK(s->done_at >= 90u && s->done_at <= 100u && s->done_cause == 1u,
+    GCHECK(s->done_at >= g_done_lo && s->done_at <= 100u && s->done_cause == 1u,
            "slot %u: the shadow's normal completion at pass 90..100 (%u, cause %u)", k, s->done_at, s->done_cause);
     GCHECK(s->guard_n == 0u, "slot %u: guard trips %u", k, s->guard_n);
     GCHECK(s->arm_off != GSB_NONE && (s->off_why & GSB_R_RANGE) != 0u,
@@ -594,8 +616,96 @@ static void run_fresh_g(gr_t *g, bool verbose)
 
 static gr_t g_a, g_b;
 
-int main(void)
+/* THE LIVE GOLDEN (G4a, 2026-11-19, ~/tcu_sweep/g4a_release_port.md): the
+ * per-frame live identity hash (every bus-A word in wire order, the cell
+ * window without the shadow's own RAM, the park demands) of each run,
+ * against the trace of HEAD bccfb9d (r04j, the instant-release stand-in;
+ * the golden file was written by this binary built at that HEAD). argv[1]
+ * = the golden file; GSB_GOLD_WRITE=1 writes it instead of comparing. */
+static unsigned gold_check(const char *path, const gr_t *g, unsigned k)
 {
+    static FILE *wf;
+    static char *buf;
+    static size_t blen;
+    const bool wr = getenv("GSB_GOLD_WRITE") != NULL;
+    unsigned diff = 0u, first = 0u, post = 0u, pfirst = 0u;
+    if (path == NULL) {
+        return 0u;
+    }
+    if (wr) {
+        if (wf == NULL) {
+            wf = fopen(path, "w");
+            if (wf == NULL) {
+                perror(path);
+                exit(2);
+            }
+        }
+        for (unsigned f = 0u; f < GFRAMES; f++) {
+            fprintf(wf, "%u %u %016llx\n", k, f + 1u, (unsigned long long)g->h[f]);
+        }
+        fflush(wf);
+        return 0u;
+    }
+    if (buf == NULL) {
+        FILE *rf = fopen(path, "r");
+        long n;
+        if (rf == NULL) {
+            perror(path);
+            exit(2);
+        }
+        fseek(rf, 0, SEEK_END);
+        n = ftell(rf);
+        fseek(rf, 0, SEEK_SET);
+        buf = malloc((size_t)n + 1u);
+        blen = fread(buf, 1u, (size_t)n, rf);
+        buf[blen] = 0;
+        fclose(rf);
+    }
+    {
+        unsigned found = 0u;
+        char *p = buf;
+        while (p != NULL && *p != 0) {
+            unsigned kk, ff;
+            unsigned long long h;
+            if (sscanf(p, "%u %u %llx", &kk, &ff, &h) == 3 && kk == k && ff >= 1u && ff <= GFRAMES) {
+                found++;
+                if (g->h[ff - 1u] != (uint64_t)h) {
+                    if (g->gold_full || ff < g->c3_frame) {
+                        if (diff == 0u) {
+                            first = ff;
+                        }
+                        diff++;
+                    } else {
+                        post++;
+                        if (pfirst == 0u) {
+                            pfirst = ff;
+                        }
+                    }
+                }
+            }
+            p = strchr(p, '\n');
+            if (p != NULL) {
+                p++;
+            }
+        }
+        printf("   GOLDEN vs HEAD bccfb9d (r04j): run %u '%s': %u of %u frames compared (%s), %u differ "
+               "(first F%u); the R commit after the release at F%u, %u frames differ from it on (first F%u)\n",
+               k, g->name, found, GFRAMES, g->gold_full ? "every frame" : "the frames before the R commit",
+               diff, first, g->c3_frame, post, pfirst);
+        if (!g->gold_full && (g->c3_frame == 0u || (pfirst != 0u && pfirst < g->c3_frame))) {
+            diff++;
+        }
+        if (found != GFRAMES) {
+            diff += GFRAMES - found;
+        }
+    }
+    return diff;
+}
+
+int main(int argc, char **argv)
+{
+    const char *gold = (argc > 1) ? argv[1] : NULL;
+    (void)gold;
 #if GS_LIVE_DIR == 0
     /* (1) identity, (2) the recorder — real feedback (the bench since r04f) */
     g_a = (gr_t){ .name = "live, no bridge", .bridge = false, .real = true };
@@ -629,6 +739,20 @@ int main(void)
         { .name = "G2 APPLIED real SAT0",         .bridge = true, .real = true, .fc_mode = 8u },
         { .name = "G2 APPLIED real SAT0 par1",    .bridge = true, .real = true, .parity = 1u, .fc_mode = 8u },
         { .name = "G2 APPLIED stand-in SAT0",     .bridge = true, .real = false, .fc_mode = 8u },
+        /* G4a: P held 0.3 s only (lever R 60 frames after lever P): the
+         * shadow's release (120 passes) is interrupted by the R request */
+        { .name = "G2 APPLIED real SAT0 shortP",  .bridge = true, .real = true, .kR = K_P1 + 60u,
+          .fc_mode = 8u },
+        /* G4a: P held 2.3 s (D 1.5 s, R 2 s): the shadow's release (1.2 s)
+         * AND B's release ramp in its fill FSM (0.8 s) end before the R
+         * commit — the bench gs-check's shape (--hold >= 2) */
+        { .name = "G2 APPLIED real SAT0 longP",   .bridge = true, .real = true, .kP1 = 360u,
+          .kR = 820u, .kP2 = 1220u, .fc_mode = 8u, .gold_full = true },
+        { .name = "G2 APPLIED real SAT0 longP par1", .bridge = true, .real = true, .parity = 1u,
+          .kP1 = 360u, .kR = 820u, .kP2 = 1220u, .fc_mode = 8u, .gold_full = true },
+        /* the bench tool's default --hold 2.0: P held exactly 2 s */
+        { .name = "G2 APPLIED real SAT0 P 2.0 s",  .bridge = true, .real = true, .kP1 = 360u,
+          .kR = 760u, .kP2 = 1160u, .fc_mode = 8u, .gold_full = true },
         /* the 10 ms turn-on / step saturation stress (the temperature dry-run's
          * D / C 0x0010 sensitivity): from power-on (A's boot fill sees it) and
          * from the lever D step only (the engagement's own steps) */
@@ -643,6 +767,10 @@ int main(void)
         gr_t *g = &runs[k];
         run_fresh_g(g, k == 0u);
         g_fails += g->info ? 0 : (int)g->fails;
+        if (!g->info) {
+            const unsigned d = gold_check(gold, g, k);
+            GCHECK(d == 0u, "%s: the live path differs from HEAD bccfb9d in %u frames", g->name, d);
+        }
         summary(&g->r);
 #if defined(DIAG_TEMPS)
         printf("    bound bits OR:");

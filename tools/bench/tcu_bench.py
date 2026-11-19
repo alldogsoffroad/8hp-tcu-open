@@ -1489,6 +1489,45 @@ def gs_rec_print(slot, raw, n):
               + f" | {e[24]:4d} {e[25]:2X} {bd76:6d}")
 
 
+GS_REL_SIZE = 0xC04         # gs_rel_t (G4a 2026-11-19, static-asserted in app/gs_shadow.h)
+GS_RREC_N = 125
+GS_REL_PH = ("12", "13", "14", "--")
+
+
+def gs_rel_print(raw):
+    """The release (G4a): BD8E, the witnesses, the two release slots (0 from D, 1 from R)."""
+    u16 = lambda o: int.from_bytes(raw[o:o + 2], "big")
+    u32 = lambda o: int.from_bytes(raw[o:o + 4], "big")
+    s16 = lambda o: int.from_bytes(raw[o:o + 2], "big", signed=True)
+    print(f"release (G4a): BD8E {u16(0)}, recording slot {raw[2]:#04x}, last slot {raw[3]:#04x}; release passes"
+          f" {u32(4)}, starts {u32(8)}, unported {u32(12)}, C case {u32(16)}, 0x10E896/D252 stand-in"
+          f" {u32(20)}, BD16-0 stand-in {u32(24)}")
+    for k in (0, 1):
+        h = 28 + 24 * k
+        n = raw[h + 10]
+        ln = u16(h + 4)
+        print(f"  release slot {k} (from {'D' if k == 0 else 'R'}): start pass {u32(h)}, length "
+              f"{'-' if ln == 0xFFFF else ln} passes, cause {raw[h + 11]} (5 0x106918, 6 BD8E timer, 4 new"
+              f" request), BD8E at the end {u16(h + 6)}, limit D0DC+0x12 {u16(h + 8)}, gear "
+              f"{raw[h + 12] - 256 if raw[h + 12] > 127 else raw[h + 12]}, elements {raw[h + 13]}/{raw[h + 14]}/"
+              f"{raw[h + 15]}, +0x26 {s16(h + 16)}/{s16(h + 18)}/{s16(h + 20)}, {n} entries")
+        if n == 0:
+            continue
+        print("  pass ph D0DC/D148/D1B4  fl |    A    D    B    E    C   (fl b0 releasing b1 completion"
+              " b2 commit b3/b4 vented D0DC/D1B4 b5 speed exit b6/b7 out mode D0DC/D1B4)")
+        prev = None
+        for i in range(min(n, GS_RREC_N)):
+            o = 76 + (k * GS_RREC_N + i) * 12
+            e = raw[o:o + 12]
+            cur = [int.from_bytes(e[2 * c:2 * c + 2], "big") for c in range(5)]
+            ph, fl = e[10], e[11]
+            key = (tuple(cur), ph, fl)
+            if i < 3 or i % 10 == 0 or i >= n - 3 or fl & 0x06 or (prev is not None and prev[1:] != key[1:]):
+                print(f"  {i:4d}    {GS_REL_PH[ph & 3]}/{GS_REL_PH[(ph >> 2) & 3]}/{GS_REL_PH[(ph >> 4) & 3]}"
+                      f"     {fl:02X} | " + " ".join(f"{c:4d}" for c in cur))
+            prev = key
+
+
 def cmd_gs_check(b, args):
     """The READ-ONLY garage-engagement shadow (app/gs_shadow.c; ~/tcu_sweep/garage_shadow_port.md).
     It DRIVES NOTHING: the stock's garage engagement (direction request, power-flow commit, the
@@ -1507,6 +1546,9 @@ def cmd_gs_check(b, args):
 
     w_addr, w_size = elf_sym(args.elf, "_g_w")
     r_slots = [elf_sym(args.elf, "_g_rec0"), elf_sym(args.elf, "_g_rec1")]
+    rel_addr, rel_size = elf_sym(args.elf, "_g_rel")
+    if rel_size != GS_REL_SIZE:
+        sys.exit(f"_g_rel {rel_size:#x}: not the gs_rel_t layout this tool expects (G4a) - rebuild?")
     if w_size != GS_WIT_SIZE or any(sz != GS_REC_N * GS_REC_ENTRY for _, sz in r_slots):
         sys.exit(f"_g_w {w_size:#x} / _g_rec0/1 {[hex(sz) for _, sz in r_slots]}: not the layout this"
                  " tool expects - rebuild?")
@@ -1564,8 +1606,9 @@ def cmd_gs_check(b, args):
     g = gs_wit_parse(read_retry(w_addr, GS_WIT_SIZE))
     print(f"witnesses: passes {g['passes']} commits {g['commits']} (last {g['commit_old']} -> "
           f"{g['commit_new']} at pass {g['commit_pass']}), completion cause {g['done_cause']} "
-          f"(1 normal, 2 timeout, 3 release stand-in, 4 other) at pass {g['done_pass']}")
-    print(f"  stand-ins taken: 0x10E896 term {g['e896']}, 0x1147C8 limit {g['lim']}, release {g['rel']}, "
+          f"(1 normal, 2 timeout, 3 BD16-0 stand-in, 4 other, 5 release 0x106918, 6 release BD8E timer)"
+          f" at pass {g['done_pass']}")
+    print(f"  stand-ins taken: 0x10E896 term {g['e896']}, 0x1147C8 limit {g['lim']}, release passes {g['rel']}, "
           f"0x104A28 {g['seq']}, lockup head {g['lockup']}, unported {g['unp']}, loop cap {g['loop_cap']}")
     for slot in (0, 1):
         n = min(g["rec_n"][slot], GS_REC_N)
@@ -1574,6 +1617,15 @@ def cmd_gs_check(b, args):
             continue
         raw = read_retry(r_slots[slot][0], n * GS_REC_ENTRY)
         gs_rec_print(slot, raw, n)
+    # the release object: the 76-byte head, then only the recorded entries of each slot
+    raw = bytearray(GS_REL_SIZE)
+    raw[0:76] = read_retry(rel_addr, 76)
+    for k in (0, 1):
+        n = min(raw[28 + 24 * k + 10], GS_RREC_N)
+        o = 76 + k * GS_RREC_N * 12
+        if n:
+            raw[o:o + 12 * n] = read_retry(rel_addr + o, 12 * n)
+    gs_rel_print(bytes(raw))
     return 0
 
 

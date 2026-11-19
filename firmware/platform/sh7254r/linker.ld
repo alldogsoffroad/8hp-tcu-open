@@ -397,6 +397,19 @@ SECTIONS
     } > RAM
     ASSERT(__gs_rec_start >= ADDR(.tmp_edd8) + SIZEOF(.tmp_edd8), ".gs_rec overlaps .tmp_edd8")
     ASSERT(__gs_rec_end <= ADDR(.adc_cells), ".gs_rec runs into .adc_cells")
+    /* THE GARAGE RELEASE (G4a, 2026-11-19, ~/tcu_sweep/g4a_release_port.md;
+     * ours — not stock cells): gs_rel_t (the release's BD8E, witnesses and
+     * two 125-pass recorder slots, 0xC04 B) in 0xFFF8872C..0xFFF893C8 —
+     * stock RAM the driving dump holds all zero (0xFFF8872A..0xFFF893C8)
+     * and no code of ours names (literal scan at the port), after
+     * .adc_ring's guard and below .rng_893e0. Cleared by gs_shadow_init. */
+    .gs_rel 0xFFF8872C (NOLOAD) : {
+        __gs_rel_start = .; KEEP(*(.gs_rel)) . = ALIGN(4); __gs_rel_end = .;
+    } > RAM
+    ASSERT(__gs_rel_start >= ADDR(.adc_ring) + SIZEOF(.adc_ring) && __gs_rel_end <= 0xFFF893C8,
+           ".gs_rel overlaps .adc_ring or leaves the dump's zero run")
+    ASSERT(__gs_rel_end <= ADDR(.rng_893e0), ".gs_rel runs into .rng_893e0")
+    ASSERT(SIZEOF(.gs_rel) == 0xC04, ".gs_rel: gs_rel_t is off (tcu_bench.py gs-check)")
 
     /* THE GARAGE BRIDGE, STAGE G1 (app/gs_bridge.c; ours — not stock cells;
      * 2026-11-18, ~/tcu_sweep/garage_g1_port.md). Four NOLOAD objects:

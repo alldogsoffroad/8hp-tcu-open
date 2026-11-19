@@ -107,14 +107,16 @@ typedef struct {
     uint32_t commit_pass;   /* pass of the last commit */
     uint8_t  commit_old, commit_new;
     uint8_t  done_cause;    /* last completion: 1 normal (B +0x54), 2 timeout,
-                             * 3 release stand-in, 4 another 0x103DE2 term */
+                             * 3 BD16 == 0 stand-in, 4 another 0x103DE2 term,
+                             * 5 release 0x106918, 6 release BD8E timer (G4a) */
     uint8_t  rec_slot;      /* next recorder slot */
     uint32_t done_pass;     /* pass of the last completion */
     uint32_t loop_cap_n;    /* 0x10D070 iteration cap (ours) reached */
     uint32_t e896_n;        /* 0x10E896 term stand-in (0) taken */
     uint32_t lim_n;         /* 0x1147C8 limit applied */
     uint32_t unp_n;         /* unported branches reached (this TU) */
-    uint32_t rel_n;         /* release (types 3/4) stand-in taken */
+    uint32_t rel_n;         /* release passes (BD16 == 4; G4a — was: the
+                             * one-pass release stand-in taken) */
     uint32_t seq_n;         /* 0x104A28 sequencing stand-in taken */
     uint32_t lockup_n;      /* 0xDCD38.. WK lock-up branch head true (not ported) */
     uint8_t  rec_n[GS_REC_SLOTS];
@@ -131,8 +133,63 @@ typedef struct {
 } gs_wit_t;
 _Static_assert(sizeof(gs_wit_t) == 76u, "gs_wit_t is 76 bytes (tools/bench/tcu_bench.py gs-check)");
 
+/* ── THE RELEASE (G4a, 2026-11-19, ~/tcu_sweep/g4a_release_port.md) ──────
+ * the stock's garage RELEASE (D/R → P/N: phases 0x12 → 0x13 → 0x14 of the
+ * three releasing sub-objects, completion by 0x106918 or by the pass timer
+ * BD8E ≥ sub0 +0x12) replaces the one-pass stand-in. Its witnesses and two
+ * recorder slots live in OUR object .gs_rel (0xFFF8872C, stock RAM the
+ * driving dump holds zero and no code of ours names), so that no earlier
+ * shadow symbol moves. Slot 0 = the last release from D (old power flow 1),
+ * slot 1 = the last release from R (old power flow 2). */
+typedef struct {
+    uint16_t cur[5];        /* shadow currents 0.1 mA, ch 0..4 = A D B E C */
+    uint8_t  ph;            /* 2 bits per sub-object (bits 0-1 D0DC, 2-3 D148, 4-5
+                             * D1B4): phase − 0x12 (0..2 = 0x12 / 0x13 / 0x14), 3 = other */
+    uint8_t  fl;            /* bit0 BD16 == 4 (releasing), 1 completion this pass,
+                             * 2 commit this pass, 3 D0DC +0x1F (vented), 4 D1B4
+                             * +0x1F, 5 |BD7C| >= 0x10F26C (the speed exit), 6 D0DC
+                             * output mode +0x10, 7 D1B4 output mode +0x10 */
+} gs_rrec_t;
+_Static_assert(sizeof(gs_rrec_t) == 12u, "gs_rrec_t is 12 bytes (tools/bench/tcu_bench.py gs-check)");
+
+typedef struct {
+    uint32_t start_pass;    /* shadow pass of the release commit */
+    uint16_t len;           /* passes commit → completion (0xFFFF: not yet) */
+    uint16_t bd8e_end;      /* BD8E at the completion */
+    uint16_t lim12;         /* D0DC +0x12 (the timer limit 0x10F06A) at the commit */
+    uint8_t  n;             /* entries recorded */
+    uint8_t  cause;         /* 5 0x106918, 6 the BD8E timer, 4 a new request / E28E */
+    int8_t   gear;          /* the gear code (0x89C2B) at the commit */
+    uint8_t  el[3];         /* the released elements (D0DC, D148, D1B4; 1 A .. 5 E) */
+    int16_t  p26[3];        /* +0x26 of each sub-object after the commit pass (mbar) */
+    uint16_t pad;
+} gs_rslot_t;
+_Static_assert(sizeof(gs_rslot_t) == 24u, "gs_rslot_t is 24 bytes (tools/bench/tcu_bench.py gs-check)");
+
+#define GS_RREC_N       125u    /* per slot: the 120-pass timer + 5 */
+
+typedef struct {
+    uint16_t bd8e;          /* 0xFFF8BD8E (block A +0x22): passes since the start */
+    uint8_t  on;            /* the slot being recorded, 0xFF idle */
+    uint8_t  last;          /* the slot of the last release */
+    uint32_t rel_passes;    /* passes with BD16 == 4 */
+    uint32_t starts;        /* releases started (BD16 = 4) */
+    uint32_t unp_n;         /* release branches not ported reached (kind 2 / 7) */
+    uint32_t c3_n;          /* the class-3 / element-C 0x12 special case taken */
+    uint32_t e896_n;        /* release passes through 0x10E896 (D252 stand-in 0) */
+    uint32_t idle_n;        /* completion with BD16 == 0 (the cause-3 stand-in, kept) */
+    gs_rslot_t slot[2];
+    gs_rrec_t rec[2][GS_RREC_N];
+} gs_rel_t;
+_Static_assert(sizeof(gs_rel_t) == 28u + 48u + 2u * 125u * 12u, "gs_rel_t layout (tools/bench/tcu_bench.py gs-check)");
+
 void gs_shadow_init(void);
 void gs_shadow_tick_10ms(const gs_in_t *in);
+const volatile gs_rel_t *gs_shadow_rel(void);
+/* the shadow is releasing (BD16 == 4): G4a does NOT bridge the release —
+ * app/gs_bridge.c compares the live producer against the P content in
+ * these passes, as it did against HEAD's instant-release shadow */
+uint8_t  gs_shadow_releasing(void);
 
 const volatile gs_wit_t *gs_shadow_wit(void);
 const volatile gs_rec_t *gs_shadow_rec(uint8_t slot, uint8_t i);
@@ -172,6 +229,18 @@ int16_t  gs_shadow_slip(void);              /* 0xFFF8BD7C */
 #define GS_HOST_OLD_E469C      0x02u
 #define GS_HOST_FORCE_PROGRESS 0x04u
 #define GS_HOST_R37            0x08u
+/* G4a negatives: bit 4 the OLD one-pass release stand-in (completed in the
+ * commit pass, cause 3); bit 5 the release timer limit D0DC +0x12 forced 0 */
+#define GS_HOST_OLD_RELEASE    0x10u
+#define GS_HOST_LIM12_0        0x20u
+#define GS_HOST_CECA_CLASS     0x40u    /* 0x10CECA's release test on the class (old) */
+/* G4a: the output 0x10CECA on a synthetic sub-object (cls +0x1C, eng +0x20,
+ * rel +0x21, f7 +7, calc_p +0xC) → its output mode +0x10; ceca_cls = 1
+ * evaluates the OLD class-based release test (the negative) */
+uint8_t gs_shadow_host_ceca(uint8_t cls, uint8_t eng, uint8_t rel, uint8_t f7, int16_t calc_p,
+                            uint8_t ceca_cls);
+/* G4a: sub-object k's release fields: +0x26, +0xA, +0x1F, +0x12 */
+void gs_shadow_host_rel(uint8_t k, int16_t v[4]);
 void gs_shadow_host_standins(uint8_t mask, int16_t bd76, uint8_t bd30);
 /* host only: sub-object k's +0xC, +0x24, +0x54, +0x30, +0x32 and its
  * element's request result +2 */

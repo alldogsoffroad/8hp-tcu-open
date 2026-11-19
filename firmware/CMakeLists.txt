@@ -1148,16 +1148,31 @@ else()
     add_test(NAME gs_bridge_chain COMMAND test_gs_bridge_chain)
     add_executable(test_gs_bridge_g2 ${GSB_CHAIN_SOURCES})
     target_compile_definitions(test_gs_bridge_g2 PRIVATE ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3)
-    add_test(NAME gs_bridge_g2_gate COMMAND test_gs_bridge_g2)
+    # G4a (2026-11-19, ~/tcu_sweep/g4a_release_port.md): the live path with
+    # the bridge LIVE (the SH configuration) against the per-frame trace of
+    # HEAD bccfb9d (r04j, the instant-release stand-in): every frame of the
+    # long-P runs (P >= release + B's ramp), every frame before the first
+    # post-release commit of the 1 s / 0.3 s-P runs. The negative applies the
+    # shadow's release through the seam and must FAIL.
+    add_test(NAME gs_bridge_g2_gate COMMAND test_gs_bridge_g2
+        ${CMAKE_SOURCE_DIR}/tests/unit/golden/gsb_live_g2_head_bccfb9d.txt)
+    add_executable(test_gs_bridge_g2_gold_neg ${GSB_CHAIN_SOURCES})
+    target_compile_definitions(test_gs_bridge_g2_gold_neg PRIVATE ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3
+        GSB_HOST_NEG_REL_ARM=1)
+    add_test(NAME gs_bridge_g2_gold_neg COMMAND test_gs_bridge_g2_gold_neg
+        ${CMAKE_SOURCE_DIR}/tests/unit/golden/gsb_live_g2_head_bccfb9d.txt)
+    set_tests_properties(gs_bridge_g2_gold_neg PROPERTIES WILL_FAIL TRUE)
     add_executable(test_gs_bridge_g2_temps ${GSB_CHAIN_SOURCES} app/tsel_shadow.c)
     target_compile_definitions(test_gs_bridge_g2_temps PRIVATE ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3
         DIAG_TEMPS=1 FBS_9393A_HOST_SRC=g_fbs_9393a_host)
-    add_test(NAME gs_bridge_g2_gate_bounds COMMAND test_gs_bridge_g2_temps)
+    add_test(NAME gs_bridge_g2_gate_bounds COMMAND test_gs_bridge_g2_temps
+        ${CMAKE_SOURCE_DIR}/tests/unit/golden/gsb_live_g2_temps_head_bccfb9d.txt)
     add_executable(test_gs_bridge_g2_temps_live ${GSB_CHAIN_SOURCES} app/tsel_shadow.c
         app/tsel_live.c bsw/drv/drv_tsel.c)
     target_compile_definitions(test_gs_bridge_g2_temps_live PRIVATE ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3
         DIAG_TEMPS=1 TSEL_LIVE=1 FBS_T_ECU_LIVE=1)
-    add_test(NAME gs_bridge_g2_gate_bounds_live COMMAND test_gs_bridge_g2_temps_live)
+    add_test(NAME gs_bridge_g2_gate_bounds_live COMMAND test_gs_bridge_g2_temps_live
+        ${CMAKE_SOURCE_DIR}/tests/unit/golden/gsb_live_g2_temps_live_head_bccfb9d.txt)
     # the bridge's logic on test_gs_shadow's light harness: the OS-mode-2
     # witness, the .noinit windows, the guard negatives (G1: recorded, the
     # wire never moves), and — GS_LIVE_DIR 3, host only — every abort of the

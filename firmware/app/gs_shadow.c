@@ -40,9 +40,9 @@
  *       0xB7888 0xB785C 0xB78AC 0xB77BC
  *
  * NOT PORTED / STAND-INS (each counted where reachable; report §3):
- *   the release phases 0x12..0x17 (types 3/4; D→N, R→N): the release is
- *   completed on its first pass (wit rel_n); 0x10E896's 0xE9464/0xE945E
- *   term (0); 0xBA178 / 0xEAD94 / 0xE9446 notifications; BC74 (ids
+ *   [G4a 2026-11-19: the release phases 0x12/0x13/0x14 ARE ported — see
+ *   below; only kind 2's 0x15..0x17 remain counted] 0x10E896's 0xE9464/
+ *   0xE945E term (0); 0xBA178 / 0xEAD94 / 0xE9446 notifications; BC74 (ids
  *   0x10/0x11: not started, E6C1/E6C2 dump 0/3); the kinds 1/2/5/6/7 (the
  *   flags B0FE/B10D/B10E/E60F dump 0 → kind 0); 0xD1B10/0xD1990 (E6A1 =
  *   the gear target); 0x104A28's undecoded branch (wit seq_n); 0x103CEC's
@@ -67,6 +67,25 @@
  * never touches the counters, never read by the engine). STILL a stand-in:
  * the 0x10E896 term (the E4BC turbine-gradient PI output; its target D238
  * is undecoded) = 0.
+ *
+ * 2026-11-19 (~/tcu_sweep/g4a_release_port.md, decode garage_release_
+ * decode.md, re-derived from the bytes) — G4a, THE RELEASE, replacing the
+ * one-pass stand-in: a power-flow-0 commit (lever P/N, D↔R through N)
+ * starts BD16 = 4 through the same 0xDDCA2 → 0xEB900 → 0x1066D6 path,
+ * the three sub-objects type 3 (0x106866) → phases 0x12 (entry 0x10D824:
+ * +0x26 = 0xB82E2 = elem +2 − +0x42, the class-3 / element-C case
+ * 0x10D836; done 0x10DC4A: classes 2/4 at once, class 3 on 0x10E850),
+ * 0x13 (pressure 0x10E25A: class 2 min(+0x26, map_u8(blk5C+0x28)·0x10F00C
+ * /100 + 0x10F030 + map(blk5C+0x30)), class 4 kind 0 min(+0x26,
+ * map2(blk5C+8) + map2(blk5C+0)), class 3 0; done 0x10DCE8: the vent
+ * flags +0x1F with the partner, the speed exit |BD7C| >= 0x10F26C), 0x14;
+ * the output 0x10CECA's release mode on the ELEMENT (+0x21 == 2), not the
+ * class; the pass counter BD8E (block A +0x22: 0 at every start by
+ * 0x117970, +1 in slot 28 by 0x117538); completion 0xEDA48 (+2 == 4) →
+ * 0x106918 (cause 5) or BD8E >= D0DC +0x12 (0x10F06A, cause 6). Stand-in:
+ * the release's 0x10E896 term D252 (zeroed at the start, no writer found)
+ * = 0 (counted, gs_rel_t.e896_n). Kind 2 (0x15..0x17, the class-4 kind
+ * 2/7 maps, lim12 kind 2) is unreachable here (kind 0): counted unp_n.
  */
 #define TCU_GS_SHADOW_TU 1
 #include "app/gs_shadow.h"
@@ -136,11 +155,13 @@ _Static_assert(GS_C06 == 0u && GS_C08 == 0u && GS_C10 == 0u && GS_C1A == 0 &&
 #  define GS_REC __attribute__((section(".gs_rec")))
 #  define GS_PRG __attribute__((section(".gs_prog")))   /* the tail of .gs_obj */
 #  define GS_RC1 __attribute__((section(".gs_rec1")))   /* the tail of .gs_obj */
+#  define GS_REL __attribute__((section(".gs_rel")))    /* G4a: the release (0xFFF8872C) */
 #else
 #  define GS_OBJ
 #  define GS_REC
 #  define GS_PRG
 #  define GS_RC1
+#  define GS_REL
 #endif
 
 typedef struct {        /* the ramp object at sub +0x40 (vtable 0x49FC0) */
@@ -263,7 +284,12 @@ static volatile gs_prog_t g_p GS_PRG;
  * region alone is too small for 2 × 112 × 28 bytes) */
 static volatile gs_rec_t g_rec0[GS_REC_N] GS_REC;
 static volatile gs_rec_t g_rec1[GS_REC_N] GS_RC1;
+/* G4a: the release's state, witnesses and recorder — its own object (no
+ * zero-initialised static may be added to this TU: its .bss lies in
+ * .gs_obj BEFORE .gs_prog / .gs_rec1, which must not move) */
+static volatile gs_rel_t g_rel GS_REL;
 #define G   (*(gs_t *)&g_s)
+#define R   (*(gs_rel_t *)&g_rel)
 #define W   (*(gs_wit_t *)&g_w)
 #define P   (*(gs_prog_t *)&g_p)
 static volatile gs_rec_t *rec_at(uint8_t slot, uint8_t i)
@@ -273,6 +299,7 @@ static volatile gs_rec_t *rec_at(uint8_t slot, uint8_t i)
 
 #if !defined(__sh__)
 static uint8_t s_host_mask;         /* gs_shadow_host_standins */
+static uint8_t s_host_ceca_cls;     /* gs_shadow_host_ceca: the old class test */
 static int16_t s_host_bd76;
 static uint8_t s_host_bd30;
 #else
@@ -436,6 +463,46 @@ static uint8_t b827a(uint8_t e)
 /* ── the per-sub-object helpers (cal: blk58 / blk60 by stock address) ─── */
 static uint32_t b58(const gs_sub_t *s, uint32_t off) { return gsf_fl32(s->blk58 + off); }
 static uint32_t b60(const gs_sub_t *s, uint32_t off) { return gsf_fl32(s->blk60 + off); }
+static uint32_t b5c(const gs_sub_t *s, uint32_t off) { return gsf_fl32(s->blk5c + off); }
+
+/* ── THE RELEASE helpers (G4a, 2026-11-19; ~/tcu_sweep/g4a_release_port.md,
+ * from the bytes) ──────────────────────────────────────────────────────── */
+/* 0xB82E2(E5C4, e) = 0xE513C(e) → 0xE4C00: b7888((u16)+2 − (u16)+0x42) —
+ * the element's result minus its kiss pressure [O 0xE4C00..0xE4C16] */
+static int16_t b82e2(uint8_t e)
+{
+    const uint32_t o = req_obj(e);
+    return b7888((int32_t)(uint32_t)RU16(o, RO_RES) - (int32_t)(uint32_t)RU16(o, 0x42u));
+}
+/* 0xB82F6(E5C4, e): the element's +0x42 (kiss) */
+static uint16_t b82f6(uint8_t e) { return RU16(req_obj(e), 0x42u); }
+/* 0x10F00C: map2(blk5C+0x14; x = +0x38 (s16), y = b7768(+0x32)) */
+static int16_t f00c(const gs_sub_t *s)
+{
+    return (int16_t)gsf_b7164(b5c(s, 0x14u), (int16_t)s->f38, b7768(s->t32));
+}
+/* 0x10F030: map2(blk5C+0x1C+4·0x89C06; x = BD22 (u8), y = b7768(+0x32)) */
+static int16_t f030(const gs_sub_t *s)
+{
+    return (int16_t)gsf_b7164(b5c(s, 0x1Cu + 4u * GS_C06), (int16_t)G.bd22, b7768(s->t32));
+}
+/* 0x10F26C(*0xFFF84D44, 0x89C2F): the release speed exit, a word through
+ * *(set + (0x89C2F == 1 ? 0x3C : 0x44) + 4·0x89C06) (cal 0x1FF1D2 / 0x1FF1D6
+ * = 2000 rpm) */
+static int16_t f26c(void)
+{
+    return (int16_t)gsf_fl16(gsf_fl32(GS_P84D44 + (G.c2f == 1u ? 0x3Cu : 0x44u) + 4u * GS_C06));
+}
+/* 0x10E850: (+0x21 == 2) ? b7768(element +0x42) : 0 [O 0x10E850..0x10E870] */
+static int16_t e850(const gs_sub_t *s)
+{
+    return (s->rel == 2u) ? b7768(b82f6(s->rel)) : (int16_t)0;
+}
+/* 0xB77A0: |v| saturated (−32768 → 32767) */
+static int16_t b77a0(int16_t v)
+{
+    return (v == (int16_t)-0x8000) ? (int16_t)0x7FFF : (int16_t)(v < 0 ? -v : v);
+}
 
 /* every helper below is the kind-0 path (E4AC+8 = 0); the other kinds are
  * not ported (unreachable with the stand-in flags, counted if reached) */
@@ -581,11 +648,18 @@ static void e780(gs_sub_t *s)
 {
     if (G.bd16 == 4u) {
         if (G.kind == 2u) {
+            /* 0x10E794: map(blk60 +0x0C, 0x89C13) — kind 2, unreachable */
+            R.unp_n++;
             W.unp_n++;
-            s->lim12 = 0u;
+            s->lim12 = gsf_b6eae(b60(s, 0x0Cu), G.c13);
         } else {
             s->lim12 = gsf_b6eae(b60(s, 0x08u), G.bd22);     /* 0x10F06A */
         }
+#if !defined(__sh__)
+        if ((s_host_mask & GS_HOST_LIM12_0) != 0u) {
+            s->lim12 = 0u;                               /* host negative */
+        }
+#endif
     } else {
         const uint16_t u = gsf_b6eae(b60(s, 0x00u), G.bd22);
         s->to1a = u;
@@ -685,7 +759,27 @@ static void d5e4(gs_sub_t *s)
     case 0x14:
         s->f7 = 1u;
         break;
-    default:                                /* release 0x12/0x15..0x17: not ported */
+    case 0x12:                              /* 0x10D824 (G4a) */
+        if (!b822c(s->rel)) {
+            s->p26 = 0;                     /* 0x10D8A8: the element is not applied */
+        } else if (s->cls == 3u && s->rel == 3u) {
+            /* the class-3 / element-C case: +0x26 = *(*(*0xFFF84D44 + (E4B4
+             * == 2 ? 0x38 : 0x34))) − b7768(element +0x42) [O 0x10D836..
+             * 0x10D876]: C as the second element (a 6th-gear release, not a
+             * garage) */
+            const int16_t w = (int16_t)gsf_fl16(gsf_fl32(GS_P84D44 + (G.kind == 2u ? 0x38u : 0x34u)));
+            R.c3_n++;
+            s->p26 = (int16_t)(w - b7768(b82f6(s->rel)));
+        } else {
+            s->p26 = b82e2(s->rel);         /* 0x10D896 */
+        }
+        break;
+    case 0x15:                              /* 0x10D884: as 0x12 without the C case (kind 2) */
+        R.unp_n++;
+        s->p26 = b822c(s->rel) ? b82e2(s->rel) : (int16_t)0;
+        break;
+    default:                                /* 0x16 / 0x17 (kind 2 only): not ported */
+        R.unp_n++;
         W.unp_n++;
         break;
     }
@@ -761,8 +855,43 @@ static bool d9b6(gs_sub_t *s)
     case 0x11:
         /* BD1C / BD1D == 0 (dump): the second sub-object's fill condition */
         return cf80(&G.sub[1], s->dur30);
+    case 0x12:                              /* 0x10DC4A (G4a) */
+        if (G.bd16 != 4u) {
+            break;                          /* 0x10DE34: the timer */
+        }
+        if (s->cls == 2u || s->cls == 4u) {
+            return true;
+        }
+        /* class 3 (GBR 0xFFF8D0E6): D0E3 (D0DC +7), D0E6 (+0xA) == 0x10E850,
+         * D1BB (D1B4 +7), D1BE (+0xA) == 0x10E850 — 0x10E850 of THIS sub */
+        if (G.sub[0].f7 == 0u || G.sub[0].out_p != e850(s)) {
+            return false;
+        }
+        return G.sub[2].f7 != 0u && G.sub[2].out_p == e850(s);
+    case 0x13: {                            /* 0x10DCE8 (G4a) */
+        uint8_t part;
+        if (s->cls == 3u && GS_C25 == 6) {
+            return true;
+        }
+        if (b822c(s->rel)) {
+            s->f1f = (uint8_t)((b82e2(s->rel) > 0) ? 0u : 1u);   /* cmp/pl; movrt */
+        }
+        if (s->cls == 4u) {
+            part = (s->f1f != 0u && G.sub[0].f1f != 0u) ? 1u : 0u;   /* D0FB */
+        } else {
+            part = (s->f1f != 0u && G.sub[2].f1f != 0u) ? 1u : 0u;   /* D1D3 */
+        }
+        if ((int32_t)b77a0(P.slip) >= (int32_t)(uint16_t)f26c()) {  /* BD7C */
+            return true;
+        }
+        return part != 0u;
+    }
+    case 0x15: case 0x16: case 0x17:
+        R.unp_n++;                          /* release kind 2: not ported */
+        W.unp_n++;
+        break;
     default:
-        W.unp_n++;                          /* release phases */
+        W.unp_n++;
         break;
     }
     return (int32_t)s->dur30 <= (int32_t)s->t32;
@@ -862,8 +991,38 @@ static int16_t de46(gs_sub_t *s)
     case 0x14:
         p = (s->cls == 3u && GS_C25 != 6) ? 20000 : 0;      /* *0x89C25 */
         break;
+    case 0x12:                               /* 0x10E3E0 (G4a) */
+        p = s->p26;
+        break;
+    case 0x13:                               /* 0x10E25A (G4a) */
+        if (s->cls == 4u) {
+            if (G.kind == 2u || G.kind == 7u) {
+                R.unp_n++;                   /* 0x10E27E / 0x10E2BE: not ported */
+                W.unp_n++;
+                p = 0;
+            } else {
+                p = (int32_t)(int16_t)gsf_b7164(b5c(s, 0x08u + 4u * GS_C06), (int16_t)G.bd22, b7768(s->t32))
+                  + (int32_t)(int16_t)gsf_b7164(b5c(s, 0x00u), (int16_t)s->f38, b7768(s->t32));
+            }
+        } else if (s->cls == 2u) {
+            const uint8_t fac = gsf_b6d6c(b5c(s, 0x28u), G.c13);       /* 0x89C13 */
+            p = ((int32_t)fac * (int32_t)f00c(s)) / 100 + (int32_t)f030(s)
+              + (int32_t)(int16_t)gsf_b6e10(b5c(s, 0x30u), (int16_t)GS_C10);
+        } else {
+            p = 0;                           /* class 3: 0x10E46C */
+            break;
+        }
+        if ((int32_t)s->p26 < p) {           /* never above +0x26 */
+            p = s->p26;
+        }
+        break;
+    case 0x15: case 0x16: case 0x17:
+        R.unp_n++;                           /* release kind 2: not ported */
+        W.unp_n++;
+        p = 0;
+        break;
     default:
-        W.unp_n++;                           /* release phases 0x12/0x13/0x15..0x17 */
+        W.unp_n++;
         p = 0;
         break;
     }
@@ -928,10 +1087,15 @@ static void ceca(gs_sub_t *s)
     }
     {
         int16_t v = s->calc_p;
-        if (s->cls == 2u) {
+        if (s->cls == 2u) {                 /* +0x1C == 2 [O 0x10CEEE] */
             /* 0x10E896: + the 0xFFF8E6CC term (0xE9464 / 0xE945E) — NOT
-             * DECODED, stand-in 0 → 0xB7888(p) */
+             * DECODED, stand-in 0 → 0xB7888(p); in a release (BD16 = 4)
+             * the term is D252 (0xE945E), zeroed at the start, no writer
+             * found: stand-in 0, counted apart */
             W.e896_n++;
+            if (G.bd16 == 4u) {
+                R.e896_n++;
+            }
             v = b7888(v);
         }
         s->out_p = v;
@@ -941,7 +1105,14 @@ static void ceca(gs_sub_t *s)
         s->out_mode = (ph == 0x01u || ph == 0x0Fu || ph == 0x11u) ? 1u : 0u;
     }
     if (s->rel != 0u) {
-        if (s->cls == 2u) {
+        /* the ELEMENT +0x21 == 2 (B) selects mode 0, not the class [O
+         * 0x10CF20..0x10CF2E: movu.b @(33,r14) cmp/eq #2] (G4a) */
+#if !defined(__sh__)
+        if ((s_host_ceca_cls != 0u || (s_host_mask & GS_HOST_CECA_CLASS) != 0u)
+                ? (s->cls == 2u) : (s->rel == 2u)) {     /* host negative: the old test */
+#else
+        if (s->rel == 2u) {
+#endif
             s->out_mode = 0u;
         } else {
             s->out_mode = (s->f7 != 0u && s->out_p == 0) ? 1u : 0u;
@@ -1326,6 +1497,7 @@ static void eb900(uint8_t pf, uint8_t e1, uint8_t e2, uint8_t e3, int8_t gear)
         e6866(G.bd17, G.bd16);
     }
     if (G.bd16 != 0u) {
+        R.bd8e = 0u;                                     /* 0xEDC5A → 0xED9B2 → 0x117970: +0x22 */
         prog_start(gear);                                /* 0xEDC5A → 0x11793E */
     }
 }
@@ -1387,8 +1559,37 @@ static bool bab6c(uint8_t *cause)
         }
         return d;
     }
-    /* BD16 == 4 (release, phases 0x12..0x17 not ported) or idle */
-    W.rel_n++;
+#if !defined(__sh__)
+    if (G.bd16 == 4u && (s_host_mask & GS_HOST_OLD_RELEASE) != 0u) {
+        W.unp_n++;                                       /* host negative: the old stand-in */
+        *cause = 3u;
+        return true;
+    }
+#endif
+    if (G.bd16 == 4u) {
+        /* 0xEDA48 (+2 == 4): +0x2D = 0x106918 (BD16 == 4 branch, 0x10691A..
+         * 0x10694C): done unless (D0E3 == 0 or the role-4 pressure 0x1069DA
+         * = D0DC +0xA != 0) and 0xB822C(0x10CDDC(D0DC)); else done iff
+         * (u16) BD8E >= (u16) D0EE (D0DC +0x12) [O 0xEDA64..0xEDA96] (G4a) */
+        bool d = true;
+        if (G.sub[0].f7 == 0u || G.sub[0].out_p != 0) {
+            const uint8_t e = (G.sub[0].eng != 0u) ? G.sub[0].eng : G.sub[0].rel;   /* 0x10CDDC */
+            if (b822c(e)) {
+                d = false;
+            }
+        }
+        if (d) {
+            *cause = 5u;
+            return true;
+        }
+        if (R.bd8e >= G.sub[0].lim12) {
+            *cause = 6u;
+            return true;
+        }
+        return false;
+    }
+    /* BD16 == 0 (a change without elements): the stand-in, kept */
+    R.idle_n++;
     *cause = 3u;
     return true;
 }
@@ -1596,6 +1797,26 @@ static void cfd1a(void)
             G.rec_t0 = W.passes;
         }
         ddca2(old, G.e69b, G.e69f);                      /* 0xBAABC */
+        if (G.bd16 == 4u) {                              /* G4a: a release started */
+            const uint8_t k = (old == 2u) ? 1u : 0u;     /* slot 0 from D, 1 from R */
+            volatile gs_rslot_t *h = &g_rel.slot[k];
+            R.starts++;
+            R.on = k;
+            R.last = k;
+            h->start_pass = W.passes;
+            h->len = 0xFFFFu;
+            h->bd8e_end = 0u;
+            h->lim12 = G.sub[0].lim12;
+            h->n = 0u;
+            h->cause = 0u;
+            h->gear = G.e69f;
+            for (unsigned j = 0u; j < 3u; j++) {
+                h->el[j] = G.sub[j].rel;
+                h->p26[j] = 0;
+            }
+        } else if (G.e69b != 0u) {
+            R.on = 0xFFu;                                /* a nonzero commit ends the release slot */
+        }
     }
 }
 
@@ -1608,6 +1829,13 @@ static void r3de2(void)
         if (done || G.e6ef != G.e69b || d0d52()) {
             if (!done) {
                 cause = 4u;
+            }
+            if (G.bd16 == 4u && R.last < 2u) {           /* G4a: the release completes */
+                volatile gs_rslot_t *h = &g_rel.slot[R.last];
+                const uint32_t d = W.passes - h->start_pass;
+                h->len = (uint16_t)(d > 0xFFFEu ? 0xFFFEu : d);
+                h->bd8e_end = R.bd8e;
+                h->cause = cause;
             }
             G.e6ee = G.e69b;
             G.c2f = G.e69b;                              /* 0x89C2F */
@@ -1849,6 +2077,52 @@ static void rec_pass(void)
     W.rec_n[slot] = (uint8_t)(n + 1u);
 }
 
+/* ── the release recorder (G4a, ours) ──────────────────────────────────── */
+static uint8_t ph2(uint8_t ph)
+{
+    return (ph >= 0x12u && ph <= 0x14u) ? (uint8_t)(ph - 0x12u) : 3u;
+}
+
+static void rel_pass(void)
+{
+    static const uint8_t SH[5] = { 0u, 1u, 2u, 3u, 4u };    /* A D B E C */
+    const uint8_t k = R.on;
+    volatile gs_rslot_t *h;
+    volatile gs_rrec_t *r;
+    uint8_t n;
+
+    if (G.bd16 == 4u) {
+        R.rel_passes++;
+        W.rel_n++;
+    }
+    if (k >= 2u) {
+        return;
+    }
+    h = &g_rel.slot[k];
+    n = h->n;
+    if (n >= GS_RREC_N) {
+        R.on = 0xFFu;
+        return;
+    }
+    if (n == 0u) {
+        for (unsigned j = 0u; j < 3u; j++) {
+            h->p26[j] = G.sub[j].p26;
+        }
+    }
+    r = &g_rel.rec[k][n];
+    for (unsigned c = 0u; c < 5u; c++) {
+        r->cur[c] = G.cur[SH[c]];
+    }
+    r->ph = (uint8_t)(ph2(G.sub[0].phase) | (uint8_t)(ph2(G.sub[1].phase) << 2) |
+                      (uint8_t)(ph2(G.sub[2].phase) << 4));
+    r->fl = (uint8_t)((G.bd16 == 4u ? 0x01u : 0u) | (G.done_now ? 0x02u : 0u) |
+                      (G.commit_now ? 0x04u : 0u) | (G.sub[0].f1f != 0u ? 0x08u : 0u) |
+                      (G.sub[2].f1f != 0u ? 0x10u : 0u) |
+                      ((int32_t)b77a0(P.slip) >= (int32_t)(uint16_t)f26c() ? 0x20u : 0u) |
+                      (G.sub[0].out_mode != 0u ? 0x40u : 0u) | (G.sub[2].out_mode != 0u ? 0x80u : 0u));
+    h->n = (uint8_t)(n + 1u);
+}
+
 /* ── the fill inputs of the shadow instance ────────────────────────────── */
 static void fill_bind(void)
 {
@@ -1884,6 +2158,11 @@ void gs_shadow_init(void)
     for (unsigned i = 0u; i < sizeof g_rec1; i++) { b[i] = 0u; }
     b = (volatile uint8_t *)&g_p;
     for (unsigned i = 0u; i < sizeof g_p; i++) { b[i] = 0u; }
+    b = (volatile uint8_t *)&g_rel;
+    for (unsigned i = 0u; i < sizeof g_rel; i++) { b[i] = 0u; }
+    R.on = 0xFFu;
+    R.last = 0xFFu;
+    R.bd8e = 0xFFFFu;                                    /* dump: long idle */
     for (uint32_t a = GS_REQ_BASE; a < GS_REQ_BASE + GS_REQ_SIZE; a++) {
         *(volatile uint8_t *)(uintptr_t)a = 0u;
     }
@@ -1967,6 +2246,7 @@ void gs_shadow_tick_10ms(const gs_in_t *in)
     /* slot 28: 0xEC0E0 — BD30 / BD2E (+= *0xFFF8E220 = 1), then 0x106848 */
     G.bd30 = sat8p1(G.bd30);
     P.bd2e = sat16p1(P.bd2e);
+    R.bd8e = sat16p1(R.bd8e);                            /* 0x117538(BD6C) → 0xBAE5E(E21E, +0x22) */
     /* the timers, the time base, the element tick / update */
     G.e4ac6 = sat8p1(G.e4ac6);
     cf4e(&G.sub[0]);
@@ -2020,6 +2300,7 @@ void gs_shadow_tick_10ms(const gs_in_t *in)
     dc4c4();
     actuators();
     rec_pass();
+    rel_pass();
     G.e69c0 = 0u;                                        /* [I] one pass */
     W.e28e = G.e28e;
     W.e6a8 = G.e6a8[4];
@@ -2039,6 +2320,8 @@ void gs_shadow_tick_10ms(const gs_in_t *in)
 }
 
 const volatile gs_wit_t *gs_shadow_wit(void) { return &g_w; }
+const volatile gs_rel_t *gs_shadow_rel(void) { return &g_rel; }
+uint8_t gs_shadow_releasing(void)    { return g_s.bd16 == 4u ? 1u : 0u; }
 const volatile gs_rec_t *gs_shadow_rec(uint8_t slot, uint8_t i)
 {
     return (slot < GS_REC_SLOTS && i < GS_REC_N) ? rec_at(slot, i) : 0;
@@ -2074,6 +2357,31 @@ void gs_shadow_host_sub(uint8_t k, int16_t v[6])
     v[3] = s->dur30;
     v[4] = (int16_t)s->t32;
     v[5] = (int16_t)RU16(req_obj(s->eng != 0u ? s->eng : 2u), RO_RES);
+}
+
+uint8_t gs_shadow_host_ceca(uint8_t cls, uint8_t eng, uint8_t rel, uint8_t f7, int16_t calc_p,
+                            uint8_t ceca_cls)
+{
+    gs_sub_t t = { 0 };
+    t.cls = cls;
+    t.eng = eng;
+    t.rel = rel;
+    t.f7 = f7;
+    t.calc_p = calc_p;
+    t.phase = 0x13u;
+    s_host_ceca_cls = ceca_cls;
+    ceca(&t);
+    s_host_ceca_cls = 0u;
+    return t.out_mode;
+}
+
+void gs_shadow_host_rel(uint8_t k, int16_t v[4])
+{
+    const gs_sub_t *s = &G.sub[k < 3u ? k : 0u];
+    v[0] = s->p26;
+    v[1] = s->out_p;
+    v[2] = (int16_t)s->f1f;
+    v[3] = (int16_t)s->lim12;
 }
 
 void gs_shadow_host_standins(uint8_t mask, int16_t bd76, uint8_t bd30)

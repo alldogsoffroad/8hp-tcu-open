@@ -55,6 +55,9 @@
 
 static sensors_in_t s_z;
 static uint16_t s_tur_inject;           /* (g): the shadow's 0x89CBA */
+static uint32_t s_tur_from;             /* (r7): the injection starts at this tick */
+static uint32_t s_t;                    /* the current tick */
+static uint8_t (*s_lever_fn)(uint32_t t);   /* (r): a per-tick lever, overriding sched */
 static uint8_t s_temp_byte = 0x4Fu;     /* 0x89C13 / 0x89CD2 (0x4F: 38.9 °C, r03u) */
 const sensors_in_t *sensors_in(void) { return &s_z; }
 
@@ -131,7 +134,7 @@ static void shadow_tick(void)
         .eng_speed = (uint16_t)v->engine_speed,
         .eng_valid = (v->q_engine_speed == Q_OK) ? 1u : 0u,
         .out_rpm = (s_z.q_output_speed == Q_OK && s_z.output_speed > 0) ? (uint16_t)s_z.output_speed : 0u,
-        .tur_rpm = s_tur_inject,
+        .tur_rpm = (s_t >= s_tur_from) ? s_tur_inject : 0u,
     };
     gs_shadow_tick_10ms(&gi);
     {
@@ -186,7 +189,7 @@ static void run(const scen_t *sc, bool shadow, uint64_t *hs, tick_cb_t cb)
         gs_bridge_init(true);
     }
     for (uint32_t t = 0u; t < sc->nseg * SEG; t++) {
-        const uint8_t code = sc->sched[t / SEG];
+        const uint8_t code = (s_lever_fn != NULL) ? s_lever_fn(t) : sc->sched[t / SEG];
         uint8_t d[8];
         uint64_t h = 0xCBF29CE484222325ull;
 
@@ -215,6 +218,7 @@ static void run(const scen_t *sc, bool shadow, uint64_t *hs, tick_cb_t cb)
         kl15_tick_10ms();
         rng_chain_tick_10ms(1u, 1u, 1u);
         park_tick_10ms();
+        s_t = t;
         if (shadow) {
             shadow_tick();
         }
@@ -497,6 +501,267 @@ static void engagement(const char *name, uint8_t lever, uint8_t mask, const uint
     }
 }
 
+/* ── (r) THE RELEASE (G4a, 2026-11-19; ~/tcu_sweep/g4a_release_port.md,
+ * decode garage_release_decode.md §5) ─────────────────────────────────── */
+static uint32_t s_rel_lp;           /* the tick of lever P (or of the second lever) */
+static uint8_t  s_rel_x, s_rel_x2;  /* the first lever (4 D / 2 R), the second (1 P / 2 R) */
+static uint8_t lever_rel(uint32_t t)
+{
+    if (t < 100u) {
+        return 1u;
+    }
+    return (t < s_rel_lp) ? s_rel_x : s_rel_x2;
+}
+
+typedef struct {
+    int      x_commit;          /* tick of the first (nonzero) commit */
+    int      r_commit;          /* tick of the release commit */
+    int      c3;                /* tick of a third commit (D → R direct) */
+    unsigned bad_out;           /* release passes with a sub-object +0xA > its +0x26 */
+    unsigned bad_mono;          /* release passes where a moving channel moved the wrong way */
+    uint16_t prev[5];
+} rel_obs_t;
+static rel_obs_t s_ro;
+static void rel_cb(uint32_t t, uint8_t lever)
+{
+    const volatile gs_wit_t *w = gs_shadow_wit();
+    (void)lever;
+    if (s_ro.x_commit < 0 && w->commits >= 1u) {
+        s_ro.x_commit = (int)t;
+    }
+    if (s_ro.r_commit < 0 && w->commits >= 2u) {
+        s_ro.r_commit = (int)t;
+    }
+    if (s_ro.c3 < 0 && w->commits >= 3u) {
+        s_ro.c3 = (int)t;
+    }
+    if (gs_shadow_releasing() != 0u) {
+        for (uint8_t k = 0u; k < 3u; k++) {
+            int16_t v[4];
+            gs_shadow_host_rel(k, v);
+            if (v[1] > v[0]) {
+                s_ro.bad_out++;
+            }
+        }
+    }
+}
+
+typedef struct {
+    const gs_rslot_t *h;
+    const gs_rrec_t *r;
+} rel_view_t;
+
+static rel_view_t rel_slot(uint8_t k)
+{
+    const volatile gs_rel_t *g = gs_shadow_rel();
+    rel_view_t v = { (const gs_rslot_t *)&g->slot[k], (const gs_rrec_t *)&g->rec[k][0] };
+    return v;
+}
+
+static void rel_dump(uint8_t k, unsigned every)
+{
+    const rel_view_t v = rel_slot(k);
+    printf("  release slot %u: start pass %u, len %u, cause %u, BD8E at the end %u, lim12 %u, n %u, gear %d, "
+           "elements %u %u %u, +0x26 %d %d %d\n", k, (unsigned)v.h->start_pass, v.h->len, v.h->cause,
+           v.h->bd8e_end, v.h->lim12, v.h->n, v.h->gear, v.h->el[0], v.h->el[1], v.h->el[2], v.h->p26[0],
+           v.h->p26[1], v.h->p26[2]);
+    for (unsigned i = 0u; i < v.h->n; i++) {
+        const gs_rrec_t *e = &v.r[i];
+        if (i < 3u || (i % every) == 0u || (i + 3u >= v.h->n) || (e->fl & 0x02u) != 0u ||
+            (i > 0u && (v.r[i - 1u].fl & 0x02u) != 0u)) {
+            printf("  %4u ph %02X fl %02X | A %4u D %4u B %4u E %4u C %4u\n", i, e->ph, e->fl, e->cur[0],
+                   e->cur[1], e->cur[2], e->cur[3], e->cur[4]);
+        }
+    }
+}
+
+/* one release: lever x for `hold` ticks after its commit, then x2; temp byte */
+static rel_view_t release(const char *name, uint8_t x, int hold, uint8_t x2, uint8_t temp, uint8_t mask,
+                          bool print)
+{
+    static const scen_t sc0 = { "release", { 0 }, 7u, true, 700u, 0u, 0u, 0u };
+    int xc;
+    s_temp_byte = temp;
+    gs_shadow_host_standins(mask, 0, 0u);
+    s_lever_fn = lever_rel;
+    s_rel_x = x;
+    s_rel_x2 = 1u;
+    /* the probe: where does x commit? */
+    s_rel_lp = 100000u;
+    memset(&s_ro, 0xFF, sizeof s_ro);
+    run(&sc0, true, NULL, rel_cb);
+    xc = s_ro.x_commit;
+    s_rel_lp = (uint32_t)(xc + hold);
+    s_rel_x2 = x2;
+    memset(&s_ro, 0, sizeof s_ro);
+    s_ro.x_commit = s_ro.r_commit = s_ro.c3 = -1;
+    run(&sc0, true, NULL, rel_cb);
+    s_lever_fn = NULL;
+    gs_shadow_host_standins(0u, 0, 0u);
+    {
+        const volatile gs_rel_t *g = gs_shadow_rel();
+        const uint8_t k = (x == 2u) ? 1u : 0u;
+        printf("%s: %s commit at tick %d, lever %u at tick %u, release commit at tick %d (%d passes after "
+               "the %s commit), third commit %d; rel passes %u starts %u unp %u c3 %u e896 %u idle %u; "
+               "+0xA > +0x26: %u\n", name, x == 2u ? "R" : "D", s_ro.x_commit, x2, s_rel_lp, s_ro.r_commit,
+               s_ro.r_commit - s_ro.x_commit, x == 2u ? "R" : "D", s_ro.c3, (unsigned)g->rel_passes,
+               (unsigned)g->starts, (unsigned)g->unp_n, (unsigned)g->c3_n, (unsigned)g->e896_n,
+               (unsigned)g->idle_n, s_ro.bad_out);
+        if (print) {
+            rel_dump(k, 10u);
+        }
+        return rel_slot(k);
+    }
+}
+
+/* the decode's §5 values: pass 0 and passes 80..119 of the moving pair, the
+ * P content at pass 120 (cause 6, the BD8E timer); returns the failures */
+static int rel_shape_bad(const rel_view_t *v, uint8_t mov3, uint16_t b0, uint16_t m0, uint16_t b80,
+                         uint16_t m80, bool print, const char *nm)
+{
+    static const uint16_t PC[5] = { 8500u, 8500u, 500u, 8500u, 8500u };
+    int bad = 0;
+#define RS(c, ...) do { if (!(c)) { bad++; if (print) { printf("FAIL %s: ", nm);     printf(__VA_ARGS__); printf("\n"); } } } while (0)
+    RS(v->h->len == 120u && v->h->cause == 6u && v->h->bd8e_end == 120u && v->h->lim12 == 120u,
+       "release length %u cause %u BD8E %u lim12 %u, expected 120 / 6 (the BD8E timer) / 120 / 120",
+       v->h->len, v->h->cause, v->h->bd8e_end, v->h->lim12);
+    RS(v->h->n == GS_RREC_N, "the recorder holds %u entries (%u expected)", v->h->n, GS_RREC_N);
+    if (v->h->n == GS_RREC_N) {
+        RS(v->r[0].cur[2] == b0 && v->r[0].cur[mov3] == m0, "pass 0: B %u / third %u, expected %u / %u",
+           v->r[0].cur[2], v->r[0].cur[mov3], b0, m0);
+        for (unsigned i = 0u; i < 120u; i++) {
+            const gs_rrec_t *e = &v->r[i];
+            RS((e->fl & 0x01u) != 0u && (e->ph & 0x03u) == 1u && ((e->ph >> 4) & 3u) == 1u &&
+               ((e->ph >> 2) & 3u) == 0u,
+               "pass %u: releasing with D0DC / D1B4 in 0x13 and D148 (A) in 0x12 (ph %02X fl %02X)", i, e->ph, e->fl);
+            for (unsigned c = 0u; c < 5u; c++) {
+                if (c != 2u && c != mov3) {
+                    RS(e->cur[c] == 8500u, "pass %u: fixed channel %u = %u (8500)", i, c, e->cur[c]);
+                }
+            }
+            if (i > 0u) {   /* B (normally closed) never rises, the third never falls */
+                RS(e->cur[2] <= v->r[i - 1u].cur[2] && e->cur[mov3] >= v->r[i - 1u].cur[mov3],
+                   "pass %u: B %u -> %u, third %u -> %u (the release envelope)", i, v->r[i - 1u].cur[2],
+                   e->cur[2], v->r[i - 1u].cur[mov3], e->cur[mov3]);
+            }
+            if (i >= 80u) {
+                RS(e->cur[2] == b80 && e->cur[mov3] == m80, "pass %u: B %u third %u, expected %u / %u", i,
+                   e->cur[2], e->cur[mov3], b80, m80);
+            }
+        }
+        for (unsigned i = 120u; i < GS_RREC_N; i++) {
+            for (unsigned c = 0u; c < 5u; c++) {
+                RS(v->r[i].cur[c] == PC[c], "pass %u: P content ch %u = %u (%u)", i, c, v->r[i].cur[c], PC[c]);
+            }
+            RS((v->r[i].fl & 0x01u) == 0u, "pass %u: still releasing", i);
+        }
+        RS((v->r[120].fl & 0x02u) != 0u, "the completion is not recorded at pass 120 (fl %02X)", v->r[120].fl);
+    }
+#undef RS
+    return bad;
+}
+
+static void test_release(void)
+{
+    static const struct { uint8_t t; const char *n; uint16_t db0, dc0, db80, dc80, rb0, rd0, rb80, rd80; } T[3] = {
+        { 0x4Fu, "38.9 C", 4120u, 6441u, 3484u, 6669u, 3600u, 6151u, 3484u, 6504u },
+        { 0x52u, "42 C",   4119u, 6439u, 3482u, 6665u, 3598u, 6149u, 3482u, 6499u },
+        { 0x3Du, "21 C",   4128u, 6452u, 3494u, 6710u, 3610u, 6164u, 3494u, 6536u },
+    };
+    char nm[96];
+    rel_view_t v;
+    for (unsigned k = 0u; k < 3u; k++) {
+        /* (r1)/(r3) D → P and (r2)/(r3) R → P, lever P 2 s after the commit */
+        snprintf(nm, sizeof nm, "(r1) D->P release, %s", T[k].n);
+        v = release(nm, 4u, 200, 1u, T[k].t, 0u, k == 0u);
+        s_fail += rel_shape_bad(&v, 4u, T[k].db0, T[k].dc0, T[k].db80, T[k].dc80, true, nm);
+        CHECK(s_ro.bad_out == 0u, "%s: a sub-object's +0xA above its +0x26 (%u passes)", nm, s_ro.bad_out);
+        CHECK(gs_shadow_rel()->unp_n == 0u && gs_shadow_rel()->c3_n == 0u && gs_shadow_rel()->e896_n > 0u,
+              "%s: unported %u, C case %u, the D252 stand-in counted %u", nm, (unsigned)gs_shadow_rel()->unp_n,
+              (unsigned)gs_shadow_rel()->c3_n, (unsigned)gs_shadow_rel()->e896_n);
+        CHECK(v.h->el[0] == 2u && v.h->el[1] == 1u && v.h->el[2] == 3u, "%s: released B, A, C (%u %u %u)", nm,
+              v.h->el[0], v.h->el[1], v.h->el[2]);
+        snprintf(nm, sizeof nm, "(r2) R->P release, %s", T[k].n);
+        v = release(nm, 2u, 200, 1u, T[k].t, 0u, k == 0u);
+        s_fail += rel_shape_bad(&v, 1u, T[k].rb0, T[k].rd0, T[k].rb80, T[k].rd80, true, nm);
+        CHECK(s_ro.bad_out == 0u, "%s: a sub-object's +0xA above its +0x26 (%u passes)", nm, s_ro.bad_out);
+        CHECK(v.h->el[0] == 2u && v.h->el[1] == 1u && v.h->el[2] == 4u, "%s: released B, A, D (%u %u %u)", nm,
+              v.h->el[0], v.h->el[1], v.h->el[2]);
+    }
+    /* (r4) lever P while B is still filling: done in the commit pass (cause 5) */
+    {
+        static const int H[2] = { 5, 20 };
+        for (unsigned i = 0u; i < 2u; i++) {
+            snprintf(nm, sizeof nm, "(r4) lever P %d ticks after the D commit (B filling)", H[i]);
+            v = release(nm, 4u, H[i], 1u, 0x4Fu, 0u, false);
+            CHECK(v.h->len == 0u && v.h->cause == 5u && v.h->n >= 1u && (v.r[0].fl & 0x02u) != 0u &&
+                  v.r[0].cur[2] == 500u && v.r[0].cur[4] == 8500u,
+                  "%s: len %u cause %u (expected 0 / 5, P content in the commit pass: B %u C %u)", nm,
+                  v.h->len, v.h->cause, v.r[0].cur[2], v.r[0].cur[4]);
+        }
+    }
+    /* (r5) lever P during B's 0x0B / 0x0C: the full 120 passes */
+    {
+        static const int H[2] = { 40, 60 };
+        for (unsigned i = 0u; i < 2u; i++) {
+            snprintf(nm, sizeof nm, "(r5) lever P %d ticks after the D commit (B applied)", H[i]);
+            v = release(nm, 4u, H[i], 1u, 0x4Fu, 0u, false);
+            CHECK(v.h->len == 120u && v.h->cause == 6u, "%s: len %u cause %u (expected 120 / 6)", nm, v.h->len,
+                  v.h->cause);
+        }
+    }
+    /* (r6) D → R direct: one release pass, one N pass, the R commit */
+    v = release("(r6) D->R direct (lever R 2 s after the D commit)", 4u, 200, 2u, 0x4Fu, 0u, true);
+    CHECK(v.h->len == 1u && v.h->cause == 4u, "(r6) the release lasts %u passes, cause %u (expected 1 / 4)",
+          v.h->len, v.h->cause);
+    CHECK(s_ro.c3 >= 0 && s_ro.c3 - s_ro.r_commit == 2, "(r6) the R commit %d ticks after the release commit "
+          "(expected 2: one release pass, one N pass)", s_ro.c3 - s_ro.r_commit);
+    CHECK(v.h->n >= 2u && v.r[1].cur[2] == 500u && v.r[1].cur[4] == 8500u && (v.r[1].fl & 0x01u) == 0u,
+          "(r6) pass 1 must be the N content (B %u C %u fl %02X)", v.r[1].cur[2], v.r[1].cur[4], v.r[1].fl);
+    /* (r7) the speed exit: a 2100 rpm turbine from release pass 5 */
+    {
+        int rc;
+        s_tur_inject = 2100u;
+        s_tur_from = 100000u;
+        (void)release("(r7) probe", 4u, 200, 1u, 0x4Fu, 0u, false);
+        rc = s_ro.r_commit;
+        s_tur_from = (uint32_t)(rc + 5);
+        v = release("(r7) D->P, turbine 2100 rpm from release pass 5", 4u, 200, 1u, 0x4Fu, 0u, true);
+        s_tur_inject = 0u;
+        s_tur_from = 0u;
+        CHECK(s_ro.r_commit == rc && v.h->len == 6u && v.h->cause == 5u,
+              "(r7) the release ends %u passes after its commit, cause %u (expected 6 / 5: 0x14 at pass 5)",
+              v.h->len, v.h->cause);
+        CHECK(v.h->n > 6u && (v.r[5].ph & 0x33u) == 0x22u && (v.r[5].fl & 0x20u) != 0u,
+              "(r7) pass 5: D0DC / D1B4 must be in 0x14 with the speed exit (ph %02X fl %02X)", v.r[5].ph,
+              v.r[5].fl);
+    }
+    /* (n4) the OLD one-pass stand-in, (n5) the timer limit forced 0: must FAIL (r1) */
+    v = release("(n4) D->P, the OLD one-pass release stand-in", 4u, 200, 1u, 0x4Fu, GS_HOST_OLD_RELEASE, false);
+    CHECK(rel_shape_bad(&v, 4u, 4120u, 6441u, 3484u, 6669u, false, "n4") > 0 && v.h->len == 0u && v.h->cause == 3u,
+          "(n4) the old stand-in must fail the release shape (len %u cause %u)", v.h->len, v.h->cause);
+    v = release("(n5) D->P, D0DC +0x12 forced 0", 4u, 200, 1u, 0x4Fu, GS_HOST_LIM12_0, false);
+    CHECK(rel_shape_bad(&v, 4u, 4120u, 6441u, 3484u, 6669u, false, "n5") > 0 && v.h->len == 0u && v.h->cause == 6u,
+          "(n5) a zero timer limit must fail the release shape (len %u cause %u)", v.h->len, v.h->cause);
+    /* (n6) 0x10CECA: the element test vs the OLD class test. They differ only
+     * when sub0's element is not B (or B sits in another sub-object) — never
+     * in a 1st / R release (B, A, C / B, A, D): the synthetic sub-objects
+     * show the difference, the D → P / R → P traces must be identical */
+    CHECK(gs_shadow_host_ceca(2u, 0u, 3u, 1u, 0, 0u) == 1u && gs_shadow_host_ceca(2u, 0u, 3u, 1u, 0, 1u) == 0u,
+          "(n6) class 2 releasing C: element test mode 1 (f7, out 0), class test mode 0");
+    CHECK(gs_shadow_host_ceca(4u, 0u, 2u, 1u, 0, 0u) == 0u && gs_shadow_host_ceca(4u, 0u, 2u, 1u, 0, 1u) == 1u,
+          "(n6) class 4 releasing B: element test mode 0, class test mode 1");
+    {
+        rel_view_t a, b;
+        static gs_rrec_t ra[GS_RREC_N];
+        a = release("(n6) D->P, element test", 4u, 200, 1u, 0x4Fu, 0u, false);
+        memcpy(ra, a.r, sizeof ra);
+        b = release("(n6) D->P, OLD class test", 4u, 200, 1u, 0x4Fu, GS_HOST_CECA_CLASS, false);
+        CHECK(memcmp(ra, b.r, sizeof ra) == 0, "(n6) a 1st release: the class and element tests must agree");
+    }
+    s_temp_byte = 0x4Fu;
+}
+
 int main(void)
 {
     /* the end states: the holder's block-1 row, binary currents (0.1 mA) */
@@ -594,12 +859,13 @@ int main(void)
               gs_shadow_cur(4), gs_shadow_cur(5), gs_shadow_cur(6));
     }
     gs_shadow_host_standins(0u, 0, 0u);
+    test_release();
     {   /* (f) the bench tool's gs-check sequence: P D P R P, 2 s each */
         const volatile gs_wit_t *w;
         run(&k_scen[5], true, NULL, NULL);
         w = gs_shadow_wit();
         printf("(f) gs-check sequence P-D-P-R-P: commits %u, last %u -> %u, recorder slots %u / %u, "
-               "release stand-in %u, 0x104A28 stand-in %u; end pf %u gear %d\n",
+               "release passes %u, 0x104A28 stand-in %u; end pf %u gear %d\n",
                w->commits, w->commit_old, w->commit_new, w->rec_n[0], w->rec_n[1], w->rel_n,
                w->seq_n, gs_shadow_pf(), gs_shadow_gear());
         dump_rec(1u, 112u);
