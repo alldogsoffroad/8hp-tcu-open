@@ -368,48 +368,53 @@ SECTIONS
     } > RAM
     ASSERT(__kl15_wit_end <= 0xFFF87880, ".kl15_wit overflow")
 
-    /* THE GARAGE-ENGAGEMENT SHADOW (app/gs_shadow.c, app/gs_fill.c; ours —
-     * not stock cells; 2026-11-17, ~/tcu_sweep/garage_shadow_port.md): the
-     * shadow request objects (7 × 0x60, addressed by number: gs_fill.h
-     * GS_REQ_BASE), the engine / chain cells and witnesses, the recorder —
-     * free low RAM; cleared by gs_shadow_init; no cost to the stack guard.
-     * ld does NOT refuse overlapping NOLOAD sections: the ASSERTs hold each
-     * block between its neighbours (verified against every section by nm /
-     * objdump -h at the port, report §5). */
-    .gs_req 0xFFF911A0 (NOLOAD) : { __gs_req_start = .; . += 0x2A0; __gs_req_end = .; } > RAM
-    .gs_obj 0xFFF91440 (NOLOAD) : {
-        __gs_obj_start = .; *(.gs_obj)
-        /* the two shadow TUs' zero-initialised statics (the live instance's
-         * .bss must not grow: the stack guard has 8 bytes left) */
-        *gs_fill.c.obj(.bss .bss.* COMMON) *gs_shadow.c.obj(.bss .bss.* COMMON)
-        /* 2026-11-18 (garage_shadow_v2_port.md): the shift context's progress
-         * state and recorder slot 1, AFTER everything above so that no
-         * earlier shadow symbol moves */
-        . = ALIGN(4); *(.gs_prog)
-        . = ALIGN(4); *(.gs_rec1)
-        . = ALIGN(4); __gs_obj_end = .;
-    } > RAM
-    ASSERT(__gs_req_start >= ADDR(.drv_rec) + SIZEOF(.drv_rec), ".gs_req overlaps .drv_rec")
-    ASSERT(__gs_req_start == 0xFFF911A0 && __gs_req_end == __gs_obj_start, ".gs_req is off GS_REQ_BASE")
-    ASSERT(__gs_obj_end <= ADDR(.sup_era), ".gs_obj runs into .sup_era")
-    .gs_rec 0xFFF8EE00 (NOLOAD) : {
-        __gs_rec_start = .; *(.gs_rec) . = ALIGN(4); __gs_rec_end = .;
-    } > RAM
-    ASSERT(__gs_rec_start >= ADDR(.tmp_edd8) + SIZEOF(.tmp_edd8), ".gs_rec overlaps .tmp_edd8")
-    ASSERT(__gs_rec_end <= ADDR(.adc_cells), ".gs_rec runs into .adc_cells")
-    /* THE GARAGE RELEASE (G4a, 2026-11-19, ~/tcu_sweep/g4a_release_port.md;
-     * ours — not stock cells): gs_rel_t (the release's BD8E, witnesses and
-     * two 125-pass recorder slots, 0xC04 B) in 0xFFF8872C..0xFFF893C8 —
-     * stock RAM the driving dump holds all zero (0xFFF8872A..0xFFF893C8)
-     * and no code of ours names (literal scan at the port), after
-     * .adc_ring's guard and below .rng_893e0. Cleared by gs_shadow_init. */
-    .gs_rel 0xFFF8872C (NOLOAD) : {
-        __gs_rel_start = .; KEEP(*(.gs_rel)) . = ALIGN(4); __gs_rel_end = .;
-    } > RAM
-    ASSERT(__gs_rel_start >= ADDR(.adc_ring) + SIZEOF(.adc_ring) && __gs_rel_end <= 0xFFF893C8,
-           ".gs_rel overlaps .adc_ring or leaves the dump's zero run")
-    ASSERT(__gs_rel_end <= ADDR(.rng_893e0), ".gs_rel runs into .rng_893e0")
-    ASSERT(SIZEOF(.gs_rel) == 0xC04, ".gs_rel: gs_rel_t is off (tcu_bench.py gs-check)")
+    /* G6c (2026-11-19, ~/tcu_sweep/g6c_port.md): the garage-engagement shadow
+     * (instance 1: .gs_req 0xFFF911A0, .gs_obj 0xFFF91440, .gs_rec
+     * 0xFFF8EE00, .gs_rel 0xFFF8872C) is deleted (D-G6-7); its RAM holds the
+     * monitor's two recorders now (.gsb_rec0 / .gsb_rec1, below), which had
+     * to leave the stock cells they sat on (0xFFF8BCC0.., 0xFFF89D20..).
+     *
+     * THE ENGINE'S STOCK OBJECTS AT THE STOCK ADDRESSES (D-G6-9;
+     * app/gs_engine.c gse_* types, every field at its stock offset, the
+     * bytes between them padding of ours; binding 2 = app/gs_cand.c, the
+     * only engine in the image). Each in its own NOLOAD section; cleared by
+     * gs_cand_init. ld does NOT refuse overlapping NOLOAD sections: the
+     * ASSERTs hold each object between its neighbours, and the post-build
+     * section scan (tests/unit/g6c_sections.py) checks every allocated RAM
+     * section of the image pairwise. */
+    .gse_bd14 0xFFF8BD14 (NOLOAD) : { KEEP(*(.gse_bd14)) } > RAM   /* 0x8BD14..0x8BEB3 (+ block A 0x8BD6C) */
+    .gse_e28e 0xFFF8E28E (NOLOAD) : { KEEP(*(.gse_e28e)) } > RAM   /* 0x8E28E..0x8E297 */
+    .gse_e33c 0xFFF8E33C (NOLOAD) : { KEEP(*(.gse_e33c)) } > RAM   /* 0x8E33C..0x8E34D */
+    .gse_e4a7 0xFFF8E4A7 (NOLOAD) : { KEEP(*(.gse_e4a7)) } > RAM   /* 0x8E4A7 */
+    .gse_e4ac 0xFFF8E4AC (NOLOAD) : { KEEP(*(.gse_e4ac)) } > RAM   /* 0x8E4AC..0x8E4B5 */
+    .gse_e69b 0xFFF8E69B (NOLOAD) : { KEEP(*(.gse_e69b)) } > RAM   /* 0x8E69B */
+    .gse_e69f 0xFFF8E69F (NOLOAD) : { KEEP(*(.gse_e69f)) } > RAM   /* 0x8E69F */
+    .gse_e6a1 0xFFF8E6A1 (NOLOAD) : { KEEP(*(.gse_e6a1)) } > RAM   /* 0x8E6A1 */
+    .gse_e6a8 0xFFF8E6A8 (NOLOAD) : { KEEP(*(.gse_e6a8)) } > RAM   /* 0x8E6A8..0x8E6AC */
+    .gse_e6c5 0xFFF8E6C5 (NOLOAD) : { KEEP(*(.gse_e6c5)) } > RAM   /* 0x8E6C5 */
+    .gse_e6ee 0xFFF8E6EE (NOLOAD) : { KEEP(*(.gse_e6ee)) } > RAM   /* 0x8E6EE */
+    .gse_e6ef 0xFFF8E6EF (NOLOAD) : { KEEP(*(.gse_e6ef)) } > RAM   /* 0x8E6EF */
+    ASSERT(SIZEOF(.gse_bd14) == 0x1A0 && SIZEOF(.gse_e28e) == 0x0A && SIZEOF(.gse_e33c) == 0x12 &&
+           SIZEOF(.gse_e4a7) == 1 && SIZEOF(.gse_e4ac) == 0x0A && SIZEOF(.gse_e69b) == 1 &&
+           SIZEOF(.gse_e69f) == 1 && SIZEOF(.gse_e6a1) == 1 && SIZEOF(.gse_e6a8) == 5 &&
+           SIZEOF(.gse_e6c5) == 1 && SIZEOF(.gse_e6ee) == 1 && SIZEOF(.gse_e6ef) == 1,
+           ".gse_*: an engine object is not the size of its stock layout (app/gs_engine.c gse_*)")
+    ASSERT(ADDR(.gse_bd14) >= ADDR(.m5_in4) + SIZEOF(.m5_in4) &&
+           ADDR(.gse_bd14) + SIZEOF(.gse_bd14) <= 0xFFF8BEB4 &&
+           ADDR(.gse_bd14) + SIZEOF(.gse_bd14) <= ADDR(.rng_d5e4), ".gse_bd14 overlaps .m5_in4 / .rng_d5e4 or block B")
+    ASSERT(ADDR(.gse_e28e) + SIZEOF(.gse_e28e) <= 0xFFF8E298 &&
+           ADDR(.gse_e33c) >= ADDR(.gse_e28e) + SIZEOF(.gse_e28e) &&
+           ADDR(.gse_e33c) + SIZEOF(.gse_e33c) <= ADDR(.m5_e384) &&
+           ADDR(.gse_e4a7) >= ADDR(.m5_e384) + SIZEOF(.m5_e384) &&
+           ADDR(.gse_e4ac) >= ADDR(.gse_e4a7) + SIZEOF(.gse_e4a7) &&
+           ADDR(.gse_e4ac) + SIZEOF(.gse_e4ac) <= ADDR(.rng_e530),
+           ".gse_e28e / e33c / e4a7 / e4ac overlap E298 / .m5_e384 / .rng_e530")
+    ASSERT(ADDR(.gse_e69b) >= ADDR(.rng_e64b) + SIZEOF(.rng_e64b) &&
+           ADDR(.gse_e69f) > ADDR(.gse_e69b) && ADDR(.gse_e6a1) > ADDR(.gse_e69f) &&
+           ADDR(.gse_e6a8) > ADDR(.gse_e6a1) && ADDR(.gse_e6c5) >= ADDR(.gse_e6a8) + SIZEOF(.gse_e6a8) &&
+           ADDR(.gse_e6ee) > ADDR(.gse_e6c5) && ADDR(.gse_e6ef) > ADDR(.gse_e6ee) &&
+           ADDR(.gse_e6ef) + SIZEOF(.gse_e6ef) <= ADDR(.kl15_obj),
+           ".gse_e69b .. e6ef overlap .rng_e64b / each other / .kl15_obj")
 
     /* G6a — THE CANDIDATE (app/gs_cand.c + app/gs_cand_fill.c, instance 2 of
      * the garage engine template; ours, not stock cells; 2026-11-19,
@@ -452,10 +457,10 @@ SECTIONS
      *              both in the free low RAM 0xFFF87200..0xFFF87800 between
      *              .rng_wit (ASSERTed <= 0xFFF87800) and .tmp_wit (0xFFF87800)
      *              — the stock driving dump holds zeros there;
-     *   .gsb_rec0  112 x 36 B (the last D) at 0xFFF8BCC0, below .rng_d5e4;
-     *   .gsb_rec1  112 x 36 B (the last R) at 0xFFF89D20, below .park_req —
-     *              stock RAM our firmware never names (ctest scan: no code
-     *              literal in either range), as .gs_rec / .gs_obj.
+     *   .gsb_rec0  112 x 36 B (the last D) at 0xFFF911A0 (G6c; r04o 0xFFF8BCC0);
+     *   .gsb_rec1  112 x 36 B (the last R) at 0xFFF8EE00 (G6c; r04o 0xFFF89D20) —
+     *              the deleted shadow's RAM (G6c), our firmware names no
+     *              other cell there.
      * ld does NOT refuse overlapping NOLOAD sections: the ASSERTs hold each. */
     .gsb_win 0xFFF87200 (NOLOAD) : {
         __gsb_win_start = .; KEEP(*(.gsb_win)) . = ALIGN(4); __gsb_win_end = .;
@@ -467,16 +472,19 @@ SECTIONS
     ASSERT(__gsb_win_start >= __rng_wit_end && __gsb_win_end <= __gsb_state_start, ".gsb_win overlaps")
     ASSERT(__gsb_state_end <= ADDR(.tmp_wit), ".gsb_state runs into .tmp_wit")
     ASSERT(SIZEOF(.gsb_win) == 0x14 && SIZEOF(.gsb_state) == 0xD4, ".gsb_*: gsb_win_t / gsb_t are off (witness_g1.py)")
-    .gsb_rec0 0xFFF8BCC0 (NOLOAD) : {
+    .gsb_rec0 0xFFF911A0 (NOLOAD) : {
         __gsb_rec0_start = .; KEEP(*(.gsb_rec0)) . = ALIGN(4); __gsb_rec0_end = .;
     } > RAM
-    .gsb_rec1 0xFFF89D20 (NOLOAD) : {
+    .gsb_rec1 0xFFF8EE00 (NOLOAD) : {
         __gsb_rec1_start = .; KEEP(*(.gsb_rec1)) . = ALIGN(4); __gsb_rec1_end = .;
     } > RAM
-    ASSERT(__gsb_rec0_start >= ADDR(.m5_in4) + SIZEOF(.m5_in4) && __gsb_rec0_end <= ADDR(.rng_d5e4),
-           ".gsb_rec0 overlaps .m5_in4 / .rng_d5e4")
-    ASSERT(__gsb_rec1_start >= ADDR(.m5_in6) + SIZEOF(.m5_in6) && __gsb_rec1_end <= ADDR(.park_req),
-           ".gsb_rec1 overlaps .m5_in6 / .park_req")
+    /* G6c: off the stock cells (BD14.. / 0x89D5E.. 0xFFF8A004 / 0xFFF8A697, plan
+     * R10) into the deleted shadow's RAM: rec0 where .gs_req / .gs_obj were
+     * (0xFFF911A0..0xFFF92320), rec1 where .gs_rec was (0xFFF8EE00..) */
+    ASSERT(__gsb_rec0_start >= ADDR(.drv_rec) + SIZEOF(.drv_rec) && __gsb_rec0_end <= ADDR(.sup_era),
+           ".gsb_rec0 overlaps .drv_rec / .sup_era")
+    ASSERT(__gsb_rec1_start >= ADDR(.tmp_edd8) + SIZEOF(.tmp_edd8) && __gsb_rec1_end <= ADDR(.adc_cells),
+           ".gsb_rec1 overlaps .tmp_edd8 / .adc_cells")
     ASSERT(SIZEOF(.gsb_rec0) == 0xFC0 && SIZEOF(.gsb_rec1) == 0xFC0, ".gsb_rec*: 112 x gsb_rec_t (witness_g1.py)")
     /* STAGE G4b (2026-11-19, ~/tcu_sweep/g4b_release_bridge_port.md; ours,
      * not stock cells): the bridged release's state + recorder gsbr_t

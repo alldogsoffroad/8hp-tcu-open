@@ -1,4 +1,12 @@
-/* gs_bridge.c — THE GARAGE BRIDGE, STAGE G1: computed, recorded, NOT
+/* G6c (2026-11-19, ~/tcu_sweep/g6c_port.md): THE MONITOR ONLY. The r04n
+ * bridge (the shadow's currents armed per pass: bridge_tick, its agreement
+ * entry and fresh-arm rules) is deleted with the shadow (D-G6-7); every
+ * monitor check stays, unchanged in value (D-G6-6), except "candidate !=
+ * shadow" (GSB_L_SHADOW), whose reference was the shadow. The recorders
+ * (.gsb_rec0 / .gsb_rec1) moved off the stock cells into the deleted
+ * shadow's RAM (linker.ld). GS_G6B 0 now means: no seam, no monitor.
+ * The text below is the history (G1 .. G6b).
+ * gs_bridge.c — THE GARAGE BRIDGE, STAGE G1: computed, recorded, NOT
  * applied (ours, not stock; app/gs_bridge.h, bsw/drv/drv_gsbr.h;
  * ~/tcu_sweep/garage_live_plan.md, ~/tcu_sweep/garage_g1_port.md).
  *
@@ -269,6 +277,9 @@ void gs_bridge_init(bool cold)
     win_seal();
 }
 
+#if GS_G6B
+/* G6c (2026-11-19, ~/tcu_sweep/g6c_port.md): everything below is the
+ * MONITOR's; GS_G6B 0 (a host build without the seam) compiles none of it */
 /* the would-be word: the staged word's command (E8 / F0 row) with the
  * setpoint 0x901A0 composes from current cur — (I + 0x9090A) × 1/6, as
  * drv_reqlaw.c rq_setpoint (the rounding offset the last compose used) */
@@ -481,359 +492,6 @@ static uint8_t rel_envelope(uint8_t *tch, uint16_t *tv, uint8_t (*reqmode)(uint8
     return 0u;
 }
 
-static void bridge_tick(const gsb_in_t *in)
-{
-    const volatile gs_wit_t *w = gs_shadow_wit();
-    const uint8_t os = LIVE_U8(L_OS_MODE);
-    const uint8_t pf = gs_shadow_pf();
-    const uint8_t dirbit = (pf == 1u) ? 1u : ((pf == 2u) ? 2u : 0u);
-    const uint16_t *fix = (pf == 2u) ? GSB_FIX_R : GSB_FIX_D;
-    const uint8_t move = (pf == 2u) ? GSB_R_MOVE : GSB_D_MOVE;
-    const uint8_t rel = gs_shadow_releasing();
-    volatile gsb_slot_t *s = 0;
-    uint16_t why = 0u;
-    bool commit_now = false, done_now = false, armed, applied, agree = true;
-    const bool prev_applied = (B.applied != 0u);
-    bool relmode = false;
-    uint8_t adirbit = dirbit;           /* the direction the arm is evaluated for */
-
-    m2_pass(in, os);
-
-    /* 1. the shadow's commit / completion */
-    if (w->commits != B.sh_commits) {
-        B.sh_commits = w->commits;
-        commit_now = true;
-        if (w->commit_new != 0u) {
-            if (W.commits < 0xFFFEu) {
-                W.commits = (uint16_t)(W.commits + 1u);
-                win_seal();
-            }
-            if (W.commits > GSB_COMMITS_MAX) {
-                latch(GSB_L_COMMITS);
-            }
-            B.eng_on = 1u;
-            B.eng_t = 0u;
-            slot_start(w->commit_new);
-        } else {
-            B.eng_on = 0u;
-        }
-    }
-    if (w->done_pass != B.sh_done) {
-        B.sh_done = w->done_pass;
-        done_now = true;
-        B.eng_on = 0u;
-        if (B.slot_cur < 2u && B.slot[B.slot_cur].done_at == GSB_NONE) {
-            B.slot[B.slot_cur].done_at = since(&B.slot[B.slot_cur]);
-            B.slot[B.slot_cur].done_cause = w->done_cause;
-        }
-    }
-    if (B.eng_on != 0u) {
-        if (B.eng_t < 0xFFFFu) {
-            B.eng_t = (uint16_t)(B.eng_t + 1u);
-        }
-        if (B.eng_t > GSB_ENG_PASSES) {
-            latch(GSB_L_ENGT);          /* 3.5 s without a completion: abort, latched */
-            B.eng_on = 0u;
-        }
-    }
-    if (B.slot_cur < 2u) {
-        s = &B.slot[B.slot_cur];
-    }
-
-    /* G4b: the bridged release. A release starts in the shadow's
-     * power-flow-0 commit pass (BD16 = 4 from that pass); it is bridged only
-     * when the bridge was APPLIED in the pass before (continuity) and the
-     * last nonzero commit's slot names its direction (= the shadow's
-     * commit_old). It ends with the shadow's release (the completion pass:
-     * the P content), with a nonzero commit, or at its first unarmed pass —
-     * never re-armed. */
-#if defined(GSB_HOST_NO_REL_BRIDGE) && !defined(__sh__)
-    (void)prev_applied;                 /* host NEGATIVE: the r04k behaviour */
-    (void)rel_start;
-#else
-    if (R.on != 0u && (rel == 0u || (commit_now && w->commit_new != 0u))) {
-        rel_end(GSBR_E_DONE, 0u);
-    }
-    if (rel != 0u && R.rel_prev == 0u) {
-        const uint8_t spf = (B.slot_cur < 2u) ? B.slot[B.slot_cur].pf : 0u;
-#  if defined(GSB_HOST_NEG_REL_FRESH) && !defined(__sh__)
-        const bool cont = true;         /* host NEGATIVE: no continuity rule */
-#  else
-        const bool cont = prev_applied;
-#  endif
-        if (cont && spf != 0u && commit_now && w->commit_new == 0u && w->commit_old == spf) {
-            rel_start(spf, prev_applied);
-        } else {
-            R.refused = (uint16_t)(R.refused + 1u);
-        }
-    }
-    relmode = (R.on != 0u) && (rel != 0u);
-    if (relmode) {
-        adirbit = (R.pf == 1u) ? 1u : 2u;
-    }
-#endif
-    R.rel_prev = rel;
-
-    /* the shadow's and the live producer's A..E. G4a (2026-11-19,
-     * ~/tcu_sweep/g4a_release_port.md): the shadow now runs the stock's
-     * 1.2 s RELEASE (BD16 = 4) after a power-flow-0 commit, which this
-     * stage does NOT bridge — the live content in those passes is the P
-     * content. So while the shadow releases, the agreement compares the
-     * live producer against the P content (what HEAD's instant-release
-     * shadow showed in the same passes), keeping the arm entry, the
-     * back-to-P witness and the live path exactly as before; the release
-     * never arms (RANGE / IDLE: power flow 0). */
-    for (uint8_t ch = 0u; ch < 5u; ch++) {
-        uint16_t v = gs_shadow_cur(ch);
-        const uint16_t lv = LIVE_U16(L_PROD + 2u * ch);
-#if !defined(__sh__)
-        if (ch == s_inj_ch && B.passes >= s_inj_from && B.passes < s_inj_to) {
-            v = s_inj_v;
-        }
-#endif
-        B.sh[ch] = v;
-        B.lv[ch] = (lv == (uint16_t)~LIVE_U16(L_PROD_C + 2u * ch)) ? lv : 0xFFFFu;
-        if (((rel != 0u) ? GSB_PCONT[ch] : B.sh[ch]) != B.lv[ch]) {
-            agree = false;
-        }
-    }
-
-    /* 2. the arm conditions (plan §2.4; G4b: in a bridged release the
-     * idle / range / park conditions are the release's) */
-    if (!relmode && !(pf != 0u || gs_shadow_pending() != 0u || (w->now_flags & 0x08u) != 0u)) {
-        why |= GSB_R_IDLE;
-    }
-    if ((GSB_EVAL_DIR & adirbit) == 0u) {
-        why |= GSB_R_DIR;
-    }
-    if (LIVE_U8(L_SEQ2) != (uint8_t)'U' || LIVE_U8(L_LETTER) != (uint8_t)'c') {
-        why |= GSB_R_RAIL;
-    }
-    if (os < 1u) {
-        why |= GSB_R_OSMODE;
-    }
-    if (relmode) {
-        /* the release: any range 5..8 (lever P, or N / R / D on the way
-         * back); the park model is waived (the park outputs follow the
-         * range chain on their own and drop in the lever-P pass) */
-        if (PCELL_TGT < 5u || PCELL_TGT > 8u) {
-            why |= GSB_R_RANGE;
-        }
-    } else {
-        const uint8_t want = (pf == 1u) ? 5u : ((pf == 2u) ? 7u : 0u);
-        if (want == 0u || PCELL_TGT != want) {
-            why |= GSB_R_RANGE;
-        }
-        if (LIVE_U8(L_PARK_MODEL) != 1u) {
-            why |= GSB_R_PARK;
-        }
-    }
-    if (in->mon_faults != 0u) {
-        why |= GSB_R_MON;
-    }
-    for (uint8_t ch = 0u; ch < 5u; ch++) {
-        if (LIVE_U16(L_FW + 2u * ch) != 0u || LIVE_U8(L_CCLS + ch) != 0u || LIVE_U8(L_OST + ch) >= 2u) {
-            why |= GSB_R_DIAG;
-        }
-    }
-    if (in->relwin_st == 2u) {
-        why |= GSB_R_RELWIN;
-    }
-    if (!win_ok()) {
-        latch((uint8_t)(GSB_L_WIN | GSB_L_GUARD));    /* a torn window: fail safe */
-    }
-    if ((W.latch & GSB_L_WIN) != 0u || W.acc_ms >= GSB_WIN_MS) {
-        why |= GSB_R_WIN;
-    }
-    if ((W.latch & GSB_L_ENGT) != 0u) {
-        why |= GSB_R_ENGT;
-    }
-    if ((W.latch & GSB_L_COMMITS) != 0u) {
-        why |= GSB_R_COMMITS;
-    }
-    if ((W.latch & GSB_L_GUARD) != 0u) {
-        why |= GSB_G_LATCH;
-    }
-    if (B.armed == 0u && B.agree_run < GSB_AGREE_N) {
-        why |= GSB_R_AGREE;             /* the entry condition (first armed pass only) */
-    }
-
-    /* 3a. G4b: the release envelope (only where the bridge would arm) */
-    if (why == 0u && relmode) {
-        uint8_t tch = 0xFFu;
-        uint16_t tv = 0u;
-        const uint8_t code = rel_envelope(&tch, &tv, gs_shadow_reqmode);
-        if (code != 0u) {
-            const uint16_t g = (code == GSBR_T_FIXED) ? GSB_G_FIXED : GSB_G_RANGE;
-            latch(GSB_L_GUARD);
-            B.guard_n = (uint16_t)(B.guard_n + 1u);
-            B.guard_why = g;
-            B.guard_ch = tch;
-            B.guard_v = tv;
-            R.trip_n = (uint16_t)(R.trip_n + 1u);
-            R.trip_code = code;
-            R.trip_ch = tch;
-            R.trip_v = tv;
-            why = (uint16_t)(why | g | GSB_G_LATCH);
-            rel_end((uint8_t)(0x10u + code), why);
-        }
-    }
-
-    /* 3. the compile-time element bounds (only where the bridge would arm) */
-    if (why == 0u && !relmode) {
-        uint16_t g = 0u;
-        uint8_t gch = 0xFFu;
-        uint16_t gv = 0u;
-        for (uint8_t ch = 0u; ch < 5u; ch++) {
-            const uint16_t v = B.sh[ch];
-            uint16_t t = 0u;
-            if (((move >> ch) & 1u) != 0u) {
-                if (v < GSB_IMIN || v > GSB_IMAX) {
-                    t = GSB_G_RANGE;
-                } else if (gs_shadow_reqmode(ch) == 1u && v != GSB_IMIN && v != GSB_IMAX) {
-                    t = GSB_G_RANGE;    /* a mode-1 pass is exactly 500 or 8500 */
-                }
-            } else if (v != fix[ch]) {
-                t = GSB_G_FIXED;
-            }
-            if (t != 0u && g == 0u) {
-                gch = ch;
-                gv = v;
-            }
-            g = (uint16_t)(g | t);
-        }
-        if (g != 0u) {
-            latch(GSB_L_GUARD);
-            B.guard_n = (uint16_t)(B.guard_n + 1u);
-            B.guard_why = g;
-            B.guard_ch = gch;
-            B.guard_v = gv;
-            if (s != 0) {
-                s->guard_n = (uint8_t)(s->guard_n + 1u);
-            }
-            why = (uint16_t)(why | g | GSB_G_LATCH);
-        }
-    }
-
-    /* 4. would-arm; the armed-time budget */
-    armed = (why == 0u);
-    applied = armed && (((uint8_t)GS_LIVE_DIR & adirbit) != 0u);
-    if (relmode && R.on != 0u && !applied) {
-#if !(defined(GSB_HOST_NEG_REL_FRESH) && !defined(__sh__))
-        rel_end(GSBR_E_WHY, why);       /* an unarmed release pass: never re-armed */
-#endif
-    }
-    if (relmode && applied) {
-        R.n++;
-    }
-    if (armed) {
-        B.armed_n++;
-        W.acc_ms += 10u;
-        win_seal();
-        if (W.acc_ms >= GSB_WIN_MS) {
-            latch(GSB_L_WIN);           /* the budget ends after this pass */
-        }
-        if (s != 0 && s->armed_n < 0xFFFFu) {
-            s->armed_n = (uint16_t)(s->armed_n + 1u);
-        }
-        B.agree_run = 0u;               /* a re-arm needs 10 fresh agreeing passes */
-    } else if (agree) {
-        B.agree_n++;
-        if (B.agree_run < 0xFFu) {
-            B.agree_run = (uint8_t)(B.agree_run + 1u);
-        }
-    } else {
-        B.disagree_n++;
-        B.last_dis = B.passes;
-        B.agree_run = 0u;
-    }
-    if (applied) {
-        B.applied_n++;
-    }
-    if (armed && B.armed == 0u) {
-        B.arm_ev = (uint16_t)(B.arm_ev + 1u);
-        if (s != 0 && s->arm_on == GSB_NONE) {
-            s->arm_on = since(s);
-        }
-    }
-    if (!armed && B.armed != 0u) {
-        B.disarm_ev = (uint16_t)(B.disarm_ev + 1u);
-        B.why_armed_or = (uint16_t)(B.why_armed_or | why);
-        if (s != 0 && s->arm_off == GSB_NONE) {
-            s->arm_off = since(s);
-            s->off_why = why;
-        }
-        B.back_pend = 1u;
-    }
-    if (B.back_pend != 0u && !armed && agree) {
-        B.back_pend = 0u;
-        if (s != 0 && s->back_at == GSB_NONE) {
-            s->back_at = since(s);
-        }
-    }
-    B.armed = armed ? 1u : 0u;
-    B.applied = applied ? 1u : 0u;
-    B.pf = pf;
-    B.why = why;
-
-    /* 5. the would-be currents and words; the recorder */
-    for (uint8_t ch = 0u; ch < 5u; ch++) {
-        B.cur[ch] = armed ? B.sh[ch] : B.lv[ch];
-        B.app[ch] = applied ? B.sh[ch] : 0u;
-    }
-    if (s != 0 && s->n < GSB_REC_N) {
-        volatile gsb_rec_t *r = rec_at(B.slot_cur, s->n);
-        for (uint8_t k = 0u; k < 3u; k++) {
-            r->ph[k] = gs_shadow_phase(k);
-        }
-        r->st = (uint8_t)((armed ? 0x01u : 0u) | (applied ? 0x02u : 0u) |
-                          (((W.latch & GSB_L_GUARD) != 0u) ? 0x04u : 0u) | (agree ? 0x08u : 0u) |
-                          (uint8_t)((pf & 3u) << 4) | (commit_now ? 0x40u : 0u) | (done_now ? 0x80u : 0u));
-        r->why = why;
-        for (uint8_t ch = 0u; ch < 5u; ch++) {
-            const uint16_t lw = (in->cyc != 0) ? in->cyc[cyc_idx(ch)] : 0u;
-            r->live[ch] = lw;
-            r->wb[ch] = word_of(ch, lw, B.cur[ch]);
-            r->est[ch] = LIVE_U16(L_EST + 2u * ch);
-        }
-        s->n = (uint8_t)(s->n + 1u);
-    }
-    /* G4b: the bridged-release recorder (entry = release pass; then up to 3
-     * passes after its end, to show the P content reach the wire) */
-    if (R.rec < 2u) {
-        volatile gsbr_slot_t *rs = &R.slot[R.rec];
-        const uint8_t x = rs->xch;
-        if (rs->n < GSBR_REC_N) {
-            const uint8_t i = rs->n;
-            const uint16_t eb = LIVE_U16(L_EST + 2u * GSB_CH_B), ex = LIVE_U16(L_EST + 2u * x);
-            if (applied) {
-                rs->bm[i >> 3] = (uint8_t)(rs->bm[i >> 3] | (uint8_t)(1u << (i & 7u)));
-            }
-            rs->live[i][0] = (in->cyc != 0) ? in->cyc[cyc_idx(GSB_CH_B)] : 0u;
-            rs->live[i][1] = (in->cyc != 0) ? in->cyc[cyc_idx(x)] : 0u;
-            s_gsbr_est.est[R.rec][i][0] = (uint8_t)((eb >= 10180u) ? 255u : (eb + 20u) / 40u);
-            s_gsbr_est.est[R.rec][i][1] = (uint8_t)((ex >= 10180u) ? 255u : (ex + 20u) / 40u);
-            rs->n = (uint8_t)(i + 1u);
-            if (R.on != 0u && applied) {
-                rs->len = (uint16_t)(rs->len + 1u);
-            }
-        }
-        if (R.on == 0u) {
-            if (R.rec_tail != 0u && rs->n < GSBR_REC_N) {
-                R.rec_tail = (uint8_t)(R.rec_tail - 1u);
-            } else {
-                R.rec = 0xFFu;
-            }
-        }
-    }
-    if (R.on != 0u && R.t < 0xFFFFu) {
-        R.t = (uint16_t)(R.t + 1u);
-    }
-    B.passes++;
-}
-
-
-#if GS_G6B
 /* ══ G6b: THE MONITOR (ours, not stock; ~/tcu_sweep/g6b_port.md) ══════════
  * The candidate (app/gs_cand.c, instance 2 of the garage engine template:
  * the stock engagement engine + holder in the stock 10 ms slot order, on
@@ -915,7 +573,6 @@ static void mon_tick(const gsb_in_t *in)
     volatile gsb_slot_t *s = 0;
     uint16_t why = 0u;
     bool commit_now = false, done_now = false, armed, agree = true, nonp = false, livep = true;
-    bool shdiff = false;
     const bool prev_cand = (B.src == GSM_S_CAND) && (B.passes != 0u);
     bool relmode = false;
     uint8_t adirbit = dirbit, src;
@@ -1006,9 +663,6 @@ static void mon_tick(const gsb_in_t *in)
             if (B.lv[ch] != GSB_PCONT[ch] || lst == 1u || lst == 2u) {
                 livep = false;
             }
-        }
-        if (v != gs_shadow_cur(ch)) {
-            shdiff = true;
         }
     }
     B.owns = owns ? 1u : 0u;
@@ -1154,25 +808,11 @@ static void mon_tick(const gsb_in_t *in)
             why = (uint16_t)(why | g | GSB_G_LATCH);
             src = GSM_S_PCONT;
         } else {
-            if (shdiff) {
-                B.shd_n++;
-                if (B.shd_run < 0xFFu) {
-                    B.shd_run = (uint8_t)(B.shd_run + 1u);
-                }
-            } else {
-                B.shd_run = 0u;
-            }
-            if (B.shd_run >= 2u) {
-                mon_trip(GSB_L_SHADOW, (uint16_t)(why | GSB_R_AGREE), 0xFFu, 0u);
-                why = (uint16_t)(why | GSB_R_AGREE | GSB_G_LATCH);
-                src = GSM_S_PCONT;
-            } else {
-                src = GSM_S_CAND;
-            }
+            /* G6c: the r04o check "candidate != shadow on 2 owned non-P
+             * passes → GSB_L_SHADOW" went with the shadow (D-G6-7: its only
+             * reference was the deleted instance 1); gsb_t.shd_* stay 0 */
+            src = GSM_S_CAND;
         }
-    }
-    if (!(src == GSM_S_CAND && nonp && owns)) {
-        B.shd_run = 0u;                             /* the run counts owned non-P candidate passes */
     }
 
     /* 5. the seam's value; armed = the candidate's engine on the wire */
@@ -1290,31 +930,19 @@ static void mon_tick(const gsb_in_t *in)
 }
 #endif /* GS_G6B */
 
-#if GS_G6B && defined(__sh__)
-#  define g6b_on()  true                /* the image: always the monitor */
-bool gs_bridge_g6b(void) { return true; }
-#elif GS_G6B
-static bool s_g6b_host = true;
-void gs_bridge_host_g6b(bool on) { s_g6b_host = on; }
-#  define g6b_on()  s_g6b_host
-bool gs_bridge_g6b(void) { return s_g6b_host; }
-#else
-#  define g6b_on()  false
-bool gs_bridge_g6b(void) { return false; }
-#  if !defined(__sh__)
-void gs_bridge_host_g6b(bool on) { (void)on; }
-#  endif
-#endif
+/* G6c: the r04n bridge form (GS_G6B 0 with a seam) is deleted; GS_G6B 1 is
+ * the monitor, GS_G6B 0 a host build without the seam (no monitor at all) */
+bool gs_bridge_g6b(void) { return GS_G6B != 0; }
 
 void gs_bridge_tick_10ms(const gsb_in_t *in)
 {
 #if GS_G6B
-    if (g6b_on()) {
-        mon_tick(in);
-        return;
-    }
+    mon_tick(in);
+#else
+    (void)in;
+    (void)latch;                        /* the monitor's, compiled out here */
+    (void)GSB_PCONT;
 #endif
-    bridge_tick(in);
 }
 
 const volatile gsb_t     *gs_bridge_state(void) { return &s_gsb; }

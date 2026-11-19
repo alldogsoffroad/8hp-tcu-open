@@ -329,29 +329,24 @@ static void task_10ms(void)
     park_tick_10ms();
 #if !defined(TCU_RAM_APP)    /* the RAM application carries no shadow (its 64 KB limit) */
     {
-        /* THE GARAGE-ENGAGEMENT SHADOW (app/gs_shadow.c): READ-ONLY — it gets
-         * the live values BY VALUE, after 0xB912C (park_tick: 0x89CDC) as the
-         * stock's slots 27..42 follow it, and writes only its own RAM */
+        /* G6c (2026-11-19, ~/tcu_sweep/g6c_port.md): the shadow (instance 1)
+         * is deleted (D-G6-7). THE GARAGE ENGINE (app/gs_cand.c, the
+         * candidate: the stock engine + holder in the stock 10 ms slot order,
+         * on its own RAM and its pinned stock objects) gets the live values
+         * BY VALUE after 0xB912C (park_tick: 0x89CDC), as the stock's slots
+         * 26..42 follow it, and is the producer of the live A..E currents —
+         * its pass BEFORE the monitor below decides what the seam hands the
+         * F stage (the 5 ms batch, 1 ms later) */
         const sensors_in_t *sn = sensors_in();
         gs_in_t gi;
         uint32_t t_st;
         gs_in_build(&gi);
-        t_st = plat_frt_us();
-        gs_shadow_tick_10ms(&gi);
-        g6a_time(G6A_T_SHADOW, plat_frt_us() - t_st);
-#if GS_G6B
-        /* G6b (~/tcu_sweep/g6b_port.md): THE CANDIDATE IS THE PRODUCER of the
-         * live A..E currents — its pass at its G6b slot (after park_tick, the
-         * stock's slots 26..42), BEFORE the monitor below decides what the
-         * seam hands the F stage (the 5 ms batch, 1 ms later) */
         g6a_cand_tick(&gi);
-#endif
         {
-            /* THE GARAGE BRIDGE (app/gs_bridge.c) — G6b (GS_G6B 1, the
-             * image): THE MONITOR of the candidate (permits, element bounds,
-             * release envelope, windows; violation → the P content, latched)
-             * and the E28E fence; r04i..r04n: the bridge of the shadow. Its
-             * live inputs BY VALUE; it writes only its own RAM (.gsb_*) */
+            /* THE MONITOR (app/gs_bridge.c; ours): the permits, the element
+             * bounds, the release envelope, the windows (violation → the P
+             * content, latched) and the E28E fence. Its live inputs BY
+             * VALUE; it writes only its own RAM (.gsb_*) */
             const gsb_in_t bi = {
                 .mon_faults = park_mon_faults(),
                 .relwin_st = drv_rq_rel_win_state(),
@@ -365,20 +360,9 @@ static void task_10ms(void)
             gs_bridge_tick_10ms(&bi);
             g6a_time(G6A_T_MON, plat_frt_us() - t_st);
         }
-#if GS_G6B
-        /* G6b: THE COMPARATOR — the wire (the candidate, or the fence's live
-         * producer, or the latched P content) against the candidate, and the
-         * candidate against the shadow (instance 1, kept as the reference
-         * until G6c) */
+        /* the wire self-checks and CPU witnesses (app/g6a.c): the law's
+         * 0x94ED4 against the replicated seam + guard, the guard replica */
         g6a_compare_10ms(sup_mode());
-#else
-        /* G6a (app/g6a.c, ~/tcu_sweep/g6a_port.md): THE CANDIDATE — the
-         * merged producer in its G6b form on its OWN RAM — at its G6b slot
-         * (after park_tick), then the comparison with what the F stage that
-         * follows takes (the bridge's value or the live producer's through
-         * the guard). Read-only: it writes nothing live. */
-        g6a_tick_10ms(&gi);
-#endif
     }
 #endif
     bench_tick_10ms();
@@ -497,7 +481,6 @@ int main(void)
     kl15_init();                        /* the terminal-15 object 0xFFF8E9D4 (0x140B30) */
     rng_chain_init();                   /* the range: the 0x9B228 one-shot (init arbiter → D6D6) */
 #if !defined(TCU_RAM_APP)
-    gs_shadow_init();                   /* the read-only garage-engagement shadow (its own RAM) */
     /* the garage bridge, G1 (its own RAM; its windows survive a warm reset) */
     gs_bridge_init(plat_boot_index() <= 1u);
     /* G6a: the candidate (its RAM cleared) and the comparator, before the

@@ -42,7 +42,7 @@ set(CORE_SOURCES
     app/rq_fill.c
     app/rq_fill_cal.c
     app/tmp_chain.c
-    app/gs_shadow.c app/gs_fill.c app/gs_cal.c app/gs_bridge.c
+    app/gs_cal.c app/gs_bridge.c
     app/fb_shadow.c app/fb_cal.c app/fb_hook.c
     app/pa7_shadow.c app/pa7_hook.c bsw/drv/drv_pa7.c
     app/tsel_shadow.c app/tsel_hook.c app/tsel_live.c bsw/drv/drv_tsel.c
@@ -140,13 +140,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     # NVM / DSM / event-log / fatal path; tests/unit/g6a_scan.py) — the image
     # is refused if it fails
     string(REPLACE "objcopy" "nm" SH_NM ${CMAKE_OBJCOPY})
+    string(REPLACE "objcopy" "objdump" SH_OBJDUMP ${CMAKE_OBJCOPY})
     add_custom_command(TARGET tcu_app.elf POST_BUILD
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py link ${SH_NM}
             CMakeFiles/tcu_app.elf.dir/app/gs_cand.c.obj CMakeFiles/tcu_app.elf.dir/app/gs_cand_fill.c.obj
             CMakeFiles/tcu_app.elf.dir/app/g6a.c.obj
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6c_sections.py ${SH_OBJDUMP} tcu_app.elf
         COMMAND ${CMAKE_OBJCOPY} -O ihex --remove-section=.bss tcu_app.elf tcu_app.hex
         COMMAND ${CMAKE_SIZE} tcu_app.elf
-        COMMENT "G6a link-map scan; writing application block as Intel HEX (load addresses)")
+        COMMENT "G6a link-map scan; G6c RAM-section overlap scan; writing application block as Intel HEX (load addresses)")
 
     # ---- Data-flash loader (spec 18): code flash at 0x40000, written with the Teensy flasher ----
     set(LD_LDSCRIPT ${CMAKE_SOURCE_DIR}/loader/ld_link.ld)
@@ -634,7 +636,7 @@ else()
     # (normal, ≈ 0.95 s) and the 0xE469C fill-time term, at 38.9 and 21 °C;
     # (g) the 250-pass timeout with a turbine that never synchronises; (n) the
     # old stand-ins must fail (e); reaction 37 host-forced.
-    set(GS_TEST_SOURCES tests/unit/test_gs_shadow.c app/gs_shadow.c app/gs_fill.c app/gs_cal.c app/gs_bridge.c
+    set(GS_TEST_SOURCES tests/unit/test_gs_shadow.c tests/unit/gs_ref_shadow.c app/gs_fill.c app/gs_cal.c app/gs_bridge.c
         app/rng_chain.c safety/kl15.c
         app/range.c app/park_law.c app/park.c safety/park_mon.c bsw/sched/sched.c
         io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
@@ -648,7 +650,7 @@ else()
     target_compile_definitions(test_gs_shadow_faithful PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=0)
     add_test(NAME gs_shadow_faithful COMMAND test_gs_shadow_faithful)
     # G6-0 (2026-11-19, ~/tcu_sweep/g6_0_port.md): the engine is a TEMPLATE
-    # (app/gs_engine.c) compiled twice — instance 1 = app/gs_shadow.c (the
+    # (app/gs_engine.c) compiled twice — instance 1 = tests/unit/gs_ref_shadow.c (the
     # shadow, today's RAM and symbols, the only one in the SH image) and
     # instance 2 = app/gs_cand.c + app/gs_cand_fill.c (the future G6a
     # candidate, HOST-ONLY here, its own request objects and fill instance).
@@ -702,7 +704,7 @@ else()
     set_tests_properties(gs_shadow_scan_outputs_negative PROPERTIES WILL_FAIL TRUE)
     add_test(NAME gs_shadow_scan_shadow
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/gs_shadow_scan.py shadow
-            ${CMAKE_SOURCE_DIR}/app/gs_shadow.c ${CMAKE_SOURCE_DIR}/app/gs_fill.c
+            ${CMAKE_SOURCE_DIR}/tests/unit/gs_ref_shadow.c ${CMAKE_SOURCE_DIR}/app/gs_fill.c
             ${CMAKE_SOURCE_DIR}/app/gs_shadow.h ${CMAKE_SOURCE_DIR}/app/gs_fill.h
             ${CMAKE_SOURCE_DIR}/app/gs_engine.c ${CMAKE_SOURCE_DIR}/app/gs_cand.c
             ${CMAKE_SOURCE_DIR}/app/gs_cand_fill.c ${CMAKE_SOURCE_DIR}/app/gs_cand.h
@@ -713,10 +715,15 @@ else()
     set_tests_properties(gs_shadow_scan_shadow_negative PROPERTIES WILL_FAIL TRUE)
     set(GS_SH_SRC ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard_gs.c)
     add_test(NAME gs_sh_guard_control COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${GS_SH_SRC})
+    # G6c: instance 1 (the shadow) is a host-only test reference: SH refuses it
     add_test(NAME gs_sh_guard_shadow
-        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/gs_shadow.c)
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/tests/unit/gs_ref_shadow.c)
     add_test(NAME gs_sh_guard_fill
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/gs_fill.c)
+    set_tests_properties(gs_sh_guard_shadow PROPERTIES
+        PASS_REGULAR_EXPRESSION "instance 1 .the shadow. is a host-only test reference since G6c")
+    set_tests_properties(gs_sh_guard_fill PROPERTIES
+        PASS_REGULAR_EXPRESSION "instance 1's fill .the shadow. is a host-only test reference since G6c")
     add_test(NAME gs_sh_guard_output
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DSH_GUARD_GS_OUTPUT ${GS_SH_SRC})
     add_test(NAME gs_sh_guard_live
@@ -726,7 +733,7 @@ else()
     add_test(NAME gs_sh_guard_forced
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_FORCED=2 ${GS_SH_SRC})
     add_test(NAME gs_sh_guard_r37
-        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_R37=1 ${CMAKE_SOURCE_DIR}/app/gs_shadow.c)
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_R37=1 ${CMAKE_SOURCE_DIR}/app/gs_cand.c)
     # G6-0: the template does not compile alone; the candidate is host-only
     add_test(NAME gs_sh_guard_engine_alone
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${CMAKE_SOURCE_DIR}/app/gs_engine.c)
@@ -1260,6 +1267,9 @@ else()
         SUP_L1_HOLD_PHASE40=0 SUP_L1_HOLD_FAIL_FSM=0 SUP_L3_HOLD_SEQ_L=0
         DIAG_TEMPS=1 TSEL_LIVE=1 FBS_T_ECU_LIVE=1)
     add_test(NAME diag_temps_dryrun_live COMMAND test_diag_temps_live)
+    # G6c: the harness of test_g6b / test_g6b_gate* (the r04n-form builds of
+    # this harness — test_gs_bridge_chain, test_gs_bridge_g2* — went with the
+    # r04n bridge; their goldens stay, test_g6b_gate* compares against them).
     # THE GARAGE BRIDGE, STAGE G1 (2026-11-18, ~/tcu_sweep/garage_g1_port.md):
     # test_diag_realfb's supervisor + real bus-A chain + main.c's 10 ms task
     # (producer, vehicle sims, kl15, the range chain, park_tick, the garage
@@ -1276,17 +1286,12 @@ else()
         bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
         app/fb_shadow.c app/fb_cal.c tests/unit/fb_model.c
         app/rq_prod.c app/rq_fill.c app/rq_fill_cal.c
-        app/gs_shadow.c app/gs_fill.c app/gs_cal.c app/gs_bridge.c
+        app/gs_cal.c app/gs_bridge.c
         app/rng_chain.c safety/kl15.c app/range.c app/park_law.c app/park.c safety/park_mon.c
         bsw/sched/sched.c io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
         tests/unit/stub_plat.c)
     set(GSB_CHAIN_DEFS SUP_L1_HOLD_PHASE8_REQUEST=0 SUP_L1_HOLD_PHASE40=0 SUP_L1_HOLD_FAIL_FSM=0
         SUP_L3_HOLD_SEQ_L=0 DRV_RQ_USE_PRODUCER=1 GS_FORCED=1)
-    add_executable(test_gs_bridge_chain ${GSB_CHAIN_SOURCES})
-    target_compile_definitions(test_gs_bridge_chain PRIVATE ${GSB_CHAIN_DEFS})
-    add_test(NAME gs_bridge_chain COMMAND test_gs_bridge_chain)
-    add_executable(test_gs_bridge_g2 ${GSB_CHAIN_SOURCES})
-    target_compile_definitions(test_gs_bridge_g2 PRIVATE ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3)
     # G4a (2026-11-19, ~/tcu_sweep/g4a_release_port.md): the live path with
     # the bridge LIVE (the SH configuration) against the per-frame trace of
     # HEAD bccfb9d (r04j, the instant-release stand-in): every frame of the
@@ -1301,77 +1306,16 @@ else()
     # wire, and (2) the exact G4b trace. The negative: the r04k behaviour
     # against the exact G4b trace must FAIL.
     set(GSB_GOLD ${CMAKE_SOURCE_DIR}/tests/unit/golden)
-    add_test(NAME gs_bridge_g2_gate COMMAND test_gs_bridge_g2
-        ${GSB_GOLD}/gsb_live_g2_ref_r04k.txt ${GSB_GOLD}/gsb_live_g2_g4b.txt)
-    add_executable(test_gs_bridge_g2_norel ${GSB_CHAIN_SOURCES})
-    target_compile_definitions(test_gs_bridge_g2_norel PRIVATE ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3
-        GSB_HOST_NO_REL_BRIDGE=1)
-    add_test(NAME gs_bridge_g2_r04k_ref COMMAND test_gs_bridge_g2_norel
-        ${GSB_GOLD}/gsb_live_g2_head_bccfb9d.txt ${GSB_GOLD}/gsb_live_g2_ref_r04k.txt)
-    add_test(NAME gs_bridge_g2_gold_neg COMMAND test_gs_bridge_g2_norel
-        ${GSB_GOLD}/gsb_live_g2_head_bccfb9d.txt ${GSB_GOLD}/gsb_live_g2_g4b.txt)
-    set_tests_properties(gs_bridge_g2_gold_neg PROPERTIES WILL_FAIL TRUE)
-    add_executable(test_gs_bridge_g2_temps ${GSB_CHAIN_SOURCES} app/tsel_shadow.c)
-    target_compile_definitions(test_gs_bridge_g2_temps PRIVATE ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3
-        DIAG_TEMPS=1 FBS_9393A_HOST_SRC=g_fbs_9393a_host)
-    add_test(NAME gs_bridge_g2_gate_bounds COMMAND test_gs_bridge_g2_temps
-        ${GSB_GOLD}/gsb_live_g2_temps_ref_r04k.txt ${GSB_GOLD}/gsb_live_g2_temps_g4b.txt)
-    add_executable(test_gs_bridge_g2_temps_norel ${GSB_CHAIN_SOURCES} app/tsel_shadow.c)
-    target_compile_definitions(test_gs_bridge_g2_temps_norel PRIVATE ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3
-        DIAG_TEMPS=1 FBS_9393A_HOST_SRC=g_fbs_9393a_host GSB_HOST_NO_REL_BRIDGE=1)
-    add_test(NAME gs_bridge_g2_temps_r04k_ref COMMAND test_gs_bridge_g2_temps_norel
-        ${GSB_GOLD}/gsb_live_g2_temps_head_bccfb9d.txt ${GSB_GOLD}/gsb_live_g2_temps_ref_r04k.txt)
-    add_executable(test_gs_bridge_g2_temps_live ${GSB_CHAIN_SOURCES} app/tsel_shadow.c
-        app/tsel_live.c bsw/drv/drv_tsel.c)
     # stage 2b (2026-11-19): TSEL_LIVE=1 now brings the fault flags live too
     # (TSEL_LIVE_FLAGS defaults to it — the image's configuration); the
     # stage-2a goldens are kept, the four flag cells hashed at their 2a value
     # 0 (GSB_HASH_FLAGS_AS_2A, test_gs_bridge_chain.c), everything else exact
-    target_compile_definitions(test_gs_bridge_g2_temps_live PRIVATE ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3
-        DIAG_TEMPS=1 TSEL_LIVE=1 FBS_T_ECU_LIVE=1 GSB_HASH_FLAGS_AS_2A=1)
-    add_test(NAME gs_bridge_g2_gate_bounds_live COMMAND test_gs_bridge_g2_temps_live
-        ${GSB_GOLD}/gsb_live_g2_temps_live_ref_r04k.txt ${GSB_GOLD}/gsb_live_g2_temps_live_g4b.txt)
-    add_executable(test_gs_bridge_g2_temps_live_norel ${GSB_CHAIN_SOURCES} app/tsel_shadow.c
-        app/tsel_live.c bsw/drv/drv_tsel.c)
-    target_compile_definitions(test_gs_bridge_g2_temps_live_norel PRIVATE ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3
-        DIAG_TEMPS=1 TSEL_LIVE=1 FBS_T_ECU_LIVE=1 GSB_HOST_NO_REL_BRIDGE=1 GSB_HASH_FLAGS_AS_2A=1)
-    add_test(NAME gs_bridge_g2_temps_live_r04k_ref COMMAND test_gs_bridge_g2_temps_live_norel
-        ${GSB_GOLD}/gsb_live_g2_temps_live_head_bccfb9d.txt ${GSB_GOLD}/gsb_live_g2_temps_live_ref_r04k.txt)
     # stage 2b negative: the same build WITHOUT the 2a mask must FAIL against
     # the exact golden (the flags really are written in this harness)
-    add_executable(test_gs_bridge_g2_temps_live2b_nomask ${GSB_CHAIN_SOURCES} app/tsel_shadow.c
-        app/tsel_live.c bsw/drv/drv_tsel.c)
-    target_compile_definitions(test_gs_bridge_g2_temps_live2b_nomask PRIVATE ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3
-        DIAG_TEMPS=1 TSEL_LIVE=1 FBS_T_ECU_LIVE=1)
-    add_test(NAME gs_bridge_g2_temps_live2b_nomask_negative COMMAND test_gs_bridge_g2_temps_live2b_nomask
-        ${GSB_GOLD}/gsb_live_g2_temps_live_ref_r04k.txt ${GSB_GOLD}/gsb_live_g2_temps_live_g4b.txt)
-    set_tests_properties(gs_bridge_g2_temps_live2b_nomask_negative PROPERTIES WILL_FAIL TRUE)
-    # G6a (2026-11-19, ~/tcu_sweep/g6a_port.md): THE DUAL-RUN on the real
-    # chain — the candidate (instance 2 in its SH form, GSC_G6A) and the
-    # comparator ticked as app/main.c ticks them, every scenario run without
-    # and with them: (1) every bus-A word, the park demands and the cell
-    # window identical, the only differing window bytes inside .gsc_req;
-    # (2) 0 UNEXPECTED disagreements, the boot window <= 16 passes, the
-    # law's 0x94ED4 = the predicted wire value, the guard replica silent.
-    # test_g6a_englim: the bridge's engagement limit trips mid-engagement
-    # (FENCED, never UNEXPECTED). Negatives: G6A_NEG 1 (the candidate
-    # perturbed inside its own RAM: the comparator must flag UNEXPECTED,
-    # the identity must hold) and G6A_NEG 2 (the candidate bound onto the
-    # live request objects: the identity must fail) — each passes only
-    # when its defect is caught.
-    set(G6A_SOURCES ${GSB_CHAIN_SOURCES} app/gs_cand.c app/gs_cand_fill.c app/g6a.c)
-    list(REMOVE_ITEM G6A_SOURCES tests/unit/test_gs_bridge_chain.c)
-    list(APPEND G6A_SOURCES tests/unit/test_g6a.c)
-    set(G6A_DEFS ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3 GSC_G6A=1)
-    add_executable(test_g6a ${G6A_SOURCES})
-    target_compile_definitions(test_g6a PRIVATE ${G6A_DEFS})
-    add_test(NAME g6a_dual_run COMMAND test_g6a)
-    add_executable(test_g6a_englim ${G6A_SOURCES})
-    target_compile_definitions(test_g6a_englim PRIVATE ${G6A_DEFS} GSB_ENG_PASSES=50u G6A_ENGLIM=1)
-    add_test(NAME g6a_dual_run_englim COMMAND test_g6a_englim)
-    add_executable(test_g6a_neg_perturb ${G6A_SOURCES})
-    target_compile_definitions(test_g6a_neg_perturb PRIVATE ${G6A_DEFS} G6A_NEG=1 GSC_NEG_C3D=1)
-    add_test(NAME g6a_neg_perturbed_candidate COMMAND test_g6a_neg_perturb)
+    # G6c (2026-11-19, ~/tcu_sweep/g6c_port.md): the G6a dual-run tests
+    # (test_g6a*: the candidate beside the r04n bridge of the shadow) went
+    # with the shadow and the r04n bridge form (D-G6-7); the image's form is
+    # tested by test_g6b / test_g6b_gate* below.
     # the read-only frame of the candidate and the comparator: the source
     # scans (outputs may not name them, the comparator only reads) and THE
     # LINK-MAP SCAN of their objects (every undefined symbol in the allowed
@@ -1401,10 +1345,22 @@ else()
     set_tests_properties(g6a_scan_cmp_negative PROPERTIES WILL_FAIL TRUE)
     add_test(NAME g6a_scan_link
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py link nm
-            ${CMAKE_BINARY_DIR}/CMakeFiles/test_g6a.dir/app/gs_cand.c.o
-            ${CMAKE_BINARY_DIR}/CMakeFiles/test_g6a.dir/app/gs_cand_fill.c.o
-            ${CMAKE_BINARY_DIR}/CMakeFiles/test_g6a.dir/app/g6a.c.o)
+            ${CMAKE_BINARY_DIR}/CMakeFiles/test_g6b.dir/app/gs_cand.c.o
+            ${CMAKE_BINARY_DIR}/CMakeFiles/test_g6b.dir/app/gs_cand_fill.c.o
+            ${CMAKE_BINARY_DIR}/CMakeFiles/test_g6b.dir/app/g6a.c.o)
     add_library(g6a_link_fixture OBJECT tests/unit/g6a_scan_fixture_link.c)
+    # G6c: the monitor's .noinit windows over a cold / warm / torn reset
+    # (gs_bridge_init; the r04n bridge-logic test that carried it is gone)
+    add_executable(test_g6c_windows tests/unit/test_g6c_windows.c app/gs_bridge.c)
+    add_test(NAME g6c_monitor_windows_reset COMMAND test_g6c_windows)
+    # G6c: the RAM-section overlap scan (POST_BUILD of tcu_app.elf) on its fixtures
+    add_test(NAME g6c_sections_scan
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6c_sections.py --fixture
+            ${CMAKE_SOURCE_DIR}/tests/unit/g6c_sections_fixture_ok.txt)
+    add_test(NAME g6c_sections_scan_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6c_sections.py --fixture
+            ${CMAKE_SOURCE_DIR}/tests/unit/g6c_sections_fixture_overlap.txt)
+    set_tests_properties(g6c_sections_scan_negative PROPERTIES WILL_FAIL TRUE)
     add_test(NAME g6a_scan_link_negative
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py link nm $<TARGET_OBJECTS:g6a_link_fixture>)
     set_tests_properties(g6a_scan_link_negative PROPERTIES WILL_FAIL TRUE)
@@ -1445,73 +1401,29 @@ else()
     set(G6B_DEFS ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3 GSC_G6A=1 GS_G6B=1)
     add_executable(test_g6b ${G6B_SOURCES})
     target_compile_definitions(test_g6b PRIVATE ${G6B_DEFS})
+    # G6c (2026-11-19, ~/tcu_sweep/g6c_port.md): the r04o goldens of every
+    # test_g6b run (written by HEAD fff32bd's G6b form, tests/unit/g6c_gold.h)
+    file(ARCHIVE_EXTRACT INPUT ${CMAKE_SOURCE_DIR}/tests/unit/golden/g6c_r04o_test_g6b.tgz
+        DESTINATION ${CMAKE_BINARY_DIR}/g6c_r04o)
+    set(G6C_GOLD_ENV "G6C_GOLD_IN=${CMAKE_BINARY_DIR}/g6c_r04o/gold")
     add_test(NAME g6b_switch COMMAND test_g6b)
     add_executable(test_g6b_englim ${G6B_SOURCES})
     target_compile_definitions(test_g6b_englim PRIVATE ${G6B_DEFS} GSB_ENG_PASSES=50u G6A_ENGLIM=1)
     add_test(NAME g6b_switch_englim COMMAND test_g6b_englim)
+    set_tests_properties(g6b_switch g6b_switch_englim PROPERTIES ENVIRONMENT "${G6C_GOLD_ENV}")
     add_executable(test_g6b_bypass ${G6B_SOURCES})
     target_compile_definitions(test_g6b_bypass PRIVATE ${G6B_DEFS} GSM_HOST_BYPASS=1 G6B_BYPASS=1)
     add_test(NAME g6b_monitor_bypass_negative COMMAND test_g6b_bypass)
+    set_tests_properties(g6b_monitor_bypass_negative PROPERTIES ENVIRONMENT "${G6C_GOLD_ENV}")
     set_tests_properties(g6b_monitor_bypass_negative PROPERTIES WILL_FAIL TRUE)
-    add_executable(test_g6a_neg_livewrite ${G6A_SOURCES})
-    target_compile_definitions(test_g6a_neg_livewrite PRIVATE ${G6A_DEFS} G6A_NEG=2 GSC_NEG_LIVE_ALIAS=0xFFF8B7C8u)
-    add_test(NAME g6a_neg_live_write COMMAND test_g6a_neg_livewrite)
-    # the bridge's logic on test_gs_shadow's light harness: the OS-mode-2
-    # witness, the .noinit windows, the guard negatives (G1: recorded, the
-    # wire never moves), and — GS_LIVE_DIR 3, host only — every abort of the
-    # plan (the P content within 2 passes, the latches, the windows over a
-    # warm reset); the table mutation and the engagement limit
-    set(GSB_LOGIC_SOURCES tests/unit/test_gs_bridge_logic.c app/gs_shadow.c app/gs_fill.c app/gs_cal.c
-        app/gs_bridge.c app/rng_chain.c safety/kl15.c
-        app/range.c app/park_law.c app/park.c safety/park_mon.c bsw/sched/sched.c
-        io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
-        app/rq_prod.c app/rq_fill.c app/rq_fill_cal.c
-        bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
-        tests/unit/stub_plat.c)
-    add_executable(test_gs_bridge_logic ${GSB_LOGIC_SOURCES})
-    target_compile_definitions(test_gs_bridge_logic PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=1)
-    add_test(NAME gs_bridge_logic COMMAND test_gs_bridge_logic)
-    add_executable(test_gs_bridge_live ${GSB_LOGIC_SOURCES})
-    target_compile_definitions(test_gs_bridge_live PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=1 GS_LIVE_DIR=3)
-    add_test(NAME gs_bridge_live_aborts COMMAND test_gs_bridge_live)
-    # G6-0: the candidate beside the shadow through every abort case
-    add_executable(test_gs_dual_bridge_logic ${GSB_LOGIC_SOURCES} app/gs_cand.c app/gs_cand_fill.c
-        tests/unit/gs_dual.c)
-    target_compile_definitions(test_gs_dual_bridge_logic PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=1 GS_DUAL=1)
-    add_test(NAME gs_dual_bridge_logic COMMAND test_gs_dual_bridge_logic)
-    add_executable(test_gs_dual_bridge_live ${GSB_LOGIC_SOURCES} app/gs_cand.c app/gs_cand_fill.c
-        tests/unit/gs_dual.c)
-    target_compile_definitions(test_gs_dual_bridge_live PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=1 GS_LIVE_DIR=3
-        GS_DUAL=1)
-    add_test(NAME gs_dual_bridge_live_aborts COMMAND test_gs_dual_bridge_live)
-    add_executable(test_gs_bridge_mut ${GSB_LOGIC_SOURCES})
-    target_compile_definitions(test_gs_bridge_mut PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=1 GSB_HOST_MUT_TABLE=1)
-    add_test(NAME gs_bridge_table_mutation_trips COMMAND test_gs_bridge_mut)
-    add_executable(test_gs_bridge_engt ${GSB_LOGIC_SOURCES})
-    target_compile_definitions(test_gs_bridge_engt PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=1 GS_LIVE_DIR=3
-        GSB_ENG_PASSES=50u TEST_ENGT=1)
-    add_test(NAME gs_bridge_engagement_limit COMMAND test_gs_bridge_engt)
-    # STAGE G4b (2026-11-19, ~/tcu_sweep/g4b_release_bridge_port.md): the
-    # release length limit (host override 50 passes); the two release
-    # negatives must FAIL the release tests — the r04k behaviour (no bridged
-    # release) and a bridge that arms fresh into a release
-    add_executable(test_gs_bridge_rellen ${GSB_LOGIC_SOURCES})
-    target_compile_definitions(test_gs_bridge_rellen PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=1 GS_LIVE_DIR=3
-        GSB_REL_PASSES=50u TEST_REL_LEN=1)
-    add_test(NAME gs_bridge_release_length_limit COMMAND test_gs_bridge_rellen)
-    add_executable(test_gs_bridge_rel_norel ${GSB_LOGIC_SOURCES})
-    target_compile_definitions(test_gs_bridge_rel_norel PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=1 GS_LIVE_DIR=3
-        GSB_HOST_NO_REL_BRIDGE=1 TEST_REL_ONLY=1)
-    add_test(NAME gs_bridge_release_neg_r04k COMMAND test_gs_bridge_rel_norel)
-    set_tests_properties(gs_bridge_release_neg_r04k PROPERTIES WILL_FAIL TRUE)
-    add_executable(test_gs_bridge_rel_fresh ${GSB_LOGIC_SOURCES})
-    target_compile_definitions(test_gs_bridge_rel_fresh PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=1 GS_LIVE_DIR=3
-        GSB_HOST_NEG_REL_FRESH=1 TEST_REL_ONLY=1)
-    add_test(NAME gs_bridge_release_neg_fresh_arm COMMAND test_gs_bridge_rel_fresh)
-    set_tests_properties(gs_bridge_release_neg_fresh_arm PROPERTIES WILL_FAIL TRUE)
+    # G6c: the r04n bridge's logic tests (test_gs_bridge_logic / _live /
+    # _mut / _engt / _rellen / _rel_norel / _rel_fresh, test_gs_dual_bridge_*)
+    # went with the r04n bridge form; the monitor's equivalents (bounds,
+    # envelope, 125-pass release limit, 3.5 s engagement limit, windows,
+    # permits) are test_g6b's negatives
     # the compile-time element bounds against the image's bytes (role tables
     # 0x6312F / 0x63139 / 0x63143, table 0x505A4); the mutated table must FAIL
-    set(GSB_TABLE_SOURCES tests/unit/test_gs_bridge_tables.c app/gs_bridge.c app/gs_shadow.c
+    set(GSB_TABLE_SOURCES tests/unit/test_gs_bridge_tables.c app/gs_bridge.c tests/unit/gs_ref_shadow.c
         app/gs_fill.c app/gs_cal.c app/rq_fill_cal.c tests/unit/stub_plat.c)
     add_executable(test_gs_bridge_tables ${GSB_TABLE_SOURCES})
     target_compile_definitions(test_gs_bridge_tables PRIVATE GS_FORCED=1

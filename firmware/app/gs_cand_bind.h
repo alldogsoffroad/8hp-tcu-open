@@ -1,4 +1,7 @@
-/* gs_cand_bind.h — the BINDING of INSTANCE 2 of the garage engine template
+/* G6c (2026-11-19, ~/tcu_sweep/g6c_port.md): instance 2 is THE ENGINE of the
+ * image (the only binding on SH); instance 1 lives on only as the host test
+ * reference tests/unit/gs_ref_shadow.c. The text below is the G6-0/G6a note.
+ * gs_cand_bind.h — the BINDING of INSTANCE 2 of the garage engine template
  * (app/gs_engine.c + app/gs_fill.c): the future G6a CANDIDATE.
  * G6-0, 2026-11-19, ~/tcu_sweep/g6_0_port.md.
  *

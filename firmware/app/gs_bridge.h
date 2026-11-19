@@ -211,7 +211,8 @@ _Static_assert(sizeof(gsb_t) == 212u, "gsb_t is 212 bytes (tools/bench/witness_g
 #define GSM_S_PCONT   2u
 /* G6b: the monitor's own latch bits (gsb_win_t.latch, .noinit, until power-off) */
 #define GSB_L_PERMIT  0x10u     /* a permit failed while the candidate's engine owned non-P content */
-#define GSB_L_SHADOW  0x20u     /* candidate != shadow (A..E) on 2 owned non-P passes running */
+#define GSB_L_SHADOW  0x20u     /* r04o only: candidate != shadow (A..E) on 2 owned non-P passes
+                                 * running — G6c deleted the check with the shadow (never set) */
 #define GSB_L_IDLE    0x40u     /* non-P content while the candidate's engine owned nothing */
 /* G6b meanings of two r04n reason bits in a trip record (gsb_t.trip_why):
  * GSB_R_AGREE = candidate != shadow (the comparator's monitor role, plan
@@ -325,14 +326,12 @@ const volatile gsbr_est_t *gs_bridge_rel_est(void);
 void gs_bridge_init(bool cold);
 void gs_bridge_tick_10ms(const gsb_in_t *in);
 #if !defined(__sh__)
-/* host only (GS_G6B builds): run the monitor (true, the image's form) or the
- * r04n bridge (false) — one binary compares the two wires */
-void gs_bridge_host_g6b(bool on);
 /* host only (GS_G6B builds): the monitor's windows at run time (the
  * negatives): engagement passes, release passes, armed ms, commits */
 void gs_bridge_host_limits(uint16_t eng, uint16_t rel, uint32_t win_ms, uint16_t commits);
 #endif
-/* true: this build / run is the G6b monitor (the seam carries the candidate) */
+/* true: this build is the G6b monitor (the seam carries the candidate);
+ * G6c: a build constant (the r04n bridge form is deleted) */
 bool gs_bridge_g6b(void);
 
 const volatile gsb_t     *gs_bridge_state(void);

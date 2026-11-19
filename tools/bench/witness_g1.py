@@ -16,8 +16,8 @@ blocks; read after the lever sequence, with the bridge idle in P):
   gsb_t     212 B at 0xFFF87220 (.gsb_state) state, witnesses, slot headers,
                                               the OS-mode-2 witness (0x1418E2),
                                               G6b: the monitor block (+172)
-  gsb_rec_t 112 x 36 B at 0xFFF8BCC0 (.gsb_rec0, the last D)
-  gsb_rec_t 112 x 36 B at 0xFFF89D20 (.gsb_rec1, the last R)
+  gsb_rec_t 112 x 36 B at 0xFFF911A0 (.gsb_rec0, the last D; G6c — r04o 0xFFF8BCC0)
+  gsb_rec_t 112 x 36 B at 0xFFF8EE00 (.gsb_rec1, the last R; G6c — r04o 0xFFF89D20)
 plus, for comparison, LIVE cells the bridge must never change (D6D6, the park
 model, the OS mode, seq2 / letter, the live producer's A..E 0x84B78, the fault
 word 0x93004 A..E).
@@ -29,8 +29,11 @@ word 0x93004 A..E).
   --quick   no recorder (state, windows, slot headers, mode-2 witness only)
 
 Addresses from nm of THIS build (sh-elf-nm build/sh2a/tcu_app.elf | grep gsb):
-_s_gsb_win 0xFFF87200, _s_gsb 0xFFF87220, _s_gsb_rec0 0xFFF8BCC0,
-_s_gsb_rec1 0xFFF89D20. Re-check before every use.
+_s_gsb_win 0xFFF87200, _s_gsb 0xFFF87220, _s_gsb_rec0 0xFFF911A0,
+_s_gsb_rec1 0xFFF8EE00 (r04p, G6c: off the stock cells into the deleted
+shadow's RAM). Re-check before every use.
+G6c: the shadow is deleted — the monitor's "candidate != shadow" check with it
+(latch bit 0x20 SHADOW never set, the shadow-diff counters stay 0).
 
 Reading a G1 run (the gs-check with --sim-brake --sim-engine 700):
   - slot D / R: arm_on 0 (would-arm from the commit pass), done_at ~93..96
@@ -52,7 +55,7 @@ import tcu_bench  # noqa: E402
 
 WIN = 0xFFF87200
 ST = 0xFFF87220
-REC = (0xFFF8BCC0, 0xFFF89D20)
+REC = (0xFFF911A0, 0xFFF8EE00)   # r04p (G6c); r04o 0xFFF8BCC0 / 0xFFF89D20
 RECN = 112
 RECSZ = 36
 LIVE = [
@@ -61,7 +64,7 @@ LIVE = [
     ("producer A..E 0x84B78", 0xFFF84B78, 10), ("fault word A..E 0x93004", 0xFFF93004, 10),
 ]
 WHY = ["IDLE", "DIR", "RAIL", "OS", "RANGE", "PARK", "MON", "DIAG", "RELWIN", "WIN", "ENGT", "COMMITS",
-       "AGREE(G6b: cand!=shadow)", "G_RANGE", "G_FIXED", "G_LATCH"]
+       "AGREE(r04o: cand!=shadow, retired G6c)", "G_RANGE", "G_FIXED", "G_LATCH"]
 LATCH = ["WIN 30s", "ENGT 3.5s", "COMMITS 16", "GUARD bounds/envelope", "PERMIT", "SHADOW", "IDLE non-P", "?"]
 SRC = ["LIVE (E28E fence)", "CAND", "PCONT (latched)"]
 ST_SZ = 212
@@ -134,7 +137,7 @@ def show_mon(d):
           "P content %u | fence entries %u exits %u (first exit at bridge pass %u)"
           % (SRC[d[m]] if d[m] < 3 else "?", d[m + 1], d[m + 2], d[m + 3], u32(d, m + 12), u32(d, m + 16),
              u32(d, m + 20), u16(d, m + 28), u16(d, m + 30), u32(d, m + 32)))
-    print("  G6b trips %u (want 0): first at pass %s why %s ch %s v %u | shadow-diff passes %u (run %u)"
+    print("  G6b trips %u (want 0): first at pass %s why %s ch %s v %u | shadow-diff passes %u (run %u; retired G6c, 0)"
           % (u16(d, m + 38), "-" if tp == 0xFFFFFFFF else tp, why(u16(d, m + 6)),
              "-" if d[m + 5] == 0xFF else d[m + 5], u16(d, m + 36), u32(d, m + 24), d[m + 4]))
 

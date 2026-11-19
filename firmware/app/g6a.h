@@ -49,6 +49,16 @@
  * The comparator is COMMON-MODE with the shadow (the same engine source):
  * it proves the binding, the slot order and the boot pass, not the logic.
  */
+/* G6c (2026-11-19, ~/tcu_sweep/g6c_port.md): THE SHADOW IS DELETED (D-G6-7)
+ * and with it every candidate-vs-shadow comparison. g6a_t keeps its r04o
+ * layout (the bench tools) with these fields retired, always 0: cvs_n,
+ * cvs_all, sh_us_max / sh_us_last, g6a_rec_t.sph; class FSMTAIL is never
+ * taken (r04o's FSMTAIL passes count as AGREE: candidate == wire). The
+ * classes now: AGREE candidate == wire; BOOT inside the boot window (the
+ * E28E boot fence); FENCED the monitor chose the live producer (fence) or
+ * the latched P content; UNEXP the seam carried the candidate and the wire
+ * differs (a guard fallback). The law cross-check, the guard replica and
+ * the CPU witnesses are unchanged. The text below is the r04o note. */
 #ifndef TCU_APP_G6A_H
 #define TCU_APP_G6A_H
 
@@ -181,14 +191,11 @@ void g6a_boot(const gs_in_t *gi);
 /* app/main.c: builds the inputs and calls g6a_boot (the weak hook of
  * bsw/sup/sup_mode.c) */
 void g6a_boot_pass(void);
-/* task_10ms, after the garage bridge (OS modes 1..3): the candidate's pass
- * at its G6b slot, then the comparison (the r04n / G6a order) */
-void g6a_tick_10ms(const gs_in_t *gi);
 /* G6b order (app/main.c): the candidate's pass BEFORE the monitor (the seam
  * hands the F stage this pass's candidate), the comparison after it */
 void g6a_cand_tick(const gs_in_t *gi);
 void g6a_compare_10ms(uint8_t os_mode);
-/* G6b: a stage's duration, µs (G6A_T_SHADOW, G6A_T_MON) */
+/* G6b: a stage's duration, µs (G6A_T_MON; G6A_T_SHADOW retired in G6c) */
 #define G6A_T_SHADOW    0u
 #define G6A_T_MON       1u
 void g6a_time(unsigned what, uint32_t us);

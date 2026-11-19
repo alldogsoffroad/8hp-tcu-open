@@ -55,7 +55,7 @@ Commands:
                           (alias shadow-check) PROJECT firmware: lever P R N D P, the live range
                           chain's cells (at the stock addresses) and the park path per step
   gs-check [--sim-brake] [--sim-engine RPM] [--start-before-power] [--hold S]
-                          PROJECT firmware: the READ-ONLY garage-engagement shadow (app/gs_shadow.c)
+                          PROJECT firmware: the garage engine (G6c: app/gs_cand.c, the producer under the monitor)
                           - lever P, D, P, R, P; prints the shadow's witnesses and its
                           per-pass engagement recorder after the P->D and P->R commits
   keyoff-check [--off-code C] [--sim-brake] [--sim-engine RPM] [--settle S]
@@ -1583,43 +1583,81 @@ def gsbr_print(raw, est, rel_raw):
             prevkey = key
 
 
+GSE_RELH_SIZE = 0x4C        # gse_relh_t (app/gs_engine.c, GSE_REC 0: gs_rel_t up to .rec)
+GSB_REC_ENTRY = 36          # gsb_rec_t (app/gs_bridge.h)
+GSB_REC_N = 112
+# G6c (D-G6-9): the engine's objects at their stock addresses (app/gs_engine.c gse_*)
+GSE_PINNED = (("E28E", 0xFFF8E28E, 10), ("E4A7", 0xFFF8E4A7, 1), ("E4AC", 0xFFF8E4AC, 10),
+              ("E69B", 0xFFF8E69B, 1), ("E69F", 0xFFF8E69F, 1), ("E6A1", 0xFFF8E6A1, 1), ("E6A8", 0xFFF8E6A8, 5),
+              ("E6C5", 0xFFF8E6C5, 1), ("E6EE", 0xFFF8E6EE, 1), ("E6EF", 0xFFF8E6EF, 1))
+
+
+def gse_relh_print(raw, bd8e):
+    """The engine's release header (G4a; GSE_REC 0: no entries) + BD8E at its stock cell (G6c)."""
+    u16 = lambda o: int.from_bytes(raw[o:o + 2], "big")
+    u32 = lambda o: int.from_bytes(raw[o:o + 4], "big")
+    s16 = lambda o: int.from_bytes(raw[o:o + 2], "big", signed=True)
+    print(f"release (G4a, the engine): BD8E 0x{bd8e:04X} (0xFFF8BD8E, G6c), recording slot {raw[2]:#04x}, last slot"
+          f" {raw[3]:#04x}; release passes {u32(4)}, starts {u32(8)}, unported {u32(12)}, C case {u32(16)},"
+          f" 0x10E896/D252 stand-in {u32(20)}, BD16-0 stand-in {u32(24)}")
+    for k in (0, 1):
+        h = 28 + 24 * k
+        ln = u16(h + 4)
+        print(f"  release slot {k} (from {'D' if k == 0 else 'R'}): start pass {u32(h)}, length "
+              f"{'-' if ln == 0xFFFF else ln} passes, cause {raw[h + 11]} (5 0x106918, 6 BD8E timer, 4 new"
+              f" request), BD8E at the end {u16(h + 6)}, limit D0DC+0x12 {u16(h + 8)}, gear "
+              f"{raw[h + 12] - 256 if raw[h + 12] > 127 else raw[h + 12]}, elements {raw[h + 13]}/{raw[h + 14]}/"
+              f"{raw[h + 15]}, +0x26 {s16(h + 16)}/{s16(h + 18)}/{s16(h + 20)}")
+
+
+def gsb_rec_print(k, slot, raw, n):
+    """The monitor's recorder slot k (gsb_rec_t; G6b: the candidate's phases and words)."""
+    u16 = lambda d, o: int.from_bytes(d[o:o + 2], "big")
+    u32 = lambda d, o: int.from_bytes(d[o:o + 4], "big")
+    print(f"  monitor recorder slot {k} ({'D' if k == 0 else 'R'}): commit at monitor pass {u32(slot, 0)}, arm_on"
+          f" {u16(slot, 4)}, arm_off {u16(slot, 6)} (why {u16(slot, 8):04X}), done_at {u16(slot, 10)} cause"
+          f" {slot[18]}, armed {u16(slot, 14)} passes, guard trips {slot[19]}; {n} entries")
+    print("  pass ph0 ph1 ph2 st why  | staged A    D    B    E    C | est A  D    B    E    C (0.1 mA)")
+    for i in range(n):
+        e = raw[i * GSB_REC_ENTRY:(i + 1) * GSB_REC_ENTRY]
+        if i < 4 or i % 8 == 0 or i >= n - 2 or e[3] & 0xC0:
+            print(f"  {i:4d} {e[0]:3X} {e[1]:3X} {e[2]:3X} {e[3]:02X} {u16(e, 4):04X} | "
+                  + " ".join(f"{u16(e, 16 + 2 * c):04X}" for c in range(5)) + " | "
+                  + " ".join(f"{u16(e, 26 + 2 * c):4d}" for c in range(5)))
+
+
 def cmd_gs_check(b, args):
-    """The READ-ONLY garage-engagement shadow (app/gs_shadow.c; ~/tcu_sweep/garage_shadow_port.md).
-    It DRIVES NOTHING: the stock's garage engagement (direction request, power-flow commit, the
-    three-element engine, the producer sources ids 6/8/10, the holder, the element law) is
-    computed into the shadow's own RAM. GS_FORCED (the SH build) runs it AS IF OS mode were not 1
-    and the gear target the fault-free 1st - the stock itself never commits in mode 1.
+    """THE GARAGE ENGINE (G6c, r04p on: app/gs_cand.c — the stock engagement engine + holder in the
+    stock 10 ms slot order) DRIVES the A..E element currents through the monitor (app/gs_bridge.c:
+    permits, element bounds, release envelope, windows; violation -> the P content, latched; the
+    E28E fence). The shadow (instance 1, the read-only reference of r04a..r04o) is DELETED (D-G6-7).
     Sequence (lever, --hold s each): P, D, P, R, P. With --sim-brake --sim-engine 700 the LIVE
-    range chain releases park on D and R (release 1.0 A + hold: the only current that moves),
-    the shadow commits ~150 ms later (the park model) and records 1.12 s of the engagement.
-    Expected (host test test_gs_shadow, 2026-11-18 v2 at 38.9 C): P->D commit, C fills first
-    (~5930, 10 passes), B waits in 0x0F, B fill ~5710, B phase 4 ~3630 (one pass), sync on the
-    next pass (turbine 0), B in 0x0B for 49 passes (~4150 -> 5225, BD30 1..49), the 0x0C ramp,
-    completion (cause 1) ~0.95 s after the commit, then A 8500 D 8500 B 8500 E 8500 C 500;
-    P->R the same shape with D third, end A 8500 D 500 B 8500 E 8500 C 8500; WK / Sys 500.
-    G2 (r04i+): the bridge APPLIES the engagement to the live solenoid currents. G4b (r04l+): after
-    each lever P it also applies the stock's 1.2 s RELEASE (120 passes on the dry bench: from D B
-    ~4116 -> ~3486, C ~6440 -> ~6670; from R B ~3600 -> ~3486, D ~6150 -> ~6504), then the P content;
-    the bridged-release recorder (_s_gsbr / _s_gsbr_est) is printed at the end."""
+    range chain releases park on D and R (release 1.0 A + hold), the engine commits ~150 ms later
+    (the park model): C fills first (~5930, 11 passes with the 0xE469C term), B waits in 0x0F, B fill
+    ~5710, B phase 4 ~3630, sync, B in 0x0B ~49 passes, the 0x0C ramp, completion (cause 1) at pass
+    ~96 (D) / ~95 (R), then A 8500 D 8500 B 8500 E 8500 C 500 (D) / A 8500 D 500 B 8500 E 8500 C 8500
+    (R); after each lever P the stock's 1.2 s release (120 passes, cause 6), then the P content.
+    Printed: the engine's witnesses and release header, its stock objects at their stock addresses
+    (G6c), the monitor's two recorder slots, the bridged-release recorder and the monitor line."""
     b.start_drain()     # keep the Teensy ports drained (lever-sim gaps, 2026-11-17)
 
-    w_addr, w_size = elf_sym(args.elf, "_g_w", G6A_CAND_RAM)      # the shadow's, not the G6a candidate's
-    r_slots = [elf_sym(args.elf, "_g_rec0"), elf_sym(args.elf, "_g_rec1")]
-    rel_addr, rel_size = elf_sym(args.elf, "_g_rel", G6A_CAND_RAM)
-    if rel_size != GS_REL_SIZE:
-        sys.exit(f"_g_rel {rel_size:#x}: not the gs_rel_t layout this tool expects (G4a) - rebuild?")
-    if w_size != GS_WIT_SIZE or any(sz != GS_REC_N * GS_REC_ENTRY for _, sz in r_slots):
-        sys.exit(f"_g_w {w_size:#x} / _g_rec0/1 {[hex(sz) for _, sz in r_slots]}: not the layout this"
-                 " tool expects - rebuild?")
+    w_addr, w_size = elf_sym(args.elf, "_g_w")        # G6c: the engine's (the only _g_w)
+    rel_addr, rel_size = elf_sym(args.elf, "_g_rel")
+    gs_addr, gs_size = elf_sym(args.elf, "_s_gsb")
+    gw_addr, _ = elf_sym(args.elf, "_s_gsb_win")
+    mr = [elf_sym(args.elf, "_s_gsb_rec0"), elf_sym(args.elf, "_s_gsb_rec1")]
+    if rel_size != GSE_RELH_SIZE or w_size != GS_WIT_SIZE or gs_size != GSB_SIZE_G6B or \
+            any(sz != GSB_REC_N * GSB_REC_ENTRY for _, sz in mr):
+        sys.exit(f"_g_rel {rel_size:#x} / _g_w {w_size:#x} / _s_gsb {gs_size:#x} / _s_gsb_rec0/1"
+                 f" {[hex(sz) for _, sz in mr]}: not the G6c layout this tool expects - rebuild?")
     release = bool(args.sim_brake) and (args.sim_engine or 0) > 430
-    print("G6b (r04o+): THE CANDIDATE (app/gs_cand.c, the stock engine + holder) DRIVES the A..E element"
-          " currents through the monitor (app/gs_bridge.c); the shadow is read-only (the comparator's"
-          " reference). The LIVE range chain drives the park outputs (release bus-A ch 7 1.0 A + hold TOE31)"
-          " whenever the range leaves P")
-    print("  dry bench, ammeter on, bench supply limit 4 A; ~2 x --hold s of the 30 s release budget")
+    print("G6c (r04p+): THE ENGINE (app/gs_cand.c, the stock engine + holder) DRIVES the A..E element"
+          " currents through the monitor (app/gs_bridge.c); the shadow is deleted. The LIVE range chain"
+          " drives the park outputs (release bus-A ch 7 1.0 A + hold TOE31) whenever the range leaves P")
+    print("  dry bench, ammeter on, bench supply limit 5 A; ~2 x --hold s of the 30 s release budget")
     print("  both Teensy ports are used (0x210 on bus 2): the ammeter logger cannot run - watch the meter")
     fake_signal_banner(args)
-    if input("Mechatronic dry (no pump, no driveline), ammeter running, supply limit 4 A? [yes/no] ").strip() != "yes":
+    if input("Mechatronic dry (no pump, no driveline), ammeter running, supply limit set? [yes/no] ").strip() != "yes":
         return 1
     sim = VehicleSim(b)
     sim.code, sim.lever_on = 1, True
@@ -1653,8 +1691,8 @@ def cmd_gs_check(b, args):
                         raise
                     time.sleep(0.2)
         P, R, D = 1, 2, 4
-        print(f"shadow witnesses _g_w at 0x{w_addr:08X}, recorder _g_rec0 at 0x{r_slots[0][0]:08X},"
-              f" _g_rec1 at 0x{r_slots[1][0]:08X}; {args.hold:.1f} s per step")
+        print(f"engine witnesses _g_w at 0x{w_addr:08X}; monitor recorders _s_gsb_rec0 0x{mr[0][0]:08X},"
+              f" _s_gsb_rec1 0x{mr[1][0]:08X}; {args.hold:.1f} s per step")
         for name, code in (("P", P), ("D", D), ("P", P), ("R", R), ("P", P)):
             sim.code = code
             time.sleep(args.hold)
@@ -1665,35 +1703,29 @@ def cmd_gs_check(b, args):
         sim.join(1.0)
         print("all simulated frames stopped (lever, brake, engine)")
     g = gs_wit_parse(read_retry(w_addr, GS_WIT_SIZE))
-    print(f"witnesses: passes {g['passes']} commits {g['commits']} (last {g['commit_old']} -> "
+    print(f"engine witnesses: passes {g['passes']} commits {g['commits']} (last {g['commit_old']} -> "
           f"{g['commit_new']} at pass {g['commit_pass']}), completion cause {g['done_cause']} "
           f"(1 normal, 2 timeout, 3 BD16-0 stand-in, 4 other, 5 release 0x106918, 6 release BD8E timer)"
           f" at pass {g['done_pass']}")
     print(f"  stand-ins taken: 0x10E896 term {g['e896']}, 0x1147C8 limit {g['lim']}, release passes {g['rel']}, "
           f"0x104A28 {g['seq']}, lockup head {g['lockup']}, unported {g['unp']}, loop cap {g['loop_cap']}")
-    for slot in (0, 1):
-        n = min(g["rec_n"][slot], GS_REC_N)
-        if n == 0:
-            print(f"  recorder slot {slot}: empty" + ("" if release else " (no commit without the sims)"))
-            continue
-        raw = read_retry(r_slots[slot][0], n * GS_REC_ENTRY)
-        gs_rec_print(slot, raw, n)
-    # the release object: the 76-byte head, then only the recorded entries of each slot
-    raw = bytearray(GS_REL_SIZE)
-    raw[0:76] = read_retry(rel_addr, 76)
+    bd = read_retry(0xFFF8BD14, 0x80)
+    gse_relh_print(read_retry(rel_addr, GSE_RELH_SIZE), int.from_bytes(bd[0x7A:0x7C], "big"))
+    print("  stock objects (G6c, at their stock addresses): "
+          + " | ".join(f"{nm} {read_retry(a, n).hex().upper()}" for nm, a, n in GSE_PINNED)
+          + f" | BD16 {bd[2]:02X} BD17 {bd[3]:02X} BD2E {bd[0x1A:0x1C].hex().upper()} BD30 {bd[0x1C]:02X}"
+          f" BD6C {bd[0x58]:02X} BD6D {bd[0x59]:02X} BD76 {bd[0x62:0x64].hex().upper()}")
+    st = read_retry(gs_addr, GSB_SIZE_G6B)
     for k in (0, 1):
-        n = min(raw[28 + 24 * k + 10], GS_RREC_N)
-        o = 76 + k * GS_RREC_N * 12
-        if n:
-            raw[o:o + 12 * n] = read_retry(rel_addr + o, 12 * n)
-    gs_rel_print(bytes(raw))
-    # G4b: the bridged release (live staged words vs the shadow's release, the estimate)
-    try:
-        br_addr, br_size = elf_sym(args.elf, "_s_gsbr")
-        be_addr, be_size = elf_sym(args.elf, "_s_gsbr_est")
-    except SystemExit:
-        print("bridged release: no _s_gsbr in this ELF (before G4b)")
-        return 0
+        slot = st[100 + 20 * k:120 + 20 * k]
+        n = min(slot[16], GSB_REC_N)
+        if n == 0 or slot[17] == 0:
+            print(f"  monitor recorder slot {k}: empty" + ("" if release else " (no commit without the sims)"))
+            continue
+        gsb_rec_print(k, slot, read_retry(mr[k][0], n * GSB_REC_ENTRY), n)
+    # G4b: the bridged release (the monitor's release recorder, the estimate)
+    br_addr, br_size = elf_sym(args.elf, "_s_gsbr")
+    be_addr, be_size = elf_sym(args.elf, "_s_gsbr_est")
     if br_size != GSBR_SIZE or be_size != GSBR_EST_SIZE:
         sys.exit(f"_s_gsbr {br_size:#x} / _s_gsbr_est {be_size:#x}: not the G4b layout - rebuild?")
     braw = bytearray(GSBR_SIZE)
@@ -1705,28 +1737,18 @@ def cmd_gs_check(b, args):
         if n:
             braw[h + 38:h + 38 + 4 * n] = read_retry(br_addr + h + 38, 4 * n)
     best = bytes(read_retry(be_addr, GSBR_EST_SIZE))
-    gsbr_print(bytes(braw), best, bytes(raw))
-    # G6b: the candidate's witnesses (instance 2, no recorder) and the monitor block
-    try:
-        cw_addr, cw_size = elf_sym_in(args.elf, "_g_w", G6A_CAND_RAM)
-        gs_addr, gs_size = elf_sym(args.elf, "_s_gsb")
-        gw_addr, _ = elf_sym(args.elf, "_s_gsb_win")
-    except SystemExit:
-        print("G6b: no candidate / monitor in this ELF")
-        return 0
-    if cw_size == GS_WIT_SIZE:
-        print("  CANDIDATE (the producer): " + gs_wit_line(gs_wit_parse(read_retry(cw_addr, GS_WIT_SIZE))))
-    if gs_size == GSB_SIZE_G6B:
-        m = read_retry(gs_addr + 172, 40)
-        w = read_retry(gw_addr, 20)
-        u32 = lambda d, o: int.from_bytes(d[o:o + 4], "big")
-        u16 = lambda d, o: int.from_bytes(d[o:o + 2], "big")
-        tp = u32(m, 8)
-        print(f"  MONITOR: seam now {('LIVE (E28E fence)', 'CANDIDATE', 'P CONTENT (latched)')[m[0]] if m[0] < 3 else m[0]}"
-              f" | passes candidate {u32(m, 12)}, live (fence) {u32(m, 16)}, P content {u32(m, 20)} | fence entries"
-              f" {u16(m, 28)} exits {u16(m, 30)} | trips {u16(m, 38)} (want 0)"
-              + ("" if tp == 0xFFFFFFFF else f" first at pass {tp} why {u16(m, 6):04X} ch {m[5]} v {u16(m, 36)}")
-              + f" | latch {w[16]:02X} (want 00) acc {u32(w, 4)} ms commits {u16(w, 12)}")
+    gsbr_print(bytes(braw), best, None)
+    print("  ENGINE (the producer): " + gs_wit_line(g))
+    m = st[172:212]
+    w = read_retry(gw_addr, 20)
+    u32 = lambda d, o: int.from_bytes(d[o:o + 4], "big")
+    u16 = lambda d, o: int.from_bytes(d[o:o + 2], "big")
+    tp = u32(m, 8)
+    print(f"  MONITOR: seam now {('LIVE (E28E fence)', 'CANDIDATE', 'P CONTENT (latched)')[m[0]] if m[0] < 3 else m[0]}"
+          f" | passes candidate {u32(m, 12)}, live (fence) {u32(m, 16)}, P content {u32(m, 20)} | fence entries"
+          f" {u16(m, 28)} exits {u16(m, 30)} | trips {u16(m, 38)} (want 0)"
+          + ("" if tp == 0xFFFFFFFF else f" first at pass {tp} why {u16(m, 6):04X} ch {m[5]} v {u16(m, 36)}")
+          + f" | latch {w[16]:02X} (want 00) acc {u32(w, 4)} ms commits {u16(w, 12)}")
     return 0
 
 
@@ -1802,9 +1824,9 @@ RCM_U_FAIL, RCM_U_PASS, RCM_SKIP, RCM_FM_MS, RCM_FM109, RCM_FM98 = 0x14, 0x18, 0
 
 def elf_sym(elf, name, skip=None):
     """(address, size) of a symbol from sh-elf-nm -S. skip = (lo, hi): ignore a
-    symbol of that name inside [lo, hi) (G6a: the candidate, instance 2 of the
-    garage engine template, has statics of the same names as the shadow's in
-    .gsc_req/.gsc_obj 0xFFF925C0..0xFFF92C68)."""
+    symbol of that name inside [lo, hi) (G6a..G6b: the candidate's statics
+    shared names with the shadow's; G6c deleted the shadow — the engine's
+    statics are unique again)."""
     import subprocess
     out = subprocess.run(["sh-elf-nm", "-S", elf], capture_output=True, text=True, check=True).stdout
     for l in out.splitlines():

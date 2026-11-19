@@ -26,6 +26,12 @@
  *     +0x4C == 0 → fault 0x19F (as the stock's 0xE43xx report).
  */
 #define RQF_SHADOW_INSTANCE 1
+/* G6c (2026-11-19, ~/tcu_sweep/g6c_port.md): compiled as ITSELF this file
+ * is instance 1's fill (the deleted shadow) — host tests only; the image
+ * compiles it only through app/gs_cand_fill.c (GSC_FILL_TU) */
+#if defined(__sh__) && !defined(GSC_FILL_TU)
+#  error "gs_fill.c: instance 1's fill (the shadow) is a host-only test reference since G6c; the image's fill is app/gs_cand_fill.c"
+#endif
 #include "app/gs_fill.h"
 #include "app/gs_cal.h"
 

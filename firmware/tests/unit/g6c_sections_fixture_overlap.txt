@@ -1,0 +1,4 @@
+# G6c negative fixture: a pinned engine object overlapping a recorder
+.gse_bd14 FFF8BD14 1A0
+.gsb_rec0 FFF8BCC0 FC0
+.m5_in4 FFF8BCB0 2

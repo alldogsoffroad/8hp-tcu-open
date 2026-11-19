@@ -13,6 +13,7 @@ static uint32_t s_pass, s_bad, s_bytes, s_cur_bad;
 static const char *const k_blk[] = {
     "gs_t", "gs_wit_t", "gs_prog_t", "recorder slot 0", "recorder slot 1", "gs_rel_t",
     "request objects", "fill cells", "park model latch", "park request latch", "boot flag",
+    "E28E", "E33C", "E4AC", "BD14 + block A", "E4A7", "E69B", "E69F", "E6A1", "E6A8", "E6C5", "E6EE", "E6EF",
 };
 
 void gs_dual_init(void)

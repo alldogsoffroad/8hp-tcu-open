@@ -1,0 +1,4 @@
+# G6c positive fixture
+.m5_in4 FFF8BCB0 2
+.gse_bd14 FFF8BD14 1A0
+.rng_d5e4 FFF8D5E4 30

@@ -57,6 +57,9 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#if !defined(G6A_TEST) || !GS_G6B
+#  error "test_gs_bridge_chain.c (G6c): the harness of test_g6b / test_g6b_gate* only (G6A_TEST, GS_G6B 1)"
+#endif
 #if defined(G6A_TEST)
 /* G6a (2026-11-19, ~/tcu_sweep/g6a_port.md): tests/unit/test_g6a.c includes
  * this harness with the candidate + comparator ticked as app/main.c ticks
@@ -327,13 +330,7 @@ static void task10(gr_t *g, unsigned p)
             .ae28 = *(const volatile uint8_t *)0xFFF8AE28u,   /* app/main.c gs_in_build */
 #endif
         };
-#if defined(G6A_HOSTTIME)
-        G6A_T0();
-#endif
-        gs_shadow_tick_10ms(&gi);
-#if defined(G6A_HOSTTIME)
-        G6A_T1(0);
-#endif
+        /* G6c: no shadow (instance 1 is deleted from app/main.c) */
 #if defined(G6A_TEST) && GS_G6B
         /* G6b (app/main.c): the candidate BEFORE the monitor */
         const bool g6b_run = g6a_on && gs_bridge_g6b();
@@ -366,12 +363,9 @@ static void task10(gr_t *g, unsigned p)
 #if defined(G6A_HOSTTIME)
             G6A_T0();
 #endif
-#if GS_G6B
             if (g6b_run) {
                 g6a_compare_10ms(mode);             /* G6b: the comparison after the monitor */
-            } else
-#endif
-            g6a_tick_10ms(&gi);                     /* app/main.c: after the bridge */
+            }
 #if defined(G6A_HOSTTIME)
             G6A_T1(1);
 #endif
@@ -391,6 +385,8 @@ typedef struct {
     uint8_t src;        /* G6b: the monitor's seam source after this tick (GSM_S_*) */
     uint16_t frame;     /* the frame of this tick */
     uint32_t bpass;     /* G6b: the bridge / monitor pass of this tick */
+    uint8_t  g6c_latch, g6c_fence;  /* G6c goldens: the monitor's latch / fence after this tick */
+    uint16_t g6c_trip_n;
 } tick_t;
 static tick_t g_tk[GFRAMES];
 static unsigned g_tk_n;
@@ -436,7 +432,6 @@ static void run_g(gr_t *g)
     *(volatile uint8_t *)0xFFF89CD2u = 0x4Fu;
     drv_rq_prod_host_select(true);
     drv_rq_request_set(7u, 0u);
-    gs_shadow_init();
     gs_bridge_init(true);
 #if defined(G6A_TEST)
     if (g6a_on) {
@@ -482,12 +477,15 @@ static void run_g(gr_t *g)
                         t->src = gs_bridge_state()->src;
                         t->frame = (uint16_t)p;
                         t->bpass = gs_bridge_state()->passes - 1u;
+                        t->g6c_latch = gs_bridge_win()->latch;
+                        t->g6c_fence = gs_bridge_state()->fence;
+                        t->g6c_trip_n = gs_bridge_state()->trip_n;
                         t->fn = drv_out_wit()->f_n;
-                        t->shrel = gs_shadow_releasing() != 0u;
-                        t->dir = t->relon ? gs_bridge_rel()->pf : gs_shadow_pf();
+                        t->shrel = gs_cand_releasing() != 0u;
+                        t->dir = t->relon ? gs_bridge_rel()->pf : gs_cand_pf();
                         for (uint8_t ch = 0u; ch < 5u; ch++) {
                             t->st[ch] = cyc[(((ch & 1u) != 0u) ? 20u : 10u) + (ch >> 1)];
-                            t->sh[ch] = gs_shadow_cur(ch);
+                            t->sh[ch] = gs_cand_cur(ch);
                         }
 #if defined(G6A_TEST) && GS_G6B
                         if (g6a_on && gs_bridge_g6b()) {
@@ -609,7 +607,7 @@ static void run_g(gr_t *g)
             }
         }
         stub_log_n = 0u;
-        if (g->c3_frame == 0u && gs_shadow_wit()->commits >= 3u) {
+        if (g->c3_frame == 0u && gs_cand_wit()->commits >= 3u) {
             g->c3_frame = p;
         }
     }
@@ -681,16 +679,14 @@ static void check_slot(uint8_t k, bool applied_build, bool print)
     }
     for (uint8_t i = 0u; i < s->n; i++) {
         const volatile gsb_rec_t *e = gs_bridge_rec(k, i);
-        const volatile gs_rec_t *sr = gs_shadow_rec(k, i);
-        static const uint8_t SH_CH[5] = { 0u, 1u, 2u, 3u, 4u };
+        /* G6c: the shadow (instance 1) and its recorder are deleted; the
+         * would-be words were checked against the shadow's recorded current
+         * (common-mode with the candidate since G6b) — the gold identity of
+         * every frame is the check now */
+        static const gs_rec_t z0;
+        const gs_rec_t *sr = &z0;
         if ((e->st & 1u) != 0u) {
             armed++;
-            for (uint8_t ch = 0u; ch < 5u; ch++) {
-                const unsigned cur = sr->cur[SH_CH[ch]];
-                if (absd(sp_of(e->wb[ch]), cur) > 6u) {
-                    bad_wb++;
-                }
-            }
         }
         if (!applied_build) {
             /* G1: nothing is applied — the live staged words stay the P content */

@@ -52,8 +52,9 @@ _Static_assert(GS_LIVE_DIR == 0 || GS_LIVE_DIR == 3,
  * windows, the arm-condition permits; any violation → the P content,
  * latched until power-off) and the E28E fence (D-G6-4 / D-G6-12: the boot
  * transient and the engine-stop all-release keep the live producer's
- * content). GS_G6B 0: the r04i..r04n bridge (the shadow, armed per pass) —
- * kept for the host goldens. The SH application builds GS_G6B 1 (CMake
+ * content). GS_G6B 0: (r04i..r04n) the bridge of the shadow, armed per pass;
+ * G6c deleted that form — GS_G6B 0 is a build without the seam and without
+ * the monitor (host builds of the light harnesses). The SH application builds GS_G6B 1 (CMake
  * cache GS_G6B); it needs the seam (GS_LIVE_DIR 3). */
 #ifndef GS_G6B
 #  define GS_G6B 0

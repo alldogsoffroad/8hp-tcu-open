@@ -34,6 +34,19 @@
  * (0x108 valid at 0 rpm), the plain boot (no frames). test_g6b_englim
  * (GSB_ENG_PASSES 50): the 3.5 s limit trips mid-engagement in both forms.
  */
+/* G6c (2026-11-19, ~/tcu_sweep/g6c_port.md): THE SHADOW AND THE r04n BRIDGE
+ * FORM ARE DELETED (D-G6-7). (1) is now THE WIRE vs r04o: every run is
+ * compared, frame by frame and tick by tick, with the goldens the G6b form of
+ * r04o (HEAD fff32bd, tests/unit/g6c_gold.h; G6C_GOLD_IN) wrote — every bus-A
+ * word, the park demands, the cell window, the monitor's source / latch /
+ * fence / trips per tick, gsb_t and the .noinit windows at the end, the end-
+ * of-run window byte for byte. (2) keeps the comparator's wire self-checks
+ * (law cross-check, guard replica, UNEXP 0). (4) the monitor negatives: 12 of
+ * r04o's 13 trip in the same pass with the same latch, identical to the
+ * goldens; the 13th (candidate != shadow) had its check deleted with the
+ * shadow — it must NOT trip now (the injected in-bounds value reaches the
+ * wire, as any in-bounds candidate value does), and every frame before the
+ * injection must equal the golden. */
 #define GSB_CHAIN_NO_MAIN 1
 #define G6A_TEST 1
 #define G6B_TEST 1
@@ -137,7 +150,7 @@ static void run_child(const scen_t *sc, bool g6b, gr_t *g, res_t *res, uint8_t *
     if (pid == 0) {
         close(fd[0]);
         g6a_on = true;
-        gs_bridge_host_g6b(g6b);
+        (void)g6b;                                  /* G6c: the G6b form only */
         g6a_eng0_from = sc->eng0;
         g6a_nosim = sc->nosim;
         if (sc->neg != NULL) {
@@ -154,6 +167,21 @@ static void run_child(const scen_t *sc, bool g6b, gr_t *g, res_t *res, uint8_t *
             }
         }
         run_g(g);
+        if (getenv("G6C_DUMP_PINNED") != NULL &&
+            (strcmp(getenv("G6C_DUMP_PINNED"), sc->name) == 0 || strcmp(getenv("G6C_DUMP_PINNED"), "*") == 0)) {
+            printf("PINRUN %s\n", sc->name);
+            /* G6c: the engine's pinned stock objects at the end of the run
+             * (the report's dump comparison) — host_state blocks 11..22 */
+            for (uint8_t k = 11u; k <= 22u; k++) {
+                uint32_t n = 0u;
+                const volatile uint8_t *b = (const volatile uint8_t *)gs_cand_host_state(k, &n);
+                printf("PINNED %u ", k);
+                for (uint32_t i = 0u; b != NULL && i < n; i++) {
+                    printf("%02X", b[i]);
+                }
+                printf("\n");
+            }
+        }
         memset(res, 0, sizeof *res);
         res->c = *(const g6a_t *)(const void *)g6a_state();
         res->b = *(const gsb_t *)(const void *)gs_bridge_state();
@@ -165,7 +193,7 @@ static void run_child(const scen_t *sc, bool g6b, gr_t *g, res_t *res, uint8_t *
         res->relev = gs_bridge_rel()->ev;
         res->relref = gs_bridge_rel()->refused;
         res->cand_commits = gs_cand_wit()->commits;
-        res->sh_commits = gs_shadow_wit()->commits;
+        res->sh_commits = gs_cand_wit()->commits;   /* G6c: no shadow */
         res->ae28_x = gs_cand_ae28_x();
         res->cand_unp = gs_cand_wit()->unp_n;
         res->r = g->r;
@@ -223,6 +251,26 @@ static void print_rec(const char *tag, const g6a_rec_t *r)
            r->wire[2], r->wire[3], r->wire[4]);
 }
 
+#include "g6c_gold.h"
+#if defined(G6A_ENGLIM)
+#  define G6C_PFX "englim "
+#else
+#  define G6C_PFX ""
+#endif
+static unsigned g6c_cmp(const char *name, const gr_t *g, const res_t *r, const uint8_t *win, const tick_t *tks)
+{
+    char n[200];
+    snprintf(n, sizeof n, "%s%s", G6C_PFX, name);
+    if (getenv("G6C_GOLD_OUT") != NULL) {
+        g6c_gold_put(n, g, r, win, tks, r->tk_n);
+        return 0u;
+    }
+    if (getenv("G6C_GOLD_IN") == NULL) {
+        printf("FAIL %s: G6C_GOLD_IN (the r04o goldens) not set\n", n);
+        return 1u;
+    }
+    return g6c_gold_cmp(n, g, r, win, tks, r->tk_n, 0u, 0u);
+}
 static gr_t g_ga, g_gb;
 static res_t g_ra, g_rb;
 static res_t g_base;        /* the base gs-check run in G6b form (anchors, the negatives' reference) */
@@ -242,45 +290,22 @@ static void monitor_line(const char *tag, const res_t *r)
 
 static void scenario(const scen_t *sc)
 {
-    unsigned wd = 0u, hd = 0u, first = 0u, wbytes = 0u;
-    uint32_t o_lo = 0u, o_hi = 0u;
     const g6a_t *c = &g_rb.c;
+    unsigned gd;
 
-    run_child(sc, false, &g_ga, &g_ra, g_win[0], g_tks[0]);
+    (void)g_ga;
+    (void)g_ra;
     run_child(sc, true, &g_gb, &g_rb, g_win[1], g_tks[1]);
-    for (unsigned f = 0u; f < GFRAMES; f++) {
-        if (g_ga.hw[f] != g_gb.hw[f]) {
-            wd++;
-            first = first ? first : f + 1u;
-        }
-        if (g_ga.h[f] != g_gb.h[f]) {
-            hd++;
-            first = first ? first : f + 1u;
-        }
-    }
-    for (uint32_t i = 0u; i < WIN_N; i++) {
-        if (g_win[0][i] != g_win[1][i]) {
-            if (wbytes == 0u) {
-                o_lo = 0xFFF80000u + i;
-            }
-            o_hi = 0xFFF80000u + i;
-            wbytes++;
-        }
-    }
-    printf("== %s: mode 1 F%u 'U' F%u | (1) G6b vs r04n: wire frames differ %u, window frames differ %u (first F%u); "
-           "end-of-run window bytes differing %u", sc->name, g_rb.m1, g_rb.u, wd, hd, first, wbytes);
-    if (wbytes != 0u) {
-        printf(" (0x%08X..0x%08X)", (unsigned)o_lo, (unsigned)o_hi);
-    }
-    printf("\n");
-    printf("   (2) G6b comparator: passes %u | AGREE %u BOOT %u FENCED %u FSMTAIL %u UNEXP %u | boot window closed at "
-           "pass %u (%u disagreeing) | cand!=shadow on candidate passes %u (any pass after the window %u) | law "
-           "checks %u mismatches %u | guard fallbacks %u | ae28_x %u\n", (unsigned)c->passes,
-           (unsigned)c->cls_n[0], (unsigned)c->cls_n[1], (unsigned)c->cls_n[2], (unsigned)c->cls_n[3],
-           (unsigned)c->cls_n[4], c->boot_close, c->boot_dis, (unsigned)c->cvs_n, (unsigned)c->cvs_all,
-           (unsigned)c->law_n, (unsigned)c->law_x, (unsigned)c->guard_x, (unsigned)g_rb.ae28_x);
+    gd = g6c_cmp(sc->name, &g_gb, &g_rb, g_win[1], g_tks[1]);
+    printf("== %s: mode 1 F%u 'U' F%u | (1) G6c vs the r04o golden: %u differences\n", sc->name, g_rb.m1, g_rb.u,
+           gd);
+    printf("   (2) wire self-check: passes %u | AGREE %u BOOT %u FENCED %u FSMTAIL %u UNEXP %u | boot window closed at "
+           "pass %u (%u disagreeing) | law checks %u mismatches %u | guard fallbacks %u | ae28_x %u\n",
+           (unsigned)c->passes, (unsigned)c->cls_n[0], (unsigned)c->cls_n[1], (unsigned)c->cls_n[2],
+           (unsigned)c->cls_n[3], (unsigned)c->cls_n[4], c->boot_close, c->boot_dis, (unsigned)c->law_n,
+           (unsigned)c->law_x, (unsigned)c->guard_x, (unsigned)g_rb.ae28_x);
     monitor_line("(2)", &g_rb);
-    printf("       commits shadow %u / candidate %u; diag: fault events %u switch-off %u DSM fail %u pend %u "
+    printf("       commits %u / candidate %u; diag: fault events %u switch-off %u DSM fail %u pend %u "
            "would-reset %u\n", (unsigned)g_rb.sh_commits, (unsigned)g_rb.cand_commits, g_rb.r.fw_set_events,
            g_rb.r.switched_off, g_rb.r.gfail_tot, g_rb.r.gpend_tot, g_rb.r.fatal_tot);
     for (unsigned i = 0u; i < c->rec_n && i < 8u; i++) {
@@ -289,19 +314,10 @@ static void scenario(const scen_t *sc)
     for (unsigned i = 0u; i < c->urec_n; i++) {
         print_rec("UNEX", &c->urec[i]);
     }
+    GCHECK(gd == 0u, "%s: G6c differs from the r04o golden (%u)", sc->name, gd);
     if (sc->info) {
-        printf("       r04n form: bridge armed %u applied %u arm/disarm %u/%u, releases bridged %u refused %u | G6b: "
-               "releases %u refused %u, slot R t0 %u arm_on %u done_at %u cause %u\n", (unsigned)g_ra.b.armed_n,
-               (unsigned)g_ra.b.applied_n, g_ra.b.arm_ev, g_ra.b.disarm_ev, (unsigned)g_ra.relev, g_ra.relref,
-               (unsigned)g_rb.relev, g_rb.relref, (unsigned)g_rb.b.slot[1].t0, g_rb.b.slot[1].arm_on,
-               g_rb.b.slot[1].done_at, g_rb.b.slot[1].done_cause);
-        printf("       (informational run: r04n's bridge refuses this R engagement — its agreement entry needs 10 "
-               "agreeing passes; G6b has no entry rule)\n");
-        return;
+        return;             /* D -> R direct: the golden identity is the whole check */
     }
-    GCHECK(wd == 0u && hd == 0u, "%s: the G6b wire / window differs from r04n's (wire %u, window %u frames, first F%u)",
-           sc->name, wd, hd, first);
-    GCHECK(wbytes == 0u, "%s: %u window bytes differ at the end of the run", sc->name, wbytes);
     GCHECK(c->magic == G6A_MAGIC && c->booted == 1u, "%s: comparator magic / booted", sc->name);
     GCHECK(c->cls_n[G6A_C_UNEXP] == 0u, "%s: %u UNEXPECTED", sc->name, (unsigned)c->cls_n[G6A_C_UNEXP]);
     GCHECK(c->boot_close != 0xFFFFu && c->boot_close <= G6A_BOOT_MAX, "%s: boot window closed at %u", sc->name,
@@ -309,14 +325,13 @@ static void scenario(const scen_t *sc)
     GCHECK(c->law_x == 0u && c->law_n + 10u >= c->passes, "%s: law cross-check %u of %u", sc->name,
            (unsigned)c->law_x, (unsigned)c->law_n);
     GCHECK(c->guard_x == 0u, "%s: the widened guard fell back %u", sc->name, (unsigned)c->guard_x);
-    GCHECK(c->cvs_n == 0u, "%s: candidate != shadow on %u candidate passes", sc->name, (unsigned)c->cvs_n);
     GCHECK(g_rb.ae28_x == 0u && g_rb.cand_unp == 0u, "%s: ae28_x %u unported %u", sc->name,
            (unsigned)g_rb.ae28_x, (unsigned)g_rb.cand_unp);
 #if defined(G6A_ENGLIM)
     /* the englim build: the 3.5 s limit (50 passes) trips mid-engagement —
      * the r04n bridge disarms latched, the monitor latches the P content */
-    GCHECK((g_rb.w.latch & GSB_L_ENGT) != 0u && (g_ra.w.latch & GSB_L_ENGT) != 0u,
-           "%s: the engagement limit did not latch (G6b %02X, r04n %02X)", sc->name, g_rb.w.latch, g_ra.w.latch);
+    GCHECK((g_rb.w.latch & GSB_L_ENGT) != 0u, "%s: the engagement limit did not latch (%02X)", sc->name,
+           g_rb.w.latch);
 #else
     GCHECK(g_rb.b.trip_n == 0u && g_rb.w.latch == 0u, "%s: the monitor tripped (%u, latch %02X)", sc->name,
            g_rb.b.trip_n, g_rb.w.latch);
@@ -326,7 +341,6 @@ static void scenario(const scen_t *sc)
            (unsigned)g_rb.b.live_n);
     GCHECK(g_rb.r.fw_set_events == 0u && g_rb.r.switched_off == 0u && g_rb.r.gfail_tot == 0u &&
            g_rb.r.gpend_tot == 0u && g_rb.r.fatal_tot == 0u, "%s: diagnosis not silent", sc->name);
-    GCHECK(g_rb.cand_commits == g_rb.sh_commits, "%s: commits", sc->name);
     if (sc->eng0 != 0u) {
         /* (3) the engine-stop all-release fenced: the candidate's A at 500,
          * the staged A word at the live producer's 8500 (D-G6-12) */
@@ -362,6 +376,38 @@ static void negative(const neg_t *n)
     sc.anchors[A_R_COMMIT] = g_base.b.slot[1].t0;
     sc.anchors[A_D_REL] = g_base.rel_t0[0];
     run_child(&sc, true, &g, &r, win, tks);
+    if (n->latch == GSB_L_SHADOW) {
+        /* G6c: the candidate != shadow check went with the shadow: the
+         * injection must NOT trip; every frame before the injected pass is
+         * the r04o golden's */
+        const uint32_t at0 = (uint32_t)((int32_t)sc.anchors[n->anchor] + n->from_off);
+        unsigned lim = GFRAMES, pre = 0u;
+        for (unsigned i = 0u; i < r.tk_n; i++) {
+            if (tks[i].bpass == at0 && tks[i].frame < lim) {
+                lim = tks[i].frame;
+            }
+        }
+        for (unsigned f = 0u; f + 1u < lim && f < GFRAMES; f++) {
+            if (g.hw[f] != g_gbase.hw[f]) {
+                pre++;
+            }
+        }
+        ok = r.b.trip_n == 0u && r.w.latch == 0u && pre == 0u && lim != GFRAMES;
+        printf("== NEG %s: G6c — the check is DELETED with the shadow (D-G6-7): injection at pass %u (F%u), trips %u "
+               "latch %02X, frames before the injection differing from the base %u => %s\n", n->name, (unsigned)at0,
+               lim, r.b.trip_n, r.w.latch, pre, ok ? "NOT TRIPPED, as required" : "UNEXPECTED");
+        monitor_line("   ", &r);
+        (void)g6c_cmp(n->name, &g, &r, win, tks);     /* printed: differs from the injection on, by design */
+        if (ok) {
+            g_neg_ok++;
+        }
+        GCHECK(ok, "NEG %s: the deleted shadow check", n->name);
+        return;
+    }
+    {
+        const unsigned gd = g6c_cmp(n->name, &g, &r, win, tks);
+        GCHECK(gd == 0u, "NEG %s: differs from the r04o golden (%u)", n->name, gd);
+    }
     for (unsigned i = 0u; i < r.tk_n; i++) {
         if (r.b.trip_pass != 0xFFFFFFFFu && tks[i].bpass == r.b.trip_pass) {
             tripk = i;
@@ -478,12 +524,14 @@ int main(void)
         static tick_t tks[GFRAMES];
         const scen_t base = { .name = "base gs-check (G6b, the negatives' reference)" };
         run_child(&base, true, &g_gbase, &g_base, win, tks);
+        GCHECK(g6c_cmp(base.name, &g_gbase, &g_base, win, tks) == 0u, "base: differs from the r04o golden");
         printf("== base: D commit pass %u, R commit pass %u, D release start pass %u\n",
                (unsigned)g_base.b.slot[0].t0, (unsigned)g_base.b.slot[1].t0, (unsigned)g_base.rel_t0[0]);
         for (unsigned k = 0u; k < nN; k++) {
             negative(&N[k]);
         }
-        printf("negatives caught: %u of %u\n", g_neg_ok, nN);
+        printf("negatives as required: %u of %u (12 caught as r04o + the deleted shadow check not tripping)\n",
+               g_neg_ok, nN);
     }
 #endif
     if (g_fails == 0) {
