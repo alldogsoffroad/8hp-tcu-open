@@ -19,6 +19,11 @@
  *   6. the OS-mode selector 0x1418E2 on our inputs (read-only witness).
  * The seam drv_gsbr_take() exists only with GS_LIVE_DIR != 0 (host dry-run
  * builds in G1); on SH it is not compiled (drv_gsbr.h: _Static_assert).
+ * (G2, r04i: the SH image builds GS_LIVE_DIR 3 — the seam is live.)
+ * STAGE G4b (2026-11-19, gs_bridge.h, ~/tcu_sweep/g4b_release_bridge_port.md):
+ * after a bridged engagement the stock's release (the shadow's BD16 = 4)
+ * stays bridged until its completion, inside the release envelope; state
+ * and recorder in .gsb_rel / .gsb_rel_est.
  *
  * Live cells are READ through const volatile literals (ctest
  * gs_bridge_scan bridge), never written; the only writes are to this TU's
@@ -112,7 +117,11 @@ static const uint16_t GSB_PCONT[5] = { GSB_PIN, GSB_PIN, GSB_IMIN_P, GSB_PIN, GS
 #  define GSB_ST  __attribute__((section(".gsb_state")))
 #  define GSB_RC0 __attribute__((section(".gsb_rec0")))
 #  define GSB_RC1 __attribute__((section(".gsb_rec1")))
+#  define GSB_REL __attribute__((section(".gsb_rel")))
+#  define GSB_RES __attribute__((section(".gsb_rel_est")))
 #else
+#  define GSB_REL
+#  define GSB_RES
 #  define GSB_WIN
 #  define GSB_ST
 #  define GSB_RC0
@@ -122,8 +131,11 @@ static volatile gsb_win_t s_gsb_win GSB_WIN;    /* NOT cleared on a warm boot */
 static volatile gsb_t     s_gsb     GSB_ST;
 static volatile gsb_rec_t s_gsb_rec0[GSB_REC_N] GSB_RC0;   /* the last D */
 static volatile gsb_rec_t s_gsb_rec1[GSB_REC_N] GSB_RC1;   /* the last R */
+static volatile gsbr_t    s_gsbr    GSB_REL;     /* G4b: the bridged release */
+static volatile gsbr_est_t s_gsbr_est GSB_RES;   /* G4b: its estimate record */
 #define B (s_gsb)
 #define W (s_gsb_win)
+#define R (s_gsbr)
 
 #if !defined(__sh__)
 static uint8_t  s_inj_ch = 0xFFu;
@@ -176,6 +188,11 @@ void gs_bridge_init(bool cold)
     zero(&s_gsb, sizeof s_gsb);
     zero(s_gsb_rec0, sizeof s_gsb_rec0);
     zero(s_gsb_rec1, sizeof s_gsb_rec1);
+    zero(&s_gsbr, sizeof s_gsbr);
+    zero(&s_gsbr_est, sizeof s_gsbr_est);
+    R.rec = 0xFFu;
+    R.slot[0].end_t = GSB_NONE;
+    R.slot[1].end_t = GSB_NONE;
     B.slot_cur = 0xFFu;
     for (unsigned k = 0u; k < 2u; k++) {
         B.slot[k].arm_on = GSB_NONE;
@@ -320,6 +337,104 @@ static uint16_t since(const volatile gsb_slot_t *s)
     return (uint16_t)(d > 0xFFFEu ? 0xFFFEu : d);
 }
 
+/* ── G4b: the bridged release (gs_bridge.h) ───────────────────────────── */
+#define GSB_D_X     GSB_SH_MUT_CH   /* the third element of 1st: C */
+#define GSB_R_X     GSB_R_MOVE3     /* the third element of R: D */
+
+static uint8_t rel_x(uint8_t pf) { return (pf == 2u) ? GSB_R_X : GSB_D_X; }
+
+/* the release's first pass: the slot and the references */
+static void rel_start(uint8_t pf, bool prev_applied)
+{
+    const uint8_t k = (pf == 2u) ? 1u : 0u;
+    volatile gsbr_slot_t *rs = &R.slot[k];
+    const uint8_t x = rel_x(pf);
+    zero(rs, sizeof *rs);
+    rs->t0 = B.passes;
+    rs->end_t = GSB_NONE;
+    rs->pf = pf;
+    rs->xch = x;
+    /* the applied value in the pass before (B.app still holds it); a fresh
+     * arm (host negative only) has none: the loosest references */
+    rs->bprev = prev_applied ? B.app[GSB_CH_B] : (uint16_t)GSB_IMAX;
+    rs->xprev = prev_applied ? B.app[x] : (uint16_t)GSB_IMIN;
+    rs->b0 = rs->bprev;                 /* the first armed pass sets them */
+    rs->x0 = rs->xprev;
+    zero(s_gsbr_est.est[k], sizeof s_gsbr_est.est[k]);
+    R.on = 1u;
+    R.pf = pf;
+    R.t = 0u;
+    R.rec = k;
+    R.rec_tail = 0u;
+    R.ev = (uint16_t)(R.ev + 1u);
+}
+
+static void rel_end(uint8_t code, uint16_t why)
+{
+    if (R.on != 0u && R.rec < 2u) {
+        volatile gsbr_slot_t *rs = &R.slot[R.rec];
+        rs->end_t = R.t;
+        rs->end_code = code;
+        rs->end_why = why;
+        R.rec_tail = 3u;                /* record the P content after it */
+    }
+    R.on = 0u;
+}
+
+/* the release envelope; 0 = inside, else GSBR_T_* (ch / v of the trip) */
+static uint8_t rel_envelope(uint8_t *tch, uint16_t *tv)
+{
+    volatile gsbr_slot_t *rs = &R.slot[(R.pf == 2u) ? 1u : 0u];
+    const uint16_t *fix = (R.pf == 2u) ? GSB_FIX_R : GSB_FIX_D;
+    const uint8_t move = (R.pf == 2u) ? GSB_R_MOVE : GSB_D_MOVE;
+    const uint8_t x = rel_x(R.pf);
+    const uint16_t b = B.sh[GSB_CH_B], xv = B.sh[x];
+    for (uint8_t ch = 0u; ch < 5u; ch++) {
+        const uint16_t v = B.sh[ch];
+        *tch = ch;
+        *tv = v;
+        if (((move >> ch) & 1u) != 0u) {
+            if (v < GSB_IMIN || v > GSB_IMAX ||
+                (gs_shadow_reqmode(ch) == 1u && v != GSB_IMIN && v != GSB_IMAX)) {
+                return GSBR_T_RANGE;
+            }
+        } else if (v != fix[ch]) {
+            return GSBR_T_FIXED;
+        }
+    }
+    if (R.t >= GSB_REL_PASSES) {
+        *tch = 0xFFu;
+        *tv = R.t;
+        return GSBR_T_LEN;
+    }
+    if (R.t == 0u) {
+        *tch = GSB_CH_B;
+        *tv = b;
+        if (b > rs->bprev) {
+            return GSBR_T_B0;
+        }
+        *tch = x;
+        *tv = xv;
+        if (xv < rs->xprev) {
+            return GSBR_T_X0;
+        }
+        rs->b0 = b;
+        rs->x0 = xv;
+        return 0u;
+    }
+    *tch = GSB_CH_B;
+    *tv = b;
+    if (b > rs->b0) {
+        return GSBR_T_BUP;
+    }
+    *tch = x;
+    *tv = xv;
+    if (xv < rs->x0) {
+        return GSBR_T_XDN;
+    }
+    return 0u;
+}
+
 void gs_bridge_tick_10ms(const gsb_in_t *in)
 {
     const volatile gs_wit_t *w = gs_shadow_wit();
@@ -332,6 +447,9 @@ void gs_bridge_tick_10ms(const gsb_in_t *in)
     volatile gsb_slot_t *s = 0;
     uint16_t why = 0u;
     bool commit_now = false, done_now = false, armed, applied, agree = true;
+    const bool prev_applied = (B.applied != 0u);
+    bool relmode = false;
+    uint8_t adirbit = dirbit;           /* the direction the arm is evaluated for */
 
     m2_pass(in, os);
 
@@ -376,6 +494,40 @@ void gs_bridge_tick_10ms(const gsb_in_t *in)
         s = &B.slot[B.slot_cur];
     }
 
+    /* G4b: the bridged release. A release starts in the shadow's
+     * power-flow-0 commit pass (BD16 = 4 from that pass); it is bridged only
+     * when the bridge was APPLIED in the pass before (continuity) and the
+     * last nonzero commit's slot names its direction (= the shadow's
+     * commit_old). It ends with the shadow's release (the completion pass:
+     * the P content), with a nonzero commit, or at its first unarmed pass —
+     * never re-armed. */
+#if defined(GSB_HOST_NO_REL_BRIDGE) && !defined(__sh__)
+    (void)prev_applied;                 /* host NEGATIVE: the r04k behaviour */
+    (void)rel_start;
+#else
+    if (R.on != 0u && (rel == 0u || (commit_now && w->commit_new != 0u))) {
+        rel_end(GSBR_E_DONE, 0u);
+    }
+    if (rel != 0u && R.rel_prev == 0u) {
+        const uint8_t spf = (B.slot_cur < 2u) ? B.slot[B.slot_cur].pf : 0u;
+#  if defined(GSB_HOST_NEG_REL_FRESH) && !defined(__sh__)
+        const bool cont = true;         /* host NEGATIVE: no continuity rule */
+#  else
+        const bool cont = prev_applied;
+#  endif
+        if (cont && spf != 0u && commit_now && w->commit_new == 0u && w->commit_old == spf) {
+            rel_start(spf, prev_applied);
+        } else {
+            R.refused = (uint16_t)(R.refused + 1u);
+        }
+    }
+    relmode = (R.on != 0u) && (rel != 0u);
+    if (relmode) {
+        adirbit = (R.pf == 1u) ? 1u : 2u;
+    }
+#endif
+    R.rel_prev = rel;
+
     /* the shadow's and the live producer's A..E. G4a (2026-11-19,
      * ~/tcu_sweep/g4a_release_port.md): the shadow now runs the stock's
      * 1.2 s RELEASE (BD16 = 4) after a power-flow-0 commit, which this
@@ -400,11 +552,12 @@ void gs_bridge_tick_10ms(const gsb_in_t *in)
         }
     }
 
-    /* 2. the arm conditions (plan §2.4) */
-    if (!(pf != 0u || gs_shadow_pending() != 0u || (w->now_flags & 0x08u) != 0u)) {
+    /* 2. the arm conditions (plan §2.4; G4b: in a bridged release the
+     * idle / range / park conditions are the release's) */
+    if (!relmode && !(pf != 0u || gs_shadow_pending() != 0u || (w->now_flags & 0x08u) != 0u)) {
         why |= GSB_R_IDLE;
     }
-    if ((GSB_EVAL_DIR & dirbit) == 0u) {
+    if ((GSB_EVAL_DIR & adirbit) == 0u) {
         why |= GSB_R_DIR;
     }
     if (LIVE_U8(L_SEQ2) != (uint8_t)'U' || LIVE_U8(L_LETTER) != (uint8_t)'c') {
@@ -413,14 +566,21 @@ void gs_bridge_tick_10ms(const gsb_in_t *in)
     if (os < 1u) {
         why |= GSB_R_OSMODE;
     }
-    {
+    if (relmode) {
+        /* the release: any range 5..8 (lever P, or N / R / D on the way
+         * back); the park model is waived (the park outputs follow the
+         * range chain on their own and drop in the lever-P pass) */
+        if (PCELL_TGT < 5u || PCELL_TGT > 8u) {
+            why |= GSB_R_RANGE;
+        }
+    } else {
         const uint8_t want = (pf == 1u) ? 5u : ((pf == 2u) ? 7u : 0u);
         if (want == 0u || PCELL_TGT != want) {
             why |= GSB_R_RANGE;
         }
-    }
-    if (LIVE_U8(L_PARK_MODEL) != 1u) {
-        why |= GSB_R_PARK;
+        if (LIVE_U8(L_PARK_MODEL) != 1u) {
+            why |= GSB_R_PARK;
+        }
     }
     if (in->mon_faults != 0u) {
         why |= GSB_R_MON;
@@ -452,8 +612,29 @@ void gs_bridge_tick_10ms(const gsb_in_t *in)
         why |= GSB_R_AGREE;             /* the entry condition (first armed pass only) */
     }
 
+    /* 3a. G4b: the release envelope (only where the bridge would arm) */
+    if (why == 0u && relmode) {
+        uint8_t tch = 0xFFu;
+        uint16_t tv = 0u;
+        const uint8_t code = rel_envelope(&tch, &tv);
+        if (code != 0u) {
+            const uint16_t g = (code == GSBR_T_FIXED) ? GSB_G_FIXED : GSB_G_RANGE;
+            latch(GSB_L_GUARD);
+            B.guard_n = (uint16_t)(B.guard_n + 1u);
+            B.guard_why = g;
+            B.guard_ch = tch;
+            B.guard_v = tv;
+            R.trip_n = (uint16_t)(R.trip_n + 1u);
+            R.trip_code = code;
+            R.trip_ch = tch;
+            R.trip_v = tv;
+            why = (uint16_t)(why | g | GSB_G_LATCH);
+            rel_end((uint8_t)(0x10u + code), why);
+        }
+    }
+
     /* 3. the compile-time element bounds (only where the bridge would arm) */
-    if (why == 0u) {
+    if (why == 0u && !relmode) {
         uint16_t g = 0u;
         uint8_t gch = 0xFFu;
         uint16_t gv = 0u;
@@ -490,7 +671,15 @@ void gs_bridge_tick_10ms(const gsb_in_t *in)
 
     /* 4. would-arm; the armed-time budget */
     armed = (why == 0u);
-    applied = armed && (((uint8_t)GS_LIVE_DIR & dirbit) != 0u);
+    applied = armed && (((uint8_t)GS_LIVE_DIR & adirbit) != 0u);
+    if (relmode && R.on != 0u && !applied) {
+#if !(defined(GSB_HOST_NEG_REL_FRESH) && !defined(__sh__))
+        rel_end(GSBR_E_WHY, why);       /* an unarmed release pass: never re-armed */
+#endif
+    }
+    if (relmode && applied) {
+        R.n++;
+    }
     if (armed) {
         B.armed_n++;
         W.acc_ms += 10u;
@@ -512,13 +701,6 @@ void gs_bridge_tick_10ms(const gsb_in_t *in)
         B.last_dis = B.passes;
         B.agree_run = 0u;
     }
-#if defined(GSB_HOST_NEG_REL_ARM) && !defined(__sh__)
-    /* host NEGATIVE only (ctest gs_bridge_g2_gold_neg, WILL_FAIL): a bridge
-     * that applies the shadow's release — the live golden must catch it */
-    if (rel != 0u) {
-        applied = true;
-    }
-#endif
     if (applied) {
         B.applied_n++;
     }
@@ -570,11 +752,44 @@ void gs_bridge_tick_10ms(const gsb_in_t *in)
         }
         s->n = (uint8_t)(s->n + 1u);
     }
+    /* G4b: the bridged-release recorder (entry = release pass; then up to 3
+     * passes after its end, to show the P content reach the wire) */
+    if (R.rec < 2u) {
+        volatile gsbr_slot_t *rs = &R.slot[R.rec];
+        const uint8_t x = rs->xch;
+        if (rs->n < GSBR_REC_N) {
+            const uint8_t i = rs->n;
+            const uint16_t eb = LIVE_U16(L_EST + 2u * GSB_CH_B), ex = LIVE_U16(L_EST + 2u * x);
+            if (applied) {
+                rs->bm[i >> 3] = (uint8_t)(rs->bm[i >> 3] | (uint8_t)(1u << (i & 7u)));
+            }
+            rs->live[i][0] = (in->cyc != 0) ? in->cyc[cyc_idx(GSB_CH_B)] : 0u;
+            rs->live[i][1] = (in->cyc != 0) ? in->cyc[cyc_idx(x)] : 0u;
+            s_gsbr_est.est[R.rec][i][0] = (uint8_t)((eb >= 10180u) ? 255u : (eb + 20u) / 40u);
+            s_gsbr_est.est[R.rec][i][1] = (uint8_t)((ex >= 10180u) ? 255u : (ex + 20u) / 40u);
+            rs->n = (uint8_t)(i + 1u);
+            if (R.on != 0u && applied) {
+                rs->len = (uint16_t)(rs->len + 1u);
+            }
+        }
+        if (R.on == 0u) {
+            if (R.rec_tail != 0u && rs->n < GSBR_REC_N) {
+                R.rec_tail = (uint8_t)(R.rec_tail - 1u);
+            } else {
+                R.rec = 0xFFu;
+            }
+        }
+    }
+    if (R.on != 0u && R.t < 0xFFFFu) {
+        R.t = (uint16_t)(R.t + 1u);
+    }
     B.passes++;
 }
 
 const volatile gsb_t     *gs_bridge_state(void) { return &s_gsb; }
 const volatile gsb_win_t *gs_bridge_win(void)   { return &s_gsb_win; }
+const volatile gsbr_t     *gs_bridge_rel(void)     { return &s_gsbr; }
+const volatile gsbr_est_t *gs_bridge_rel_est(void) { return &s_gsbr_est; }
 const volatile gsb_rec_t *gs_bridge_rec(uint8_t slot, uint8_t i)
 {
     return (slot < 2u && i < GSB_REC_N) ? rec_at(slot, i) : 0;

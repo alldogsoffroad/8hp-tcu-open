@@ -390,6 +390,362 @@ static void test_agree_negative(void)
 }
 
 #if GS_LIVE_DIR != 0
+/* ── G4b: THE BRIDGED RELEASE (2026-11-19, ~/tcu_sweep/g4b_release_bridge_port.md)
+ * In this harness drv_cyclic_build runs after the bridge in the same tick,
+ * so the staged words carry THIS pass's applied current (lag 0; the chain
+ * test checks the real F-stage lag of 1). */
+static uint16_t stw(uint8_t ch)
+{
+    const uint16_t *cyc = drv_job_tx(DRV_CYC);
+    return cyc[(((ch & 1u) != 0u) ? 20u : 10u) + (ch >> 1)];
+}
+
+typedef struct {
+    unsigned len;           /* release passes the shadow ran (BD16 = 4) */
+    unsigned applied;       /* of them, applied by the bridge */
+    unsigned follow_bad;    /* staged B / third != the shadow's current (applied passes) */
+    unsigned fix_bad;       /* a pinned channel off 8500 (applied passes) */
+    unsigned mono_bad;      /* B rose or the third fell between applied passes */
+    unsigned p_at;          /* release pass at which the staged words first read the P content */
+    unsigned shadow_end;    /* release pass at which the shadow stopped releasing */
+    uint16_t b_first, b_last, x_first, x_last;
+} relobs_t;
+
+/* tick from the lever-P pass (the caller has set the lever) until the
+ * shadow's release has ended and the staged words read the P content (or
+ * `max` passes); pf 1 D (third C) / 2 R (third D). act(k) is called before
+ * release pass k (NULL: none). */
+static relobs_t follow_release(uint8_t pf, unsigned max, void (*act)(unsigned))
+{
+    relobs_t o;
+    const uint8_t x = (pf == 2u) ? 1u : 4u;
+    const uint8_t fixm = (pf == 2u) ? 0x19u : 0x0Bu;    /* R: A C E; D: A D E */
+    uint16_t pb = 0xFFFFu, px = 0u;
+    memset(&o, 0, sizeof o);
+    o.p_at = 0xFFFFu;
+    o.shadow_end = 0xFFFFu;
+    for (unsigned k = 0u; k < max; k++) {
+        if (act != 0) {
+            act(k);
+        }
+        tick();
+        if (k == 0u && C.lever == 1u) {
+            /* the park outputs follow the range chain: off in the lever-P pass */
+            CHECK(park_slot7_release() == 0u && park_slot11_hold() == 0u,
+                  "release: the park outputs drop in the lever-P pass (release %u hold %u)",
+                  park_slot7_release(), park_slot11_hold());
+        }
+        if (gs_shadow_releasing() != 0u) {
+            o.len++;
+        } else if (o.shadow_end == 0xFFFFu) {
+            o.shadow_end = k;
+        }
+        if (gs_bridge_state()->applied != 0u && gs_shadow_releasing() != 0u) {
+            const uint16_t b = (uint16_t)sp6(stw(2u)), xv = (uint16_t)sp6(stw(x));
+            o.applied++;
+            if (absd(b, gs_shadow_cur(2u)) > 6u || absd(xv, gs_shadow_cur(x)) > 6u) {
+                o.follow_bad++;
+            }
+            for (uint8_t ch = 0u; ch < 5u; ch++) {
+                if (((fixm >> ch) & 1u) != 0u && absd(sp6(stw(ch)), 8500u) > 6u) {
+                    o.fix_bad++;
+                }
+            }
+            if (pb != 0xFFFFu && (b > pb + 6u || xv + 6u < px)) {
+                o.mono_bad++;
+            }
+            if (o.applied == 1u) {
+                o.b_first = b;
+                o.x_first = xv;
+            }
+            o.b_last = b;
+            o.x_last = xv;
+            pb = b;
+            px = xv;
+        }
+        if (o.p_at == 0xFFFFu && staged_P()) {
+            o.p_at = k;
+        }
+        if (o.shadow_end != 0xFFFFu && o.p_at != 0xFFFFu && k > o.shadow_end + 2u) {
+            break;
+        }
+    }
+    return o;
+}
+
+static const volatile gsbr_slot_t *rslot(uint8_t k) { return &gs_bridge_rel()->slot[k]; }
+
+/* (1) a bridged release after lever P at engagement pass `at` */
+static void rel_bridged(uint8_t lev, unsigned at)
+{
+    char nm[64];
+    const uint8_t pf = (lev == 2u) ? 2u : 1u, k = (uint8_t)(pf - 1u);
+    unsigned c;
+    uint32_t acc0;
+    relobs_t o;
+    snprintf(nm, sizeof nm, "release %s, lever P at pass %u", pf == 1u ? "D" : "R", at);
+    boot(true);
+    c = engage(lev);
+    run_to(c + at);
+    CHECK(gs_bridge_state()->applied != 0u, "%s: applied before lever P", nm);
+    acc0 = gs_bridge_win()->acc_ms;
+    C.lever = 1u;
+    o = follow_release(pf, 200u, 0);
+    if (gs_shadow_rel()->slot[k].len == 0u) {
+        /* lever P during B's fill: the stock's release completes in its
+         * commit pass (cause 5) — nothing to bridge, the P content at once */
+        CHECK(o.p_at == 0u && o.applied == 0u, "%s: release length 0 → the P content in the lever-P pass "
+              "(p_at %u applied %u)", nm, o.p_at, o.applied);
+        printf("release %-30s: shadow length 0 (cause %u) → P content in the lever-P pass\n", nm,
+               gs_shadow_rel()->slot[k].cause);
+        return;
+    }
+    CHECK(o.len == gs_shadow_rel()->slot[k].len, "%s: shadow release length %u (slot %u)", nm, o.len,
+          gs_shadow_rel()->slot[k].len);
+    CHECK(o.applied == o.len, "%s: every release pass bridged (%u of %u)", nm, o.applied, o.len);
+    CHECK(o.follow_bad == 0u && o.fix_bad == 0u && o.mono_bad == 0u,
+          "%s: staged follows the shadow (bad %u), pins hold (bad %u), envelope monotone (bad %u)", nm,
+          o.follow_bad, o.fix_bad, o.mono_bad);
+    CHECK(o.p_at == o.shadow_end, "%s: the P content exactly at the shadow's completion pass "
+          "(P at release pass %u, shadow end %u)", nm, o.p_at, o.shadow_end);
+    CHECK(gs_bridge_win()->latch == 0u && gs_bridge_rel()->trip_n == 0u, "%s: no latch / trip", nm);
+    CHECK(rslot(k)->pf == pf && rslot(k)->len == o.len && rslot(k)->end_code == GSBR_E_DONE &&
+          rslot(k)->end_t == o.len, "%s: recorder slot pf %u len %u end %u at %u", nm, rslot(k)->pf,
+          rslot(k)->len, rslot(k)->end_code, rslot(k)->end_t);
+    CHECK(gs_bridge_win()->acc_ms >= acc0 + 10u * o.len, "%s: release passes count against the budget "
+          "(acc %u → %u)", nm, (unsigned)acc0, (unsigned)gs_bridge_win()->acc_ms);
+    CHECK(gs_bridge_win()->commits == 1u, "%s: the release commit is not counted (commits %u)", nm,
+          gs_bridge_win()->commits);
+    printf("release %-30s: %u passes bridged, B %u → %u, %s %u → %u, P content at release pass %u "
+           "(shadow end %u, cause %u), budget +%u ms\n", nm, o.applied, o.b_first, o.b_last,
+           pf == 1u ? "C" : "D", o.x_first, o.x_last, o.p_at, o.shadow_end, gs_shadow_rel()->slot[k].cause,
+           (unsigned)(gs_bridge_win()->acc_ms - acc0));
+}
+
+/* (2) aborts during a release: P content at once, never re-armed */
+static unsigned s_rel_abort_at;
+static void (*s_rel_abort)(void);
+static void rel_act(unsigned k)
+{
+    if (k == s_rel_abort_at && s_rel_abort != 0) {
+        s_rel_abort();
+    }
+}
+static void rel_abort(const char *nm, void (*act)(void), int want_latch, uint16_t want_why)
+{
+    unsigned c, lag = 0xFFFFu;
+    relobs_t o;
+    boot(true);
+    s_skip = 0u;
+    c = engage(4u);
+    run_to(c + 150u);
+    C.lever = 1u;
+    s_rel_abort_at = 30u;
+    s_rel_abort = act;
+    /* release passes 0..29 bridged, then the abort before pass 30 */
+    o = follow_release(1u, 30u, 0);
+    CHECK(o.applied == 30u, "%s: 30 release passes bridged before the abort (%u)", nm, o.applied);
+    act();
+    tick();
+    if (gs_bridge_state()->applied == 0u && staged_P()) {
+        lag = 0u;
+    }
+    CHECK(lag == 0u, "%s: the P content in the abort pass (applied %u)", nm, gs_bridge_state()->applied);
+    CHECK(rslot(0)->end_code != GSBR_E_DONE && rslot(0)->end_t == 30u,
+          "%s: the release left at pass 30 (end %02X at %u)", nm, rslot(0)->end_code, rslot(0)->end_t);
+    CHECK((rslot(0)->end_why & want_why) != 0u, "%s: end reason %04X (want %04X)", nm, rslot(0)->end_why,
+          want_why);
+    CHECK(want_latch < 0 || gs_bridge_win()->latch == (uint8_t)want_latch, "%s: latch %02X", nm,
+          gs_bridge_win()->latch);
+    /* never re-armed for the rest of the release, even when the cause clears */
+    C.mon = 0u;
+    C.relwin = 0u;
+    *(volatile uint16_t *)(uintptr_t)(0xFFF93004u + 2u * 2u) = 0u;
+    {
+        unsigned re = 0u, notp = 0u;
+        for (unsigned k = 31u; k < 140u; k++) {
+            tick();
+            re += gs_bridge_state()->applied;
+            if (!staged_P()) {
+                notp++;
+            }
+        }
+        CHECK(re == 0u && notp == 0u, "%s: not re-armed (applied %u), P content held (%u passes not P)", nm,
+              re, notp);
+    }
+    printf("release abort %-30s: P content in the abort pass, end %02X why %04X, latch %02X, not re-armed\n",
+           nm, rslot(0)->end_code, rslot(0)->end_why, gs_bridge_win()->latch);
+    s_skip = 0u;
+}
+static void ract_mon(void) { C.mon = 0x04u; }
+static void ract_relwin(void) { C.relwin = 2u; }
+static void ract_diag_b(void) { *(volatile uint16_t *)(uintptr_t)(0xFFF93004u + 2u * 2u) = 0x0010u; s_skip = 0x04u; }
+
+static void rel_warm_reset(void)
+{
+    unsigned c, notp = 0u;
+    relobs_t o;
+    boot(true);
+    c = engage(4u);
+    run_to(c + 150u);
+    C.lever = 1u;
+    o = follow_release(1u, 30u, 0);
+    CHECK(o.applied == 30u, "release warm reset: bridged before (%u)", o.applied);
+    gs_shadow_init();
+    gs_bridge_init(false);
+    tick();
+    CHECK(gs_bridge_state()->applied == 0u && staged_P(), "release warm reset: the P content at once");
+    for (unsigned k = 0u; k < 150u; k++) {
+        tick();
+        if (!staged_P() || gs_bridge_state()->applied != 0u) {
+            notp++;
+        }
+    }
+    CHECK(notp == 0u, "release warm reset: P content held (%u)", notp);
+    printf("release abort warm reset              : P content at once, nothing re-armed\n");
+}
+
+/* (3) the envelope negatives: each trips, latches, the P content at once */
+typedef struct { const char *name; uint8_t lev; uint8_t ch; uint16_t v; uint8_t code; uint16_t gbit; } rneg_t;
+static void rel_envelope_negative(const rneg_t *n)
+{
+    unsigned c, at;
+    const uint8_t k = (n->lev == 2u) ? 1u : 0u;
+    boot(true);
+    c = engage(n->lev);
+    run_to(c + 150u);
+    C.lever = 1u;
+    at = T + 20u;                       /* release pass 20 */
+    gs_bridge_host_inject(n->ch, n->v, at, at + 1u);
+    run_to(at + 1u);
+    CHECK(gs_bridge_rel()->trip_n == 1u && gs_bridge_rel()->trip_code == n->code &&
+          gs_bridge_rel()->trip_ch == n->ch && gs_bridge_rel()->trip_v == n->v,
+          "%s: trip %u code %u ch %u v %u (want code %u ch %u v %u)", n->name, gs_bridge_rel()->trip_n,
+          gs_bridge_rel()->trip_code, gs_bridge_rel()->trip_ch, gs_bridge_rel()->trip_v, n->code, n->ch, n->v);
+    CHECK((gs_bridge_win()->latch & GSB_L_GUARD) != 0u && gs_bridge_state()->applied == 0u && staged_P(),
+          "%s: latched, the P content in the trip pass", n->name);
+    CHECK(rslot(k)->end_code == (uint8_t)(0x10u + n->code) && rslot(k)->end_t == 20u &&
+          (rslot(k)->end_why & n->gbit) != 0u, "%s: slot end %02X at %u why %04X", n->name, rslot(k)->end_code,
+          rslot(k)->end_t, rslot(k)->end_why);
+    /* latched until power-off: the next engagement never arms */
+    run_to(T + 150u);
+    C.lever = n->lev;
+    run_to(T + 200u);
+    CHECK(gs_bridge_state()->armed == 0u && staged_P(), "%s: stays latched", n->name);
+    printf("release envelope negative %-26s: code %u at release pass 20, latched, P content\n", n->name,
+           n->code);
+}
+
+/* (4) a lever change back to D / R during the release: the stock ends its
+ * release (cause 4, the new request) and re-commits once its gates allow
+ * (the park model back at "released", 0xDC37E); the bridge's own arm rules
+ * apply — the P content in between, a re-arm only after GSB_AGREE_N
+ * agreeing passes at the new commit */
+static void rel_lever_back(uint8_t back)
+{
+    unsigned c, k_end = 0xFFFFu, k_commit = 0xFFFFu, k_arm = 0xFFFFu, notp_gap = 0u, trips;
+    uint32_t c0;
+    relobs_t o;
+    const uint8_t k2 = (back == 2u) ? 1u : 0u;
+    boot(true);
+    c = engage(4u);
+    run_to(c + 150u);
+    C.lever = 1u;
+    o = follow_release(1u, 40u, 0);
+    CHECK(o.applied == 40u, "lever back: 40 release passes bridged (%u)", o.applied);
+    C.lever = back;
+    trips = gs_bridge_rel()->trip_n;
+    c0 = gs_shadow_wit()->commits;
+    for (unsigned k = 0u; k < 200u; k++) {
+        tick();
+        if (k_end == 0xFFFFu && gs_shadow_releasing() == 0u) {
+            k_end = k;
+        }
+        if (k_commit == 0xFFFFu && gs_shadow_wit()->commits != c0 && gs_shadow_wit()->commit_new != 0u) {
+            k_commit = k;
+        }
+        if (k_arm == 0xFFFFu && gs_bridge_state()->applied != 0u && gs_shadow_releasing() == 0u) {
+            k_arm = k;
+        }
+        if (k_end != 0xFFFFu && k_arm == 0xFFFFu && !staged_P()) {
+            notp_gap++;
+        }
+    }
+    CHECK(k_end == 0u, "lever back: the shadow ends its release in the lever pass (k %u)", k_end);
+    CHECK(rslot(0)->end_code == GSBR_E_DONE && rslot(0)->end_t == 40u, "lever back: release ended by the "
+          "shadow at pass 40 (end %02X at %u)", rslot(0)->end_code, rslot(0)->end_t);
+    CHECK(k_commit != 0xFFFFu && k_commit >= GSB_AGREE_N && k_arm == k_commit && notp_gap == 0u,
+          "lever back to %s: the P content until the re-commit (%u not P), re-armed at the commit "
+          "(commit %u arm %u)", back == 4u ? "D" : "R", notp_gap, k_commit, k_arm);
+    CHECK(gs_bridge_rel()->trip_n == trips && gs_bridge_win()->latch == 0u && slot(k2)->arm_on == 0u,
+          "lever back: no trip, the re-engagement armed at its commit (arm_on %u)", slot(k2)->arm_on);
+    printf("release, lever back to %s at release pass 40: shadow release ends in that pass (cause %u), "
+           "the P content for %u passes, re-commit at +%u, bridged from its commit pass; no trip\n",
+           back == 4u ? "D" : "R", gs_shadow_rel()->slot[0].cause, k_commit, k_commit);
+}
+
+/* (5) no fresh arm into a release: the engagement was disarmed (park_mon,
+ * cleared again), the release must not be bridged */
+static void rel_no_fresh_arm(void)
+{
+    unsigned c;
+    relobs_t o;
+    boot(true);
+    c = engage(4u);
+    run_to(c + 30u);
+    C.mon = 0x04u;
+    run_to(c + 40u);
+    C.mon = 0u;
+    run_to(c + 150u);
+    CHECK(gs_bridge_state()->applied == 0u, "fresh arm: the engagement stays disarmed after park_mon");
+    C.lever = 1u;
+    o = follow_release(1u, 200u, 0);
+    CHECK(o.len >= 100u && o.applied == 0u && gs_bridge_rel()->refused >= 1u,
+          "fresh arm: the release is not bridged (len %u applied %u refused %u)", o.len, o.applied,
+          gs_bridge_rel()->refused);
+    printf("release after a disarmed engagement: %u shadow release passes, %u bridged, refused %u\n", o.len,
+           o.applied, gs_bridge_rel()->refused);
+}
+
+/* (6) the release length limit (host override GSB_REL_PASSES) */
+static void rel_length_limit(void)
+{
+    unsigned c;
+    boot(true);
+    c = engage(4u);
+    run_to(c + 150u);
+    C.lever = 1u;
+    run_to(T + GSB_REL_PASSES + 2u);
+    CHECK(gs_bridge_rel()->trip_code == GSBR_T_LEN && (gs_bridge_win()->latch & GSB_L_GUARD) != 0u &&
+          rslot(0)->end_t == GSB_REL_PASSES && staged_P(),
+          "release length limit %u: tripped (code %u end_t %u latch %02X)", (unsigned)GSB_REL_PASSES,
+          gs_bridge_rel()->trip_code, rslot(0)->end_t, gs_bridge_win()->latch);
+    printf("release length limit %u passes: tripped at release pass %u, latched, P content\n",
+           (unsigned)GSB_REL_PASSES, rslot(0)->end_t);
+}
+
+/* (7) the engine stops (valid 0x108 at 0 rpm) while engaged in D: the stock
+ * commits power flow 0 and releases; the bridge carries that release */
+static void rel_engine_stop(void)
+{
+    unsigned c;
+    relobs_t o;
+    boot(true);
+    c = engage(4u);
+    run_to(c + 150u);
+    C.eng_rpm = 0u;
+    o = follow_release(1u, 200u, 0);
+    printf("release on engine stop (0x108 valid at 0 rpm, lever D): shadow %u release passes (cause %u), "
+           "bridged %u, P content at release pass %u, shadow end %u, follow bad %u\n", o.len,
+           gs_shadow_rel()->slot[0].cause, o.applied, o.p_at, o.shadow_end, o.follow_bad);
+    CHECK(o.applied == o.len && o.follow_bad == 0u && o.fix_bad == 0u && o.mono_bad == 0u &&
+          o.p_at == o.shadow_end && gs_bridge_win()->latch == 0u,
+          "engine stop: the stock's release bridged, P content at its completion");
+    /* the lever is still in D, the engine is stopped: nothing re-arms */
+    run_to(T + 100u);
+    CHECK(gs_bridge_state()->applied == 0u && staged_P(), "engine stop: P content held after the release");
+}
+
 /* ── the aborts (applied) ──────────────────────────────────────────────── */
 static void abort_lever(unsigned at)
 {
@@ -458,11 +814,17 @@ static void engine_stop_continues(void)
           "engine frames stop: the engagement completes armed (armed %u done %u cause %u e6a8 %u)",
           gs_bridge_state()->armed, slot(0)->done_at, slot(0)->done_cause, gs_shadow_wit()->e6a8);
     C.lever = 1u;
-    lag = p_within(T, "engine frames stop, then lever P");
+    {
+        /* G4b: lever P now starts the bridged release (the P content at its completion) */
+        const relobs_t o = follow_release(1u, 200u, 0);
+        lag = o.p_at;
+        CHECK(o.applied == o.len && o.len > 0u && o.p_at == o.shadow_end,
+              "engine frames stop, then lever P: the release bridged (len %u applied %u P at %u end %u)",
+              o.len, o.applied, o.p_at, o.shadow_end);
+    }
     printf("engine frames stop mid-fill: engine state held 3 (0xD4DC2), completion at pass %u armed; "
-           "lever P → P content in %u\n", slot(0)->done_at, lag);
+           "lever P → the bridged release, P content at release pass %u\n", slot(0)->done_at, lag);
 }
-static void act_eng_zero(void) { C.eng_rpm = 0u; }
 static void act_mon(void) { C.mon = 0x04u; }
 static void act_relwin(void) { C.relwin = 2u; }
 /* the fault word on B: the LIVE law reacts on B itself (0x7BA76), so B is
@@ -577,6 +939,14 @@ int main(void)
     }
 #elif defined(TEST_ENGT)
     abort_engt();
+#elif defined(TEST_REL_LEN)
+    rel_length_limit();
+#elif defined(TEST_REL_ONLY)
+    /* the release negatives' builds: GSB_HOST_NO_REL_BRIDGE (the r04k
+     * behaviour) and GSB_HOST_NEG_REL_FRESH must FAIL here */
+    rel_bridged(4u, 150u);
+    rel_bridged(2u, 150u);
+    rel_no_fresh_arm();
 #else
     test_m2();
     test_windows();
@@ -594,13 +964,39 @@ int main(void)
     }
     test_agree_negative();
 #if GS_LIVE_DIR != 0
+    /* lever P during the fill: the stock's release ends in its commit pass,
+     * the P content at once (G2's abort). Later (G4b): the bridged release */
     abort_lever(5u);
-    abort_lever(30u);
-    abort_lever(60u);
-    abort_lever(90u);
+    rel_bridged(4u, 5u);
+    rel_bridged(4u, 20u);
+    rel_bridged(4u, 30u);
+    rel_bridged(4u, 60u);
+    rel_bridged(4u, 90u);
+    rel_bridged(4u, 150u);
+    rel_bridged(2u, 150u);
+    rel_bridged(2u, 40u);
     engine_stop_continues();
-    abort_case("valid 0x108 at 0 rpm while engaged", 30u, act_eng_zero, -1,
-               (uint16_t)(GSB_R_IDLE | GSB_R_RANGE | GSB_R_DIR | GSB_G_FIXED | GSB_G_RANGE));
+    rel_engine_stop();
+    rel_abort("park_mon latch", ract_mon, 0, GSB_R_MON);
+    rel_abort("release window latched", ract_relwin, 0, GSB_R_RELWIN);
+    rel_abort("diagnosis fault word on B", ract_diag_b, 0, GSB_R_DIAG);
+    rel_warm_reset();
+    {
+        static const rneg_t RN[] = {
+            { "B above its start (D)",     4u, 2u, 4200u, GSBR_T_BUP, GSB_G_RANGE },
+            { "C below its start (D)",     4u, 4u, 6000u, GSBR_T_XDN, GSB_G_RANGE },
+            { "E off its pin (D)",         4u, 3u, 8000u, GSBR_T_FIXED, GSB_G_FIXED },
+            { "C (pinned) moves (R)",      2u, 4u, 8400u, GSBR_T_FIXED, GSB_G_FIXED },
+            { "D below its start (R)",     2u, 1u, 6000u, GSBR_T_XDN, GSB_G_RANGE },
+            { "B 9000 (R)",                2u, 2u, 9000u, GSBR_T_RANGE, GSB_G_RANGE },
+        };
+        for (unsigned k = 0u; k < sizeof RN / sizeof RN[0]; k++) {
+            rel_envelope_negative(&RN[k]);
+        }
+    }
+    rel_lever_back(4u);
+    rel_lever_back(2u);
+    rel_no_fresh_arm();
     abort_case("park_mon latch", 30u, act_mon, 0u, GSB_R_MON);
     abort_case("release window latched mid-D", 30u, act_relwin, 0u, GSB_R_RELWIN);
     abort_case("diagnosis fault word on B", 30u, act_diag_b, 0u, GSB_R_DIAG);

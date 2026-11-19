@@ -446,6 +446,24 @@ SECTIONS
     ASSERT(__gsb_rec1_start >= ADDR(.m5_in6) + SIZEOF(.m5_in6) && __gsb_rec1_end <= ADDR(.park_req),
            ".gsb_rec1 overlaps .m5_in6 / .park_req")
     ASSERT(SIZEOF(.gsb_rec0) == 0xFC0 && SIZEOF(.gsb_rec1) == 0xFC0, ".gsb_rec*: 112 x gsb_rec_t (witness_g1.py)")
+    /* STAGE G4b (2026-11-19, ~/tcu_sweep/g4b_release_bridge_port.md; ours,
+     * not stock cells): the bridged release's state + recorder gsbr_t
+     * (0x450 B) at 0xFFF87300 in the free low RAM after .gsb_state (ends
+     * 0xFFF872CC) and below .tmp_wit (0xFFF87800); its estimate record
+     * gsbr_est_t (0x1F4 B) at 0xFFF86D50 after .fb_shadow (ends 0xFFF86D4C)
+     * and below .rng_wit (0xFFF87000) — both inside the stock driving
+     * dump's all-zero run 0xFFF85400..0xFFF88100 (.fb_rec's note).
+     * Cleared by gs_bridge_init (cold and warm boots alike). */
+    .gsb_rel 0xFFF87300 (NOLOAD) : {
+        __gsb_rel_start = .; KEEP(*(.gsb_rel)) . = ALIGN(4); __gsb_rel_end = .;
+    } > RAM
+    .gsb_rel_est 0xFFF86D50 (NOLOAD) : {
+        __gsb_rel_est_start = .; KEEP(*(.gsb_rel_est)) . = ALIGN(4); __gsb_rel_est_end = .;
+    } > RAM
+    ASSERT(__gsb_rel_start >= __gsb_state_end && __gsb_rel_end <= ADDR(.tmp_wit), ".gsb_rel overlaps .gsb_state / .tmp_wit")
+    ASSERT(__gsb_rel_est_start >= ADDR(.fb_shadow) + SIZEOF(.fb_shadow) && __gsb_rel_est_end <= ADDR(.rng_wit),
+           ".gsb_rel_est overlaps .fb_shadow / .rng_wit")
+    ASSERT(SIZEOF(.gsb_rel) == 0x450 && SIZEOF(.gsb_rel_est) == 0x1F4, ".gsb_rel*: gsbr_t / gsbr_est_t are off (tcu_bench.py gs-check)")
 
     /* THE PWM-FEEDBACK SHADOW (app/fb_shadow.c; ours — not stock cells;
      * 2026-11-18, ~/tcu_sweep/feedback_shadow_port.md): struct fbs_t (0x34C)

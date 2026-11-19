@@ -1154,25 +1154,46 @@ else()
     # long-P runs (P >= release + B's ramp), every frame before the first
     # post-release commit of the 1 s / 0.3 s-P runs. The negative applies the
     # shadow's release through the seam and must FAIL.
+    # G4b (2026-11-19, ~/tcu_sweep/g4b_release_bridge_port.md): the bridged
+    # release. Each G2 gate runs against (1) the r04k REFERENCE trace (no
+    # bridged release; written by the GSB_HOST_NO_REL_BRIDGE build, whose
+    # own trace reproduces HEAD bccfb9d under the G4a rule — the *_r04k_ref
+    # tests) with the differences confined to the release windows on the
+    # wire, and (2) the exact G4b trace. The negative: the r04k behaviour
+    # against the exact G4b trace must FAIL.
+    set(GSB_GOLD ${CMAKE_SOURCE_DIR}/tests/unit/golden)
     add_test(NAME gs_bridge_g2_gate COMMAND test_gs_bridge_g2
-        ${CMAKE_SOURCE_DIR}/tests/unit/golden/gsb_live_g2_head_bccfb9d.txt)
-    add_executable(test_gs_bridge_g2_gold_neg ${GSB_CHAIN_SOURCES})
-    target_compile_definitions(test_gs_bridge_g2_gold_neg PRIVATE ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3
-        GSB_HOST_NEG_REL_ARM=1)
-    add_test(NAME gs_bridge_g2_gold_neg COMMAND test_gs_bridge_g2_gold_neg
-        ${CMAKE_SOURCE_DIR}/tests/unit/golden/gsb_live_g2_head_bccfb9d.txt)
+        ${GSB_GOLD}/gsb_live_g2_ref_r04k.txt ${GSB_GOLD}/gsb_live_g2_g4b.txt)
+    add_executable(test_gs_bridge_g2_norel ${GSB_CHAIN_SOURCES})
+    target_compile_definitions(test_gs_bridge_g2_norel PRIVATE ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3
+        GSB_HOST_NO_REL_BRIDGE=1)
+    add_test(NAME gs_bridge_g2_r04k_ref COMMAND test_gs_bridge_g2_norel
+        ${GSB_GOLD}/gsb_live_g2_head_bccfb9d.txt ${GSB_GOLD}/gsb_live_g2_ref_r04k.txt)
+    add_test(NAME gs_bridge_g2_gold_neg COMMAND test_gs_bridge_g2_norel
+        ${GSB_GOLD}/gsb_live_g2_head_bccfb9d.txt ${GSB_GOLD}/gsb_live_g2_g4b.txt)
     set_tests_properties(gs_bridge_g2_gold_neg PROPERTIES WILL_FAIL TRUE)
     add_executable(test_gs_bridge_g2_temps ${GSB_CHAIN_SOURCES} app/tsel_shadow.c)
     target_compile_definitions(test_gs_bridge_g2_temps PRIVATE ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3
         DIAG_TEMPS=1 FBS_9393A_HOST_SRC=g_fbs_9393a_host)
     add_test(NAME gs_bridge_g2_gate_bounds COMMAND test_gs_bridge_g2_temps
-        ${CMAKE_SOURCE_DIR}/tests/unit/golden/gsb_live_g2_temps_head_bccfb9d.txt)
+        ${GSB_GOLD}/gsb_live_g2_temps_ref_r04k.txt ${GSB_GOLD}/gsb_live_g2_temps_g4b.txt)
+    add_executable(test_gs_bridge_g2_temps_norel ${GSB_CHAIN_SOURCES} app/tsel_shadow.c)
+    target_compile_definitions(test_gs_bridge_g2_temps_norel PRIVATE ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3
+        DIAG_TEMPS=1 FBS_9393A_HOST_SRC=g_fbs_9393a_host GSB_HOST_NO_REL_BRIDGE=1)
+    add_test(NAME gs_bridge_g2_temps_r04k_ref COMMAND test_gs_bridge_g2_temps_norel
+        ${GSB_GOLD}/gsb_live_g2_temps_head_bccfb9d.txt ${GSB_GOLD}/gsb_live_g2_temps_ref_r04k.txt)
     add_executable(test_gs_bridge_g2_temps_live ${GSB_CHAIN_SOURCES} app/tsel_shadow.c
         app/tsel_live.c bsw/drv/drv_tsel.c)
     target_compile_definitions(test_gs_bridge_g2_temps_live PRIVATE ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3
         DIAG_TEMPS=1 TSEL_LIVE=1 FBS_T_ECU_LIVE=1)
     add_test(NAME gs_bridge_g2_gate_bounds_live COMMAND test_gs_bridge_g2_temps_live
-        ${CMAKE_SOURCE_DIR}/tests/unit/golden/gsb_live_g2_temps_live_head_bccfb9d.txt)
+        ${GSB_GOLD}/gsb_live_g2_temps_live_ref_r04k.txt ${GSB_GOLD}/gsb_live_g2_temps_live_g4b.txt)
+    add_executable(test_gs_bridge_g2_temps_live_norel ${GSB_CHAIN_SOURCES} app/tsel_shadow.c
+        app/tsel_live.c bsw/drv/drv_tsel.c)
+    target_compile_definitions(test_gs_bridge_g2_temps_live_norel PRIVATE ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3
+        DIAG_TEMPS=1 TSEL_LIVE=1 FBS_T_ECU_LIVE=1 GSB_HOST_NO_REL_BRIDGE=1)
+    add_test(NAME gs_bridge_g2_temps_live_r04k_ref COMMAND test_gs_bridge_g2_temps_live_norel
+        ${GSB_GOLD}/gsb_live_g2_temps_live_head_bccfb9d.txt ${GSB_GOLD}/gsb_live_g2_temps_live_ref_r04k.txt)
     # the bridge's logic on test_gs_shadow's light harness: the OS-mode-2
     # witness, the .noinit windows, the guard negatives (G1: recorded, the
     # wire never moves), and — GS_LIVE_DIR 3, host only — every abort of the
@@ -1198,6 +1219,24 @@ else()
     target_compile_definitions(test_gs_bridge_engt PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=1 GS_LIVE_DIR=3
         GSB_ENG_PASSES=50u TEST_ENGT=1)
     add_test(NAME gs_bridge_engagement_limit COMMAND test_gs_bridge_engt)
+    # STAGE G4b (2026-11-19, ~/tcu_sweep/g4b_release_bridge_port.md): the
+    # release length limit (host override 50 passes); the two release
+    # negatives must FAIL the release tests — the r04k behaviour (no bridged
+    # release) and a bridge that arms fresh into a release
+    add_executable(test_gs_bridge_rellen ${GSB_LOGIC_SOURCES})
+    target_compile_definitions(test_gs_bridge_rellen PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=1 GS_LIVE_DIR=3
+        GSB_REL_PASSES=50u TEST_REL_LEN=1)
+    add_test(NAME gs_bridge_release_length_limit COMMAND test_gs_bridge_rellen)
+    add_executable(test_gs_bridge_rel_norel ${GSB_LOGIC_SOURCES})
+    target_compile_definitions(test_gs_bridge_rel_norel PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=1 GS_LIVE_DIR=3
+        GSB_HOST_NO_REL_BRIDGE=1 TEST_REL_ONLY=1)
+    add_test(NAME gs_bridge_release_neg_r04k COMMAND test_gs_bridge_rel_norel)
+    set_tests_properties(gs_bridge_release_neg_r04k PROPERTIES WILL_FAIL TRUE)
+    add_executable(test_gs_bridge_rel_fresh ${GSB_LOGIC_SOURCES})
+    target_compile_definitions(test_gs_bridge_rel_fresh PRIVATE DRV_RQ_USE_PRODUCER=1 GS_FORCED=1 GS_LIVE_DIR=3
+        GSB_HOST_NEG_REL_FRESH=1 TEST_REL_ONLY=1)
+    add_test(NAME gs_bridge_release_neg_fresh_arm COMMAND test_gs_bridge_rel_fresh)
+    set_tests_properties(gs_bridge_release_neg_fresh_arm PROPERTIES WILL_FAIL TRUE)
     # the compile-time element bounds against the image's bytes (role tables
     # 0x6312F / 0x63139 / 0x63143, table 0x505A4); the mutated table must FAIL
     set(GSB_TABLE_SOURCES tests/unit/test_gs_bridge_tables.c app/gs_bridge.c app/gs_shadow.c
@@ -1254,6 +1293,14 @@ else()
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGSB_HOST_MUT_TABLE ${GSB_SH_SRC})
     add_test(NAME gs_bridge_sh_guard_engt
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGSB_ENG_PASSES=50 ${GSB_SH_SRC})
+    add_test(NAME gs_bridge_sh_guard_rellen
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGSB_REL_PASSES=50 ${GSB_SH_SRC})
+    add_test(NAME gs_bridge_sh_guard_relneg
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGSB_HOST_NO_REL_BRIDGE ${GSB_SH_SRC})
+    set_tests_properties(gs_bridge_sh_guard_rellen PROPERTIES
+        PASS_REGULAR_EXPRESSION "GSB_REL_PASSES is a host-only test override")
+    set_tests_properties(gs_bridge_sh_guard_relneg PROPERTIES
+        PASS_REGULAR_EXPRESSION "the release negatives are host-only tests")
     add_test(NAME gs_bridge_sh_guard_ramapp
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DTCU_RAM_APP -DGS_LIVE_DIR=3 ${GSB_SH_SRC})
     set_tests_properties(gs_bridge_sh_guard_output PROPERTIES

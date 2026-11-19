@@ -122,6 +122,22 @@ typedef struct {
     unsigned modes_bad;             /* applied: ch 0..6 law mode != 3 after A's fill */
     uint32_t armed_n, applied_n, take_n, guard_n;
     uint64_t h[GFRAMES];
+    uint64_t hw[GFRAMES];   /* G4b: the WIRE part alone (bus-A words + park demands) */
+    uint8_t  relon[GFRAMES];/* G4b: the bridged release on after this frame's 10 ms task */
+    /* G4b: the bridged release, on the real chain */
+    unsigned rel_n;                 /* releases checked (lever P from D / R, shadow completion in the run) */
+    unsigned rel_bad_applied;       /* a shadow release pass not bridged */
+    unsigned rel_p_lag[2];          /* ticks from the shadow's completion pass to the staged P content (D, R) */
+    unsigned rel_len[2];            /* shadow release passes (D, R) */
+    unsigned rel_open_end;          /* a release still bridged at the end of the run */
+    uint16_t rel_b0[2], rel_b1[2], rel_x0[2], rel_x1[2];   /* staged first / last release values */
+#if defined(DIAG_TEMPS)
+    /* the current-bound margins during the bridged release (tested passes),
+     * per direction (0 D, 1 R) for B (0) and the third (1): UB − est, est − LB */
+    int32_t  rm_up[2][2], rm_lo[2][2];
+    uint16_t rm_up_est[2][2], rm_up_b[2][2], rm_lo_est[2][2], rm_lo_b[2][2];
+    unsigned rm_n[2][2];
+#endif
     unsigned c3_frame;      /* the frame of the shadow's third commit (0 → R): the
                              * first engagement after the D → P release */
     bool gold_full;         /* G4a golden: every frame identical to HEAD (else
@@ -215,7 +231,13 @@ static void task10(gr_t *g, unsigned p)
 }
 
 /* applied runs: the staged words after each 10 ms tick */
-typedef struct { uint8_t lev; uint16_t st[5]; uint16_t sh[5]; bool applied; } tick_t;
+typedef struct {
+    uint8_t lev; uint16_t st[5]; uint16_t sh[5]; bool applied;
+    uint32_t miss, fn;  /* drv_out_wit(): cyclic misses, F passes after this tick */
+    uint8_t dir;        /* G4b: the direction whose pins apply (the bridged release's, else the shadow's pf) */
+    bool shrel;         /* the shadow releasing after this tick */
+    bool relon;         /* the bridged release on after this tick */
+} tick_t;
 static tick_t g_tk[GFRAMES];
 static unsigned g_tk_n;
 
@@ -239,6 +261,14 @@ static void run_g(gr_t *g)
     r->fc_mode = g->fc_mode;
 #endif
     rr_reset(r);
+#if defined(DIAG_TEMPS)
+    for (unsigned d = 0u; d < 2u; d++) {
+        for (unsigned q = 0u; q < 2u; q++) {
+            g->rm_up[d][q] = g->rm_lo[d][q] = 0x7FFFFFFF;
+            g->rm_n[d][q] = 0u;
+        }
+    }
+#endif
     memset(g_ctr, 0, sizeof g_ctr);
     memset(&g_z, 0, sizeof g_z);
     g_z.q_output_speed = Q_OK;
@@ -288,6 +318,11 @@ static void run_g(gr_t *g)
                         const uint16_t *cyc = drv_job_tx(DRV_CYC);
                         t->lev = lever_at(p, g->m1);
                         t->applied = g->bridge && gs_bridge_state()->applied != 0u;
+                        t->relon = g->bridge && gs_bridge_rel()->on != 0u;
+                        t->miss = drv_out_wit()->missed[3];
+                        t->fn = drv_out_wit()->f_n;
+                        t->shrel = gs_shadow_releasing() != 0u;
+                        t->dir = t->relon ? gs_bridge_rel()->pf : gs_shadow_pf();
                         for (uint8_t ch = 0u; ch < 5u; ch++) {
                             t->st[ch] = cyc[(((ch & 1u) != 0u) ? 20u : 10u) + (ch >> 1)];
                             t->sh[ch] = gs_shadow_cur(ch);
@@ -315,6 +350,29 @@ static void run_g(gr_t *g)
                     observe(&now);
                     diff_print(r, p, &prev, &now);
 #if defined(DIAG_TEMPS)
+                    if (g->bridge && gs_bridge_rel()->on != 0u) {
+                        /* G4b: the bound margins while the release is bridged */
+                        const uint8_t d = (gs_bridge_rel()->pf == 2u) ? 1u : 0u;
+                        const uint8_t chs[2] = { 2u, (uint8_t)((d == 1u) ? 1u : 4u) };
+                        for (uint8_t q = 0u; q < 2u; q++) {
+                            const uint8_t ch = chs[q];
+                            const uint16_t est = U16C_(0xFFF93394u + 2u * ch);
+                            const uint16_t tested = U16C_(0xFFF94944u + 2u * ch);
+                            g->rm_n[d][q]++;
+                            if ((tested & 0x200u) != 0u && r->ub_prev[ch] != 0u) {
+                                const int32_t m = (int32_t)(int16_t)r->ub_prev[ch] - (int32_t)(int16_t)est;
+                                if (m < g->rm_up[d][q]) {
+                                    g->rm_up[d][q] = m; g->rm_up_est[d][q] = est; g->rm_up_b[d][q] = r->ub_prev[ch];
+                                }
+                            }
+                            if ((tested & 0x100u) != 0u && r->lb_prev[ch] != 0u) {
+                                const int32_t m = (int32_t)(int16_t)est - (int32_t)(int16_t)r->lb_prev[ch];
+                                if (m < g->rm_lo[d][q]) {
+                                    g->rm_lo[d][q] = m; g->rm_lo_est[d][q] = est; g->rm_lo_b[d][q] = r->lb_prev[ch];
+                                }
+                            }
+                        }
+                    }
                     if (getenv("GSB_BTRACE") != NULL && r->u_frame != 0u && g->parity == 0u &&
                         g->sat_ms == 0u && g->real && p >= r->u_frame + 60u && p <= r->u_frame + 300u) {
                         /* B (ch 2) / C (ch 4) through the D engagement: the tested
@@ -366,7 +424,18 @@ static void run_g(gr_t *g)
         }
         h = fnv64(h, park_slot7_release());
         h = fnv64(h, park_slot11_hold());
+        g->hw[p - 1u] = h;
         g->h[p - 1u] = g_hash_window(h);
+        g->relon[p - 1u] = (uint8_t)((g->bridge && gs_bridge_rel()->on != 0u) ? 1u : 0u);
+        if (getenv("GSB_DUMP_FRAME") != NULL && (unsigned)atoi(getenv("GSB_DUMP_FRAME")) == p &&
+            g->parity == 0u && getenv("GSB_DUMP_RUN") != NULL && strcmp(getenv("GSB_DUMP_RUN"), g->name) == 0) {
+            /* debug: the cell window at this frame (the post-release state comparison) */
+            FILE *df = fopen(getenv("GSB_DUMP_FILE") ? getenv("GSB_DUMP_FILE") : "gsb_dump.bin", "wb");
+            if (df != NULL) {
+                fwrite((const void *)(uintptr_t)0xFFF80000u, 1u, 0x16000u, df);
+                fclose(df);
+            }
+        }
         stub_log_n = 0u;
         if (g->c3_frame == 0u && gs_shadow_wit()->commits >= 3u) {
             g->c3_frame = p;
@@ -418,10 +487,22 @@ static void check_slot(uint8_t k, bool applied_build, bool print)
     GCHECK(s->done_at >= g_done_lo && s->done_at <= 100u && s->done_cause == 1u,
            "slot %u: the shadow's normal completion at pass 90..100 (%u, cause %u)", k, s->done_at, s->done_cause);
     GCHECK(s->guard_n == 0u, "slot %u: guard trips %u", k, s->guard_n);
-    GCHECK(s->arm_off != GSB_NONE && (s->off_why & GSB_R_RANGE) != 0u,
-           "slot %u: disarmed by the range (lever P): off %u why %s", k, s->arm_off, why_str(s->off_why));
-    GCHECK(s->back_at != GSB_NONE && (unsigned)(s->back_at - s->arm_off) <= 2u,
-           "slot %u: shadow == live within 2 passes of the disarm (off %u back %u)", k, s->arm_off, s->back_at);
+    if (s->arm_off == GSB_NONE && applied_build && gs_bridge_rel()->on != 0u &&
+        gs_bridge_rel()->pf == (uint8_t)(k + 1u)) {
+        /* G4b: the run ended inside this direction's bridged release */
+        printf("  slot %u: still armed at the end of the run — in its bridged release (pass %u)\n", k,
+               gs_bridge_rel()->t);
+    } else {
+        /* G4b: an applied build disarms at the end of the bridged release
+         * (the shadow's completion: power flow 0, not releasing) — the
+         * range reason is still among them */
+        GCHECK(s->arm_off != GSB_NONE && (s->off_why & GSB_R_RANGE) != 0u,
+               "slot %u: disarmed by the range (lever P / the release's end): off %u why %s", k, s->arm_off,
+               why_str(s->off_why));
+        GCHECK(s->back_at != GSB_NONE && (unsigned)(s->back_at - s->arm_off) <= 2u,
+               "slot %u: shadow == live within 2 passes of the disarm (off %u back %u)", k, s->arm_off,
+               s->back_at);
+    }
     if (print) {
         printf("  pass ph0 ph1 ph2 st  why          | would-be A D B E C          | live staged A D B E C       "
                "| est A D B E C               | shadow A D B E C\n");
@@ -475,10 +556,49 @@ static void check_applied(gr_t *g)
     unsigned lagD = 0xFFFFu, lagR = 0xFFFFu;
     for (unsigned i = 1u; i < g_tk_n; i++) {
         const tick_t *t = &g_tk[i], *q = &g_tk[i - 1u];
-        /* lever P after D / R: the first tick the staged words read the P content */
+        /* lever P after D / R (G4b): the shadow releases from tick i; every
+         * release pass is bridged; the staged words read the P content from
+         * the tick after the shadow's completion pass e (the F stage follows
+         * the 10 ms task: lag 1), never before */
         if (t->lev == 1u && (q->lev == 4u || q->lev == 2u)) {
-            unsigned j = i;
-            for (; j < g_tk_n && j < i + 20u; j++) {
+            const unsigned d = (q->lev == 4u) ? 0u : 1u;
+            unsigned e = i, j;
+            while (e < g_tk_n && g_tk[e].shrel) {
+                if (!g_tk[e].applied) {
+                    g->rel_bad_applied++;
+                }
+                e++;
+            }
+            if (e >= g_tk_n) {
+                g->rel_open_end++;          /* the run ends inside the release */
+                j = 0xFFFFu;
+            } else if (g_tk[e].lev != 1u) {
+                j = 0xFFFFu;                /* the lever left P first: the release interrupted */
+            } else {
+                g->rel_n++;
+                g->rel_len[d] = e - i;
+                for (j = i; j < g_tk_n && j < e + 20u; j++) {
+                    bool pc = true;
+                    for (uint8_t ch = 0u; ch < 5u; ch++) {
+                        if (absd(sp_of(g_tk[j].st[ch]), P[ch]) > 6u) {
+                            pc = false;
+                        }
+                    }
+                    if (pc) {
+                        break;
+                    }
+                }
+                g->rel_p_lag[d] = (j >= e) ? j - e : 0xFFFFu;   /* 0xFFFF: P content before the completion */
+                if (e > i + 1u) {
+                    const uint8_t x = (d == 0u) ? 4u : 1u;
+                    g->rel_b0[d] = (uint16_t)sp_of(g_tk[i + 1u].st[2]);
+                    g->rel_x0[d] = (uint16_t)sp_of(g_tk[i + 1u].st[x]);
+                    g->rel_b1[d] = (uint16_t)sp_of(g_tk[e].st[2]);
+                    g->rel_x1[d] = (uint16_t)sp_of(g_tk[e].st[x]);
+                }
+            }
+            /* the first tick with the P content after lever P (any tick) */
+            for (j = i; j < g_tk_n && j < i + 200u; j++) {
                 bool pc = true;
                 for (uint8_t ch = 0u; ch < 5u; ch++) {
                     if (absd(sp_of(g_tk[j].st[ch]), P[ch]) > 6u) {
@@ -489,20 +609,34 @@ static void check_applied(gr_t *g)
                     break;
                 }
             }
-            if (q->lev == 4u) { lagD = j - i; } else { lagR = j - i; }
+            if (d == 0u) { lagD = j - i; } else { lagR = j - i; }
         }
         /* applied on the previous tick: the staged words carry the shadow's
          * previous-tick current (the F stage runs after the 10 ms task) */
         if (q->applied && t->applied) {
             for (uint8_t ch = 0u; ch < 5u; ch++) {
+                if (t->fn == q->fn) {
+                    /* no F stage between these two 10 ms ticks (the 10 ms
+                     * task and the F stage's 10 ms part drift by a frame now
+                     * and then): the staged words still carry the tick
+                     * before — not a follow sample */
+                    break;
+                }
                 g->follow_n++;
                 if (absd(sp_of(t->st[ch]), q->sh[ch]) > 6u) {
+                    if (getenv("GSB_FOLLOW_DBG") != NULL) {
+                        printf("    follow mismatch tick %u ch %u staged %u shadow(prev) %u lev %u/%u rel %u/%u "
+                               "shrel %u/%u miss %u→%u fn %u→%u\n", i, ch, sp_of(t->st[ch]), q->sh[ch], q->lev,
+                               t->lev, q->relon, t->relon, q->shrel, t->shrel, (unsigned)q->miss, (unsigned)t->miss,
+                               (unsigned)q->fn, (unsigned)t->fn);
+                    }
                     g->follow_bad++;
                 }
             }
-            /* the fixed channels: D → A D E, R → A C E at 8500 */
-            {
-                const uint8_t fixm = (t->lev == 4u) ? 0x0Bu : 0x19u;
+            /* the fixed channels: D → A D E, R → A C E at 8500 (G4b: the
+             * direction of the bridged release while it runs) */
+            if (t->dir == 1u || t->dir == 2u) {
+                const uint8_t fixm = (t->dir == 1u) ? 0x0Bu : 0x19u;
                 for (uint8_t ch = 0u; ch < 5u; ch++) {
                     if (((fixm >> ch) & 1u) != 0u && absd(sp_of(t->st[ch]), 8500u) > 6u) {
                         g->fix_moves++;
@@ -565,7 +699,8 @@ static void run_fresh_g(gr_t *g, bool verbose)
             check_slot(1u, GS_LIVE_DIR != 0, verbose);
             GCHECK(b->guard_n == 0u && w->latch == 0u && w->commits == 2u,
                    "guard %u latch %02X commits %u", b->guard_n, w->latch, w->commits);
-            GCHECK(b->arm_ev == 2u && b->disarm_ev == 2u, "arm %u / disarm %u events (want 2 / 2)",
+            GCHECK(b->arm_ev == 2u && b->disarm_ev == (unsigned)((gs_bridge_rel()->on != 0u) ? 1u : 2u),
+                   "arm %u / disarm %u events (want 2 / 2, or 2 / 1 with a release open at the end)",
                    b->arm_ev, b->disarm_ev);
             GCHECK(b->m2.req == 2u && b->m2.first2 != 0u && b->m2.live_os == 1u,
                    "mode-2 witness: req %u first2 %u (engine 700 valid from power-on)", b->m2.req,
@@ -583,8 +718,28 @@ static void run_fresh_g(gr_t *g, bool verbose)
             GCHECK(g->follow_n > 0u && g->follow_bad == 0u, "staged vs shadow: %u bad of %u",
                    g->follow_bad, g->follow_n);
             GCHECK(g->fix_moves == 0u, "a fixed channel moved (%u)", g->fix_moves);
+#if defined(GSB_HOST_NO_REL_BRIDGE)
+            /* the r04k behaviour: the P content within 2 passes of lever P */
             GCHECK(g->lagP_D <= 2u && g->lagP_R <= 2u, "P content after lever P: D %u R %u ticks",
                    g->lagP_D, g->lagP_R);
+#else
+            printf("   G4b bridged releases: %u completed in the run (D %u passes, R %u), open at the end %u; "
+                   "P content %u / %u ticks after the shadow's completion pass; staged B %u → %u / %u → %u, "
+                   "third %u → %u / %u → %u; release passes not bridged %u\n", g->rel_n, g->rel_len[0],
+                   g->rel_len[1], g->rel_open_end, g->rel_p_lag[0], g->rel_p_lag[1], g->rel_b0[0], g->rel_b1[0],
+                   g->rel_b0[1], g->rel_b1[1], g->rel_x0[0], g->rel_x1[0], g->rel_x0[1], g->rel_x1[1],
+                   g->rel_bad_applied);
+            GCHECK(g->rel_bad_applied == 0u, "a shadow release pass not bridged (%u)", g->rel_bad_applied);
+            GCHECK(g->rel_n + g->rel_open_end >= 1u, "no bridged release in the run");
+            for (unsigned d = 0u; d < 2u; d++) {
+                GCHECK(g->rel_len[d] == 0u || g->rel_len[d] == 120u, "release %u: %u passes (want 120)", d,
+                       g->rel_len[d]);
+                GCHECK(g->rel_len[d] == 0u || g->rel_p_lag[d] == 1u,
+                       "release %u: the P content %u ticks after the shadow's completion pass (want 1)", d,
+                       g->rel_p_lag[d]);
+            }
+            GCHECK(gs_bridge_rel()->trip_n == 0u, "release envelope trips %u", gs_bridge_rel()->trip_n);
+#endif
             GCHECK(g->modes_bad == 0u, "law modes != 3 on A..Sys: %u", g->modes_bad);
 #endif
         }
@@ -616,96 +771,192 @@ static void run_fresh_g(gr_t *g, bool verbose)
 
 static gr_t g_a, g_b;
 
-/* THE LIVE GOLDEN (G4a, 2026-11-19, ~/tcu_sweep/g4a_release_port.md): the
- * per-frame live identity hash (every bus-A word in wire order, the cell
- * window without the shadow's own RAM, the park demands) of each run,
- * against the trace of HEAD bccfb9d (r04j, the instant-release stand-in;
- * the golden file was written by this binary built at that HEAD). argv[1]
- * = the golden file; GSB_GOLD_WRITE=1 writes it instead of comparing. */
-static unsigned gold_check(const char *path, const gr_t *g, unsigned k)
+/* THE LIVE GOLDENS. Each line: run k, frame f, the per-frame live identity
+ * hash (every bus-A word in wire order, the cell window without the
+ * shadow's own RAM, the park demands) and — G4b files — the WIRE part alone
+ * (bus-A words + park demands).
+ *
+ *   golden 1 (argv[1]): in a G4b build the REFERENCE trace of the r04k
+ *     behaviour (no bridged release), written by the GSB_HOST_NO_REL_BRIDGE
+ *     build — which itself reproduces HEAD bccfb9d's trace under the G4a
+ *     rule (ctest gs_bridge_g2_r04k_ref*). The G4b run must equal it in
+ *     every frame before its first bridged-release frame, and on the WIRE in
+ *     every frame outside the release windows (a frame whose 10 ms task, or
+ *     one of the 4 frames before it, had the bridged release on). Cell-only
+ *     differences after a release (slow state: the coil-resistance model,
+ *     the feedback filters) are counted, not failed.
+ *     In a GSB_HOST_NO_REL_BRIDGE build: HEAD bccfb9d's trace, the G4a rule.
+ *   golden 2 (argv[2], optional): the exact trace, every frame, every hash.
+ * GSB_GOLD_WRITE=<path> writes this build's trace (4 columns) instead. */
+typedef struct { unsigned k, f; uint64_t h, hw; bool has_w; } gline_t;
+
+static gline_t *gold_load(const char *path, size_t *n)
+{
+    FILE *rf = fopen(path, "r");
+    char line[128];
+    gline_t *v = NULL;
+    size_t cap = 0u;
+    *n = 0u;
+    if (rf == NULL) {
+        perror(path);
+        exit(2);
+    }
+    while (fgets(line, sizeof line, rf) != NULL) {
+        unsigned kk, ff;
+        unsigned long long h, hw;
+        const int m = sscanf(line, "%u %u %llx %llx", &kk, &ff, &h, &hw);
+        if (m >= 3) {
+            if (*n == cap) {
+                cap = cap ? 2u * cap : 4096u;
+                v = realloc(v, cap * sizeof *v);
+            }
+            v[*n] = (gline_t){ kk, ff, (uint64_t)h, (m == 4) ? (uint64_t)hw : 0u, m == 4 };
+            (*n)++;
+        }
+    }
+    fclose(rf);
+    return v;
+}
+
+static void gold_write(const gr_t *g, unsigned k)
 {
     static FILE *wf;
-    static char *buf;
-    static size_t blen;
-    const bool wr = getenv("GSB_GOLD_WRITE") != NULL;
-    unsigned diff = 0u, first = 0u, post = 0u, pfirst = 0u;
-    if (path == NULL) {
-        return 0u;
-    }
-    if (wr) {
+    const char *path = getenv("GSB_GOLD_WRITE");
+    if (wf == NULL) {
+        wf = fopen(path, "w");
         if (wf == NULL) {
-            wf = fopen(path, "w");
-            if (wf == NULL) {
-                perror(path);
-                exit(2);
-            }
-        }
-        for (unsigned f = 0u; f < GFRAMES; f++) {
-            fprintf(wf, "%u %u %016llx\n", k, f + 1u, (unsigned long long)g->h[f]);
-        }
-        fflush(wf);
-        return 0u;
-    }
-    if (buf == NULL) {
-        FILE *rf = fopen(path, "r");
-        long n;
-        if (rf == NULL) {
             perror(path);
             exit(2);
         }
-        fseek(rf, 0, SEEK_END);
-        n = ftell(rf);
-        fseek(rf, 0, SEEK_SET);
-        buf = malloc((size_t)n + 1u);
-        blen = fread(buf, 1u, (size_t)n, rf);
-        buf[blen] = 0;
-        fclose(rf);
     }
-    {
-        unsigned found = 0u;
-        char *p = buf;
-        while (p != NULL && *p != 0) {
-            unsigned kk, ff;
-            unsigned long long h;
-            if (sscanf(p, "%u %u %llx", &kk, &ff, &h) == 3 && kk == k && ff >= 1u && ff <= GFRAMES) {
-                found++;
-                if (g->h[ff - 1u] != (uint64_t)h) {
-                    if (g->gold_full || ff < g->c3_frame) {
-                        if (diff == 0u) {
-                            first = ff;
-                        }
-                        diff++;
-                    } else {
-                        post++;
-                        if (pfirst == 0u) {
-                            pfirst = ff;
-                        }
-                    }
+    for (unsigned f = 0u; f < GFRAMES; f++) {
+        fprintf(wf, "%u %u %016llx %016llx\n", k, f + 1u, (unsigned long long)g->h[f],
+                (unsigned long long)g->hw[f]);
+    }
+    fflush(wf);
+}
+
+static bool in_rel_window(const gr_t *g, unsigned f /* 1-based */)
+{
+    for (unsigned d = 0u; d <= 4u && d < f; d++) {
+        if (g->relon[f - 1u - d] != 0u) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static unsigned gold_check(const char *path, const gr_t *g, unsigned k, bool exact)
+{
+    static const char *lp;
+    static gline_t *v;
+    static size_t vn;
+    unsigned found = 0u, diff = 0u, first = 0u;
+    if (path == NULL) {
+        return 0u;
+    }
+    if (lp == NULL || strcmp(lp, path) != 0) {
+        free(v);
+        v = gold_load(path, &vn);
+        lp = path;
+    }
+#if defined(GSB_HOST_NO_REL_BRIDGE)
+    if (!exact) {
+        /* the r04k behaviour against HEAD bccfb9d (r04j): the G4a rule */
+        unsigned post = 0u, pfirst = 0u;
+        for (size_t i = 0u; i < vn; i++) {
+            if (v[i].k != k || v[i].f < 1u || v[i].f > GFRAMES) {
+                continue;
+            }
+            found++;
+            if (g->h[v[i].f - 1u] != v[i].h) {
+                if (g->gold_full || v[i].f < g->c3_frame) {
+                    if (diff == 0u) { first = v[i].f; }
+                    diff++;
+                } else {
+                    post++;
+                    if (pfirst == 0u) { pfirst = v[i].f; }
                 }
             }
-            p = strchr(p, '\n');
-            if (p != NULL) {
-                p++;
-            }
         }
-        printf("   GOLDEN vs HEAD bccfb9d (r04j): run %u '%s': %u of %u frames compared (%s), %u differ "
-               "(first F%u); the R commit after the release at F%u, %u frames differ from it on (first F%u)\n",
-               k, g->name, found, GFRAMES, g->gold_full ? "every frame" : "the frames before the R commit",
-               diff, first, g->c3_frame, post, pfirst);
+        printf("   GOLDEN (r04k behaviour) vs HEAD bccfb9d: run %u '%s': %u frames compared (%s), %u differ "
+               "(first F%u); from the R commit F%u on %u differ (first F%u)\n", k, g->name, found,
+               g->gold_full ? "every frame" : "the frames before the R commit", diff, first, g->c3_frame, post,
+               pfirst);
         if (!g->gold_full && (g->c3_frame == 0u || (pfirst != 0u && pfirst < g->c3_frame))) {
             diff++;
         }
-        if (found != GFRAMES) {
-            diff += GFRAMES - found;
-        }
+        return diff + (GFRAMES - found);
     }
-    return diff;
+#endif
+    if (exact) {
+        for (size_t i = 0u; i < vn; i++) {
+            if (v[i].k != k || v[i].f < 1u || v[i].f > GFRAMES) {
+                continue;
+            }
+            found++;
+            if (g->h[v[i].f - 1u] != v[i].h || (v[i].has_w && g->hw[v[i].f - 1u] != v[i].hw)) {
+                if (diff == 0u) { first = v[i].f; }
+                diff++;
+            }
+        }
+        printf("   GOLDEN exact (G4b trace): run %u '%s': %u frames compared, %u differ (first F%u)\n", k,
+               g->name, found, diff, first);
+        return diff + (GFRAMES - found);
+    }
+    {
+        /* G4b against the r04k reference: confinement to the release windows */
+        unsigned first_rel = 0u, pre = 0u, wire_out = 0u, wire_in = 0u, cell_only = 0u, wo_first = 0u;
+        unsigned co_first = 0u, co_last = 0u, relf = 0u;
+        for (unsigned f = 1u; f <= GFRAMES; f++) {
+            if (g->relon[f - 1u] != 0u) {
+                relf++;
+                if (first_rel == 0u) { first_rel = f; }
+            }
+        }
+        for (size_t i = 0u; i < vn; i++) {
+            const unsigned f = v[i].f;
+            if (v[i].k != k || f < 1u || f > GFRAMES) {
+                continue;
+            }
+            found++;
+            if (!v[i].has_w) {
+                printf("   reference golden %s has no wire column\n", path);
+                return 1u + GFRAMES;
+            }
+            if (first_rel == 0u || f < first_rel) {
+                if (g->h[f - 1u] != v[i].h) {
+                    pre++;
+                }
+                continue;
+            }
+            if (g->hw[f - 1u] != v[i].hw) {
+                if (in_rel_window(g, f)) {
+                    wire_in++;
+                } else {
+                    if (wo_first == 0u) { wo_first = f; }
+                    wire_out++;
+                }
+            } else if (g->h[f - 1u] != v[i].h) {
+                cell_only++;
+                if (co_first == 0u) { co_first = f; }
+                co_last = f;
+            }
+        }
+        printf("   GOLDEN vs the r04k reference (no bridged release): run %u '%s': %u frames; before the first "
+               "release frame F%u %u differ; WIRE differs in %u frames inside the %u release-window frames, "
+               "%u outside (first F%u); cell-window-only differences %u (F%u..F%u)\n", k, g->name, found,
+               first_rel, pre, wire_in, relf, wire_out, wo_first, cell_only, co_first, co_last);
+        return pre + wire_out + (GFRAMES - found) + ((first_rel == 0u) ? 1u : 0u) + ((wire_in == 0u) ? 1u : 0u);
+    }
 }
 
 int main(int argc, char **argv)
 {
     const char *gold = (argc > 1) ? argv[1] : NULL;
+    const char *gold2 = (argc > 2) ? argv[2] : NULL;
     (void)gold;
+    (void)gold2;
 #if GS_LIVE_DIR == 0
     /* (1) identity, (2) the recorder — real feedback (the bench since r04f) */
     g_a = (gr_t){ .name = "live, no bridge", .bridge = false, .real = true };
@@ -768,8 +1019,14 @@ int main(int argc, char **argv)
         run_fresh_g(g, k == 0u);
         g_fails += g->info ? 0 : (int)g->fails;
         if (!g->info) {
-            const unsigned d = gold_check(gold, g, k);
-            GCHECK(d == 0u, "%s: the live path differs from HEAD bccfb9d in %u frames", g->name, d);
+            if (getenv("GSB_GOLD_WRITE") != NULL) {
+                gold_write(g, k);
+            } else {
+                const unsigned d = gold_check(gold, g, k, false);
+                const unsigned e = gold_check(gold2, g, k, true);
+                GCHECK(d == 0u, "%s: the live path against golden 1 (%s): %u", g->name, gold, d);
+                GCHECK(e == 0u, "%s: the live path against the exact golden (%s): %u", g->name, gold2, e);
+            }
         }
         summary(&g->r);
 #if defined(DIAG_TEMPS)
@@ -785,6 +1042,25 @@ int main(int argc, char **argv)
                    g->r.mlo_est[ch], g->r.mlo_b[ch], g->r.tlo_n[ch]);
         }
         printf("\n");
+        /* G4b: the bound margins while the release is bridged (tested passes) */
+        for (unsigned d = 0u; d < 2u; d++) {
+            for (unsigned q = 0u; q < 2u; q++) {
+                if (g->rm_n[d][q] == 0u) {
+                    continue;
+                }
+                printf("    G4b release from %s, %s (%u passes): UB − est %s%d (est %u / UB %u), est − LB %s%d "
+                       "(est %u / LB %u)\n", d == 0u ? "D" : "R", q == 0u ? "B" : (d == 0u ? "C" : "D"),
+                       g->rm_n[d][q], g->rm_up[d][q] == 0x7FFFFFFF ? "untested " : "",
+                       g->rm_up[d][q] == 0x7FFFFFFF ? 0 : (int)g->rm_up[d][q], g->rm_up_est[d][q],
+                       g->rm_up_b[d][q], g->rm_lo[d][q] == 0x7FFFFFFF ? "untested " : "",
+                       g->rm_lo[d][q] == 0x7FFFFFFF ? 0 : (int)g->rm_lo[d][q], g->rm_lo_est[d][q],
+                       g->rm_lo_b[d][q]);
+                if (!g->info) {
+                    GCHECK(g->rm_up[d][q] > 0 && g->rm_lo[d][q] > 0, "%s: release %u ch %u margin %d / %d",
+                           g->name, d, q, (int)g->rm_up[d][q], (int)g->rm_lo[d][q]);
+                }
+            }
+        }
 #endif
         if (!g->info) {
             const run_r_t *r = &g->r;

@@ -1528,6 +1528,61 @@ def gs_rel_print(raw):
             prev = key
 
 
+GSBR_SIZE = 0x450          # gsbr_t (G4b 2026-11-19, static-asserted in app/gs_bridge.h)
+GSBR_EST_SIZE = 0x1F4      # gsbr_est_t
+GSBR_SLOT = 540
+GSBR_REC_N = 125
+GSBR_TRIP = {1: "B above its first-pass value", 2: "third below its first-pass value",
+             3: "B's first pass above its applied value before", 4: "third's first pass below its applied value before",
+             5: "outside [500, 8500] / mode-1 rule", 6: "a pinned channel off 8500", 7: "release length > 125 passes"}
+
+
+def gsbr_print(raw, est, rel_raw):
+    """The BRIDGED release (G4b): live staged words of B and the third element against the shadow's
+    release currents (gs_rel_t slots, same pass index) and the real-feedback estimate."""
+    u16 = lambda b, o: int.from_bytes(b[o:o + 2], "big")
+    u32 = lambda b, o: int.from_bytes(b[o:o + 4], "big")
+    print(f"bridged release (G4b): {u32(raw, 0)} bridged passes, {u16(raw, 4)} releases bridged, {u16(raw, 6)} refused"
+          f" (bridge not applied before), envelope trips {u16(raw, 8)}"
+          + (f" (last: code {raw[12]} = {GSBR_TRIP.get(raw[12], '?')}, ch {raw[13]}, value {u16(raw, 10)})"
+             if u16(raw, 8) else "")
+          + f"; now on {raw[14]} pf {raw[15]} pass {u16(raw, 16)}")
+    for k in (0, 1):
+        h = 24 + GSBR_SLOT * k
+        sl = raw[h:h + GSBR_SLOT]
+        n, pf, xch, code = sl[21], sl[18], sl[19], sl[20]
+        if pf == 0:
+            print(f"  bridged-release slot {k} (from {'D' if k == 0 else 'R'}): empty")
+            continue
+        end_t = u16(sl, 6)
+        xn = {4: "C", 1: "D"}.get(xch, "?")
+        endtxt = {1: "the shadow's completion", 2: f"disarmed (why {u16(sl, 8):04X})"}.get(
+            code, f"ENVELOPE TRIP {GSBR_TRIP.get(code - 0x10, '?')}" if code >= 0x10 else "-")
+        print(f"  bridged-release slot {k} (from {'D' if k == 0 else 'R'}): start bridge pass {u32(sl, 0)},"
+              f" {u16(sl, 4)} passes bridged, ended at release pass {'-' if end_t == 0xFFFF else end_t} by {endtxt};"
+              f" B first {u16(sl, 10)} (before {u16(sl, 14)}), {xn} first {u16(sl, 12)} (before {u16(sl, 16)}); {n} entries")
+        if n == 0:
+            continue
+        print(f"  pass ap | staged B  0.1mA shadow B(prev) | staged {xn} 0.1mA shadow {xn}(prev) | est B  est {xn} (0.1 mA, 4 mA steps)")
+        prevkey = None
+        for i in range(min(n, GSBR_REC_N)):
+            ap = (sl[22 + (i >> 3)] >> (i & 7)) & 1
+            wb, wx = u16(sl, 38 + 4 * i), u16(sl, 40 + 4 * i)
+            eb, ex = est[(k * GSBR_REC_N + i) * 2], est[(k * GSBR_REC_N + i) * 2 + 1]
+            # the shadow's release current of the previous pass (gs_rel_t rec[k][i-1]: cur A D B E C)
+            sb = sx = None
+            if rel_raw is not None and i >= 1:
+                o = 76 + (k * GS_RREC_N + i - 1) * 12
+                e = rel_raw[o:o + 12]
+                sb = int.from_bytes(e[4:6], "big")
+                sx = int.from_bytes(e[2 * xch:2 * xch + 2], "big")
+            key = (ap, wb, wx)
+            if i < 3 or i % 10 == 0 or i >= n - 5 or (prevkey is not None and prevkey[0] != ap):
+                print(f"  {i:4d} {ap:2d} | {wb:04X} {6 * (wb & 0x7FF):5d}  {'-' if sb is None else sb:>14} |"
+                      f" {wx:04X} {6 * (wx & 0x7FF):5d}  {'-' if sx is None else sx:>14} | {40 * eb:5d}  {40 * ex:5d}")
+            prevkey = key
+
+
 def cmd_gs_check(b, args):
     """The READ-ONLY garage-engagement shadow (app/gs_shadow.c; ~/tcu_sweep/garage_shadow_port.md).
     It DRIVES NOTHING: the stock's garage engagement (direction request, power-flow commit, the
@@ -1541,7 +1596,11 @@ def cmd_gs_check(b, args):
     (~5930, 10 passes), B waits in 0x0F, B fill ~5710, B phase 4 ~3630 (one pass), sync on the
     next pass (turbine 0), B in 0x0B for 49 passes (~4150 -> 5225, BD30 1..49), the 0x0C ramp,
     completion (cause 1) ~0.95 s after the commit, then A 8500 D 8500 B 8500 E 8500 C 500;
-    P->R the same shape with D third, end A 8500 D 500 B 8500 E 8500 C 8500; WK / Sys 500."""
+    P->R the same shape with D third, end A 8500 D 500 B 8500 E 8500 C 8500; WK / Sys 500.
+    G2 (r04i+): the bridge APPLIES the engagement to the live solenoid currents. G4b (r04l+): after
+    each lever P it also applies the stock's 1.2 s RELEASE (120 passes on the dry bench: from D B
+    ~4116 -> ~3486, C ~6440 -> ~6670; from R B ~3600 -> ~3486, D ~6150 -> ~6504), then the P content;
+    the bridged-release recorder (_s_gsbr / _s_gsbr_est) is printed at the end."""
     b.start_drain()     # keep the Teensy ports drained (lever-sim gaps, 2026-11-17)
 
     w_addr, w_size = elf_sym(args.elf, "_g_w")
@@ -1626,6 +1685,25 @@ def cmd_gs_check(b, args):
         if n:
             raw[o:o + 12 * n] = read_retry(rel_addr + o, 12 * n)
     gs_rel_print(bytes(raw))
+    # G4b: the bridged release (live staged words vs the shadow's release, the estimate)
+    try:
+        br_addr, br_size = elf_sym(args.elf, "_s_gsbr")
+        be_addr, be_size = elf_sym(args.elf, "_s_gsbr_est")
+    except SystemExit:
+        print("bridged release: no _s_gsbr in this ELF (before G4b)")
+        return 0
+    if br_size != GSBR_SIZE or be_size != GSBR_EST_SIZE:
+        sys.exit(f"_s_gsbr {br_size:#x} / _s_gsbr_est {be_size:#x}: not the G4b layout - rebuild?")
+    braw = bytearray(GSBR_SIZE)
+    braw[0:24] = read_retry(br_addr, 24)
+    for k in (0, 1):
+        h = 24 + GSBR_SLOT * k
+        braw[h:h + 38] = read_retry(br_addr + h, 38)
+        n = min(braw[h + 21], GSBR_REC_N)
+        if n:
+            braw[h + 38:h + 38 + 4 * n] = read_retry(br_addr + h + 38, 4 * n)
+    best = bytes(read_retry(be_addr, GSBR_EST_SIZE))
+    gsbr_print(bytes(braw), best, bytes(raw))
     return 0
 
 

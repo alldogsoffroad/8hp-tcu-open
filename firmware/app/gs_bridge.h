@@ -184,6 +184,111 @@ typedef struct {
 } gsb_t;
 _Static_assert(sizeof(gsb_t) == 172u, "gsb_t is 172 bytes (tools/bench/witness_g1.py)");
 
+/* ── STAGE G4b (2026-11-19, ~/tcu_sweep/g4b_release_bridge_port.md): THE
+ * BRIDGED RELEASE (ours, not stock). After a bridged engagement, the stock's
+ * garage release (the shadow's BD16 = 4, G4a: phases 0x12 → 0x13 → 0x14,
+ * 120 passes on the dry bench, cause 6) stays bridged instead of dropping to
+ * the P content in the lever-P pass:
+ *   - CONTINUITY: a release is bridged only from its first pass (the
+ *     shadow's power-flow-0 commit) and only when the bridge was APPLIED in
+ *     the pass before; once a release pass is not armed, that release is
+ *     never re-armed (no fresh arm into a release);
+ *   - direction = the last nonzero commit's slot (its pf; the shadow's
+ *     commit_old must agree), applied only if GS_LIVE_DIR carries it;
+ *   - during the release: range D6D6 5..8 accepted, the park-model
+ *     condition waived, no agreement entry; every other arm condition and
+ *     latch as an engagement (rail, OS mode, park_mon, diagnosis, the
+ *     release window, the 30 s budget, the latches);
+ *   - THE RELEASE ENVELOPE (compile-time; a trip latches the guard until
+ *     power-off, as the element bounds): only the engagement's moving
+ *     channels move (D: B, C; R: B, D), every other at its pin 8500; every
+ *     moving value in [500, 8500] (mode-1 passes exactly 500 / 8500); B never
+ *     above its value in the release's first pass, and that never above B's
+ *     applied value in the pass before; the third element never below its
+ *     first-pass value, and that never below its applied value before; at
+ *     most GSB_REL_PASSES release passes (the shadow's 120 + 5);
+ *   - no ramp tail: after the release's completion the shadow's currents
+ *     ARE the P content (B released at 500 in mode 1 while its request
+ *     object's +0x46 ramps down internally — no current transient, the
+ *     m5_transient decode's switch-off), so the bridge disarms in the
+ *     completion pass;
+ *   - windows: release passes count against the 30 s armed budget (they
+ *     are armed and applied); NOT against the 3.5 s engagement limit (the
+ *     release commit ends the engagement timer; the release has its own
+ *     125-pass limit) nor the 16-commit cap (a power-flow-0 commit). */
+#if defined(GSB_REL_PASSES) && defined(__sh__)
+#  error "gs bridge: the release limit is 125 passes on SH builds (GSB_REL_PASSES is a host-only test override)"
+#endif
+#ifndef GSB_REL_PASSES
+#  define GSB_REL_PASSES  125u      /* the shadow's 120-pass timer + 5 */
+#endif
+#if defined(__sh__) && (defined(GSB_HOST_NEG_REL_FRESH) || defined(GSB_HOST_NO_REL_BRIDGE))
+#  error "gs bridge: the release negatives are host-only tests"
+#endif
+
+/* the release trip codes (gsbr_t.trip_code, gsbr_slot_t.end_code 0x10 + code) */
+#define GSBR_T_BUP     1u   /* B above its first-pass value */
+#define GSBR_T_XDN     2u   /* the third element below its first-pass value */
+#define GSBR_T_B0      3u   /* B's first-pass value above its applied value before */
+#define GSBR_T_X0      4u   /* the third's first-pass value below its applied value before */
+#define GSBR_T_RANGE   5u   /* outside [500, 8500], or a mode-1 value not 500 / 8500 */
+#define GSBR_T_FIXED   6u   /* a pinned channel off 8500 */
+#define GSBR_T_LEN     7u   /* more than GSB_REL_PASSES release passes */
+/* end codes: 1 the shadow's completion, 2 disarmed by a reason (end_why),
+ * 0x10 + trip code: the envelope tripped */
+#define GSBR_E_DONE    1u
+#define GSBR_E_WHY     2u
+
+#define GSBR_REC_N     125u     /* per slot: release passes 0..120 + the P-content passes after */
+
+/* one bridged-release slot (slot 0: the last release from D, 1: from R) */
+typedef struct {
+    uint32_t t0;            /* bridge pass of the release commit */
+    uint16_t len;           /* bridged release passes */
+    uint16_t end_t;         /* release pass the bridge left the release (0xFFFF: not yet) */
+    uint16_t end_why;       /* GSB_R_* / GSB_G_* at the end */
+    uint16_t b0, x0;        /* B / the third element in the release's first pass (0.1 mA) */
+    uint16_t bprev, xprev;  /* B / the third applied in the pass before the release */
+    uint8_t  pf;            /* 1 D, 2 R; 0 = never used */
+    uint8_t  xch;           /* the third element's channel (4 C, 1 D) */
+    uint8_t  end_code;      /* GSBR_E_* / 0x10 + GSBR_T_* */
+    uint8_t  n;             /* entries recorded */
+    uint8_t  bm[16];        /* bit i: entry i applied */
+    uint16_t live[GSBR_REC_N][2];   /* the live staged words of B and the third (E8 / F0
+                                     * rows) at the start of entry i — the previous pass's
+                                     * compose (the F stage follows the 10 ms task) */
+} gsbr_slot_t;
+_Static_assert(sizeof(gsbr_slot_t) == 540u, "gsbr_slot_t is 540 bytes (tcu_bench.py gs-check)");
+
+typedef struct {
+    uint32_t n;             /* bridged release passes (all releases) */
+    uint16_t ev;            /* bridged releases started */
+    uint16_t refused;       /* shadow releases not bridged (the bridge not applied before) */
+    uint16_t trip_n;        /* envelope trips (each latches) */
+    uint16_t trip_v;        /* the last trip's value */
+    uint8_t  trip_code;     /* GSBR_T_* */
+    uint8_t  trip_ch;
+    uint8_t  on;            /* a bridged release is in progress after this pass */
+    uint8_t  pf;            /* its direction */
+    uint16_t t;             /* its release pass (0 = the release commit) */
+    uint8_t  rec;           /* the slot being recorded (0xFF none) */
+    uint8_t  rec_tail;      /* passes still recorded after the end */
+    uint8_t  rel_prev;      /* the shadow was releasing in the previous pass */
+    uint8_t  pad;
+    gsbr_slot_t slot[2];
+} gsbr_t;
+_Static_assert(sizeof(gsbr_t) == 24u + 2u * 540u, "gsbr_t is 1104 bytes (tcu_bench.py gs-check)");
+
+/* the real-feedback estimate 0x93394 of B and the third, per entry, in
+ * 4 mA steps (est / 40) — a separate object (.gsb_rel_est) */
+typedef struct {
+    uint8_t est[2][GSBR_REC_N][2];
+} gsbr_est_t;
+_Static_assert(sizeof(gsbr_est_t) == 500u, "gsbr_est_t is 500 bytes (tcu_bench.py gs-check)");
+
+const volatile gsbr_t     *gs_bridge_rel(void);
+const volatile gsbr_est_t *gs_bridge_rel_est(void);
+
 void gs_bridge_init(bool cold);
 void gs_bridge_tick_10ms(const gsb_in_t *in);
 
