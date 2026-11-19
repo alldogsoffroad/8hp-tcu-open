@@ -1,56 +1,44 @@
 #!/usr/bin/env python3
-"""witness_g6a.py — G6a, THE DUAL-RUN COMPARATOR (firmware/app/g6a.c, g6a.h;
-the candidate firmware/app/gs_cand.c + gs_cand_fill.c; ~/tcu_sweep/g6a_port.md).
+"""witness_g6a.py — THE COMPARATOR (firmware/app/g6a.c, g6a.h) of G6a and G6b, the
+candidate (firmware/app/gs_cand.c + gs_cand_fill.c) and — G6b — the monitor
+(firmware/app/gs_bridge.c mon_tick); ~/tcu_sweep/g6a_port.md, ~/tcu_sweep/g6b_port.md.
 
-The candidate (instance 2 of the garage engine template, the merged producer
-in its G6b form, on its OWN RAM) runs every 10 ms beside the live path and
-writes nothing live; the comparator records, every pass, the candidate's
-A..Sys currents / A..E modes and fill states against what the F stage takes
-(the bridge's value while applied, else the live producer through the
-guard), classified:
-  AGREE    no difference
-  BOOT     expected: the boot window (E28E starts at 1, A refills) — closes at
-           the first full agreement with E28E 0 and nothing filling, <= 16
-  FENCED   expected: the bridge not applied, the shadow's engine owns the
-           content (pf / releasing / pending / active / E28E != 0) and the
-           candidate == the shadow
-  FSMTAIL  expected: the bridge not applied, candidate == shadow, currents
-           and modes == the wire, only non-filling fill states differ (the
-           live objects never ran the engagement)
-  UNEXP    everything else — the G6a discriminator
+G6b (r04o on): THE CANDIDATE IS THE PRODUCER of the live A..E currents. Every
+10 ms: shadow (instance 1, read-only, the reference) -> candidate -> monitor
+(the seam: the candidate, or the E28E fence's live producer, or the latched P
+content) -> comparison. Classes (one per comparator pass):
+  AGREE    wire == candidate == shadow
+  BOOT     expected: the boot window (the boot fence: the live producer's boot
+           fill on the wire while the candidate's E28E transient runs; closes
+           at the first pass with wire == candidate == shadow, <= 16)
+  FENCED   expected: wire != candidate because the monitor fenced (E28E: the
+           engine-stop all-release) or latched, candidate == shadow
+  FSMTAIL  expected: wire == candidate, candidate != shadow only in a
+           non-filling fill state (one pass of B's record ramp after boot)
+  UNEXP    anything else — must be 0
+(G6a, r04n: the classes of the dual-run — see g6a.h.)
 
 Reads over meas (6 bytes per request; NOT atomic — read in P, after the lever
-sequence): g6a_t 932 B at 0xFFF93C08 (.g6a); the candidate's gs_wit_t (76 B)
-and the shadow's (76 B); the walk poll / ISR counters and now_ms.
+sequence): g6a_t 1008 B at 0xFFF93C08 (.g6a): the head (164 B), the records,
+the G6b CPU block (+932, 76 B); the candidate's gs_wit_t (76 B) and the
+shadow's; the monitor block of gsb_t (+172, 40 B at 0xFFF87220 + 172) and the
+window latch (0xFFF87200 + 16); the walk poll / ISR counters and now_ms.
 
     witness_g6a.py [rounds] [--recs] [--raw]
 
-  --recs    also print the first 16 disagreeing passes and the first 8
-            unexpected ones (~160 more meas requests)
-
 Addresses from nm of THIS build (sh-elf-nm build/sh2a/tcu_app.elf):
 _s_g6a 0xFFF93C08, the candidate's _g_w 0xFFF928D0 (the second _g_w; the
-shadow's is 0xFFF91440), _s_ae28_x 0xFFF92AD8, _s_walk_poll_count 0xFFF955BC,
-_s_walk_isr_count 0xFFF955C0, _s_now_ms 0xFFF956A8; the shadow's _s_e469c_off
-0xFFF916D8 (unchanged since r04a). Re-check before every use. The last one can
-also be read ZERO-FLASH on r04m (same address) before installing r04n.
+shadow's is 0xFFF91440), _s_ae28_x 0xFFF92AD8, _s_gsb 0xFFF87220, _s_gsb_win
+0xFFF87200, _s_walk_poll_count 0xFFF955BC, _s_walk_isr_count 0xFFF955C0,
+_s_now_ms 0xFFF956A8. Re-check before every use.
 
-Bench prediction (r04n, ~/tcu_sweep/g6a_port.md §8):
-  plain boot: magic 47364131, booted 1, boot window closed at pass ~13 with ~6
-    disagreeing (A at 500 for 2 passes, then its refill 2 passes late), every
-    later pass AGREE, UNEXP 0, law checks ~= passes with 0 mismatches, guard
-    0, ae28_x 0; cand_us_max / task_us_max: the CPU witness (read and record).
-  gs-check (--sim-brake --sim-engine 700 --start-before-power --hold 8):
-    BOOT ~6; FSMTAIL after each release (~76 per release: B / the third
-    element ramping +0x46 in the candidate, at 0 in the live objects);
-    UNEXP 0 IF the shadow's 0xE469C garage fill-time term is on — BUT the
-    r04l recorder shows it OFF on this bench (the third element's fill 8
-    passes where the host's is 10: instance 1's host-negative flag
-    s_e469c_off sits in uncleared NOLOAD RAM). Then: UNEXP ~85 per engagement
-    (~170 for D + R), from the commit + 9 to the shadow's completion + 2, on
-    B / C (D) and B / D (R) only, cand != shadow while applied ~= UNEXP,
-    every record a 2-pass phase shift (candidate's third element still in
-    phase 2 where the shadow's is in 4).
+CPU (G6b, the bench's CPU stop conditions: scheduler missed_ticks > 0, any ring
+overflow, the walk polled share > 10 %): the candidate's tick by slot group —
+head, s28 (timers, element tick / update), s29 (engine state), s30 (AE28,
+E28E, request), s31/32 (commit, strobe), s34 (sync progress), s35 (element
+steps / outputs), s42 (producer + actuators), tail — max, last and AT THE
+candidate's max pass (names the peak's source); the shadow's tick; the monitor;
+the comparison.
 """
 import struct
 import sys
@@ -60,7 +48,12 @@ sys.path.insert(0, "/home/chadk/Documents/REA Projects/tools/bench")
 import tcu_bench  # noqa: E402
 
 G6A = 0xFFF93C08
-G6A_SZ = 932
+G6A_SZ = 1008
+CPU_OFF = 932
+GSB = 0xFFF87220
+GSB_WIN = 0xFFF87200
+STG = ['head', 's28', 's29', 's30', 's31/32', 's34', 's35', 's42', 'tail']
+SRC = ['LIVE (E28E fence)', 'CANDIDATE', 'P CONTENT (latched)']
 CAND_W = 0xFFF928D0
 SH_W = 0xFFF91440
 AE28X = 0xFFF92AD8
@@ -117,7 +110,8 @@ def show_head(d):
     print("  per channel disagreeing: " + " ".join("%s %u" % (CH[c], u32(d, 28 + 4 * c)) for c in range(7)))
     print("  per channel UNEXPECTED:  " + " ".join("%s %u" % (CH[c], u32(d, 56 + 4 * c)) for c in range(7)))
     fu, lu = u32(d, 96), u32(d, 100)
-    print("  mode/state-only passes %u | cand != shadow while applied %u | applied %u | first/last UNEXP %s / %s"
+    print("  mode/state-only passes %u | cand != shadow (G6b: a current / mode on a candidate pass) %u | seam "
+          "value passes %u | first/last UNEXP %s / %s"
           % (u32(d, 84), u32(d, 88), u32(d, 92), "-" if fu == 0xFFFFFFFF else fu, "-" if lu == 0xFFFFFFFF else lu))
     print("  law cross-checks %u, mismatches %u (want 0) | guard fallbacks %u (want 0)"
           % (u32(d, 104), u32(d, 108), u32(d, 112)))
@@ -173,6 +167,26 @@ def main():
         eo = read(b, 1, SH_E469C_OFF, 1)
         wk = read(b, 1, WALK, 8)
         nw = read(b, 1, NOW, 4)
+        cpu = read(b, 1, G6A + CPU_OFF, 76)
+        if cpu:
+            print("  CPU (us) candidate stages max:   " + " ".join("%s %u" % (STG[k], u16(cpu, 2 * k)) for k in range(9)))
+            print("  CPU (us) candidate stages last:  " + " ".join("%s %u" % (STG[k], u16(cpu, 18 + 2 * k)) for k in range(9)))
+            print("  CPU (us) stages at the max pass (comparator pass %u): " % u32(cpu, 64)
+                  + " ".join("%s %u" % (STG[k], u16(cpu, 36 + 2 * k)) for k in range(9)))
+            print("  CPU (us) shadow tick max %u last %u | monitor max %u last %u | comparison last %u | "
+                  "G6b cand != shadow (any field, after the boot window) %u"
+                  % (u16(cpu, 54), u16(cpu, 56), u16(cpu, 58), u16(cpu, 60), u16(cpu, 62), u32(cpu, 68)))
+        mon = read(b, 1, GSB + 172, 40)
+        gw = read(b, 1, GSB_WIN, 20)
+        if mon and gw:
+            tp = u32(mon, 8)
+            print("  MONITOR: seam now %s | candidate %u live (fence) %u P content %u passes | fence entries %u "
+                  "exits %u (first exit pass %u) | trips %u (want 0)%s | latch %02X (want 00) acc %u ms commits %u"
+                  % (SRC[mon[0]] if mon[0] < 3 else mon[0], u32(mon, 12), u32(mon, 16), u32(mon, 20),
+                     u16(mon, 28), u16(mon, 30), u32(mon, 32), u16(mon, 38),
+                     "" if tp == 0xFFFFFFFF else " first at pass %u why %04X ch %u v %u" % (tp, u16(mon, 6), mon[5],
+                                                                                      u16(mon, 36)),
+                     gw[16], u32(gw, 4), u16(gw, 12)))
         if cw:
             show_wit("candidate", cw)
         if sw:
@@ -182,7 +196,7 @@ def main():
         if eo:
             print("  the SHADOW's s_e469c_off (0xFFF916D8, uncleared NOLOAD) = %02X: %s" % (
                 eo[0], "0 - the shadow's garage fill-time term is ON (UNEXP 0 expected)" if eo[0] == 0 else
-                "nonzero - the shadow's 0xE469C term is OFF: ~85 UNEXP per engagement expected (g6a_port.md 6)"))
+                "nonzero (not read on SH since r04n - informational)"))
         if wk and nw:
             p, i = u32(wk, 0), u32(wk, 4)
             print("  walk: poll %u isr %u (poll share %.1f %%) now_ms %u" % (p, i, 100.0 * p / max(1, p + i),

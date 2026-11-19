@@ -127,6 +127,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     # flashed application (bsw/drv/drv_gsbr.h; 0 = off, 3 = D and R)
     set(GS_LIVE_DIR 3 CACHE STRING "garage bridge stage of tcu_app.elf (0 off / 3 D and R)")
     target_compile_definitions(tcu_app.elf PRIVATE GS_LIVE_DIR=${GS_LIVE_DIR})
+    # G6b (2026-11-19, ~/tcu_sweep/g6b_port.md): THE SWITCH — the seam carries
+    # the candidate (the stock engine + holder, its own RAM) under the monitor
+    # (bsw/drv/drv_gsbr.h GS_G6B; 1 needs GS_LIVE_DIR 3; SH asserts it)
+    set(GS_G6B 1 CACHE STRING "G6b: the candidate under the monitor drives A..E (1) / the r04n bridge (0, host only)")
+    target_compile_definitions(tcu_app.elf PRIVATE GS_G6B=${GS_G6B})
     target_link_options(tcu_app.elf PRIVATE -T ${LDSCRIPT} -Wl,-Map=tcu_app.map)
     target_link_libraries(tcu_app.elf PRIVATE gcc)
     add_dependencies(tcu_app.elf tcu_flasher_bin)
@@ -1383,6 +1388,13 @@ else()
     set_tests_properties(g6a_scan_outputs_negative PROPERTIES WILL_FAIL TRUE)
     add_test(NAME g6a_scan_cmp
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py cmp ${CMAKE_SOURCE_DIR}/app/g6a.c)
+    # G6b: the monitor's rule (app/gs_bridge.c, inside the outputs scan) and its negative
+    add_test(NAME g6b_scan_monitor_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py monitor
+            ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan_fixture_monitor.c)
+    set_tests_properties(g6b_scan_monitor_negative PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME g6b_scan_monitor
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py monitor ${CMAKE_SOURCE_DIR}/app/gs_bridge.c)
     add_test(NAME g6a_scan_cmp_negative
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py cmp
             ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan_fixture_cmp.c)
@@ -1396,6 +1408,51 @@ else()
     add_test(NAME g6a_scan_link_negative
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py link nm $<TARGET_OBJECTS:g6a_link_fixture>)
     set_tests_properties(g6a_scan_link_negative PROPERTIES WILL_FAIL TRUE)
+    # G6b (2026-11-19, ~/tcu_sweep/g6b_port.md): THE SWITCH on the real chain.
+    # (1) THE G2 GATE IN G6b FORM (test_gs_bridge_chain.c's main, G6B_GATE):
+    # the candidate drives A..E through the monitor; every frame against the
+    # r04n goldens (the bridge of the shadow: the exact G4b traces, both
+    # parities, the long-P / 2 s / 0.3 s P holds), the output diagnosis on the
+    # real feedback silent (no fault word, switch-off, DSM report, would-be
+    # reset); _bounds / _bounds_live with the current bounds (0x940FC 8).
+    set(G6B_GATE_SOURCES ${GSB_CHAIN_SOURCES} app/gs_cand.c app/gs_cand_fill.c app/g6a.c)
+    set(G6B_GATE_DEFS ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3 GSC_G6A=1 GS_G6B=1 G6A_TEST=1 G6B_GATE=1)
+    add_executable(test_g6b_gate ${G6B_GATE_SOURCES})
+    target_compile_definitions(test_g6b_gate PRIVATE ${G6B_GATE_DEFS})
+    add_test(NAME g6b_gate COMMAND test_g6b_gate
+        ${GSB_GOLD}/gsb_live_g2_ref_r04k.txt ${GSB_GOLD}/gsb_live_g2_g4b.txt)
+    add_executable(test_g6b_gate_bounds ${G6B_GATE_SOURCES} app/tsel_shadow.c)
+    target_compile_definitions(test_g6b_gate_bounds PRIVATE ${G6B_GATE_DEFS}
+        DIAG_TEMPS=1 FBS_9393A_HOST_SRC=g_fbs_9393a_host)
+    add_test(NAME g6b_gate_bounds COMMAND test_g6b_gate_bounds
+        ${GSB_GOLD}/gsb_live_g2_temps_ref_r04k.txt ${GSB_GOLD}/gsb_live_g2_temps_g4b.txt)
+    add_executable(test_g6b_gate_bounds_live ${G6B_GATE_SOURCES} app/tsel_shadow.c
+        app/tsel_live.c bsw/drv/drv_tsel.c)
+    target_compile_definitions(test_g6b_gate_bounds_live PRIVATE ${G6B_GATE_DEFS}
+        DIAG_TEMPS=1 TSEL_LIVE=1 FBS_T_ECU_LIVE=1 GSB_HASH_FLAGS_AS_2A=1)
+    add_test(NAME g6b_gate_bounds_live COMMAND test_g6b_gate_bounds_live
+        ${GSB_GOLD}/gsb_live_g2_temps_live_ref_r04k.txt ${GSB_GOLD}/gsb_live_g2_temps_live_g4b.txt)
+    # (2) test_g6b: every G6a scenario in the r04n form and the G6b form in
+    # one binary — wire + cell window identical frame for frame; the G6b
+    # comparator (UNEXP 0, candidate == shadow), the E28E fence (boot, engine
+    # stall), the diagnosis silent; the monitor negatives (bounds, envelope,
+    # windows, permits, idle content, shadow) each caught in its pass and
+    # latched. _englim: the 3.5 s limit at 50 passes, both forms. _bypass
+    # (GSM_HOST_BYPASS: the monitor's checks skipped) must FAIL.
+    set(G6B_SOURCES ${G6B_GATE_SOURCES})
+    list(REMOVE_ITEM G6B_SOURCES tests/unit/test_gs_bridge_chain.c)
+    list(APPEND G6B_SOURCES tests/unit/test_g6b.c)
+    set(G6B_DEFS ${GSB_CHAIN_DEFS} GS_LIVE_DIR=3 GSC_G6A=1 GS_G6B=1)
+    add_executable(test_g6b ${G6B_SOURCES})
+    target_compile_definitions(test_g6b PRIVATE ${G6B_DEFS})
+    add_test(NAME g6b_switch COMMAND test_g6b)
+    add_executable(test_g6b_englim ${G6B_SOURCES})
+    target_compile_definitions(test_g6b_englim PRIVATE ${G6B_DEFS} GSB_ENG_PASSES=50u G6A_ENGLIM=1)
+    add_test(NAME g6b_switch_englim COMMAND test_g6b_englim)
+    add_executable(test_g6b_bypass ${G6B_SOURCES})
+    target_compile_definitions(test_g6b_bypass PRIVATE ${G6B_DEFS} GSM_HOST_BYPASS=1 G6B_BYPASS=1)
+    add_test(NAME g6b_monitor_bypass_negative COMMAND test_g6b_bypass)
+    set_tests_properties(g6b_monitor_bypass_negative PROPERTIES WILL_FAIL TRUE)
     add_executable(test_g6a_neg_livewrite ${G6A_SOURCES})
     target_compile_definitions(test_g6a_neg_livewrite PRIVATE ${G6A_DEFS} G6A_NEG=2 GSC_NEG_LIVE_ALIAS=0xFFF8B7C8u)
     add_test(NAME g6a_neg_live_write COMMAND test_g6a_neg_livewrite)
@@ -1516,6 +1573,24 @@ else()
         PASS_REGULAR_EXPRESSION "GSB_REL_PASSES is a host-only test override")
     set_tests_properties(gs_bridge_sh_guard_relneg PROPERTIES
         PASS_REGULAR_EXPRESSION "the release negatives are host-only tests")
+    # G6b SH guards: the monitor bypass is host-only; a live seam on SH is the
+    # G6b form; G6b needs the seam; the control (G6b, -Wall -Wextra -Wconversion)
+    add_test(NAME g6b_sh_guard_control
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion -DGS_LIVE_DIR=3 -DGS_G6B=1
+            ${CMAKE_SOURCE_DIR}/app/gs_bridge.c)
+    add_test(NAME g6b_sh_guard_bypass
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_LIVE_DIR=3 -DGS_G6B=1 -DGSM_HOST_BYPASS
+            ${CMAKE_SOURCE_DIR}/app/gs_bridge.c)
+    set_tests_properties(g6b_sh_guard_bypass PROPERTIES
+        PASS_REGULAR_EXPRESSION "the monitor bypass is a host-only negative test")
+    add_test(NAME g6b_sh_guard_r04n_form
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_LIVE_DIR=3 -DGS_G6B=0 ${GSB_SH_SRC})
+    set_tests_properties(g6b_sh_guard_r04n_form PROPERTIES
+        PASS_REGULAR_EXPRESSION "on SH builds a live seam carries the candidate under the monitor")
+    add_test(NAME g6b_sh_guard_noseam
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_G6B=1 ${GSB_SH_SRC})
+    set_tests_properties(g6b_sh_guard_noseam PROPERTIES
+        PASS_REGULAR_EXPRESSION "G6b .GS_G6B 1. needs the seam for D and R")
     add_test(NAME gs_bridge_sh_guard_ramapp
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DTCU_RAM_APP -DGS_LIVE_DIR=3 ${GSB_SH_SRC})
     set_tests_properties(gs_bridge_sh_guard_output PROPERTIES

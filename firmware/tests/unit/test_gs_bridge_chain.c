@@ -63,10 +63,21 @@
  * them (after the bridge, its boot pass at boot state 1 through
  * sup_mode.c's weak hook); g6a_on selects the run with / without them */
 #include "app/g6a.h"
+#include "app/gs_cand.h"
+#if defined(G6B_GATE)
+/* G6b (2026-11-19, ~/tcu_sweep/g6b_port.md): the G2 gate's main with THE
+ * SWITCH — the candidate ticked before the monitor, the monitor's seam on
+ * the wire — against the r04n goldens (the bridge of the shadow) */
+static bool g6a_on = true;
+#else
 static bool g6a_on;
+#endif
 static unsigned g6a_eng0_from;  /* frames after the mode-1 switch: 0x108 valid at 0 rpm (0 = never) */
 static bool g6a_nosim;          /* no lever / brake / engine frames at all (the plain boot) */
 static unsigned g6a_m1;         /* the mode-1 frame of the current run */
+#if defined(G6B_TEST)
+static uint32_t g6b_relwin_from = 0xFFFFFFFFu, g6b_relwin_to;   /* test_g6b.c: forced RELWIN passes */
+#endif
 #if defined(G6A_HOSTTIME)
 /* scratch CPU-cost model (not a ctest): host ns of the shadow's tick (0) and
  * the candidate + comparator (1), per pass */
@@ -79,6 +90,28 @@ static unsigned g6a_ns_n[2];
     const double d_ = (double)(t1_.tv_sec - g6a_ts0.tv_sec) * 1e9 + (double)(t1_.tv_nsec - g6a_ts0.tv_nsec); \
     g6a_ns_sum[k] += d_; g6a_ns_n[k]++; if (d_ > g6a_ns_max[k]) { g6a_ns_max[k] = d_; } } while (0)
 #endif
+#endif
+
+#if defined(G6B_GATE)
+/* the candidate's boot pass at boot state 1 (app/main.c g6a_boot_pass) */
+void g6a_boot_pass(void)
+{
+    const vehicle_in_t *v = vehicle_in();
+    const gs_in_t gi = {
+        .os_mode = sup_mode(),
+        .rngd = *(const volatile uint8_t *)0xFFF89CDCu,
+        .park_model = park_law_state(),
+        .park_req = park_law_request(),
+        .temp = *(const volatile uint8_t *)0xFFF89C13u,
+        .cd2 = *(const volatile uint8_t *)0xFFF89CD2u,
+        .eng_speed = (uint16_t)v->engine_speed,
+        .eng_valid = (v->q_engine_speed == Q_OK) ? 1u : 0u,
+        .out_rpm = 0u,
+        .tur_rpm = 0u,
+        .ae28 = *(const volatile uint8_t *)0xFFF8AE28u,
+    };
+    g6a_boot(&gi);
+}
 #endif
 
 static sensors_in_t g_z;
@@ -215,6 +248,11 @@ static uint64_t g_hash_window(uint64_t h)
         }
 #if defined(G6A_TEST)
         if (abs >= 0xFFF925C0u && abs < 0xFFF92860u) {
+#  if defined(G6B_GATE)
+            /* G6b gate: hashed as the zeros the r04n goldens saw there (the
+             * goldens' builds had no candidate) */
+            h = (h ^ 0u) * 0x100000001B3ull;
+#  endif
             continue;                       /* G6a: the candidate's own request objects (.gsc_req) */
         }
 #endif
@@ -296,10 +334,25 @@ static void task10(gr_t *g, unsigned p)
 #if defined(G6A_HOSTTIME)
         G6A_T1(0);
 #endif
+#if defined(G6A_TEST) && GS_G6B
+        /* G6b (app/main.c): the candidate BEFORE the monitor */
+        const bool g6b_run = g6a_on && gs_bridge_g6b();
+        if (g6b_run) {
+            g6a_cand_tick(&gi);
+        }
+#endif
         if (g->bridge) {
+#if defined(G6B_TEST)
+            /* G6b negatives: the park-release window forced latched on these
+             * monitor passes (a permit failing mid-engagement) */
+            const uint32_t bp = gs_bridge_state()->passes;
+            const uint8_t rw = (bp >= g6b_relwin_from && bp < g6b_relwin_to) ? 2u : drv_rq_rel_win_state();
+#else
+            const uint8_t rw = drv_rq_rel_win_state();
+#endif
             const gsb_in_t bi = {
                 .mon_faults = park_mon_faults(),
-                .relwin_st = drv_rq_rel_win_state(),
+                .relwin_st = rw,
                 .eng_valid = gi.eng_valid,
                 .tur_ok = 1u,
                 .eng_speed = gi.eng_speed,
@@ -312,6 +365,11 @@ static void task10(gr_t *g, unsigned p)
         if (g6a_on) {
 #if defined(G6A_HOSTTIME)
             G6A_T0();
+#endif
+#if GS_G6B
+            if (g6b_run) {
+                g6a_compare_10ms(mode);             /* G6b: the comparison after the monitor */
+            } else
 #endif
             g6a_tick_10ms(&gi);                     /* app/main.c: after the bridge */
 #if defined(G6A_HOSTTIME)
@@ -330,6 +388,9 @@ typedef struct {
     uint8_t dir;        /* G4b: the direction whose pins apply (the bridged release's, else the shadow's pf) */
     bool shrel;         /* the shadow releasing after this tick */
     bool relon;         /* the bridged release on after this tick */
+    uint8_t src;        /* G6b: the monitor's seam source after this tick (GSM_S_*) */
+    uint16_t frame;     /* the frame of this tick */
+    uint32_t bpass;     /* G6b: the bridge / monitor pass of this tick */
 } tick_t;
 static tick_t g_tk[GFRAMES];
 static unsigned g_tk_n;
@@ -418,6 +479,9 @@ static void run_g(gr_t *g)
                         t->applied = g->bridge && gs_bridge_state()->applied != 0u;
                         t->relon = g->bridge && gs_bridge_rel()->on != 0u;
                         t->miss = drv_out_wit()->missed[3];
+                        t->src = gs_bridge_state()->src;
+                        t->frame = (uint16_t)p;
+                        t->bpass = gs_bridge_state()->passes - 1u;
                         t->fn = drv_out_wit()->f_n;
                         t->shrel = gs_shadow_releasing() != 0u;
                         t->dir = t->relon ? gs_bridge_rel()->pf : gs_shadow_pf();
@@ -425,6 +489,16 @@ static void run_g(gr_t *g)
                             t->st[ch] = cyc[(((ch & 1u) != 0u) ? 20u : 10u) + (ch >> 1)];
                             t->sh[ch] = gs_shadow_cur(ch);
                         }
+#if defined(G6A_TEST) && GS_G6B
+                        if (g6a_on && gs_bridge_g6b()) {
+                            /* G6b: the source the seam carries is the candidate */
+                            t->shrel = gs_cand_releasing() != 0u;
+                            t->dir = t->relon ? gs_bridge_rel()->pf : gs_cand_pf();
+                            for (uint8_t ch = 0u; ch < 5u; ch++) {
+                                t->sh[ch] = gs_cand_cur(ch);
+                            }
+                        }
+#endif
                     }
                 }
             }

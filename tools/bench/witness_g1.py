@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
-"""witness_g1.py — THE GARAGE BRIDGE, STAGE G1 (computed, recorded, NOT applied;
-firmware/app/gs_bridge.c, ~/tcu_sweep/garage_g1_port.md).
+"""witness_g1.py — THE GARAGE BRIDGE (firmware/app/gs_bridge.c): G1 (computed,
+recorded, NOT applied; ~/tcu_sweep/garage_g1_port.md), G2..G4b (the bridge of the
+shadow, r04i..r04n) and — G6b (~/tcu_sweep/g6b_port.md, r04o on) — THE MONITOR:
+the candidate (app/gs_cand.c) is the producer of the live A..E currents; the
+seam carries it every pass unless the E28E fence hands back the live producer
+(src LIVE: the boot transient, the engine-stop all-release) or the monitor has
+latched the P content (src PCONT: a violation, until power-off).
+In G6b the state's "shadow" A..E and the recorder's phases are THE CANDIDATE's;
+"applied" = the seam returned a value (candidate or P content); "would-armed" =
+the candidate's engine on the wire (owning or non-P content).
 
 Reads over meas (6 bytes per request; NOT atomic — counters tear between
 blocks; read after the lever sequence, with the bridge idle in P):
   gsb_win_t  20 B at 0xFFF87200 (.gsb_win)   the .noinit windows
-  gsb_t     172 B at 0xFFF87220 (.gsb_state) state, witnesses, slot headers,
-                                              the OS-mode-2 witness (0x1418E2)
+  gsb_t     212 B at 0xFFF87220 (.gsb_state) state, witnesses, slot headers,
+                                              the OS-mode-2 witness (0x1418E2),
+                                              G6b: the monitor block (+172)
   gsb_rec_t 112 x 36 B at 0xFFF8BCC0 (.gsb_rec0, the last D)
   gsb_rec_t 112 x 36 B at 0xFFF89D20 (.gsb_rec1, the last R)
 plus, for comparison, LIVE cells the bridge must never change (D6D6, the park
@@ -52,7 +61,10 @@ LIVE = [
     ("producer A..E 0x84B78", 0xFFF84B78, 10), ("fault word A..E 0x93004", 0xFFF93004, 10),
 ]
 WHY = ["IDLE", "DIR", "RAIL", "OS", "RANGE", "PARK", "MON", "DIAG", "RELWIN", "WIN", "ENGT", "COMMITS",
-       "AGREE", "G_RANGE", "G_FIXED", "G_LATCH"]
+       "AGREE(G6b: cand!=shadow)", "G_RANGE", "G_FIXED", "G_LATCH"]
+LATCH = ["WIN 30s", "ENGT 3.5s", "COMMITS 16", "GUARD bounds/envelope", "PERMIT", "SHADOW", "IDLE non-P", "?"]
+SRC = ["LIVE (E28E fence)", "CAND", "PCONT (latched)"]
+ST_SZ = 212
 
 
 class A:
@@ -102,10 +114,29 @@ def none(v):
     return "-" if v == 0xFFFF else str(v)
 
 
+def latch_str(v):
+    s = [LATCH[k] for k in range(8) if (v >> k) & 1]
+    return "|".join(s) if s else "none"
+
+
 def show_win(d):
-    print("  windows: magic %08X acc %u ms (inv ok %s) commits %u (inv ok %s) latch %02X (inv ok %s) warm %u broken %u"
+    print("  windows: magic %08X acc %u ms (inv ok %s) commits %u (inv ok %s) latch %02X [%s] (inv ok %s) warm %u "
+          "broken %u"
           % (u32(d, 0), u32(d, 4), u32(d, 8) == (~u32(d, 4) & 0xFFFFFFFF), u16(d, 12),
-             u16(d, 14) == (~u16(d, 12) & 0xFFFF), d[16], d[17] == (~d[16] & 0xFF), d[18], d[19]))
+             u16(d, 14) == (~u16(d, 12) & 0xFFFF), d[16], latch_str(d[16]), d[17] == (~d[16] & 0xFF), d[18],
+             d[19]))
+
+
+def show_mon(d):
+    m = 172
+    tp = u32(d, m + 8)
+    print("  G6b MONITOR: seam src now %s | fence %u owns %u non-P %u | passes: candidate %u, live (fence) %u, "
+          "P content %u | fence entries %u exits %u (first exit at bridge pass %u)"
+          % (SRC[d[m]] if d[m] < 3 else "?", d[m + 1], d[m + 2], d[m + 3], u32(d, m + 12), u32(d, m + 16),
+             u32(d, m + 20), u16(d, m + 28), u16(d, m + 30), u32(d, m + 32)))
+    print("  G6b trips %u (want 0): first at pass %s why %s ch %s v %u | shadow-diff passes %u (run %u)"
+          % (u16(d, m + 38), "-" if tp == 0xFFFFFFFF else tp, why(u16(d, m + 6)),
+             "-" if d[m + 5] == 0xFF else d[m + 5], u16(d, m + 36), u32(d, m + 24), d[m + 4]))
 
 
 def show_state(d):
@@ -165,15 +196,16 @@ def main():
     for r in range(rounds):
         print("--- round %d %s" % (r, time.strftime("%H:%M:%S")), flush=True)
         w = read(b, 1, WIN, 20)
-        s = read(b, 1, ST, 172)
+        s = read(b, 1, ST, ST_SZ)
         if w is None or s is None:
             print("  read FAIL")
             continue
         if raw:
-            for o in range(0, 172, 32):
+            for o in range(0, ST_SZ, 32):
                 print("  +%03X %s" % (o, s[o:o + 32].hex(" ")))
         show_win(w)
         show_state(s)
+        show_mon(s)
         live = []
         for name, a, n in LIVE:
             v = read(b, 1, a, n)

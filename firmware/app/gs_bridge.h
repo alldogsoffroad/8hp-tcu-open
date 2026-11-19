@@ -181,8 +181,41 @@ typedef struct {
     uint16_t app[5];        /* the applied A..E (the seam; 0 when not applied) */
     gsb_slot_t slot[2];
     gsb_m2_t m2;
+    /* ── G6b: THE MONITOR (GS_G6B 1; all zero in the r04n bridge form) ── */
+    uint8_t  src;           /* this pass's seam: GSM_S_LIVE (the E28E fence: the live
+                             * producer), GSM_S_CAND (the candidate), GSM_S_PCONT (latched) */
+    uint8_t  fence;         /* the E28E fence on after this pass (D-G6-4 / D-G6-12) */
+    uint8_t  owns;          /* the candidate's engine owns the content (pf, releasing,
+                             * a change pending, its engine active) */
+    uint8_t  nonp;          /* the candidate's A..E content != the P content (a current,
+                             * a request mode != 1, or an element filling) */
+    uint8_t  shd_run;       /* consecutive owned non-P passes with candidate != shadow */
+    uint8_t  trip_ch;       /* the first latching trip's channel (0xFF: not a channel) */
+    uint16_t trip_why;      /* the first latching trip's GSB_R_* / GSB_G_* (G6b meanings) */
+    uint32_t trip_pass;     /* bridge pass of the first latching trip (0xFFFFFFFF none) */
+    uint32_t cand_n;        /* passes the seam carried the candidate */
+    uint32_t live_n;        /* passes the E28E fence handed the live producer */
+    uint32_t pc_n;          /* passes the monitor forced the P content */
+    uint32_t shd_n;         /* owned non-P passes with candidate != shadow (any) */
+    uint16_t fence_ev;      /* E28E fence entries (the boot's included) */
+    uint16_t unfence_n;     /* E28E fence exits */
+    uint32_t unfence_pass;  /* bridge pass of the first fence exit (the boot window's end) */
+    uint16_t trip_v;        /* the first latching trip's value */
+    uint16_t trip_n;        /* latching trips (each latches; the first is recorded) */
 } gsb_t;
-_Static_assert(sizeof(gsb_t) == 172u, "gsb_t is 172 bytes (tools/bench/witness_g1.py)");
+_Static_assert(sizeof(gsb_t) == 212u, "gsb_t is 212 bytes (tools/bench/witness_g1.py)");
+
+/* G6b: gsb_t.src */
+#define GSM_S_LIVE    0u
+#define GSM_S_CAND    1u
+#define GSM_S_PCONT   2u
+/* G6b: the monitor's own latch bits (gsb_win_t.latch, .noinit, until power-off) */
+#define GSB_L_PERMIT  0x10u     /* a permit failed while the candidate's engine owned non-P content */
+#define GSB_L_SHADOW  0x20u     /* candidate != shadow (A..E) on 2 owned non-P passes running */
+#define GSB_L_IDLE    0x40u     /* non-P content while the candidate's engine owned nothing */
+/* G6b meanings of two r04n reason bits in a trip record (gsb_t.trip_why):
+ * GSB_R_AGREE = candidate != shadow (the comparator's monitor role, plan
+ * G6b item 4); GSB_R_IDLE | GSB_G_FIXED = non-P content while idle */
 
 /* ── STAGE G4b (2026-11-19, ~/tcu_sweep/g4b_release_bridge_port.md): THE
  * BRIDGED RELEASE (ours, not stock). After a bridged engagement, the stock's
@@ -291,6 +324,16 @@ const volatile gsbr_est_t *gs_bridge_rel_est(void);
 
 void gs_bridge_init(bool cold);
 void gs_bridge_tick_10ms(const gsb_in_t *in);
+#if !defined(__sh__)
+/* host only (GS_G6B builds): run the monitor (true, the image's form) or the
+ * r04n bridge (false) — one binary compares the two wires */
+void gs_bridge_host_g6b(bool on);
+/* host only (GS_G6B builds): the monitor's windows at run time (the
+ * negatives): engagement passes, release passes, armed ms, commits */
+void gs_bridge_host_limits(uint16_t eng, uint16_t rel, uint32_t win_ms, uint16_t commits);
+#endif
+/* true: this build / run is the G6b monitor (the seam carries the candidate) */
+bool gs_bridge_g6b(void);
 
 const volatile gsb_t     *gs_bridge_state(void);
 const volatile gsb_win_t *gs_bridge_win(void);

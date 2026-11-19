@@ -43,12 +43,54 @@ _Static_assert(GS_LIVE_DIR == 0 || GS_LIVE_DIR == 3,
                "gs bridge: stage G2 - on SH builds the bridge is off (0) or live for D and R (3)");
 #endif
 
+/* ── G6b (2026-11-19, ~/tcu_sweep/g6b_port.md): THE SWITCH ────────────────
+ * GS_G6B 1: the seam carries the G6a CANDIDATE (app/gs_cand.c, instance 2
+ * of the garage engine template: engine + holder in the stock 10 ms slot
+ * order, its own RAM) as the producer of the live A..E currents, under the
+ * bridge's checks turned into a permanent MONITOR of ours (app/gs_bridge.c
+ * mon_tick: compile-time element bounds, the release envelope, the .noinit
+ * windows, the arm-condition permits; any violation → the P content,
+ * latched until power-off) and the E28E fence (D-G6-4 / D-G6-12: the boot
+ * transient and the engine-stop all-release keep the live producer's
+ * content). GS_G6B 0: the r04i..r04n bridge (the shadow, armed per pass) —
+ * kept for the host goldens. The SH application builds GS_G6B 1 (CMake
+ * cache GS_G6B); it needs the seam (GS_LIVE_DIR 3). */
+#ifndef GS_G6B
+#  define GS_G6B 0
+#endif
+#if (GS_G6B != 0) && (GS_G6B != 1)
+#  error "gs bridge: GS_G6B is 0 (the r04n bridge) or 1 (G6b: the candidate under the monitor)"
+#endif
+#if (GS_G6B != 0) && (GS_LIVE_DIR != 3)
+#  error "gs bridge: G6b (GS_G6B 1) needs the seam for D and R (GS_LIVE_DIR 3)"
+#endif
+#if defined(__sh__) && (GS_LIVE_DIR != 0)
+_Static_assert(GS_G6B == 1, "gs bridge: G6b - on SH builds a live seam carries the candidate under the monitor (GS_G6B 1)");
+#endif
+
+/* THE P CONTENT (ours, D-G6-3 gear target 1st): table 0x505A4 block 0,
+ * gear code 1 — A applied (normally closed, 8500); B released (500); D, E,
+ * C released normally-open (8500); WK / Sys the compile-time 500 (D-G6-10).
+ * G6b: the fallback of rq_prod_guarded() (was the r03f gear-3 table) and the
+ * monitor's latched content (app/gs_bridge.c asserts its own copy equal). */
+#define DRV_RQ_PCONT_A    8500u
+#define DRV_RQ_PCONT_D    8500u
+#define DRV_RQ_PCONT_B    500u
+#define DRV_RQ_PCONT_E    8500u
+#define DRV_RQ_PCONT_C    8500u
+#define DRV_RQ_PCONT_WK   500u
+#define DRV_RQ_PCONT_SYS  500u
+#define DRV_RQ_PCONT_TABLE { DRV_RQ_PCONT_A, DRV_RQ_PCONT_D, DRV_RQ_PCONT_B, DRV_RQ_PCONT_E, \
+                             DRV_RQ_PCONT_C, DRV_RQ_PCONT_WK, DRV_RQ_PCONT_SYS }
+
 #if GS_LIVE_DIR != 0
 /* the seam (host G2/G3 dry-run builds only in G1): true and *v = the
  * bridged current (0.1 mA, already inside the bridge's guard) for channel
  * ch 0..4 while the bridge is armed for the shadow's direction; false = the
  * live producer's value stands */
 bool drv_gsbr_take(uint8_t ch, uint16_t *v);
+/* G6b: true = this pass's seam value comes from the candidate or the P
+ * content (the monitor decided), false = the E28E fence: the live producer */
 #endif
 
 #endif /* TCU_BSW_DRV_GSBR_H */

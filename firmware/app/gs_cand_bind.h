@@ -80,6 +80,9 @@
 #  define GSE_SEC_REL     ".gsc_obj"
 #  define GSE_CLEAR_BEGIN _gsc_obj_start            /* linker.ld __gsc_obj_start (SH symbols: + '_') */
 #  define GSE_CLEAR_END   _gsc_obj_end
+/* G6b: the tick's slot groups timed (app/g6a.c, the CPU witnesses) */
+void g6a_stage(unsigned k);
+#  define GSE_STAGE(k)    g6a_stage(k)
 #else
 /* G6-0 host binding: the candidate's request objects in their own host
  * page (7 × 0x60), mapped by app/gs_cand_fill.c */

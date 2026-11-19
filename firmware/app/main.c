@@ -334,13 +334,24 @@ static void task_10ms(void)
          * stock's slots 27..42 follow it, and writes only its own RAM */
         const sensors_in_t *sn = sensors_in();
         gs_in_t gi;
+        uint32_t t_st;
         gs_in_build(&gi);
+        t_st = plat_frt_us();
         gs_shadow_tick_10ms(&gi);
+        g6a_time(G6A_T_SHADOW, plat_frt_us() - t_st);
+#if GS_G6B
+        /* G6b (~/tcu_sweep/g6b_port.md): THE CANDIDATE IS THE PRODUCER of the
+         * live A..E currents — its pass at its G6b slot (after park_tick, the
+         * stock's slots 26..42), BEFORE the monitor below decides what the
+         * seam hands the F stage (the 5 ms batch, 1 ms later) */
+        g6a_cand_tick(&gi);
+#endif
         {
-            /* THE GARAGE BRIDGE, STAGE G1 (app/gs_bridge.c): computed and
-             * recorded, NOT applied (GS_LIVE_DIR 0: the seam in drv_reqlaw.c
-             * is not compiled). Its live inputs BY VALUE; it writes only its
-             * own RAM (.gsb_*) */
+            /* THE GARAGE BRIDGE (app/gs_bridge.c) — G6b (GS_G6B 1, the
+             * image): THE MONITOR of the candidate (permits, element bounds,
+             * release envelope, windows; violation → the P content, latched)
+             * and the E28E fence; r04i..r04n: the bridge of the shadow. Its
+             * live inputs BY VALUE; it writes only its own RAM (.gsb_*) */
             const gsb_in_t bi = {
                 .mon_faults = park_mon_faults(),
                 .relwin_st = drv_rq_rel_win_state(),
@@ -350,14 +361,24 @@ static void task_10ms(void)
                 .tur_rpm = gi.tur_rpm,
                 .cyc = drv_job_tx(DRV_CYC),
             };
+            t_st = plat_frt_us();
             gs_bridge_tick_10ms(&bi);
+            g6a_time(G6A_T_MON, plat_frt_us() - t_st);
         }
+#if GS_G6B
+        /* G6b: THE COMPARATOR — the wire (the candidate, or the fence's live
+         * producer, or the latched P content) against the candidate, and the
+         * candidate against the shadow (instance 1, kept as the reference
+         * until G6c) */
+        g6a_compare_10ms(sup_mode());
+#else
         /* G6a (app/g6a.c, ~/tcu_sweep/g6a_port.md): THE CANDIDATE — the
          * merged producer in its G6b form on its OWN RAM — at its G6b slot
          * (after park_tick), then the comparison with what the F stage that
          * follows takes (the bridge's value or the live producer's through
          * the guard). Read-only: it writes nothing live. */
         g6a_tick_10ms(&gi);
+#endif
     }
 #endif
     bench_tick_10ms();

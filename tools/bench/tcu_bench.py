@@ -1612,8 +1612,10 @@ def cmd_gs_check(b, args):
         sys.exit(f"_g_w {w_size:#x} / _g_rec0/1 {[hex(sz) for _, sz in r_slots]}: not the layout this"
                  " tool expects - rebuild?")
     release = bool(args.sim_brake) and (args.sim_engine or 0) > 430
-    print("THE GARAGE SHADOW IS READ-ONLY: it drives no solenoid. The LIVE range chain still drives the"
-          " park outputs (release bus-A ch 7 1.0 A + hold TOE31) whenever the range leaves P")
+    print("G6b (r04o+): THE CANDIDATE (app/gs_cand.c, the stock engine + holder) DRIVES the A..E element"
+          " currents through the monitor (app/gs_bridge.c); the shadow is read-only (the comparator's"
+          " reference). The LIVE range chain drives the park outputs (release bus-A ch 7 1.0 A + hold TOE31)"
+          " whenever the range leaves P")
     print("  dry bench, ammeter on, bench supply limit 4 A; ~2 x --hold s of the 30 s release budget")
     print("  both Teensy ports are used (0x210 on bus 2): the ammeter logger cannot run - watch the meter")
     fake_signal_banner(args)
@@ -1704,7 +1706,43 @@ def cmd_gs_check(b, args):
             braw[h + 38:h + 38 + 4 * n] = read_retry(br_addr + h + 38, 4 * n)
     best = bytes(read_retry(be_addr, GSBR_EST_SIZE))
     gsbr_print(bytes(braw), best, bytes(raw))
+    # G6b: the candidate's witnesses (instance 2, no recorder) and the monitor block
+    try:
+        cw_addr, cw_size = elf_sym_in(args.elf, "_g_w", G6A_CAND_RAM)
+        gs_addr, gs_size = elf_sym(args.elf, "_s_gsb")
+        gw_addr, _ = elf_sym(args.elf, "_s_gsb_win")
+    except SystemExit:
+        print("G6b: no candidate / monitor in this ELF")
+        return 0
+    if cw_size == GS_WIT_SIZE:
+        print("  CANDIDATE (the producer): " + gs_wit_line(gs_wit_parse(read_retry(cw_addr, GS_WIT_SIZE))))
+    if gs_size == GSB_SIZE_G6B:
+        m = read_retry(gs_addr + 172, 40)
+        w = read_retry(gw_addr, 20)
+        u32 = lambda d, o: int.from_bytes(d[o:o + 4], "big")
+        u16 = lambda d, o: int.from_bytes(d[o:o + 2], "big")
+        tp = u32(m, 8)
+        print(f"  MONITOR: seam now {('LIVE (E28E fence)', 'CANDIDATE', 'P CONTENT (latched)')[m[0]] if m[0] < 3 else m[0]}"
+              f" | passes candidate {u32(m, 12)}, live (fence) {u32(m, 16)}, P content {u32(m, 20)} | fence entries"
+              f" {u16(m, 28)} exits {u16(m, 30)} | trips {u16(m, 38)} (want 0)"
+              + ("" if tp == 0xFFFFFFFF else f" first at pass {tp} why {u16(m, 6):04X} ch {m[5]} v {u16(m, 36)}")
+              + f" | latch {w[16]:02X} (want 00) acc {u32(w, 4)} ms commits {u16(w, 12)}")
     return 0
+
+
+GSB_SIZE_G6B = 212          # app/gs_bridge.h gsb_t with the G6b monitor block (+172)
+
+
+def elf_sym_in(elf, name, rng):
+    """(address, size) of the symbol `name` INSIDE [rng[0], rng[1]) (the G6a / G6b
+    candidate's statics share names with the shadow's)."""
+    import subprocess
+    out = subprocess.run(["sh-elf-nm", "-S", elf], capture_output=True, text=True, check=True).stdout
+    for l in out.splitlines():
+        f = l.split()
+        if len(f) == 4 and f[3] == name and rng[0] <= int(f[0], 16) < rng[1]:
+            return int(f[0], 16), int(f[1], 16)
+    sys.exit(f"symbol {name} not found inside {rng[0]:#x}..{rng[1]:#x} in {elf} - rebuild?")
 
 
 # ---------------------------------------------------------------- range chain check (live since 2026-11-17)

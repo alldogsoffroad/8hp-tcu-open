@@ -184,21 +184,38 @@ bool drv_rq_fill_ok(uint8_t ch, uint8_t st, uint16_t v)
 static uint16_t rq_prod_guarded(uint8_t ch)
 {
     static const uint16_t R03F[RQ_PROD_NCH] = DRV_RQ_R03F_TABLE;
+#if GS_G6B
+    /* G6b: the guard's fallback is THE P CONTENT (bsw/drv/drv_gsbr.h: block 0,
+     * gear target 1st — the content the monitor latches), no longer the r03f
+     * gear-3 table (B 8500 / A 500, right only for M5-1a) */
+    static const uint16_t FALLBACK[RQ_PROD_NCH] = DRV_RQ_PCONT_TABLE;
+#else
+#  define FALLBACK R03F
+#endif
     uint16_t v;
     if (!rq_prod_started()) {
-        return R03F[ch];
+        return R03F[ch];                /* before the boot pass: r03n's wire (uncounted, not a fallback) */
     }
 #if GS_LIVE_DIR != 0
-    /* THE GARAGE BRIDGE SEAM (ours; bsw/drv/drv_gsbr.h, app/gs_bridge.c):
-     * while the bridge is armed, channels 0..4 take the garage shadow's
-     * current — inside the bridge's own guard, re-checked here against the
-     * stock clamp [i_min 500, i_max 8500] (0xB7786). Compiled only with
-     * GS_LIVE_DIR != 0: G1 builds (SH) carry no seam at all. */
+    /* THE SEAM (ours; bsw/drv/drv_gsbr.h, app/gs_bridge.c). r04i..r04n: while
+     * the bridge is armed, channels 0..4 take the garage shadow's current.
+     * G6b (GS_G6B 1, the image): every pass the monitor hands channels 0..4
+     * THE CANDIDATE's current (the producer of the live A..E currents) or,
+     * latched, the P content — false only while the E28E fence hands the
+     * live producer back (its value then takes the path below). THE WIDENED
+     * GUARD: a seam value is any current in the stock clamp [i_min 500,
+     * i_max 8500] (0xB7786) — the engine's mode-0 values (fill, phase 4,
+     * the lock hold, the ramps, the release) pass only through here, i.e.
+     * only while the monitor permits them; anything else → the fallback,
+     * counted. Compiled only with GS_LIVE_DIR != 0. */
     if (ch < 5u && drv_gsbr_take(ch, &v)) {
         if (v >= DRV_RQ_FILL_MIN && v <= DRV_RQ_FILL_MAX) {
             return v;
         }
-        s_m5_guard_n++;                 /* never in a sound build: the live value stands */
+        s_m5_guard_n++;                 /* never in a sound build */
+#if GS_G6B
+        return FALLBACK[ch];
+#endif
     }
 #endif
     v = rq_prod_ch(ch);
@@ -209,8 +226,11 @@ static uint16_t rq_prod_guarded(uint8_t ch)
         return v;
     }
     s_m5_guard_n++;
-    return R03F[ch];
+    return FALLBACK[ch];
 }
+#if !GS_G6B
+#  undef FALLBACK
+#endif
 #endif
 
 static inline uint16_t rq_request(uint8_t ch)

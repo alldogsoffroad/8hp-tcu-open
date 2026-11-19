@@ -26,7 +26,9 @@ import sys
 
 OUT_PATTERNS = [r"gs_bridge", r"\bgsb_", r"\bGSB_", r"drv_gsbr", r"\.gsb_(win|state|rec0|rec1)\b"]
 SEAM_FILE = "bsw/drv/drv_reqlaw.c"
-BRIDGE_INCLUDES = {"app/gs_bridge.h", "app/gs_shadow.h", "bsw/drv/drv_gsbr.h", "app/park_cells.h"}
+BRIDGE_INCLUDES = {"app/gs_bridge.h", "app/gs_shadow.h", "bsw/drv/drv_gsbr.h", "app/park_cells.h",
+                   # G6b (2026-11-19): the monitored source, the candidate's read accessors
+                   "app/gs_cand.h"}
 BRIDGE_PATTERNS = [
     r"\bCELL_[A-Z0-9_]+",                           # the live cell macros (writable)
     r"\bPCELL_(?!TGT\b)[A-Z0-9_]+",                 # park_cells.h: only PCELL_TGT (const)

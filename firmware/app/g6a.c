@@ -21,6 +21,7 @@
 #include "bsw/drv/drv_rqprod.h"
 #include "bsw/drv/drv_reqlaw.h"
 #include "bsw/drv/drv_jobs.h"
+#include "bsw/drv/drv_gsbr.h"      /* G6b: GS_G6B, the P content (DRV_RQ_PCONT_TABLE) */
 #include "platform/platform.h"
 
 #if defined(__sh__)
@@ -60,6 +61,11 @@ void g6a_init(void)
 static uint16_t wire_cur(uint8_t ch, bool applied, const volatile gsb_t *b, bool *guard)
 {
     static const uint16_t R03F[RQ_PROD_NCH] = DRV_RQ_R03F_TABLE;
+#if GS_G6B
+    static const uint16_t FALLBACK[RQ_PROD_NCH] = DRV_RQ_PCONT_TABLE;   /* G6b: the P content */
+#else
+    static const uint16_t *const FALLBACK = R03F;
+#endif
     uint16_t v;
 #if !DRV_RQ_USE_PRODUCER
     /* a host build whose law does not take the producer (tcu_sim): no
@@ -78,6 +84,10 @@ static uint16_t wire_cur(uint8_t ch, bool applied, const volatile gsb_t *b, bool
         if (v >= DRV_RQ_FILL_MIN && v <= DRV_RQ_FILL_MAX) {
             return v;
         }
+#if GS_G6B
+        *guard = true;
+        return FALLBACK[ch];                             /* G6b: the widened guard's fallback */
+#endif
     }
     v = rq_prod_ch(ch);
     if (v == 500u || v == 8500u) {
@@ -87,7 +97,7 @@ static uint16_t wire_cur(uint8_t ch, bool applied, const volatile gsb_t *b, bool
         return v;
     }
     *guard = true;
-    return R03F[ch];
+    return FALLBACK[ch];
 #endif
 }
 
@@ -117,8 +127,156 @@ static void put_rec(volatile g6a_rec_t *r, uint8_t cls, uint8_t dcur, uint16_t d
     }
 }
 
+#if GS_G6B
+/* G6b: the wire IS the candidate unless the monitor fenced (the live
+ * producer) or latched (the P content); the classes of app/g6a.h */
+static void compare_g6b(void)
+{
+    const volatile gsb_t *b = gs_bridge_state();
+    const bool applied = b->applied != 0u;
+    const uint8_t src = b->src;
+    const bool started = rq_prod_started();
+    uint16_t cand[7], wire[7], shad[7];
+    uint8_t dcur = 0u, filling = 0u;
+    uint16_t dms = 0u, cvs_cm = 0u, cvs_st = 0u;
+    bool guard = false, tail_ok = true;
+    uint8_t cls, srcf;
+
+    {
+        const uint32_t ln = drv_out_wit()->law_n;
+        if (C.prev_ok != 0u && ln != C.prev_law && SEQ2_0 == (uint8_t)'U') {
+            C.law_n++;
+            for (uint8_t ch = 0u; ch < 7u; ch++) {
+                if (LAW_I(ch) != C.prev_app[ch]) {
+                    C.law_x++;
+                    break;
+                }
+            }
+        }
+        C.prev_law = ln;
+    }
+    for (uint8_t ch = 0u; ch < 7u; ch++) {
+        cand[ch] = gs_cand_cur(ch);
+        shad[ch] = gs_shadow_cur(ch);
+        wire[ch] = wire_cur(ch, applied, b, &guard);
+        C.prev_app[ch] = wire[ch];
+        if (cand[ch] != wire[ch]) {
+            dcur = (uint8_t)(dcur | (1u << ch));
+        }
+        if (cand[ch] != shad[ch]) {
+            cvs_cm = (uint16_t)(cvs_cm | (1u << ch));
+        }
+        if (ch < 5u) {
+            const uint8_t cm = gs_cand_reqmode(ch), cs = gs_cand_fillst(ch);
+            const uint8_t sm = gs_shadow_reqmode(ch), ss = gs_shadow_fillst(ch);
+            if (src == GSM_S_LIVE) {
+                if (cm != LIVE_MODE(ch)) {
+                    dms = (uint16_t)(dms | (1u << ch));
+                }
+                if (cs != LIVE_ST(ch)) {
+                    dms = (uint16_t)(dms | (1u << (8u + ch)));
+                }
+            } else if (src == GSM_S_PCONT && cm != 1u) {
+                dms = (uint16_t)(dms | (1u << ch));       /* the P content is mode 1 */
+            }
+            if (cm != sm) {
+                cvs_cm = (uint16_t)(cvs_cm | (1u << (8u + ch)));
+            }
+            if (cs != ss) {
+                cvs_st = (uint16_t)(cvs_st | (1u << ch));
+                if (!idle_or_rel(cs) || !idle_or_rel(ss)) {
+                    tail_ok = false;
+                }
+            }
+            if (cs == 1u || cs == 2u) {
+                filling = 1u;
+            }
+        }
+    }
+    C.prev_ok = 1u;
+    if (guard) {
+        C.guard_x++;
+    }
+    if (applied) {
+        C.applied_n++;
+    }
+    srcf = (uint8_t)(((src == GSM_S_CAND) ? G6A_S_APPLIED : 0u) | (gs_shadow_releasing() ? G6A_S_SHREL : 0u) |
+                     ((b->owns != 0u) ? G6A_S_OWNED : 0u) | ((cvs_cm == 0u && cvs_st == 0u) ? G6A_S_CEQS : 0u) |
+                     (C.boot_open ? G6A_S_BOOTWIN : 0u) | (gs_cand_releasing() ? G6A_S_CREL : 0u) |
+                     (started ? G6A_S_STARTED : 0u));
+    if (dcur == 0u && dms == 0u && cvs_cm == 0u && cvs_st == 0u && C.boot_open != 0u &&
+        gs_cand_wit()->e28e == 0u && filling == 0u && src == GSM_S_CAND) {
+        /* G6b: the window covers the shadow's boot too (instance 1 boots at
+         * its first mode-1 tick, one pass after the candidate's boot pass) */
+        C.boot_open = 0u;                                /* the boot window ends before this pass */
+        C.boot_close = (uint16_t)(C.passes > 0xFFFEu ? 0xFFFEu : C.passes);
+    }
+    if (C.boot_open != 0u && C.passes >= G6A_BOOT_MAX) {
+        C.boot_open = 0u;                                /* the window's cap */
+        C.boot_close = (uint16_t)C.passes;
+    }
+    if (C.boot_open == 0u && (cvs_cm != 0u || cvs_st != 0u)) {
+        C.cvs_all++;
+    }
+    if (C.boot_open != 0u) {
+        cls = (uint8_t)((dcur == 0u && dms == 0u) ? G6A_C_AGREE : G6A_C_BOOT);
+        if (cls == G6A_C_BOOT) {
+            C.boot_dis++;
+        }
+    } else if (dcur == 0u && dms == 0u && cvs_cm == 0u && cvs_st == 0u) {
+        cls = G6A_C_AGREE;
+    } else if (src != GSM_S_CAND && cvs_cm == 0u && cvs_st == 0u) {
+        cls = G6A_C_FENCED;                              /* the monitor fenced / latched */
+    } else if (dcur == 0u && dms == 0u && cvs_cm == 0u && tail_ok) {
+        cls = G6A_C_FSMTAIL;
+    } else {
+        cls = G6A_C_UNEXP;
+    }
+    if (src == GSM_S_CAND && cvs_cm != 0u && C.boot_open == 0u) {
+        C.cvs_n++;              /* the wire IS the candidate this pass: a current / mode != the shadow's */
+    }
+    C.cls_n[cls]++;
+    if (cls != G6A_C_AGREE) {
+        if ((dms | cvs_st) != 0u) {
+            C.ms_dis_n++;
+        }
+        for (uint8_t ch = 0u; ch < 7u; ch++) {
+            if (((dcur | (uint8_t)cvs_cm) & (1u << ch)) != 0u) {
+                C.dis_ch[ch]++;
+                if (cls == G6A_C_UNEXP) {
+                    C.unexp_ch[ch]++;
+                }
+            }
+        }
+        if (C.rec_n < G6A_REC_N) {
+            put_rec(&s_g6a.rec[C.rec_n], cls, (uint8_t)(dcur | (uint8_t)cvs_cm), (uint16_t)(dms | (uint16_t)(cvs_st << 8)),
+                    srcf, cand, wire);
+            C.rec_n++;
+        }
+        if (cls == G6A_C_UNEXP) {
+            if (C.first_unexp == 0xFFFFFFFFu) {
+                C.first_unexp = C.passes;
+            }
+            C.last_unexp = C.passes;
+            if (C.urec_n < G6A_UREC_N) {
+                put_rec(&s_g6a.urec[C.urec_n], cls, (uint8_t)(dcur | (uint8_t)cvs_cm),
+                        (uint16_t)(dms | (uint16_t)(cvs_st << 8)), srcf, cand, wire);
+                C.urec_n++;
+            }
+        }
+    }
+    C.passes++;
+}
+#endif
+
 static void compare(void)
 {
+#if GS_G6B
+    if (gs_bridge_g6b()) {
+        compare_g6b();
+        return;
+    }
+#endif
     const volatile gsb_t *b = gs_bridge_state();
     const bool applied = b->applied != 0u;
     const bool started = rq_prod_started();
@@ -261,23 +419,76 @@ void g6a_boot(const gs_in_t *gi)
     compare();
 }
 
-void g6a_tick_10ms(const gs_in_t *gi)
+/* G6b: a slot-group mark of the candidate's tick (app/gs_engine.c GSE_STAGE
+ * via app/gs_cand_bind.h) — the group's duration since the previous mark */
+void g6a_stage(unsigned k)
 {
-    uint32_t t0, t1, t2;
+    const uint32_t now = plat_frt_us();
+    if (k < G6A_NST) {
+        const uint16_t d = us16(now - C.st_t0);
+        C.st_last[k] = d;
+        if (d > C.st_max[k]) {
+            C.st_max[k] = d;
+        }
+    }
+    C.st_t0 = now;
+}
+
+void g6a_cand_tick(const gs_in_t *gi)
+{
+    uint32_t t0;
     if (gi->os_mode < 1u || gi->os_mode > 3u) {
         return;                                          /* the stock's lists: modes 1..3 */
     }
+    for (unsigned k = 0u; k < G6A_NST; k++) {
+        C.st_last[k] = 0u;
+    }
     t0 = plat_frt_us();
+    C.st_t0 = t0;
     gs_cand_tick_10ms(gi);
-    t1 = plat_frt_us();
-    compare();
-    t2 = plat_frt_us();
-    C.cand_us_last = us16(t1 - t0);
+    C.cand_us_last = us16(plat_frt_us() - t0);
     if (C.cand_us_last > C.cand_us_max) {
         C.cand_us_max = C.cand_us_last;
+        C.cand_max_pass = C.passes;
+        for (unsigned k = 0u; k < G6A_NST; k++) {
+            C.st_atmax[k] = C.st_last[k];
+        }
     }
-    if (us16(t2 - t1) > C.cmp_us_max) {
-        C.cmp_us_max = us16(t2 - t1);
+}
+
+void g6a_compare_10ms(uint8_t os_mode)
+{
+    uint32_t t1;
+    if (os_mode < 1u || os_mode > 3u) {
+        return;
+    }
+    t1 = plat_frt_us();
+    compare();
+    C.cmp_us_last = us16(plat_frt_us() - t1);
+    if (C.cmp_us_last > C.cmp_us_max) {
+        C.cmp_us_max = C.cmp_us_last;
+    }
+}
+
+void g6a_tick_10ms(const gs_in_t *gi)
+{
+    g6a_cand_tick(gi);
+    g6a_compare_10ms(gi->os_mode);
+}
+
+void g6a_time(unsigned what, uint32_t us)
+{
+    const uint16_t d = us16(us);
+    if (what == G6A_T_SHADOW) {
+        C.sh_us_last = d;
+        if (d > C.sh_us_max) {
+            C.sh_us_max = d;
+        }
+    } else if (what == G6A_T_MON) {
+        C.mon_us_last = d;
+        if (d > C.mon_us_max) {
+            C.mon_us_max = d;
+        }
     }
 }
 

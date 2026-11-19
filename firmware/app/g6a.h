@@ -68,12 +68,33 @@
 #define G6A_REC_N       16u             /* the first disagreeing passes (any class) */
 #define G6A_UREC_N      8u              /* the first unexpected passes */
 
+/* G6b: the candidate tick's slot groups (gs_engine.c GSE_STAGE marks) */
+#define G6A_ST_HEAD     0u      /* the pass head: inputs, fill_bind */
+#define G6A_ST_S28      1u      /* slot 28: timers, element tick / update (0xE5624 / 0xE566C) */
+#define G6A_ST_S29      2u      /* slot 29: 0xD4DC2 engine state */
+#define G6A_ST_S30      3u      /* slot 30: AE28, E28E 0xD093A, 0x103F56, 0xD15A6 */
+#define G6A_ST_S3132    4u      /* slots 31 / 32: commit 0xCFD1A, 0x103CEC, 0xD0BAA */
+#define G6A_ST_S34      5u      /* slot 34: sync progress 0x1175D6 */
+#define G6A_ST_S35      6u      /* slot 35: element steps / outputs 0x10CE88 / 0x10CECA ×3 */
+#define G6A_ST_S42      7u      /* slot 42: producer 0xDC4C4 + actuators */
+#define G6A_ST_TAIL     8u      /* the tail: recorders, witnesses */
+#define G6A_NST         9u
+
 #define G6A_C_AGREE     0u
 #define G6A_C_BOOT      1u
 #define G6A_C_FENCED    2u
 #define G6A_C_FSMTAIL   3u
 #define G6A_C_UNEXP     4u
 #define G6A_NCLS        5u
+
+/* G6b CLASSES (GS_G6B, gs_bridge_g6b()): the wire IS the candidate unless
+ * the monitor fences (the E28E fence: the live producer) or latched (the P
+ * content). AGREE = wire == candidate == shadow; BOOT = inside the boot
+ * window (the boot fence); FENCED = wire != candidate because the monitor
+ * fenced or latched, candidate == shadow; FSMTAIL = wire == candidate,
+ * candidate != shadow only in non-filling fill states; UNEXP = anything else
+ * (the seam carried the candidate and the wire differs — a guard fallback —,
+ * or candidate != shadow in a current or mode after the boot window). */
 
 /* g6a_rec_t.src */
 #define G6A_S_APPLIED   0x01u   /* the bridge applied this pass (wire = shadow) */
@@ -133,8 +154,23 @@ typedef struct {
     uint32_t prev_law;      /* drv_out_wit()->law_n at the previous pass */
     g6a_rec_t rec[G6A_REC_N];
     g6a_rec_t urec[G6A_UREC_N];
+    /* ── G6b: THE CPU WITNESSES PER STAGE (µs, TCNTA) — the candidate's tick
+     * by slot group (G6A_ST_*: app/gs_engine.c GSE_STAGE), the shadow, the
+     * monitor and the comparison; st_atmax = the groups of the pass that set
+     * cand_us_max (names the peak's source) */
+    uint16_t st_max[G6A_NST];
+    uint16_t st_last[G6A_NST];
+    uint16_t st_atmax[G6A_NST];
+    uint16_t sh_us_max;     /* the shadow's tick (instance 1, the comparator's reference) */
+    uint16_t sh_us_last;
+    uint16_t mon_us_max;    /* the monitor (app/gs_bridge.c gs_bridge_tick_10ms) */
+    uint16_t mon_us_last;
+    uint16_t cmp_us_last;   /* the comparison */
+    uint32_t cand_max_pass; /* comparator pass of cand_us_max */
+    uint32_t cvs_all;       /* G6b: passes after the boot window with candidate != shadow (any field) */
+    uint32_t st_t0;         /* the stage clock (TCNTA of the last stage mark) */
 } g6a_t;
-_Static_assert(sizeof(g6a_t) == 164u + 32u * (G6A_REC_N + G6A_UREC_N), "g6a_t layout (tools/bench/witness_g6a.py)");
+_Static_assert(sizeof(g6a_t) == 164u + 32u * (G6A_REC_N + G6A_UREC_N) + 76u, "g6a_t layout (tools/bench/witness_g6a.py)");
 
 /* main init, after gs_bridge_init: the candidate's init (its RAM cleared)
  * and the comparator's */
@@ -146,8 +182,16 @@ void g6a_boot(const gs_in_t *gi);
  * bsw/sup/sup_mode.c) */
 void g6a_boot_pass(void);
 /* task_10ms, after the garage bridge (OS modes 1..3): the candidate's pass
- * at its G6b slot, then the comparison */
+ * at its G6b slot, then the comparison (the r04n / G6a order) */
 void g6a_tick_10ms(const gs_in_t *gi);
+/* G6b order (app/main.c): the candidate's pass BEFORE the monitor (the seam
+ * hands the F stage this pass's candidate), the comparison after it */
+void g6a_cand_tick(const gs_in_t *gi);
+void g6a_compare_10ms(uint8_t os_mode);
+/* G6b: a stage's duration, µs (G6A_T_SHADOW, G6A_T_MON) */
+#define G6A_T_SHADOW    0u
+#define G6A_T_MON       1u
+void g6a_time(unsigned what, uint32_t us);
 /* the end of task_10ms: its duration (µs, TCNTA) in OS modes 1..3 */
 void g6a_task_time(uint8_t os_mode, uint32_t us);
 const volatile g6a_t *g6a_state(void);

@@ -431,7 +431,7 @@ SECTIONS
     ASSERT(__gsc_req_start >= ADDR(.sup_era) + SIZEOF(.sup_era), ".gsc_req overlaps .sup_era")
     ASSERT(__gsc_obj_end <= 0xFFF92C68, ".gsc_obj leaves the dump's zero run (0xFFF925BE..0xFFF92C68)")
     ASSERT(__gsc_obj_end <= ADDR(.pks_mon), ".gsc_obj runs into .pks_mon")
-    /* G6a — THE COMPARATOR (app/g6a.c; ours): g6a_t (0x3A4) in
+    /* G6a — THE COMPARATOR (app/g6a.c; ours): g6a_t (0x3A4; G6b 0x3F0: + the CPU block) in
      * 0xFFF93C08..0xFFF94000 — the dump's zero run 0xFFF93C04..0xFFF94006,
      * no code of ours names it (literal scan at the port), after .sup_fsm
      * and below .tmp_940e0. Cleared by g6a_init. */
@@ -441,14 +441,14 @@ SECTIONS
     ASSERT(__g6a_start >= ADDR(.sup_fsm) + SIZEOF(.sup_fsm) && __g6a_end <= 0xFFF94000,
            ".g6a overlaps .sup_fsm or leaves the dump's zero run")
     ASSERT(__g6a_end <= ADDR(.tmp_940e0), ".g6a runs into .tmp_940e0")
-    ASSERT(SIZEOF(.g6a) == 0x3A4, ".g6a: g6a_t is off (tools/bench/witness_g6a.py)")
+    ASSERT(SIZEOF(.g6a) == 0x3F0, ".g6a: g6a_t is off (tools/bench/witness_g6a.py)")
 
     /* THE GARAGE BRIDGE, STAGE G1 (app/gs_bridge.c; ours — not stock cells;
      * 2026-11-18, ~/tcu_sweep/garage_g1_port.md). Four NOLOAD objects:
      *   .gsb_win   gsb_win_t (20 B) at 0xFFF87200 — the .noinit windows: NOT
      *              cleared on a warm boot (gs_bridge_init(cold) decides), so
      *              they survive an MCU reset like .noinit; a power-on clears;
-     *   .gsb_state gsb_t (172 B) + the TU's zero-initialised data, after it;
+     *   .gsb_state gsb_t (212 B since G6b: + the monitor block) + the TU's zero-initialised data, after it;
      *              both in the free low RAM 0xFFF87200..0xFFF87800 between
      *              .rng_wit (ASSERTed <= 0xFFF87800) and .tmp_wit (0xFFF87800)
      *              — the stock driving dump holds zeros there;
@@ -466,7 +466,7 @@ SECTIONS
     } > RAM
     ASSERT(__gsb_win_start >= __rng_wit_end && __gsb_win_end <= __gsb_state_start, ".gsb_win overlaps")
     ASSERT(__gsb_state_end <= ADDR(.tmp_wit), ".gsb_state runs into .tmp_wit")
-    ASSERT(SIZEOF(.gsb_win) == 0x14 && SIZEOF(.gsb_state) == 0xAC, ".gsb_*: gsb_win_t / gsb_t are off (witness_g1.py)")
+    ASSERT(SIZEOF(.gsb_win) == 0x14 && SIZEOF(.gsb_state) == 0xD4, ".gsb_*: gsb_win_t / gsb_t are off (witness_g1.py)")
     .gsb_rec0 0xFFF8BCC0 (NOLOAD) : {
         __gsb_rec0_start = .; KEEP(*(.gsb_rec0)) . = ALIGN(4); __gsb_rec0_end = .;
     } > RAM

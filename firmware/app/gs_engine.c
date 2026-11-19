@@ -140,6 +140,11 @@
 #ifndef GSE_REC
 #  define GSE_REC 1
 #endif
+/* G6b: a binding may time the tick's slot groups (the candidate: app/g6a.c
+ * g6a_stage, the CPU witnesses); instance 1 compiles nothing for it */
+#ifndef GSE_STAGE
+#  define GSE_STAGE(k) ((void)0)
+#endif
 #if defined(GSE_BOOT_ENTRY) && (GS_FORCED != 1)
 #error "gs_cand: the G6a candidate runs D-G6-2 (0x89C3D forced 0) and D-G6-3 (gear target 1st): GS_FORCED must be 1"
 #endif
@@ -2397,6 +2402,7 @@ void gs_shadow_tick_10ms(const gs_in_t *in)
         GSE_BOOT_PASS();
         return;
     }
+    GSE_STAGE(0u);                                       /* the head (inputs, fill_bind) */
     /* slot 28: 0xEC0E0 — BD30 / BD2E (+= *0xFFF8E220 = 1), then 0x106848 */
     G.bd30 = sat8p1(G.bd30);
     P.bd2e = sat16p1(P.bd2e);
@@ -2416,8 +2422,10 @@ void gs_shadow_tick_10ms(const gs_in_t *in)
     G.tb = (uint16_t)(G.tb + 10u);
     gsf_e5624();
     gsf_e566c();
+    GSE_STAGE(1u);                                       /* slot 28: timers, element tick / update */
     /* slot 29: 0xB986C */
     d4dc2();
+    GSE_STAGE(2u);                                       /* slot 29 */
     /* slot 30: 0xCFFDE */
 #if defined(GSE_AE28_IN)
     {
@@ -2449,6 +2457,7 @@ void gs_shadow_tick_10ms(const gs_in_t *in)
     d093a();
     r3f56();
     d15a6();
+    GSE_STAGE(3u);                                       /* slot 30 */
     /* slot 31: 0xD01C4 */
     r3de2();
     cfd1a();
@@ -2459,8 +2468,10 @@ void gs_shadow_tick_10ms(const gs_in_t *in)
     r3cec();
     r3de2();
     d0baa();
+    GSE_STAGE(4u);                                       /* slots 31, 32 */
     /* slot 34: 0xEBDBC → 0x1175D6 (block A): sync, rate, BD76 */
     prog_pass();
+    GSE_STAGE(5u);                                       /* slot 34 */
     /* slot 35: 0xEB348 → step (D148, D1B4, D0DC), output (same order) */
     ce88(&G.sub[1]);
     ce88(&G.sub[2]);
@@ -2468,10 +2479,12 @@ void gs_shadow_tick_10ms(const gs_in_t *in)
     ceca(&G.sub[1]);
     ceca(&G.sub[2]);
     ceca(&G.sub[0]);
+    GSE_STAGE(6u);                                       /* slot 35 */
     /* slot 42: the producer + actuators */
     gsf_set_pf(G.pf, G.c2f);
     dc4c4();
     actuators();
+    GSE_STAGE(7u);                                       /* slot 42 */
     rec_pass();
     rel_pass();
     G.e69c0 = 0u;                                        /* [I] one pass */
@@ -2490,6 +2503,7 @@ void gs_shadow_tick_10ms(const gs_in_t *in)
         W.now_cur[c] = G.cur[c];
     }
     W.passes++;
+    GSE_STAGE(8u);                                       /* the tail (recorders, witnesses) */
 }
 
 const volatile gs_wit_t *gs_shadow_wit(void) { return &g_w; }

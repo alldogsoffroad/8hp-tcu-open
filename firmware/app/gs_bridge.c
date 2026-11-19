@@ -34,6 +34,9 @@
 #include "app/gs_shadow.h"
 #include "bsw/drv/drv_gsbr.h"
 #include "app/park_cells.h"       /* PCELL_TGT: the live range D6D6, read-only */
+#if GS_G6B && !defined(TCU_RAM_APP)
+#include "app/gs_cand.h"          /* G6b: the candidate (instance 2), the monitored source */
+#endif
 
 #if defined(TCU_RAM_APP)
 
@@ -91,6 +94,11 @@ static const uint16_t GSB_FIX_R[5] = { GSB_PIN, 0u, 0u, GSB_PIN, GSB_PIN };
  * D / E / C released normally-open 8500) — the live content while the
  * shadow releases (G4a) */
 static const uint16_t GSB_PCONT[5] = { GSB_PIN, GSB_PIN, GSB_IMIN_P, GSB_PIN, GSB_PIN };
+/* G6b: the output path's P content (bsw/drv/drv_gsbr.h, rq_prod_guarded's
+ * fallback and the monitor's latched content) is this one */
+_Static_assert(DRV_RQ_PCONT_A == GSB_PIN && DRV_RQ_PCONT_D == GSB_PIN && DRV_RQ_PCONT_B == GSB_IMIN_P &&
+               DRV_RQ_PCONT_E == GSB_PIN && DRV_RQ_PCONT_C == GSB_PIN && DRV_RQ_PCONT_WK == 500u &&
+               DRV_RQ_PCONT_SYS == 500u, "gs bridge: drv_gsbr.h's P content is the bridge's GSB_PCONT");
 #define GSB_IMIN    500u            /* 0xB7786 clamp, cal 0x1FEF6C */
 #define GSB_IMAX    8500u           /* cal 0x1FEF6E */
 
@@ -110,6 +118,12 @@ static const uint16_t GSB_PCONT[5] = { GSB_PIN, GSB_PIN, GSB_IMIN_P, GSB_PIN, GS
 #define L_ROUND      0xFFF9090Au    /* u8 the 0x90118 rounding offset */
 #define L_E9FF       0xFFF8E9FFu    /* u8 the terminal-15 state (kl15) */
 #define L_SUPPLY     0xFFF94F86u    /* u16 the supply (0x8D8DE output) */
+/* G6b: the live request objects' fill state +0x34 (A D B E C; rq_fill.h RQ_OBJ_*) */
+#define L_OBJ_A_ST   0xFFF8B7FCu
+#define L_OBJ_D_ST   0xFFF8B91Cu
+#define L_OBJ_B_ST   0xFFF8B85Cu
+#define L_OBJ_E_ST   0xFFF8B97Cu
+#define L_OBJ_C_ST   0xFFF8B8BCu
 
 /* ── RAM: OUR objects (not stock cells) ───────────────────────────────── */
 #if defined(__sh__)
@@ -136,6 +150,32 @@ static volatile gsbr_est_t s_gsbr_est GSB_RES;   /* G4b: its estimate record */
 #define B (s_gsb)
 #define W (s_gsb_win)
 #define R (s_gsbr)
+
+/* G6b host tests: the monitor's windows lowered at run time (the negatives);
+ * on SH the plan's constants, nothing else */
+#if GS_G6B && !defined(__sh__)
+static uint16_t s_h_eng = GSB_ENG_PASSES, s_h_rel = GSB_REL_PASSES, s_h_commits = GSB_COMMITS_MAX;
+static uint32_t s_h_win = GSB_WIN_MS;
+void gs_bridge_host_limits(uint16_t eng, uint16_t rel, uint32_t win_ms, uint16_t commits)
+{
+    s_h_eng = eng;
+    s_h_rel = rel;
+    s_h_win = win_ms;
+    s_h_commits = commits;
+}
+#  define MON_ENG_PASSES  s_h_eng
+#  define MON_REL_PASSES  s_h_rel
+#  define MON_WIN_MS      s_h_win
+#  define MON_COMMITS_MAX s_h_commits
+#else
+#  define MON_ENG_PASSES  GSB_ENG_PASSES
+#  define MON_REL_PASSES  GSB_REL_PASSES
+#  define MON_WIN_MS      GSB_WIN_MS
+#  define MON_COMMITS_MAX GSB_COMMITS_MAX
+#endif
+#if defined(GSM_HOST_BYPASS) && defined(__sh__)
+#  error "gs bridge: the monitor bypass is a host-only negative test"
+#endif
 
 #if !defined(__sh__)
 static uint8_t  s_inj_ch = 0xFFu;
@@ -191,6 +231,12 @@ void gs_bridge_init(bool cold)
     zero(&s_gsbr, sizeof s_gsbr);
     zero(&s_gsbr_est, sizeof s_gsbr_est);
     R.rec = 0xFFu;
+#if GS_G6B
+    B.fence = 1u;                       /* G6b: the boot transient is fenced from the start */
+    B.fence_ev = 1u;
+    B.trip_pass = 0xFFFFFFFFu;
+    B.trip_ch = 0xFFu;
+#endif
     R.slot[0].end_t = GSB_NONE;
     R.slot[1].end_t = GSB_NONE;
     B.slot_cur = 0xFFu;
@@ -382,7 +428,7 @@ static void rel_end(uint8_t code, uint16_t why)
 }
 
 /* the release envelope; 0 = inside, else GSBR_T_* (ch / v of the trip) */
-static uint8_t rel_envelope(uint8_t *tch, uint16_t *tv)
+static uint8_t rel_envelope(uint8_t *tch, uint16_t *tv, uint8_t (*reqmode)(uint8_t))
 {
     volatile gsbr_slot_t *rs = &R.slot[(R.pf == 2u) ? 1u : 0u];
     const uint16_t *fix = (R.pf == 2u) ? GSB_FIX_R : GSB_FIX_D;
@@ -395,14 +441,14 @@ static uint8_t rel_envelope(uint8_t *tch, uint16_t *tv)
         *tv = v;
         if (((move >> ch) & 1u) != 0u) {
             if (v < GSB_IMIN || v > GSB_IMAX ||
-                (gs_shadow_reqmode(ch) == 1u && v != GSB_IMIN && v != GSB_IMAX)) {
+                (reqmode(ch) == 1u && v != GSB_IMIN && v != GSB_IMAX)) {
                 return GSBR_T_RANGE;
             }
         } else if (v != fix[ch]) {
             return GSBR_T_FIXED;
         }
     }
-    if (R.t >= GSB_REL_PASSES) {
+    if (R.t >= MON_REL_PASSES) {
         *tch = 0xFFu;
         *tv = R.t;
         return GSBR_T_LEN;
@@ -435,7 +481,7 @@ static uint8_t rel_envelope(uint8_t *tch, uint16_t *tv)
     return 0u;
 }
 
-void gs_bridge_tick_10ms(const gsb_in_t *in)
+static void bridge_tick(const gsb_in_t *in)
 {
     const volatile gs_wit_t *w = gs_shadow_wit();
     const uint8_t os = LIVE_U8(L_OS_MODE);
@@ -616,7 +662,7 @@ void gs_bridge_tick_10ms(const gsb_in_t *in)
     if (why == 0u && relmode) {
         uint8_t tch = 0xFFu;
         uint16_t tv = 0u;
-        const uint8_t code = rel_envelope(&tch, &tv);
+        const uint8_t code = rel_envelope(&tch, &tv, gs_shadow_reqmode);
         if (code != 0u) {
             const uint16_t g = (code == GSBR_T_FIXED) ? GSB_G_FIXED : GSB_G_RANGE;
             latch(GSB_L_GUARD);
@@ -784,6 +830,491 @@ void gs_bridge_tick_10ms(const gsb_in_t *in)
         R.t = (uint16_t)(R.t + 1u);
     }
     B.passes++;
+}
+
+
+#if GS_G6B
+/* ══ G6b: THE MONITOR (ours, not stock; ~/tcu_sweep/g6b_port.md) ══════════
+ * The candidate (app/gs_cand.c, instance 2 of the garage engine template:
+ * the stock engagement engine + holder in the stock 10 ms slot order, on
+ * its own RAM .gsc_req / .gsc_obj) is THE PRODUCER of the live A..E
+ * currents: every pass the seam (drv_gsbr_take, drv_reqlaw.c
+ * rq_prod_guarded) carries its currents — unless
+ *   (a) THE E28E FENCE (D-G6-4, D-G6-12): the candidate's exception machine
+ *       E28E != 0 while its engine owns nothing — the stock's boot transient
+ *       (E28E starts at 1, 0xD0C5A: every element released 2..3 passes, then
+ *       A refills) and the all-release on an engine stop (0xD0C94 with
+ *       0x89D12) — hands the seam back to the live producer (app/rq_prod.c,
+ *       today's content: its own boot fill, then the P content). The fence
+ *       lifts only when E28E is 0, the candidate's content IS the P content
+ *       and the live producer's is too (no element filling): never onto an
+ *       engaged state, never with a step on the wire. Not a latch.
+ *   (b) A VIOLATION: every r04n bridge check, now a permanent monitor (D-G6-6),
+ *       evaluated on every pass whose candidate content leaves the P content
+ *       (non-P: a current off the P table, a request mode != 1, an element
+ *       filling):
+ *         - the candidate's engine owns nothing (non-P while idle) — GSB_L_IDLE;
+ *         - a permit fails (rail 'U' + letter 'c', OS mode >= 1, live D6D6 =
+ *           the engaged direction (a release: 5..8), live park model released
+ *           (engage only), park_mon clear, no A..E diagnosis fault, the
+ *           park-release window not latched, the direction known) — GSB_L_PERMIT;
+ *         - the compile-time element bounds (engage) / the release envelope
+ *           (release, incl. its 125-pass limit) — GSB_L_GUARD;
+ *         - the windows: the 30 s armed budget, 3.5 s per engagement, 16
+ *           commits — GSB_L_WIN / ENGT / COMMITS (as the bridge);
+ *         - candidate != shadow (A..E currents) on 2 owned non-P passes
+ *           running (plan G6b item 4; the shadow is common-mode: this
+ *           catches a binding error or a foreign writer, not the logic) —
+ *           GSB_L_SHADOW.
+ *       Any violation → THE P CONTENT on the wire in the trip pass, latched
+ *       in .noinit until power-off (a warm reset carries it; the candidate
+ *       keeps running underneath, read-only from then on — the wire never
+ *       returns to it).
+ * A non-P pass that passes every check, and every P-content pass, carries the
+ * candidate. Passes whose content IS the P content need no permit: the wire
+ * would be the P content either way. */
+
+static uint8_t cand_cur_inj(uint8_t ch, uint16_t *v)
+{
+    *v = gs_cand_cur(ch);
+#if !defined(__sh__)
+    if (ch == s_inj_ch && B.passes >= s_inj_from && B.passes < s_inj_to) {
+        *v = s_inj_v;
+        return 1u;
+    }
+#endif
+    return 0u;
+}
+
+static void mon_trip(uint8_t lbit, uint16_t why, uint8_t ch, uint16_t v)
+{
+    latch(lbit);
+    if (B.trip_n == 0u) {
+        B.trip_why = why;
+        B.trip_ch = ch;
+        B.trip_v = v;
+        B.trip_pass = B.passes;
+    }
+    if (B.trip_n < 0xFFFFu) {
+        B.trip_n = (uint16_t)(B.trip_n + 1u);
+    }
+}
+
+static void mon_tick(const gsb_in_t *in)
+{
+    static const uint16_t PC7[7] = DRV_RQ_PCONT_TABLE;
+    static const uint32_t L_ST[5] = { L_OBJ_A_ST, L_OBJ_D_ST, L_OBJ_B_ST, L_OBJ_E_ST, L_OBJ_C_ST };
+    const volatile gs_wit_t *w = gs_cand_wit();
+    const uint8_t os = LIVE_U8(L_OS_MODE);
+    const uint8_t pf = gs_cand_pf();
+    const uint8_t dirbit = (pf == 1u) ? 1u : ((pf == 2u) ? 2u : 0u);
+    const uint16_t *fix = (pf == 2u) ? GSB_FIX_R : GSB_FIX_D;
+    const uint8_t move = (pf == 2u) ? GSB_R_MOVE : GSB_D_MOVE;
+    const uint8_t rel = gs_cand_releasing();
+    const bool owns = pf != 0u || rel != 0u || gs_cand_pending() != 0u || (w->now_flags & 0x08u) != 0u;
+    volatile gsb_slot_t *s = 0;
+    uint16_t why = 0u;
+    bool commit_now = false, done_now = false, armed, agree = true, nonp = false, livep = true;
+    bool shdiff = false;
+    const bool prev_cand = (B.src == GSM_S_CAND) && (B.passes != 0u);
+    bool relmode = false;
+    uint8_t adirbit = dirbit, src;
+
+    m2_pass(in, os);
+
+    /* 1. the candidate's commit / completion (the bridge's rule) */
+    if (w->commits != B.sh_commits) {
+        B.sh_commits = w->commits;
+        commit_now = true;
+        if (w->commit_new != 0u) {
+            if (W.commits < 0xFFFEu) {
+                W.commits = (uint16_t)(W.commits + 1u);
+                win_seal();
+            }
+            if (W.commits > MON_COMMITS_MAX) {
+                latch(GSB_L_COMMITS);
+            }
+            B.eng_on = 1u;
+            B.eng_t = 0u;
+            slot_start(w->commit_new);
+        } else {
+            B.eng_on = 0u;
+        }
+    }
+    if (w->done_pass != B.sh_done) {
+        B.sh_done = w->done_pass;
+        done_now = true;
+        B.eng_on = 0u;
+        if (B.slot_cur < 2u && B.slot[B.slot_cur].done_at == GSB_NONE) {
+            B.slot[B.slot_cur].done_at = since(&B.slot[B.slot_cur]);
+            B.slot[B.slot_cur].done_cause = w->done_cause;
+        }
+    }
+    if (B.eng_on != 0u) {
+        if (B.eng_t < 0xFFFFu) {
+            B.eng_t = (uint16_t)(B.eng_t + 1u);
+        }
+        if (B.eng_t > MON_ENG_PASSES) {
+            latch(GSB_L_ENGT);          /* 3.5 s without a completion: latched */
+            B.eng_on = 0u;
+        }
+    }
+    if (B.slot_cur < 2u) {
+        s = &B.slot[B.slot_cur];
+    }
+
+    /* the release (G4b's rule on the candidate): from its power-flow-0
+     * commit pass, after a pass the seam carried the candidate, in the last
+     * nonzero commit's direction; it ends with the candidate's release
+     * (the completion pass is the P content), a nonzero commit, or the first
+     * pass the seam does not carry the candidate */
+    if (R.on != 0u && (rel == 0u || (commit_now && w->commit_new != 0u))) {
+        rel_end(GSBR_E_DONE, 0u);
+    }
+    if (rel != 0u && R.rel_prev == 0u) {
+        const uint8_t spf = (B.slot_cur < 2u) ? B.slot[B.slot_cur].pf : 0u;
+        if (prev_cand && spf != 0u && commit_now && w->commit_new == 0u && w->commit_old == spf) {
+            rel_start(spf, true);
+        } else {
+            R.refused = (uint16_t)(R.refused + 1u);
+        }
+    }
+    relmode = (R.on != 0u) && (rel != 0u);
+    if (relmode) {
+        adirbit = (R.pf == 1u) ? 1u : 2u;
+    }
+    R.rel_prev = rel;
+
+    /* the candidate's, the live producer's and the shadow's A..E */
+    for (uint8_t ch = 0u; ch < 5u; ch++) {
+        uint16_t v;
+        const uint16_t lv = LIVE_U16(L_PROD + 2u * ch);
+        (void)cand_cur_inj(ch, &v);
+        B.sh[ch] = v;
+        B.lv[ch] = (lv == (uint16_t)~LIVE_U16(L_PROD_C + 2u * ch)) ? lv : 0xFFFFu;
+        if (v != B.lv[ch]) {
+            agree = false;
+        }
+        {
+            const uint8_t m = gs_cand_reqmode(ch), st = gs_cand_fillst(ch);
+            if (v != GSB_PCONT[ch] || m != 1u || st == 1u || st == 2u) {
+                nonp = true;
+            }
+        }
+        {
+            const uint8_t lst = LIVE_U8(L_ST[ch]);
+            if (B.lv[ch] != GSB_PCONT[ch] || lst == 1u || lst == 2u) {
+                livep = false;
+            }
+        }
+        if (v != gs_shadow_cur(ch)) {
+            shdiff = true;
+        }
+    }
+    B.owns = owns ? 1u : 0u;
+    B.nonp = nonp ? 1u : 0u;
+
+    /* 2. the permits (the bridge's arm conditions; the AGREE entry is gone) */
+    if (!relmode && !owns) {
+        why |= GSB_R_IDLE;
+    }
+    if ((GSB_EVAL_DIR & adirbit) == 0u) {
+        why |= GSB_R_DIR;
+    }
+    if (LIVE_U8(L_SEQ2) != (uint8_t)'U' || LIVE_U8(L_LETTER) != (uint8_t)'c') {
+        why |= GSB_R_RAIL;
+    }
+    if (os < 1u) {
+        why |= GSB_R_OSMODE;
+    }
+    if (relmode) {
+        if (PCELL_TGT < 5u || PCELL_TGT > 8u) {
+            why |= GSB_R_RANGE;
+        }
+    } else {
+        const uint8_t want = (pf == 1u) ? 5u : ((pf == 2u) ? 7u : 0u);
+        if (want == 0u || PCELL_TGT != want) {
+            why |= GSB_R_RANGE;
+        }
+        if (LIVE_U8(L_PARK_MODEL) != 1u) {
+            why |= GSB_R_PARK;
+        }
+    }
+    if (in->mon_faults != 0u) {
+        why |= GSB_R_MON;
+    }
+    for (uint8_t ch = 0u; ch < 5u; ch++) {
+        if (LIVE_U16(L_FW + 2u * ch) != 0u || LIVE_U8(L_CCLS + ch) != 0u || LIVE_U8(L_OST + ch) >= 2u) {
+            why |= GSB_R_DIAG;
+        }
+    }
+    if (in->relwin_st == 2u) {
+        why |= GSB_R_RELWIN;
+    }
+    if (!win_ok()) {
+        latch((uint8_t)(GSB_L_WIN | GSB_L_GUARD));    /* a torn window: fail safe */
+    }
+    if (W.acc_ms >= MON_WIN_MS) {
+        latch(GSB_L_WIN);
+    }
+    if ((W.latch & GSB_L_WIN) != 0u) {
+        why |= GSB_R_WIN;
+    }
+    if ((W.latch & GSB_L_ENGT) != 0u) {
+        why |= GSB_R_ENGT;
+    }
+    if ((W.latch & GSB_L_COMMITS) != 0u) {
+        why |= GSB_R_COMMITS;
+    }
+    if ((W.latch & (uint8_t)~(GSB_L_WIN | GSB_L_ENGT | GSB_L_COMMITS)) != 0u) {
+        why |= GSB_G_LATCH;
+    }
+
+    /* 3. the E28E fence (D-G6-4 / D-G6-12): on while E28E != 0 with nothing
+     * owned; off only onto the P content on both sides */
+    if (B.fence != 0u) {
+        if (w->e28e == 0u && !nonp && livep) {
+            B.fence = 0u;
+            B.unfence_n = (uint16_t)(B.unfence_n + 1u);
+            if (B.unfence_pass == 0u) {
+                B.unfence_pass = B.passes;
+            }
+        }
+    } else if (w->e28e != 0u && !owns) {
+        B.fence = 1u;
+        B.fence_ev = (uint16_t)(B.fence_ev + 1u);
+    }
+
+    /* 4. the decision */
+    if (B.fence != 0u) {
+        src = GSM_S_LIVE;
+    } else if (W.latch != 0u) {
+        src = GSM_S_PCONT;                          /* latched until power-off */
+        if (B.trip_n == 0u) {
+            /* a window latch (30 s / 3.5 s / 16 commits, a torn window, a
+             * warm boot's carried latch): the first one recorded */
+            mon_trip(0u, why, 0xFFu, W.latch);
+        }
+    } else if (!nonp) {
+        src = GSM_S_CAND;                           /* the P content (no permit needed) */
+#if defined(GSM_HOST_BYPASS)
+    } else if (true) {
+        src = GSM_S_CAND;                           /* host NEGATIVE: the monitor bypassed */
+#endif
+    } else if (!owns) {
+        mon_trip(GSB_L_IDLE, (uint16_t)(why | GSB_R_IDLE | GSB_G_FIXED), 0xFFu, 0u);
+        why = (uint16_t)(why | GSB_G_FIXED | GSB_G_LATCH);
+        src = GSM_S_PCONT;
+    } else if ((why & (uint16_t)~GSB_R_IDLE) != 0u) {
+        mon_trip(GSB_L_PERMIT, why, 0xFFu, 0u);
+        why = (uint16_t)(why | GSB_G_LATCH);
+        src = GSM_S_PCONT;
+    } else {
+        uint8_t tch = 0xFFu;
+        uint16_t tv = 0u, g = 0u;
+        if (relmode) {
+            const uint8_t code = rel_envelope(&tch, &tv, gs_cand_reqmode);
+            if (code != 0u) {
+                g = (code == GSBR_T_FIXED) ? GSB_G_FIXED : GSB_G_RANGE;
+                R.trip_n = (uint16_t)(R.trip_n + 1u);
+                R.trip_code = code;
+                R.trip_ch = tch;
+                R.trip_v = tv;
+                rel_end((uint8_t)(0x10u + code), (uint16_t)(why | g | GSB_G_LATCH));
+            }
+        } else {
+            for (uint8_t ch = 0u; ch < 5u; ch++) {
+                const uint16_t v = B.sh[ch];
+                uint16_t t = 0u;
+                if (((move >> ch) & 1u) != 0u) {
+                    if (v < GSB_IMIN || v > GSB_IMAX) {
+                        t = GSB_G_RANGE;
+                    } else if (gs_cand_reqmode(ch) == 1u && v != GSB_IMIN && v != GSB_IMAX) {
+                        t = GSB_G_RANGE;    /* a mode-1 pass is exactly 500 or 8500 */
+                    }
+                } else if (v != fix[ch]) {
+                    t = GSB_G_FIXED;
+                }
+                if (t != 0u && g == 0u) {
+                    tch = ch;
+                    tv = v;
+                }
+                g = (uint16_t)(g | t);
+            }
+        }
+        if (g != 0u) {
+            B.guard_n = (uint16_t)(B.guard_n + 1u);
+            B.guard_why = g;
+            B.guard_ch = tch;
+            B.guard_v = tv;
+            if (s != 0) {
+                s->guard_n = (uint8_t)(s->guard_n + 1u);
+            }
+            mon_trip(GSB_L_GUARD, (uint16_t)(why | g), tch, tv);
+            why = (uint16_t)(why | g | GSB_G_LATCH);
+            src = GSM_S_PCONT;
+        } else {
+            if (shdiff) {
+                B.shd_n++;
+                if (B.shd_run < 0xFFu) {
+                    B.shd_run = (uint8_t)(B.shd_run + 1u);
+                }
+            } else {
+                B.shd_run = 0u;
+            }
+            if (B.shd_run >= 2u) {
+                mon_trip(GSB_L_SHADOW, (uint16_t)(why | GSB_R_AGREE), 0xFFu, 0u);
+                why = (uint16_t)(why | GSB_R_AGREE | GSB_G_LATCH);
+                src = GSM_S_PCONT;
+            } else {
+                src = GSM_S_CAND;
+            }
+        }
+    }
+    if (!(src == GSM_S_CAND && nonp && owns)) {
+        B.shd_run = 0u;                             /* the run counts owned non-P candidate passes */
+    }
+
+    /* 5. the seam's value; armed = the candidate's engine on the wire */
+    armed = (src == GSM_S_CAND) && (owns || nonp);
+    if (relmode && R.on != 0u && src != GSM_S_CAND) {
+        rel_end(GSBR_E_WHY, why);                   /* never re-armed */
+    }
+    if (relmode && R.on != 0u) {
+        R.n++;
+    }
+    if (armed) {
+        B.armed_n++;
+        W.acc_ms += 10u;
+        win_seal();
+        if (W.acc_ms >= MON_WIN_MS) {
+            latch(GSB_L_WIN);                       /* the budget ends after this pass */
+        }
+        if (s != 0 && s->armed_n < 0xFFFFu) {
+            s->armed_n = (uint16_t)(s->armed_n + 1u);
+        }
+    } else if (agree) {
+        B.agree_n++;
+        if (B.agree_run < 0xFFu) {
+            B.agree_run = (uint8_t)(B.agree_run + 1u);
+        }
+    } else {
+        B.disagree_n++;
+        B.last_dis = B.passes;
+        B.agree_run = 0u;
+    }
+    if (armed && B.armed == 0u) {
+        B.arm_ev = (uint16_t)(B.arm_ev + 1u);
+        if (s != 0 && s->arm_on == GSB_NONE) {
+            s->arm_on = since(s);
+        }
+    }
+    if (!armed && B.armed != 0u) {
+        B.disarm_ev = (uint16_t)(B.disarm_ev + 1u);
+        B.why_armed_or = (uint16_t)(B.why_armed_or | why);
+        if (s != 0 && s->arm_off == GSB_NONE) {
+            s->arm_off = since(s);
+            s->off_why = why;
+        }
+        B.back_pend = 1u;
+    }
+    if (B.back_pend != 0u && !armed && agree) {
+        B.back_pend = 0u;
+        if (s != 0 && s->back_at == GSB_NONE) {
+            s->back_at = since(s);
+        }
+    }
+    B.src = src;
+    B.armed = armed ? 1u : 0u;
+    B.applied = (src != GSM_S_LIVE) ? 1u : 0u;      /* the seam returns a value */
+    B.pf = pf;
+    B.why = why;
+    switch (src) {
+    case GSM_S_CAND:  B.cand_n++; B.applied_n++; break;
+    case GSM_S_PCONT: B.pc_n++;   B.applied_n++; break;
+    default:          B.live_n++;                break;
+    }
+    for (uint8_t ch = 0u; ch < 5u; ch++) {
+        B.app[ch] = (src == GSM_S_CAND) ? B.sh[ch] : ((src == GSM_S_PCONT) ? PC7[ch] : 0u);
+        B.cur[ch] = (src == GSM_S_LIVE) ? B.lv[ch] : B.app[ch];
+    }
+
+    /* 6. the recorders (the bridge's formats; "shadow" fields = the candidate) */
+    if (s != 0 && s->n < GSB_REC_N) {
+        volatile gsb_rec_t *r = rec_at(B.slot_cur, s->n);
+        for (uint8_t k = 0u; k < 3u; k++) {
+            r->ph[k] = gs_cand_phase(k);
+        }
+        r->st = (uint8_t)((armed ? 0x01u : 0u) | ((src != GSM_S_LIVE) ? 0x02u : 0u) |
+                          ((W.latch != 0u) ? 0x04u : 0u) | (agree ? 0x08u : 0u) |
+                          (uint8_t)((pf & 3u) << 4) | (commit_now ? 0x40u : 0u) | (done_now ? 0x80u : 0u));
+        r->why = why;
+        for (uint8_t ch = 0u; ch < 5u; ch++) {
+            const uint16_t lw = (in->cyc != 0) ? in->cyc[cyc_idx(ch)] : 0u;
+            r->live[ch] = lw;
+            r->wb[ch] = word_of(ch, lw, B.cur[ch]);
+            r->est[ch] = LIVE_U16(L_EST + 2u * ch);
+        }
+        s->n = (uint8_t)(s->n + 1u);
+    }
+    if (R.rec < 2u) {
+        volatile gsbr_slot_t *rs = &R.slot[R.rec];
+        const uint8_t x = rs->xch;
+        if (rs->n < GSBR_REC_N) {
+            const uint8_t i = rs->n;
+            const uint16_t eb = LIVE_U16(L_EST + 2u * GSB_CH_B), ex = LIVE_U16(L_EST + 2u * x);
+            if (src == GSM_S_CAND) {
+                rs->bm[i >> 3] = (uint8_t)(rs->bm[i >> 3] | (uint8_t)(1u << (i & 7u)));
+            }
+            rs->live[i][0] = (in->cyc != 0) ? in->cyc[cyc_idx(GSB_CH_B)] : 0u;
+            rs->live[i][1] = (in->cyc != 0) ? in->cyc[cyc_idx(x)] : 0u;
+            s_gsbr_est.est[R.rec][i][0] = (uint8_t)((eb >= 10180u) ? 255u : (eb + 20u) / 40u);
+            s_gsbr_est.est[R.rec][i][1] = (uint8_t)((ex >= 10180u) ? 255u : (ex + 20u) / 40u);
+            rs->n = (uint8_t)(i + 1u);
+            if (R.on != 0u && src == GSM_S_CAND) {
+                rs->len = (uint16_t)(rs->len + 1u);
+            }
+        }
+        if (R.on == 0u) {
+            if (R.rec_tail != 0u && rs->n < GSBR_REC_N) {
+                R.rec_tail = (uint8_t)(R.rec_tail - 1u);
+            } else {
+                R.rec = 0xFFu;
+            }
+        }
+    }
+    if (R.on != 0u && R.t < 0xFFFFu) {
+        R.t = (uint16_t)(R.t + 1u);
+    }
+    B.passes++;
+}
+#endif /* GS_G6B */
+
+#if GS_G6B && defined(__sh__)
+#  define g6b_on()  true                /* the image: always the monitor */
+bool gs_bridge_g6b(void) { return true; }
+#elif GS_G6B
+static bool s_g6b_host = true;
+void gs_bridge_host_g6b(bool on) { s_g6b_host = on; }
+#  define g6b_on()  s_g6b_host
+bool gs_bridge_g6b(void) { return s_g6b_host; }
+#else
+#  define g6b_on()  false
+bool gs_bridge_g6b(void) { return false; }
+#  if !defined(__sh__)
+void gs_bridge_host_g6b(bool on) { (void)on; }
+#  endif
+#endif
+
+void gs_bridge_tick_10ms(const gsb_in_t *in)
+{
+#if GS_G6B
+    if (g6b_on()) {
+        mon_tick(in);
+        return;
+    }
+#endif
+    bridge_tick(in);
 }
 
 const volatile gsb_t     *gs_bridge_state(void) { return &s_gsb; }
