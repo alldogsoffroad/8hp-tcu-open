@@ -26,6 +26,24 @@
 #define GS_OBJ_SYS      (GS_REQ_BASE + 0x1E0u)
 #define GS_OBJ_WK       (GS_REQ_BASE + 0x240u)
 
+/* THE ENGINE TEMPLATE'S OBJECT BINDING (G6-0, 2026-11-19, ~/tcu_sweep/
+ * g6_0_port.md). app/gs_engine.c (the garage engine) and app/gs_fill.c (its
+ * fill instance) address the request objects ONLY through GSE_OBJ_*; the
+ * instance-1 binding (app/gs_shadow.c, app/gs_fill.c compiled as
+ * themselves) leaves GSE_REQ_BASE undefined here and gets the shadow's
+ * objects above, value for value. A second binding (app/gs_cand_bind.h)
+ * defines GSE_REQ_BASE to its own block before including. */
+#ifndef GSE_REQ_BASE
+#  define GSE_REQ_BASE  GS_REQ_BASE
+#endif
+#define GSE_OBJ_A       (GSE_REQ_BASE + 0x000u)
+#define GSE_OBJ_B       (GSE_REQ_BASE + 0x060u)
+#define GSE_OBJ_C       (GSE_REQ_BASE + 0x0C0u)
+#define GSE_OBJ_D       (GSE_REQ_BASE + 0x120u)
+#define GSE_OBJ_E       (GSE_REQ_BASE + 0x180u)
+#define GSE_OBJ_SYS     (GSE_REQ_BASE + 0x1E0u)
+#define GSE_OBJ_WK      (GSE_REQ_BASE + 0x240u)
+
 /* the fill inputs (mirror of rq_fill.h rqf_in_t, without its header) */
 typedef struct {
     uint8_t  temp, c1c, c0a, eng_stop, c3d, cd2, e5c2, b0fe, e3ed, ba79c, e6a3, rec1fd;

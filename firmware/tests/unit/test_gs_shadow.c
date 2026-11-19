@@ -53,6 +53,29 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#if defined(GS_DUAL)
+/* G6-0 (~/tcu_sweep/g6_0_port.md): instance 2 of the engine template (the
+ * candidate) driven beside the shadow, byte-identical every pass */
+#include "app/gs_cand.h"
+#include "tests/unit/gs_dual.h"
+#  define HOST_STANDINS(m, a, b)  gs_dual_standins((m), (a), (b))
+static int s_fail;
+static uint8_t host_ceca(uint8_t cls, uint8_t eng, uint8_t rel, uint8_t f7, int16_t calc_p, uint8_t old)
+{
+    const uint8_t a = gs_shadow_host_ceca(cls, eng, rel, f7, calc_p, old);
+    const uint8_t b = gs_cand_host_ceca(cls, eng, rel, f7, calc_p, old);
+    if (a != b) {
+        printf("FAIL gs_dual: 0x10CECA shadow %u, candidate %u\n", a, b);
+        s_fail++;
+    }
+    return a;
+}
+#  define HOST_CECA host_ceca
+#else
+#  define HOST_CECA gs_shadow_host_ceca
+#  define HOST_STANDINS(m, a, b)  gs_shadow_host_standins((m), (a), (b))
+#endif
+
 static sensors_in_t s_z;
 static uint16_t s_tur_inject;           /* (g): the shadow's 0x89CBA */
 static uint32_t s_tur_from;             /* (r7): the injection starts at this tick */
@@ -61,7 +84,9 @@ static uint8_t (*s_lever_fn)(uint32_t t);   /* (r): a per-tick lever, overriding
 static uint8_t s_temp_byte = 0x4Fu;     /* 0x89C13 / 0x89CD2 (0x4F: 38.9 °C, r03u) */
 const sensors_in_t *sensors_in(void) { return &s_z; }
 
+#if !defined(GS_DUAL)
 static int s_fail;
+#endif
 #define CHECK(c, ...) do { if (!(c)) { printf("FAIL %s:%d: ", __FILE__, __LINE__); \
     printf(__VA_ARGS__); printf("\n"); s_fail++; } } while (0)
 
@@ -137,6 +162,9 @@ static void shadow_tick(void)
         .tur_rpm = (s_t >= s_tur_from) ? s_tur_inject : 0u,
     };
     gs_shadow_tick_10ms(&gi);
+#if defined(GS_DUAL)
+    gs_dual_tick(&gi);
+#endif
     {
         /* (2026-11-18) THE GARAGE BRIDGE, G1 (app/gs_bridge.c): ticked with
          * the shadow, so (a) proves the live path identical with both */
@@ -186,6 +214,9 @@ static void run(const scen_t *sc, bool shadow, uint64_t *hs, tick_cb_t cb)
     rq_prod_boot_pass();
     if (shadow) {
         gs_shadow_init();
+#if defined(GS_DUAL)
+        gs_dual_init();
+#endif
         gs_bridge_init(true);
     }
     for (uint32_t t = 0u; t < sc->nseg * SEG; t++) {
@@ -263,7 +294,15 @@ static void run_fresh(const scen_t *sc, bool shadow, uint64_t *hs, unsigned n)
         if (write(fd[1], h, n * sizeof h[0]) != (ssize_t)(n * sizeof h[0])) {
             _exit(3);
         }
+#if defined(GS_DUAL)
+        if (shadow) {
+            gs_dual_report(sc->name);
+            fflush(stdout);
+        }
+        _exit(gs_dual_bad() != 0u ? 5 : 0);
+#else
         _exit(0);
+#endif
     }
     close(fd[1]);
     {
@@ -276,7 +315,19 @@ static void run_fresh(const scen_t *sc, bool shadow, uint64_t *hs, unsigned n)
             got += (size_t)r;
         }
         close(fd[0]);
+#if defined(GS_DUAL)
+        {
+            int st = 0;
+            waitpid(pid, &st, 0);
+            if (!WIFEXITED(st) || WEXITSTATUS(st) != 0) {
+                printf("FAIL gs_dual: the candidate differs from the shadow in the (a) child (%s)\n",
+                       sc->name);
+                s_fail++;
+            }
+        }
+#else
         waitpid(pid, NULL, 0);
+#endif
         if (got != n * sizeof hs[0]) {
             printf("FAIL (a) child run incomplete\n");
             s_fail++;
@@ -458,7 +509,7 @@ static void engagement(const char *name, uint8_t lever, uint8_t mask, const uint
     memset(&s_obs, 0xFF, sizeof s_obs);
     s_obs.b_ph4_cur = 0u;
     s_target_lever = lever;
-    gs_shadow_host_standins(mask, 0, 0u);
+    HOST_STANDINS(mask, 0, 0u);
     run(&sc, true, NULL, obs_cb);
     {
         const volatile gs_wit_t *w = gs_shadow_wit();
@@ -582,7 +633,7 @@ static rel_view_t release(const char *name, uint8_t x, int hold, uint8_t x2, uin
     static const scen_t sc0 = { "release", { 0 }, 7u, true, 700u, 0u, 0u, 0u };
     int xc;
     s_temp_byte = temp;
-    gs_shadow_host_standins(mask, 0, 0u);
+    HOST_STANDINS(mask, 0, 0u);
     s_lever_fn = lever_rel;
     s_rel_x = x;
     s_rel_x2 = 1u;
@@ -597,7 +648,7 @@ static rel_view_t release(const char *name, uint8_t x, int hold, uint8_t x2, uin
     s_ro.x_commit = s_ro.r_commit = s_ro.c3 = -1;
     run(&sc0, true, NULL, rel_cb);
     s_lever_fn = NULL;
-    gs_shadow_host_standins(0u, 0, 0u);
+    HOST_STANDINS(0u, 0, 0u);
     {
         const volatile gs_rel_t *g = gs_shadow_rel();
         const uint8_t k = (x == 2u) ? 1u : 0u;
@@ -747,9 +798,9 @@ static void test_release(void)
      * when sub0's element is not B (or B sits in another sub-object) — never
      * in a 1st / R release (B, A, C / B, A, D): the synthetic sub-objects
      * show the difference, the D → P / R → P traces must be identical */
-    CHECK(gs_shadow_host_ceca(2u, 0u, 3u, 1u, 0, 0u) == 1u && gs_shadow_host_ceca(2u, 0u, 3u, 1u, 0, 1u) == 0u,
+    CHECK(HOST_CECA(2u, 0u, 3u, 1u, 0, 0u) == 1u && HOST_CECA(2u, 0u, 3u, 1u, 0, 1u) == 0u,
           "(n6) class 2 releasing C: element test mode 1 (f7, out 0), class test mode 0");
-    CHECK(gs_shadow_host_ceca(4u, 0u, 2u, 1u, 0, 0u) == 0u && gs_shadow_host_ceca(4u, 0u, 2u, 1u, 0, 1u) == 1u,
+    CHECK(HOST_CECA(4u, 0u, 2u, 1u, 0, 0u) == 0u && HOST_CECA(4u, 0u, 2u, 1u, 0, 1u) == 1u,
           "(n6) class 4 releasing B: element test mode 0, class test mode 1");
     {
         rel_view_t a, b;
@@ -858,7 +909,7 @@ int main(void)
               "(n3) reaction 37: C %u (expected 0), WK %u, Sys %u (expected 500)",
               gs_shadow_cur(4), gs_shadow_cur(5), gs_shadow_cur(6));
     }
-    gs_shadow_host_standins(0u, 0, 0u);
+    HOST_STANDINS(0u, 0, 0u);
     test_release();
     {   /* (f) the bench tool's gs-check sequence: P D P R P, 2 s each */
         const volatile gs_wit_t *w;
@@ -883,6 +934,12 @@ int main(void)
 #else
     engagement("(b) P->D, stock-faithful", 4u, 0u, END_D, false);
     engagement("(c) P->R, stock-faithful", 2u, 0u, END_R, false);
+#endif
+#if defined(GS_DUAL)
+    gs_dual_report("test_gs_shadow, in-process scenarios");
+    CHECK(gs_dual_passes() > 1000u, "gs_dual: only %u passes compared", gs_dual_passes());
+    CHECK(gs_dual_bad() == 0u, "gs_dual: %u passes where the candidate differs from the shadow",
+          gs_dual_bad());
 #endif
     printf("%s (%d failures)\n", s_fail == 0 ? "PASS" : "FAIL", s_fail);
     return s_fail == 0 ? 0 : 1;

@@ -29,13 +29,13 @@
 #include "app/gs_fill.h"
 #include "app/gs_cal.h"
 
-#define RQ_OBJ_A    GS_OBJ_A
-#define RQ_OBJ_B    GS_OBJ_B
-#define RQ_OBJ_C    GS_OBJ_C
-#define RQ_OBJ_D    GS_OBJ_D
-#define RQ_OBJ_E    GS_OBJ_E
-#define RQ_OBJ_SYS  GS_OBJ_SYS
-#define RQ_OBJ_WK   GS_OBJ_WK
+#define RQ_OBJ_A    GSE_OBJ_A
+#define RQ_OBJ_B    GSE_OBJ_B
+#define RQ_OBJ_C    GSE_OBJ_C
+#define RQ_OBJ_D    GSE_OBJ_D
+#define RQ_OBJ_E    GSE_OBJ_E
+#define RQ_OBJ_SYS  GSE_OBJ_SYS
+#define RQ_OBJ_WK   GSE_OBJ_WK
 
 /* the shadow's fill cells (.gs_obj) */
 #if defined(__sh__) && !defined(TCU_RAM_APP)
