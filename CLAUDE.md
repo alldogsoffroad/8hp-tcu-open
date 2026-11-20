@@ -53,6 +53,7 @@ Standing safety constraints (from the lab record): FE13 sub 16 stays refused; st
 
 ## The bench mechanics (established laws, don't relearn them)
 
+- **Validation in one command (2026-11-20):** `python3 tools/validate_build.py check <new> <base>` builds host + SH, runs ctest, diffs RAM symbols against `build/flashed/<base>/`, checks the RAM app/loader/flasher identity and new RAM windows against the stock dump, builds `build/<new>_IFla.bin`, and writes `/tmp/install_<new>.py` + sigs — PASS/FAIL summary. After a flash is confirmed: `validate_build.py snapshot <new>` (from that build) so it becomes the next baseline.
 - **Image:** `tools/build_image.py --app build/sh2a/tcu_app.hex --base build/<previous>_IFla.bin -o build/<new>_IFla.bin --stock-ident --gap-keep-above 0x50000`. Check the block list against the previous image (an app past a block boundary must write that block too — r02w crashed on this).
 - **Install script:** copy the previous `/tmp/install_<prev>.py` with the build name substituted; its sig table `/tmp/<new>_sigs.json` sets every block the image changes (today 0x40000–0x70000) to `null` (force-write). The skip check means "live == TARGET sig". Expect 21 "OK" verifies.
 - **The flash cycle:** user "off" → arm storm + launch install (two background tasks) → user "on" (the fast Teensy LED is the cue) → install writes (~5 min) → user "off" → (ammeter logger) → "on" → witness reads.
