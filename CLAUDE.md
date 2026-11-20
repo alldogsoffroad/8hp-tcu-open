@@ -20,6 +20,8 @@ An open C reimplementation of the firmware for the Bosch transmission control un
 
 ## The immediate work (2026-11-20)
 
+**The fork point is defined in `docs/fca_finish_line.md`** (every driving function: LIVE / SHADOW / STOOD IN / MISSING, with its live switch). Keep it current.
+
 1. **The gear-pair shadow is complete as decoded (r05c).** Remaining undecoded inside it: class-0/skip downshifts, the torque-phase terms of class 1, the adaptation value 0xAED5C — all counted stand-ins.
 2. **Before any live shift:** line pressure during shifts and torque intervention (`~/tcu_sweep/line_pressure_torque_decode.md`; the input-torque writer 0xDDFD8), D-FR-5 (the monitor latches P on any gear-code change while engaged) stays until then.
 3. **Fork prep (cheap, optional):** re-base the 11 FCA-frame host tests on the `vehicle_in` injector; a neutral TX seam (`main.c` still calls `fca_tx_*`). Open decisions for the fork: D-N1 the lever source (a Nissan cabin has no CAN lever), D-N4 moving debug/meas IDs to bus 2.
