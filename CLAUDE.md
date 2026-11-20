@@ -8,19 +8,19 @@ An open C reimplementation of the firmware for the Bosch transmission control un
 
 **The plan (user decision 2026-11-20):** finish the open FCA (Ram 1500 8HP70) firmware as the stock-faithful reference, then FORK it and adapt the fork to a Nissan Frontier/Xterra ECU on the Nissan CAN bus. A Nissan ECU is on the bench (not wired in yet). Nissan sniff data: `github.com/alldogsoffroad/NissanDBCFilez`. Keep FCA-specific CAN knowledge inside `firmware/io/vehicle/` (the seam scan enforces it).
 
-## The state now (2026-11-20, r05b on the bench)
+## The state now (2026-11-20, r05c on the bench)
 
 - **M3 (closed 2026-11-13):** the supervisor certifies (0x14 = C7, gate 1); the stock self-test ladder runs to 0xAA; letter 'c' / J2 0x9020 hold the rail; the stock P set drives 1.775 A (the stock's own 1.773 A).
 - **M4 (partial):** the stock cyclic range chain owns D6D6 live (brake/engine/lever interlocks, U1267/P0850 debounce); both park outputs at stock values (30 s release limit, .noinit); key-off auto-P; PA7 and C9 bit 7 live; park sensor ported read-only. Open: sensor polarity on an assembled transmission.
 - **M5 (partial):** the stock engagement engine is the sole producer of the A–E/WK/Sys requests, at the stock RAM addresses, behind a latching monitor of ours; the stock 1.2 s release; OS mode 2 chosen by the stock selector; the mode-1 commit gate live; the commanded gear E4A7 holds E69F while a change is pending; BD15 cleared at the end (r04y). Output diagnosis on the real feedback chain; current bounds and temperature chain live.
-- **M6 (started), all READ-ONLY shadows on the target:** shift map (r04t), gear feedback chain (r04w), the fault-reaction / gear-code chain over all 195 DSM groups — its masks equal the stock dump exactly, 00813240 / E8260114 (r04x, r05a), the gear-pair shift-engine skeleton with a coupled gear chain (r04z), its kind/class machine, BD1B, counters and block swap ported (r05b).
+- **M6 (started), all READ-ONLY shadows on the target:** shift map (r04t), gear feedback chain (r04w), the fault-reaction / gear-code chain over all 195 DSM groups — its masks equal the stock dump exactly, 00813240 / E8260114 (r04x, r05a), the gear-pair shift-engine skeleton with a coupled gear chain (r04z), its kind/class machine, BD1B, counters and block swap (r05b) and the phase bodies for every upshift and the class-1 downshifts (r05c); shadows read stock calibration at 0x80000+ in place.
 - **Live stand-ins (labelled deviations):** gear target forced 1st (**decision A, 2026-11-20** — the stock picks 3rd on this bench via CAN-fault reaction 13; the honest chain belongs to the Nissan fork); Sys 500 / reaction 37 = 0 / WK not ported; the engine-stall fence; the r03f table before the boot pass; park_law's 0x89C30/E69B stand-ins.
 - **Bench limits:** dry mechatronic, no turning shafts; brake/engine/lever simulated on CAN; supply limit 5 A.
-- **Running numbers (r05a):** P ≈ 1.8 A, D/R ≈ 3.0 A; engagements complete at pass 96 (D) / 95 (R) cause 1; releases 120 passes; task_10ms ≈ 0.6 ms typical, ≤ 1.62 ms max on engagement passes; app end 0x79400 (install blocks 0x40000–0x70000; block 0x80000 is calibration — never write it); host tests 372.
+- **Running numbers (r05a):** P ≈ 1.8 A, D/R ≈ 3.0 A; engagements complete at pass 96 (D) / 95 (R) cause 1; releases 120 passes; task_10ms ≈ 0.6 ms typical, ≤ 1.62 ms max on engagement passes; app end 0x7AFC4 (install blocks 0x40000–0x70000; block 0x80000 is calibration — never write it); host tests 372.
 
 ## The immediate work (2026-11-20)
 
-1. **The gear-pair phase bodies** (`~/tcu_sweep/shift_phase_bodies_decode.md`) into gp_shadow, replacing the phase-duration stand-ins (the kind/class machine, BD1B, counters and swap are ported — r05b). Read-only.
+1. **The gear-pair shadow is complete as decoded (r05c).** Remaining undecoded inside it: class-0/skip downshifts, the torque-phase terms of class 1, the adaptation value 0xAED5C — all counted stand-ins.
 2. **Before any live shift:** line pressure during shifts and torque intervention (`~/tcu_sweep/line_pressure_torque_decode.md`; the input-torque writer 0xDDFD8), D-FR-5 (the monitor latches P on any gear-code change while engaged) stays until then.
 3. **Fork prep (cheap, optional):** re-base the 11 FCA-frame host tests on the `vehicle_in` injector; a neutral TX seam (`main.c` still calls `fca_tx_*`). Open decisions for the fork: D-N1 the lever source (a Nissan cabin has no CAN lever), D-N4 moving debug/meas IDs to bus 2.
 4. **Before any vehicle:** the honest gear target and fault reactions (in the Nissan fork), line pressure in drive, WK lock-up, a test on an assembled transmission.
