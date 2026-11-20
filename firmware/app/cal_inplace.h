@@ -113,6 +113,43 @@
 #define CAL_WK_B2AC       0x1FF072u   /* s16 10: B2AC = B2AA - 100 x this */
 #define CAL_WK_ZMAP       0x1A8638u   /* {u32 4, u32 2, f32...} the 0xD9F10 correction map of a type-0 (NC) element: z all 0 */
 
+/* lock-up REQUEST PRODUCER (sm_shadow.c: 0x124570 and its callees; ~/tcu_sweep/gaps3_decode.md section 1): the group
+ * pointer struct *0xFFF84F5C = 0x62A6C (below 0xA0000, so its entries are written out here, every one re-checked in
+ * the stock image by tests/unit/test_sm_lock.c) and the objects it points at, all >= 0x1F0000 */
+#define CAL_LU_REMAP      0x1FBCD0u   /* {u32 100, u8[100]} program -> family (struct +0x00) */
+#define CAL_LU_ALLOW      0x1FBD38u   /* {u32 8, u32 100, u8[8 x 100]} t[gear-1 + family * 8] -> map index p (+0x04) */
+#define CAL_LU_GMASK      0x1FF7D4u   /* u16 0x01FF: bit g = lock-up allowed in gear g (+0x08) */
+#define CAL_LU_HYS        0x1FF7D6u   /* u16 34 (2 -> 1) and u16 64 (3 -> 2) (+0x0C / +0x10) */
+#define CAL_LU_OVR        0x1FED93u   /* u8 x3 = 05 FF FF: override families (+0x14 / +0x18 / +0x1C) */
+#define CAL_LU_CAPLVL     0x1FC060u   /* {u32 4, u8[4]} = 0 1 1 1: the level cap (+0x20) */
+#define CAL_LU_MAP0       0x1FC068u   /* nine threshold maps {u32 40, u32 10, u16 x[40], u16 y[10], u16 z[10][40]} (+0x24..+0x44) */
+#define CAL_LU_MAP_LEN    0x38Cu
+#define CAL_LU_NMAP       9u
+#define CAL_LU_OFS        0x1FE054u   /* three {u32 8, s16[8]} per-gear offsets (+0x48 / +0x4C / +0x50), stride 0x14 */
+#define CAL_LU_OFS_STEP   0x14u
+#define CAL_LU_EN         0x1FED93u   /* the enable bytes 0x1FED93 .. 0x1FED9E (+0x54 corr, +0x5C bit 3, +0x84 bit 5, ...) */
+#define CAL_LU_EN_LEN     12u
+#define CAL_LU_G4TAB      0x1FE0D8u   /* {u32 100, u8[100]} the bit-4 gate table (+0x68): all 0 */
+#define CAL_LU_CAPSPD     0x1FE5D4u   /* {u32 8, s16[8]} 0x12D7DC speed cap (*0xFFF84F60 + 0) */
+#define CAL_LU_CAPFLG     0x1FE5E8u   /* {u32 100, u8[100]} 0x12D7DC context flag (+4): all 0 */
+#define CAL_LU_LATCH      0x1FE650u   /* {u32 5, u8 x[5], u8 y[5]} 0x1251BC cold-start latch curve (*0xFFF84F64) */
+#define CAL_LU_FLAGS      0x1FEC67u   /* u8 x6: the A1F8 getter enables (0xFFF84E30 struct) */
+
+/* WK open-loop RAMPS (wk_shadow.c; gaps3_decode.md section 2; the config struct D10 = *0xFFF84D10 = 0x54680, each entry
+ * re-checked in the stock image by tests/unit/test_wk_shadow.c --cal) */
+#define CAL_WK_PRE_MAP    0x1A560Cu   /* D10+0x1F0 {u32 2, u32 2, s16 x[2], s16 y[2], s16 z[2][2]}: prefill time, B284 x B60C (all 0) */
+#define CAL_WK_PRE_CRV    0x1A5624u   /* D10+0x1F4 {u32 2, f32 x[2], f32 y[2]}: prefill pressure vs its time fraction (all 0) */
+#define CAL_WK_FILL_LEN   0x1A5588u   /* D10+0x1E8 {6, 6, s16 slip x[6], s16 engine y[6], s16 z[6][6]}: the fill length, passes */
+#define CAL_WK_FILL_TMP   0x1A55F0u   /* D10+0x1EC {u32 6, s16 x[6], s16 y[6]}: + the temperature byte's part */
+#define CAL_WK_FILL_M2    0x1A5708u   /* D10+0x200 {6, 6, ...}: + temperature byte x E5C0 while B294+0x2D == 0 */
+#define CAL_WK_FILL_P     0x1A3ED4u   /* D10+0x16C {u32 2, f32 x[2], f32 y[2]}: the fill pressure's B532 term (~0) */
+#define CAL_WK_ENG_T0     0x1A5638u   /* D10+0x1F8 {6, 6, s16 temp byte x[6], s16 slip y[6], s16 z}: the engage ramp time, passes */
+#define CAL_WK_ENG_T1     0x1A56A0u   /* D10+0x1FC the same while B2BE (all 100) */
+#define CAL_WK_ENG_HOLD   0x1A3E6Cu   /* D10+0x168 {6, 6, s16 turbine x[6], s16 slip y[6], s16 z}: the engaged hold timer */
+#define CAL_WK_REL_CRV    0x1A5CF8u   /* D10+0x224 {u32 4, f32 x[4], f32 y[4]}: the release rate vs the pedal (all 1.0) */
+#define CAL_WK_ENG_FORM   0x1FE81Du   /* u8 *(D10+0x234) = 0: the linear engage form (1 = the integrating one) */
+#define CAL_WK_ST7        0x1A5D4Cu   /* f32 *(D10+0x248) = 0.25: state 7's PT1 gain */
+
 /* X-macro of every in-place object: name, address, length, accessor note.
  * Used by the host test (range / spot checks) — keep it complete. */
 #define CAL_IP_LIST(X) \
@@ -162,6 +199,31 @@
     X(wk_outmap,  CAL_WK_OUTMAP,  184u) \
     X(wk_b2ac,    CAL_WK_B2AC,    2u) \
     X(wk_zmap,    CAL_WK_ZMAP,    64u) \
+    X(lu_remap,   CAL_LU_REMAP,   104u) \
+    X(lu_allow,   CAL_LU_ALLOW,   808u) \
+    X(lu_gmask,   CAL_LU_GMASK,   6u) \
+    X(lu_ovr,     CAL_LU_OVR,     3u) \
+    X(lu_caplvl,  CAL_LU_CAPLVL,  8u) \
+    X(lu_maps,    CAL_LU_MAP0,    CAL_LU_NMAP * CAL_LU_MAP_LEN) \
+    X(lu_ofs,     CAL_LU_OFS,     3u * CAL_LU_OFS_STEP) \
+    X(lu_en,      CAL_LU_EN,      CAL_LU_EN_LEN) \
+    X(lu_g4tab,   CAL_LU_G4TAB,   104u) \
+    X(lu_capspd,  CAL_LU_CAPSPD,  20u) \
+    X(lu_capflg,  CAL_LU_CAPFLG,  104u) \
+    X(lu_latch,   CAL_LU_LATCH,   14u) \
+    X(lu_flags,   CAL_LU_FLAGS,   6u) \
+    X(wk_preMap,  CAL_WK_PRE_MAP, 24u) \
+    X(wk_preCrv,  CAL_WK_PRE_CRV, 20u) \
+    X(wk_fillLen, CAL_WK_FILL_LEN, 104u) \
+    X(wk_fillTmp, CAL_WK_FILL_TMP, 28u) \
+    X(wk_fillM2,  CAL_WK_FILL_M2, 104u) \
+    X(wk_fillP,   CAL_WK_FILL_P,  20u) \
+    X(wk_engT0,   CAL_WK_ENG_T0,  104u) \
+    X(wk_engT1,   CAL_WK_ENG_T1,  104u) \
+    X(wk_engHold, CAL_WK_ENG_HOLD, 104u) \
+    X(wk_relCrv,  CAL_WK_REL_CRV, 36u) \
+    X(wk_engForm, CAL_WK_ENG_FORM, 1u) \
+    X(wk_st7,     CAL_WK_ST7,     4u) \
     X(ti_maps,    CAL_TI_MAPS,    CAL_TI_MAPS_LEN) \
     X(ti_sc1,     CAL_TI_SC1,     CAL_TI_SC1_LEN) \
     X(ti_sc2,     CAL_TI_SC2,     CAL_TI_SC2_LEN)

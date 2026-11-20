@@ -430,7 +430,7 @@ SECTIONS
         __gp_ramp_start = .; *(.gp_ramp)
         . = ALIGN(4); __gp_ramp_end = .;
     } > RAM
-    ASSERT(__gp_ext_start == 0xFFF86794 && __gp_ext_start >= __gp_gear_end && SIZEOF(.gp_ext) == 0x60 &&
+    ASSERT(__gp_ext_start == 0xFFF86794 && __gp_ext_start >= __gp_gear_end && SIZEOF(.gp_ext) == 0x64 &&
            __gp_ext_end <= __sm_shadow_start, ".gp_ext: gp_x_t is off 0xFFF86794 or runs into .sm_shadow (witness_gp.py)")
     ASSERT(__gp_ramp_start == 0xFFF869BC && __gp_ramp_start >= __sm_gear_end && SIZEOF(.gp_ramp) == 0x40 &&
            __gp_ramp_end <= 0xFFF86A00, ".gp_ramp: the ramp objects are off 0xFFF869BC or run into .fb_shadow (witness_gp.py)")
@@ -473,13 +473,25 @@ SECTIONS
            ".ti_shadow: ti_t is off 0xFFF929C0 or leaves the dump-zero run (witness_lp.py)")
     /* THE TORQUE-CONVERTER LOCK-UP (WK) SHADOW (2026-11-20, ~/tcu_sweep/wk_shadow_port.md; app/wk_shadow.c, ours -
      * not stock cells): struct wk_t (0x9C) at 0xFFF935D0 inside the dump-zero run 0xFFF935C6..0xFFF9372E (re-checked
-     * all zero in stockram_driving_20261104.bin; nothing of ours there). Cleared by wk_shadow_init. */
+     * all zero in stockram_driving_20261104.bin; nothing of ours there). Cleared by wk_shadow_init. (2026-11-20, gaps3: wk_t grew 0x9C -> 0xB4 inside
+     * its window, ending before .sm_lock 0xFFF9369C.) */
     .wk_shadow 0xFFF935D0 (NOLOAD) : {
         __wk_shadow_start = .; *(.wk_shadow) *wk_shadow.c.obj(.bss .bss.* COMMON)
         . = ALIGN(4); __wk_shadow_end = .;
     } > RAM
-    ASSERT(__wk_shadow_start == 0xFFF935D0 && SIZEOF(.wk_shadow) == 0x9C && __wk_shadow_end <= 0xFFF9372E,
+    ASSERT(__wk_shadow_start == 0xFFF935D0 && SIZEOF(.wk_shadow) == 0xB4 && __wk_shadow_end <= 0xFFF9369C,
            ".wk_shadow: wk_t is off 0xFFF935D0 or leaves the dump-zero run")
+    /* THE LOCK-UP REQUEST PRODUCER of the shift-map shadow (app/sm_shadow.c lu_pass, 2026-11-20,
+     * ~/tcu_sweep/gaps3_port.md; ours, not stock cells): struct sml_t (0x80) at 0xFFF9369C in the same
+     * dump-zero run (0xFFF935C6..0xFFF9372E, re-checked all zero in stockram_driving_20261104.bin), after
+     * .wk_shadow (0xB4 after gaps3; the window ends 0xFFF9372E). Cleared by sm_shadow_init. */
+    .sm_lock 0xFFF9369C (NOLOAD) : {
+        __sm_lock_start = .; *(.sm_lock)
+        . = ALIGN(4); __sm_lock_end = .;
+    } > RAM
+    ASSERT(__sm_lock_start == 0xFFF9369C && SIZEOF(.sm_lock) == 0x80 && __sm_lock_end <= 0xFFF9372E,
+           ".sm_lock: sml_t is off 0xFFF9369C or leaves the dump-zero run (witness_sm.py)")
+    ASSERT(__sm_lock_start >= __wk_shadow_end, ".sm_lock overlaps .wk_shadow")
     /* the fault-reaction shadow's FAULT MANAGER (app/fr_fm.c, ours; RAM
      * only, written by that TU alone): struct fr_fm_t in the dump-zero gap
      * between the A-DMAC ring (+ its guard 0x88728) and the range chain's

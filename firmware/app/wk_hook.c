@@ -13,8 +13,8 @@
  * 49 / 42 (0x89CF6), the line-pressure shadow's target (E61A), the live WK current (witness only). The
  * speeds and the torque: our sensors and vehicle input, REPLACED while the bench's simulated-speed frame
  * is fresh (io/vehicle/shadow_sim.h; the shadows only). The strategy's lock-up request index
- * (0xFFF8A0A1) has no located producer: the hook feeds 0 - on the SH image always; the host harness has
- * a seam (wk_shadow_host_req). It never reads a cell the shadow models as its own. */
+ * (0xFFF8A0A1) is produced by the shift-map shadow (sm_shadow.c, 0x124570; gaps3_port.md); the host harness
+ * keeps a seam (wk_shadow_host_req) that overrides it. It never reads a cell the shadow models as its own. */
 #include "app/wk_shadow.h"
 
 #include <stdint.h>
@@ -28,11 +28,9 @@
 
 #if !defined(__sh__)
 static uint8_t s_host_req;
-void wk_shadow_host_req(uint8_t v) { s_host_req = v; }
+static uint8_t s_host_req_set;                           /* the host seam overrides the producer once it has been set */
+void wk_shadow_host_req(uint8_t v) { s_host_req = v; s_host_req_set = 1u; }
 uint8_t wk_shadow_host_req_get(void) { return s_host_req; }
-#define WK_REQ_SI (s_host_req)
-#else
-#define WK_REQ_SI ((uint8_t)0)
 #endif
 
 void wk_hook_init(void)
@@ -43,6 +41,7 @@ void wk_hook_init(void)
 #if !defined(WK_HOOK_NO_GATHER)
 #include "app/fr_shadow.h"
 #include "app/gp_shadow.h"
+#include "app/sm_shadow.h"
 #include "app/lp_shadow.h"
 #include "io/sensors/sensors.h"
 #include "io/vehicle/vehicle.h"
@@ -72,7 +71,14 @@ void wk_hook_10ms(void)
     in.e612_a = 0u;                                      /* 0xBA2A4(E612): stand-in */
     in.e612_b = 1u;                                      /* 0xBA2AC(E612): stand-in */
     in.e61c_busy = 0u;
-    in.req_idx = WK_REQ_SI;                              /* 0xFFF8A0A1: producer unlocated */
+    /* 0xFFF8A0A1 = the lock-up request index: the shift-map shadow's producer (sm_shadow.c lu_pass, 0x124570); the
+     * host seam overrides it once set. On the bench reaction 49 holds the STOCK's request at 0; the shadow's
+     * producer runs the healthy case (react 49 = 0), the WK gate (0x89CF6 = reaction 49 / 42) stays shut. */
+#if !defined(__sh__)
+    in.req_idx = s_host_req_set ? s_host_req : sm_lock_request();
+#else
+    in.req_idx = sm_lock_request();
+#endif
     in.req_force0 = 0u;
     in.e353 = 0u;
     in.shift_busy = (uint8_t)((bd16 != 0u) ? 1u : 0u);

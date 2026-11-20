@@ -25,6 +25,12 @@ extern const gp_c134_t gp_ph_c134[GP_PH_NUP];
 /* the class-1 single down-shift rows, from = 2..8 (index from - 2): the cell values and the flash ADDRESSES of the maps */
 typedef struct { uint8_t on_lock; uint8_t on_delay; uint32_t on_kiss; uint8_t on_dur0a; uint32_t on_t5; uint32_t on_lvl; uint32_t on_ex0c; uint8_t fin; uint32_t of_pct; uint32_t of_thr; uint32_t of_t0a; uint32_t of_slip; uint32_t of_d0b; uint32_t of_p1; uint32_t of_d1; uint32_t of_d0f; uint32_t of_l0d; } gp_dn_t;
 extern const gp_dn_t gp_ph_dn[GP_DN_N];
+/* the CLASS-0 single down-shift rows, from = 2..8 (only the on+0x60 / off+0x50 fields differ from class 1) */
+extern const gp_dn_t gp_ph_dn0[GP_DN_N];
+/* the 11 SKIP down-shift rows (always class 1; idx 7..17 / 14..24): from, to and the row */
+#define GP_SK_N 11u
+typedef struct { gp_dn_t d; uint8_t from; uint8_t to; } gp_sk_t;
+extern const gp_sk_t gp_ph_sk[GP_SK_N];
 
 typedef struct { uint32_t addr; uint32_t len; uint32_t col0; uint32_t fnv; } gp_ph_chk_t;
 #if defined(GP_CAL_CHECK)

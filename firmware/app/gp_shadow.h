@@ -357,8 +357,10 @@ typedef struct {
     uint16_t ramp_n;    /* +18 ramp object init / step calls */
     uint16_t bd1b_n;    /* +20 BD1B set by 0xEC6A6 */
     uint16_t c1_n;      /* +22 phase durations taken from the class-1 rows */
+    uint16_t c0_n;      /* +24 (gaps3) class-0 single-row lookups */
+    uint16_t sk_n;      /* +26 (gaps3) skip-row lookups */
 } gp_xw_t;
-_Static_assert(sizeof(gp_xw_t) == 24u, "gp_xw_t is 24 bytes (witness_gp.py)");
+_Static_assert(sizeof(gp_xw_t) == 28u, "gp_xw_t is 28 bytes (witness_gp.py)");
 
 typedef struct {
     gp_xblk_t blk[2];   /* +0   block A / B */
@@ -374,7 +376,7 @@ typedef struct {
 } gp_x_t;
 _Static_assert(offsetof(gp_x_t, in2) == 56u, "gp_x_t layout (witness_gp.py)");
 _Static_assert(offsetof(gp_x_t, w) == 70u, "gp_x_t layout (witness_gp.py)");
-_Static_assert(sizeof(gp_x_t) == 94u, "gp_x_t is 94 bytes (.gp_ext, witness_gp.py)");
+_Static_assert(sizeof(gp_x_t) == 98u, "gp_x_t is 98 bytes (.gp_ext, witness_gp.py; was 94 before the gaps3 counters)");
 _Static_assert(sizeof(gp_x_t) <= 0x6Cu, "gp_x_t must fit the dump-zero gap after .gp_gear (108 B)");
 
 /* ── 2026-11-20: the PHASE-BODY state (own RAM .gp_phase; decode shift_phase_bodies_decode.md, port

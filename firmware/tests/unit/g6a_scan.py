@@ -165,7 +165,13 @@ STOCK_FORBIDDEN = ["e8bfa", "e8cf6", "d229e", "f71ec", "a2028", "a1712", "bddb0"
                    # (-> 0xCEE94 / 0xCE48C / 0xCE00C) and its reader 0xAEE0E -> 0xCEDC6, the WK DSM report 0xE10A6 and the
                    # lock-up events 0x10C6CC / 0x10C99E (-> 0xB79E4): never defined in the image (0xB75B4, 0xB79E4,
                    # 0xA105E, 0xEBB6C / 0xEBC60's NV counters are above)
-                   "bf8e8", "aee26", "aee1c", "aee2e", "aee0e", "cee94", "ce48c", "ce00c", "cedc6", "e10a6", "10c6cc", "10c99e"]
+                   "bf8e8", "aee26", "aee1c", "aee2e", "aee0e", "cee94", "ce48c", "ce00c", "cedc6", "e10a6", "10c6cc", "10c99e",
+                   # (2026-11-20, ~/tcu_sweep/gaps3_decode.md section 4, gaps3_port.md): the keep-out table of the lock-up request
+                   # producer / the WK ramps / the class-0 and skip down-shift bodies - the converter adaptation machine 0xE0D98
+                   # (-> 0xE08AC / 0xE0D5E, the source of B5AA, with EEPROM writers), the EEPROM block-0x0304 accessors 0xBF972 /
+                   # 0xBF994 / 0xBF7F8, the WK learner reached through 0x10B490, the strategy event ring 0xF7EC8 (a COUNTER only:
+                   # never a symbol) and the up-shift 0x114CBE branch's 0xEAC5E query
+                   "e0d98", "e08ac", "e0d5e", "bf972", "bf994", "bf7f8", "10b490", "f7ec8", "eac5e"]
 LIT_FORBIDDEN = [0xFFF85174, 0xFFF85175, 0xFFF85176]
 # F1: the EEPROM / NVM / DSM-record / fatal-log cells no fault-reaction shadow
 # object may hold as a literal or a movi20 operand (plan §5, f0 §7)

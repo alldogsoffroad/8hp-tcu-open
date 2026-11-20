@@ -578,6 +578,453 @@ static uint8_t limits(sm_t *s, uint8_t cand)
     return r;
 }
 
+/* ══ THE LOCK-UP REQUEST PRODUCER 0x124570 (gaps3_decode.md section 1) ═══════════════════════
+ * Its own RAM (.sm_lock, linker.ld): every static of this TU would otherwise land in .sm_shadow. */
+#if defined(__sh__)
+#define SMLSEC __attribute__((section(".sm_lock")))
+#else
+#define SMLSEC
+#endif
+static sml_t s_lu SMLSEC;
+
+/* 0x121432 on the remap object */
+static uint8_t lu_remap(uint8_t k)
+{
+    return cal_u8(CAL_LU_REMAP + 4u + (k < cal_u32(CAL_LU_REMAP) ? k : 0u));
+}
+
+/* 0x1214B4 on the allow table {u32 n1 = 8, u32 n2 = 100, u8 t[c + r * n1]} */
+static uint8_t lu_allow(uint8_t c, uint8_t r, sml_t *l)
+{
+    const unsigned n1 = cal_u32(CAL_LU_ALLOW), n2 = cal_u32(CAL_LU_ALLOW + 4u);
+    if (c >= n1 || r >= n2) {
+        l->err_n++;                                     /* event 0x4D (counted); index 0, 0 */
+        c = 0u;
+        r = 0u;
+    }
+    return cal_u8(CAL_LU_ALLOW + 8u + c + (unsigned)r * n1);
+}
+
+/* 0x1213E8: set bit n of the inhibit byte (n == 0 sets nothing) */
+static void lu_inh(sml_t *l, unsigned n)
+{
+    if (n != 0u) {
+        l->inh = (uint8_t)(l->inh | (1u << n));
+        if (l->inh_n[n] != 0xFFFFu) {
+            l->inh_n[n]++;
+        }
+    }
+}
+
+/* 0x1250F4: the inhibit byte (bits 1 / 2 / 3 / 4 / 5 / 7) */
+static void lu_inhibit(sml_t *l, uint8_t gear)
+{
+    uint32_t m = cal_u16(CAL_LU_GMASK);
+    l->inh = 0u;
+    if (gear == 0u) {
+        m = 0u;                                         /* -(0): (uVar2 & 0x1f) == 0 -> 0 */
+    } else {
+        m >>= ((uint32_t)(gear - 1u) & 0x1Fu) + 1u;     /* the stock's shift: mask >> gear for gear 1..32 */
+    }
+    if ((m & 1u) == 0u) {
+        lu_inh(l, 1u);                                  /* the gear is not in the enable mask */
+    }
+    if (l->in.react49 != 0u) {
+        lu_inh(l, 2u);                                  /* AB97 = A004+0x61: fault reaction 49 */
+    }
+    if (l->b3 != 0u) {
+        lu_inh(l, 3u);
+    }
+    if (l->b4 == 1u) {
+        lu_inh(l, 4u);
+    }
+    if (l->b5 == 1u) {
+        lu_inh(l, 5u);
+    }
+    if (l->in.a3bc_55 == 1u) {
+        lu_inh(l, 7u);                                  /* 0xF82C8(A3BC): A3BC+0x55 */
+    }
+}
+
+/* 0x124DDE / 0x124ED4 / 0x12501E: the inhibit bits 3 / 4 / 5 - dead by calibration (enables 0x1FED97 / 0x1FED9B
+ * = 0, the bit-4 gate table all 0): L+0x2C / +0x30 / +0x31 stay 0; counted when a cal byte ever enables them */
+static void lu_dead_gates(sml_t *l)
+{
+    if (l->dg == 0u) {                                  /* the calibration does not change: scanned once (init clears dg) */
+        uint32_t any = (uint32_t)cal_u8(CAL_LU_EN + 4u) | cal_u8(CAL_LU_EN + 8u);    /* 0x1FED97, 0x1FED9B */
+        for (unsigned i = 0u; i < cal_u32(CAL_LU_G4TAB); i++) {
+            any |= cal_u8(CAL_LU_G4TAB + 4u + i);
+        }
+        l->dg = (any == 0u) ? 1u : 2u;
+    }
+    if (l->dg != 1u) {
+        l->unp_n++;
+    }
+    l->b3 = 0u;
+    l->l10 = cal_u8(CAL_LU_EN + 7u);                    /* 0x124ED4: L+0x10 = *(0x1FED9A) */
+}
+
+/* 0x124C6A: one threshold (the map of program p at column (p-1) % 10 * 4 + t, row = the pedal) */
+static unsigned lu_thr(sml_t *l, uint16_t *out, uint8_t *mi, uint8_t *colb, uint8_t p, uint8_t y, unsigned t)
+{
+    unsigned t2 = t;
+    if (t == 4u) {
+        t2 = 2u;
+    }
+    if (t == 5u) {
+        t2 = 3u;
+    }
+    const int iv = (int)p - 1;
+    *mi = (uint8_t)(iv / 10);
+    l->y = y;
+    const unsigned cb = (unsigned)((iv % 10) * 4);
+    *colb = (uint8_t)cb;
+    const unsigned col = cb + t2;
+    l->colx = (uint8_t)col;
+    if (*mi > 8u) {
+        *mi = 0u;
+        l->err_n++;                                     /* event 0x61 (0xF7EC8: counted) */
+        return 0x61u;
+    }
+    uint16_t v = lut(CAL_LU_MAP0 + CAL_LU_MAP_LEN * (*mi), (uint16_t)(col & 0xFFu), y);
+    if (t == 4u) {
+        v = sat16((int32_t)v - (int32_t)cal_u16(CAL_LU_HYS));            /* 0x1FF7D6 = 34 */
+    }
+    if (t == 5u) {
+        v = sat16((int32_t)v - (int32_t)cal_u16(CAL_LU_HYS + 2u));       /* 0x1FF7D8 = 64 */
+    }
+    *out = v;
+    return 0u;
+}
+
+/* 0x124C04: the per-gear offset (only with cal 0x1FEC68 and A1F8+0x34) */
+static uint16_t lu_ofs(sml_t *l, uint8_t gear, unsigned t)
+{
+    unsigned k;
+    if (t == 0u || t == 1u) {
+        k = 0u;
+    } else if (t == 2u || t == 4u) {
+        k = 1u;
+    } else if (t == 3u || t == 5u) {
+        k = 2u;
+    } else {
+        l->err_n++;                                     /* event 0x68 */
+        return 0u;
+    }
+    const uint32_t tb = CAL_LU_OFS + CAL_LU_OFS_STEP * k;
+    unsigned idx = (unsigned)(uint8_t)(gear - 1u);
+    if (cal_u32(tb) <= idx) {
+        l->err_n++;                                     /* 0x121482's event 0x4D */
+        idx = 0u;
+    }
+    return (uint16_t)cal_s16(tb + 4u + 2u * idx);
+}
+
+/* 0x1249DA: the four-program, two-weight blended threshold of one t (0..5) */
+static unsigned lu_blend(sml_t *l, uint16_t *out, uint8_t y, unsigned t, uint8_t gear)
+{
+    uint16_t t1 = 0u, t2 = 0u, t3 = 0u, t4 = 0u;
+    unsigned r = lu_thr(l, &t1, &l->mi[0], &l->col[0], l->allow[0], y, t);
+    l->mi[0]++;
+    if (r != 0u) {
+        return r;
+    }
+    if (l->allow[1] == 0u) {
+        t2 = t1;
+    } else {
+        r = lu_thr(l, &t2, &l->mi[1], &l->col[2], l->allow[1], y, t);
+        l->mi[1]++;
+        if (r != 0u) {
+            return r;
+        }
+    }
+    if (l->allow[2] == 0u) {
+        t3 = t1;
+    } else {
+        r = lu_thr(l, &t3, &l->mi[2], &l->col[1], l->allow[2], y, t);
+        l->mi[2]++;
+        if (r != 0u) {
+            return r;
+        }
+    }
+    if (l->allow[3] == 0u) {
+        t4 = t3;
+    } else {
+        r = lu_thr(l, &t4, &l->mi[3], &l->col[3], l->allow[3], y, t);
+        l->mi[3]++;
+        if (r != 0u) {
+            return r;
+        }
+    }
+    const int32_t a = sat16((int32_t)((uint32_t)l->w1 * ((uint32_t)t2 - (uint32_t)t1)) / 100 + (int32_t)t1);
+    const int32_t b = sat16((int32_t)((uint32_t)l->w1 * ((uint32_t)t4 - (uint32_t)t3)) / 100 + (int32_t)t3);
+    uint16_t v = sat16((int32_t)((uint32_t)l->w2 * ((uint32_t)b - (uint32_t)a)) / 100 + a);
+    /* the slip / grade correction (cal 0x1FED96 == 1): off here */
+    if (cal_u8(CAL_LU_EN + 3u) == 1u) {
+        l->unp_n++;
+    }
+    l->corr = 0;
+    if (cal_u8(CAL_LU_FLAGS + 1u) != 0u && l->in.a1f8_34 != 0u) {      /* 0xF8CF8: cal 0x1FEC68 and A1F8+0x34 */
+        const uint16_t o = lu_ofs(l, gear, t);
+        if (o != 0u) {
+            v = sat16((int32_t)((uint32_t)v + (uint32_t)o));
+        }
+    }
+    *out = v;
+    return 0u;
+}
+
+/* 0x12D7DC: the level cap at coast speeds (the context table is all 0: never applies) */
+static uint8_t lu_speedcap(sml_t *l, uint8_t lvl, uint8_t ctx, uint8_t gear)
+{
+    if ((lvl == 2u || lvl == 3u) && l->in.ab9a == 0u) {
+        unsigned c = ctx;
+        if (c >= cal_u32(CAL_LU_CAPFLG)) {
+            l->err_n++;
+            c = 0u;
+        }
+        if (cal_u8(CAL_LU_CAPFLG + 4u + c) == 1u) {
+            unsigned g = (unsigned)(uint8_t)(gear - 1u);
+            if (cal_u32(CAL_LU_CAPSPD) <= g) {
+                l->err_n++;
+                g = 0u;
+            }
+            if (l->in.a666 < (uint16_t)cal_s16(CAL_LU_CAPSPD + 4u + 2u * g)) {
+                l->speedcap_n++;
+                return 1u;
+            }
+        }
+    }
+    return lvl;
+}
+
+/* 0x1215B6 on the latch curve {u32 n, u8 x[n], u8 y[n]} */
+static uint8_t lu_curve_u8(uint8_t x)
+{
+    const uint32_t m = CAL_LU_LATCH;
+    const uint32_t n = cal_u32(m);
+#define LX(i) cal_u8(m + 4u + (uint32_t)(i))
+#define LY(i) cal_u8(m + 4u + n + (uint32_t)(i))
+    uint32_t k = 0u, w = 0u, d = 0u;
+    if (LX(0) < x) {
+        if (x < LX(n - 1u)) {
+            while (LX(k) < x) {
+                k++;
+            }
+            w = (uint32_t)(LX(k) - LX(k - 1u));
+            d = (uint32_t)(x - LX(k - 1u));
+            k -= 1u;
+        } else {
+            w = 1u;
+            d = 1u;
+            k = n - 2u;
+        }
+    }
+    uint32_t v = LY(k);
+    if (d != 0u) {
+        const uint32_t v2 = LY(k + 1u);
+        if (v2 < v) {
+            v = (v - (((d * ((v - v2) & 0xFFFFu)) / w) & 0xFFu)) & 0xFFu;
+        } else {
+            v = (((d * ((v2 - v) & 0xFFFFu)) / w) + v) & 0xFFu;
+        }
+    }
+    return (uint8_t)v;
+#undef LX
+#undef LY
+}
+
+/* 0x1251BC: the cold-start latch L+1..L+3; returns the state (1 = capped) */
+static uint8_t lu_latch(sml_t *l)
+{
+    if (l->l3 == 2u) {
+        return 2u;
+    }
+    l->l2 = (uint8_t)(l->in.a65a > 245u ? 255u : l->in.a65a + 10u);    /* 0x121CC6(A65A + 10); the update condition A666 / A66A is stood in true */
+    l->si_n++;
+    const uint8_t t = l->in.temp_byte;                                  /* A68E */
+    if (l->l3 == 0u) {
+        l->l1 = 1u;
+        if (t < lu_curve_u8(l->l2)) {
+            l->l3 = 1u;
+            l->l1 = 0u;
+            return 1u;
+        }
+    } else if (l->l3 == 1u) {
+        if (t < lu_curve_u8(l->l2)) {
+            return 1u;
+        }
+    } else {
+        l->err_n++;                                                     /* event 0x68 */
+        return l->l3;
+    }
+    l->l3 = 2u;
+    l->l1 = 1u;
+    return 2u;
+}
+
+/* 0x124570(L, S) then 0xF7864's AB94 -> A0A1 copy. s_ba = S+0xBA..0xBF = the program ids the walk stored
+ * (= S+0xC7..0xCC after 0x1280F4: p6, p9, p7, p10, the base weight, the level weight) */
+static void lu_pass(const sm_t *s)
+{
+    sml_t *l = &s_lu;
+    const uint8_t gear = s->m18;                        /* A694 */
+    const uint8_t pedal = s->a786;                      /* A786 */
+    const uint16_t ab30 = s->ab30;                      /* AB30 */
+    const uint8_t c4 = s->s_ba[0];                      /* S+0xC4 = p2 of 0x1280F4 = p6 */
+    unsigned r = 0u;
+    l->pass_n++;
+    l->g1f = 0u;                                        /* AB90+6 / +5 (stood in 0) */
+    l->g20 = 0u;
+    l->lvl_new = l->lvl;
+    l->s_d8 = s->s_d8;                                  /* L+8 / L+0xC <- S+0xD8 / S+0xD0 (the dead correction only) */
+    l->s_d0 = s->s_d0;
+    lu_dead_gates(l);
+    lu_inhibit(l, gear);
+    l->gate_ok = 0u;
+    if (l->inh == 0u) {
+        const uint8_t g1 = (uint8_t)(gear - 1u);
+        /* the families: the three A1F8 overrides, else the remap of S+0xC7..0xCA */
+        l->fam[0] = 0xFFu;
+        if (cal_u8(CAL_LU_FLAGS + 4u) != 0u && l->in.ovr_e4 == 1u) {
+            l->fam[0] = cal_u8(CAL_LU_OVR + 2u);
+        }
+        if (cal_u8(CAL_LU_FLAGS + 3u) != 0u && l->in.ovr_a4 == 1u) {
+            l->fam[0] = cal_u8(CAL_LU_OVR);
+        }
+        if (cal_u8(CAL_LU_FLAGS + 3u) != 0u && l->in.ovr_c2 == 1u) {
+            l->fam[0] = cal_u8(CAL_LU_OVR + 1u);
+        }
+        if (l->fam[0] == 0xFFu) {
+            l->fam[0] = lu_remap(s->s_ba[0]);
+            l->fam[1] = lu_remap(s->s_ba[1]);
+            l->fam[2] = lu_remap(s->s_ba[2]);
+            l->fam[3] = lu_remap(s->s_ba[3]);
+        } else {
+            l->fam[1] = l->fam[0];
+            l->fam[2] = l->fam[0];
+            l->fam[3] = l->fam[0];
+        }
+        for (unsigned i = 0u; i < 4u; i++) {
+            l->allow[i] = lu_allow(g1, l->fam[i], l);
+        }
+        l->w1 = s->s_ba[4];                             /* S+0xCB */
+        l->w2 = s->s_ba[5];                             /* S+0xCC */
+        if (l->allow[0] != 0u && l->allow[1] != 0u && l->allow[2] != 0u && l->allow[3] != 0u) {
+            uint16_t T = 0u;
+            l->gate_ok = 1u;
+            if (l->lvl == 0u) {
+                r = lu_blend(l, &T, pedal, 1u, gear);
+                if (r == 0u) {
+                    l->thr_dn = 0u;
+                    l->thr_up = T;
+                    if (T <= ab30) {
+                        l->lvl_new = 1u;
+                    }
+                }
+            } else if (l->lvl == 1u) {
+                r = lu_blend(l, &T, pedal, 0u, gear);
+                if (r == 0u) {
+                    l->thr_dn = T;
+                    if (ab30 < T) {
+                        l->lvl_new = 0u;
+                    } else if ((r = lu_blend(l, &T, pedal, 2u, gear)) == 0u) {
+                        l->thr_up = T;
+                        if (T <= ab30) {
+                            l->lvl_new = 2u;
+                        }
+                    }
+                }
+            } else if (l->lvl == 2u) {
+                r = lu_blend(l, &T, pedal, 4u, gear);
+                if (r == 0u) {
+                    l->thr_dn = T;
+                    if (ab30 < T) {
+                        l->lvl_new = 1u;
+                    } else if ((r = lu_blend(l, &T, pedal, 3u, gear)) == 0u) {
+                        l->thr_up = T;
+                        if (T <= ab30) {
+                            l->lvl_new = 3u;
+                        }
+                    }
+                }
+            } else if (l->lvl == 3u) {
+                r = lu_blend(l, &T, pedal, 5u, gear);
+                if (r == 0u) {
+                    l->thr_dn = T;
+                    l->thr_up = 0xFFFFu;
+                    if (ab30 < T) {
+                        l->lvl_new = 2u;
+                    }
+                }
+            } else {
+                l->err_n++;                             /* event 0x68, return 'h' */
+                return;
+            }
+            if (r != 0u) {
+                return;                                 /* the stock returns the error code with AB94 unchanged */
+            }
+            l->lvl = l->lvl_new;
+            l->req = lu_speedcap(l, l->lvl_new, c4, gear);
+            if (lu_latch(l) == 1u) {
+                unsigned k = l->req;
+                if (k >= cal_u32(CAL_LU_CAPLVL)) {
+                    l->err_n++;
+                    k = 0u;
+                }
+                l->req = cal_u8(CAL_LU_CAPLVL + 4u + k);
+                l->cap_n++;
+            }
+        } else {
+            l->req = 0u;
+            l->lvl = 0u;
+            l->lvl_new = 0u;
+        }
+    } else {
+        l->req = 0u;
+        l->lvl = 0u;
+        l->lvl_new = 0u;
+    }
+    if (l->ab94 != l->req) {
+        l->chg_n++;
+    }
+    l->ab94 = l->req;                                   /* 0x12D7D4 */
+    l->a0a1 = (SM_SI_AB34 == 2u) ? 0u : l->ab94;        /* 0xF7864 */
+    if (l->lvl < 4u) {
+        l->lvl_n[l->lvl]++;
+    }
+}
+
+const volatile sml_t *sm_lock_state(void)
+{
+    return &s_lu;
+}
+
+uint8_t sm_lock_request(void)
+{
+    return s_lu.a0a1;
+}
+
+void sm_lock_default_inputs(sml_in_t *in)
+{
+    in->react49 = 0u;                                   /* HEALTHY (the bench's dump has reaction 49 active: L+0x32 = 0x04) */
+    in->ovr_e4 = 0u;
+    in->ovr_a4 = 0u;
+    in->ovr_c2 = 0u;
+    in->a1f8_34 = 0u;
+    in->a3bc_55 = 0u;
+    in->ab9a = 0u;
+    in->temp_byte = 0x43u;                              /* A68E in the dump */
+    in->a666 = 0u;
+    in->a65a = 0x3Cu;
+    in->pad = 0u;
+}
+
+void sm_lock_set_inputs(const sml_in_t *in)
+{
+    s_lu.in = *in;
+}
+
 /* ── the pass: entries 5 (part), 14, 15, 16 ────────────────────────────── */
 void sm_shadow_pass(const sm_in_t *in)
 {
@@ -678,7 +1125,8 @@ void sm_shadow_pass(const sm_in_t *in)
     const uint8_t old = s->a697;
     s->a697 = limits(s, cand);
 
-    /* entry 16: 0xF7864, then 0xB912C's 0x89CE8 */
+    /* entry 16: 0xC22DA -> 0xF84EE -> 0x124570 (the lock-up request), then 0xF7864 (A0A1 / A0AA), 0xB912C's 0x89CE8 */
+    lu_pass(s);
     s->a0aa = (SM_SI_AB34 == 2u) ? (uint8_t)SM_SI_S3F : s->a697;
     s->ce8 = s->a0aa;
 
@@ -715,6 +1163,13 @@ void sm_shadow_init(void)
     s_sm.blk[8] = 1u;
     s_sm.m18 = (uint8_t)SM_SI_GEAR;             /* 0xC2192 init: A004+0x3F ... stood in */
     s_sm.init_n = 1u;
+    {
+        uint8_t *q = (uint8_t *)&s_lu;
+        for (size_t i = 0u; i < sizeof s_lu; i++) {
+            q[i] = 0u;
+        }
+        sm_lock_default_inputs(&s_lu.in);
+    }
 }
 
 const volatile sm_t *sm_shadow_state(void)

@@ -49,11 +49,11 @@ import witness_sm  # noqa: E402
 
 GP_SIZE = 0x188
 GF_SIZE = 0x9C
-GX_SIZE = 94        # gp_x_t, section .gp_ext (__gp_ext_start): the kind / class state, the counters' extensions
+GX_SIZE = 98        # gp_x_t, section .gp_ext (__gp_ext_start): the kind / class state, the counters' extensions
 GPH_SIZE = 96       # gp_ph_t, section .gp_phase (__gp_phase_start): the phase-body state (2026-11-20, ~/tcu_sweep/gp_phases_port.md)
 GR_SIZE = 64        # 4 x gp_ramp_t (16 B), section .gp_ramp (__gp_ramp_start): [block A on, A off, B on, B off]
 XW = ["k_start", "k_cyc", "k_chg", "k_ovr", "k_reload(NOT PORTED)", "k_a1032(stand-in 0)", "k_adapt(pass-through)",
-      "c_pass", "repin", "ramp", "bd1b_set", "class1_rows"]
+      "c_pass", "repin", "ramp", "bd1b_set", "class1_rows", "c0_n(class-0 rows, gaps3)", "sk_n(skip rows, gaps3)"]
 WIT = ["init", "pass", "skip_mode", "presel", "presel_t0", "presel_busy", "commit", "commit_ps", "mismatch",
        "done", "end", "gend", "nv_end(NOT CALLED)", "nv_abort(NOT CALLED)", "si_phase", "si_appl", "si_misc",
        "unp", "report", "err", "own", "block", "dis", "us_last", "us_max", "eb1e8"]

@@ -1954,6 +1954,15 @@ else()
         SM_HOOK_NO_GATHER=1 GP_NEG_DNMAP=1)
     add_test(NAME gp_shadow_neg_DNMAP COMMAND test_gp_shadow_neg_DNMAP)
     set_tests_properties(gp_shadow_neg_DNMAP PROPERTIES WILL_FAIL TRUE)
+    # 2026-11-20 (gaps3, ~/tcu_sweep/gaps3_port.md): one stock byte of a CLASS-0 single row's map (GP_NEG_CLS0) or of a SKIP row's
+    # map (GP_NEG_SKIP) moved must FAIL (the decode's section 3.3 numbers)
+    foreach(neg CLS0 SKIP)
+        add_executable(test_gp_shadow_neg_${neg} ${GP_TEST_SOURCES})
+        target_compile_definitions(test_gp_shadow_neg_${neg} PRIVATE _POSIX_C_SOURCE=200809L GP_HOOK_NO_GATHER=1
+            SM_HOOK_NO_GATHER=1 GP_NEG_${neg}=1)
+        add_test(NAME gp_shadow_neg_${neg} COMMAND test_gp_shadow_neg_${neg})
+        set_tests_properties(gp_shadow_neg_${neg} PROPERTIES WILL_FAIL TRUE)
+    endforeach()
     # 2026-11-20 (the stand-in retirements, ~/tcu_sweep/gp_standins_port.md): a mutated class
     # table (the down-shift f8 array t[1] 1 -> 0: no downshift window, kind 2, class 0) and a swap
     # that skips the ramp objects and the 0x117CE4 re-pin must FAIL
@@ -2220,6 +2229,24 @@ else()
     target_link_libraries(test_wk_shadow_neg_MAP PRIVATE m)
     add_test(NAME wk_shadow_neg_MAP COMMAND test_wk_shadow_neg_MAP)
     set_tests_properties(wk_shadow_neg_MAP PROPERTIES WILL_FAIL TRUE)
+    # 2026-11-20 (gaps3, ~/tcu_sweep/gaps3_port.md): the open-loop ramps' calibration byte moved (WK_NEG_RAMP: the engage time map) must FAIL
+    add_executable(test_wk_shadow_neg_RAMP ${WK_TEST_SOURCES})
+    target_compile_definitions(test_wk_shadow_neg_RAMP PRIVATE _POSIX_C_SOURCE=200809L WK_HOOK_NO_GATHER=1 WK_NEG_RAMP=1)
+    target_link_libraries(test_wk_shadow_neg_RAMP PRIVATE m)
+    add_test(NAME wk_shadow_neg_RAMP COMMAND test_wk_shadow_neg_RAMP)
+    set_tests_properties(wk_shadow_neg_RAMP PROPERTIES WILL_FAIL TRUE)
+    # the lock-up REQUEST PRODUCER (sm_shadow.c lu_pass = 0x124570) and its hand-over to the WK shadow; LU_NEG_MAP (a moved stock byte of
+    # the family-5 threshold map 0) must FAIL
+    set(LU_TEST_SOURCES tests/unit/test_sm_lock.c app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/wk_shadow.c app/wk_cal.c)
+    add_executable(test_sm_lock ${LU_TEST_SOURCES})
+    target_compile_definitions(test_sm_lock PRIVATE _POSIX_C_SOURCE=200809L)
+    target_link_libraries(test_sm_lock PRIVATE m)
+    add_test(NAME sm_lock COMMAND test_sm_lock)
+    add_executable(test_sm_lock_neg_MAP ${LU_TEST_SOURCES})
+    target_compile_definitions(test_sm_lock_neg_MAP PRIVATE _POSIX_C_SOURCE=200809L LU_NEG_MAP=1)
+    target_link_libraries(test_sm_lock_neg_MAP PRIVATE m)
+    add_test(NAME sm_lock_neg_MAP COMMAND test_sm_lock_neg_MAP)
+    set_tests_properties(sm_lock_neg_MAP PROPERTIES WILL_FAIL TRUE)
     set(WK_APP_SOURCES app/wk_shadow.c app/wk_cal.c app/wk_hook.c)
     add_executable(test_g6b_wk ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c io/vehicle/shadow_sim.c
         ${GP_APP_SOURCES} ${LP_APP_SOURCES} ${WK_APP_SOURCES})
@@ -2255,6 +2282,11 @@ else()
             ${CMAKE_SOURCE_DIR}/tests/unit/wk_scan_fixture_hook.c)
     set_tests_properties(wk_shadow_scan_outputs_negative wk_shadow_scan_shadow_negative
         wk_shadow_scan_hook_negative PROPERTIES WILL_FAIL TRUE)
+    # gaps3: the shift-map shadow (now carrying the lock-up request producer) names no NV / DSM / fatal routine
+    add_library(sm_nvm_objs OBJECT app/sm_shadow.c app/sm_cal.c app/sm_gear.c)
+    add_test(NAME sm_lock_scan_nvm
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py nvm nm $<TARGET_OBJECTS:sm_nvm_objs>
+        COMMAND_EXPAND_LISTS)
     add_library(wk_nvm_objs OBJECT ${WK_APP_SOURCES})
     target_compile_definitions(wk_nvm_objs PRIVATE WK_HOOK_NO_GATHER=1)
     add_test(NAME wk_scan_nvm

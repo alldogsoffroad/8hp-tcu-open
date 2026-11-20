@@ -342,8 +342,17 @@ def main():
     # decode shift_class_counters_decode.md section 6 numbers 2->1 / 3->2; the other pairs are the same blocks
     # of the same arrays (same field shapes asserted below; their VALUES are not decode-verified).
     NDN = 7
+    # 2026-11-20 (gaps3, ~/tcu_sweep/gaps3_decode.md section 3): the index tables are 9 x 9 u32 [to][from], symmetric.
+    # The singles to = from - 1 read the same values as row 0 (the old `table + 4 * from`), asserted below; the CLASS-0
+    # singles read the class-0 tables (0x5F7AC / 0x5E840, own idx 0..6 of the same block arrays); the 11 SKIP downshifts
+    # (to <= from - 2) read the own skip rows 7..17 of the d58 / d48 / d138 tables and, always in CLASS 1, the rows 14..24
+    # of 0x5F8F0 / 0x5E984 (class 2 = +18, not used: 0xEC182 returns 1 for type 4 at kinds 2 and 4).
+    def ix(tab, to, frm):
+        return u32(tab + 4 * (to * 9 + frm))
+
     DN_IDX = {'d58': (0x5F014, 0x5CD5C, 0), 'd60': (0x5F8F0, 0x5C65C, 7), 'd48': (0x5E1EC, 0x5A21C, 0),
               'd50': (0x5E984, 0x59E34, 7), 'd138': (0x61280, 0x57BCC, 0)}
+    DN_IDX0 = {'d60': (0x5F7AC, 0x5C65C, 0), 'd50': (0x5E840, 0x59E34, 0)}      # class 0 (own tables, idx 0..6)
     DN_F = [  # (struct member, family, offset, type)
         ('on_lock', 'd58', 0x00, 'c8'), ('on_delay', 'd58', 0x04, 'c8'), ('on_kiss', 'd58', 0x0C, 'm1s16'),
         ('on_dur0a', 'd58', 0x14, 'c8'), ('on_t5', 'd58', 0x40, 'm1s16'),
@@ -353,25 +362,58 @@ def main():
         ('of_slip', 'd50', 0x00, 'm1s16'), ('of_d0b', 'd50', 0x0C, 'm1u8'), ('of_p1', 'd50', 0x14, '2du8'),
         ('of_d1', 'd50', 0x1C, '2du8'), ('of_d0f', 'd50', 0x28, 'm1u8'), ('of_l0d', 'd50', 0x2C, '2ds16'),
     ]
-    dn_rows = []
     dn_maps = {}
-    for frm in range(2, 2 + NDN):
-        blks = {}
-        for fam, (idxt, arr, base) in DN_IDX.items():
-            idx = u32(idxt + 4 * frm)
-            assert idx == base + frm - 2, (fam, frm, idx)
-            blks[fam] = u32(arr + 8 * idx)
+
+    def make_row(idxs):
+        """idxs: {family: absolute block index} -> the member list of one gp_dn_t row"""
+        blks = {fam: u32(DN_IDX[fam][1] + 8 * idxs[fam]) for fam in DN_IDX}
         row = []
-        for name, fam, off, t in DN_F:
-            p = u32(blks[fam] + off)
-            if t == 'c8':
-                row.append((name, t, p, img[p]))
+        for name, fam, off, tt in DN_F:
+            q = u32(blks[fam] + off)
+            if tt == 'c8':
+                row.append((name, tt, q, img[q]))
                 continue
-            n = msize(t, p)
-            assert p >= 0x80000 and p + n <= len(img), (name, hex(p))
-            dn_maps[p] = (t, n)
-            row.append((name, t, p, None))
-        dn_rows.append((frm, row))
+            n = msize(tt, q)
+            assert q >= 0x80000 and q + n <= len(img), (name, hex(q))
+            dn_maps[q] = (tt, n)
+            row.append((name, tt, q, None))
+        return row
+
+    dn_rows = []        # class 1 singles (the historical rows)
+    dn_rows0 = []       # class 0 singles
+    for frm in range(2, 2 + NDN):
+        to = frm - 1
+        idxs = {}
+        for fam, (idxt, arr, base) in DN_IDX.items():
+            assert ix(idxt, to, frm) == u32(idxt + 4 * frm), (fam, frm)       # [from-1][from] == row 0 [from]: no old value moves
+            idxs[fam] = ix(idxt, to, frm)
+            assert idxs[fam] == base + frm - 2, (fam, frm, idxs[fam])
+        dn_rows.append((frm, make_row(idxs)))
+        idxs0 = dict(idxs)
+        for fam, (idxt, arr, base) in DN_IDX0.items():
+            idxs0[fam] = ix(idxt, to, frm)
+            assert idxs0[fam] == base + frm - 2, ('class 0', fam, frm, idxs0[fam])
+        dn_rows0.append((frm, make_row(idxs0)))
+    # the 11 skips
+    sk_pairs = {}
+    for to in range(1, 9):
+        for frm in range(to + 2, 9):
+            k = ix(DN_IDX['d58'][0], to, frm)
+            if k >= 7:
+                assert ix(DN_IDX['d48'][0], to, frm) == k and ix(DN_IDX['d138'][0], to, frm) == k
+                assert ix(DN_IDX['d60'][0], to, frm) == 7 + k and ix(DN_IDX['d50'][0], to, frm) == 7 + k, (to, frm)
+                sk_pairs[k] = (frm, to)
+    assert sorted(sk_pairs) == list(range(7, 18)), sorted(sk_pairs)
+    assert [sk_pairs[k] for k in range(7, 18)] == [(3, 1), (4, 2), (5, 3), (6, 4), (7, 5), (8, 6), (5, 1), (6, 3), (7, 1), (8, 2), (8, 4)]
+    dn_sk = []
+    for k in range(7, 18):
+        frm, to = sk_pairs[k]
+        idxs = {'d58': k, 'd48': k, 'd138': k, 'd60': 7 + k, 'd50': 7 + k}
+        dn_sk.append((frm, to, make_row(idxs)))
+    # the type-4-only terms 0x114BDC / 0x114C16 (d54 + 0x10 / + 0x14 vs 0x89D00) are 0 on this calibration (the decode:
+    # every d54 block y = 0): the skip pairs read the d54 / d44 SINGLE row of their from gear
+    for (frm, to, _r) in dn_sk:
+        assert ix(0x5EED0, to, frm) == ix(0x5EED0, frm - 1, frm) == frm - 2 and ix(0x5E0A8, to, frm) == frm - 2, (frm, to)
     # the maps do not overlap (contiguous cal layout, 4-byte alignment padding between them)
     srt = sorted(dn_maps)
     for i, a in enumerate(srt[:-1]):
@@ -406,7 +448,13 @@ def main():
     hh += ['', '#define GP_DN_N %du' % NDN,
            '/* the class-1 single down-shift rows, from = 2..8 (index from - 2): the cell values and the flash ADDRESSES of the maps */',
            'typedef struct { %s } gp_dn_t;' % ' '.join(('uint8_t %s;' if t == 'c8' else 'uint32_t %s;') % nm for nm, fam, off, t in DN_F),
-           'extern const gp_dn_t gp_ph_dn[GP_DN_N];']
+           'extern const gp_dn_t gp_ph_dn[GP_DN_N];',
+           '/* the CLASS-0 single down-shift rows, from = 2..8 (only the on+0x60 / off+0x50 fields differ from class 1) */',
+           'extern const gp_dn_t gp_ph_dn0[GP_DN_N];',
+           '/* the 11 SKIP down-shift rows (always class 1; idx 7..17 / 14..24): from, to and the row */',
+           '#define GP_SK_N 11u',
+           'typedef struct { gp_dn_t d; uint8_t from; uint8_t to; } gp_sk_t;',
+           'extern const gp_sk_t gp_ph_sk[GP_SK_N];']
     hh += ['', 'typedef struct { uint32_t addr; uint32_t len; uint32_t col0; uint32_t fnv; } gp_ph_chk_t;',
            '#if defined(GP_CAL_CHECK)', 'extern const gp_ph_chk_t gp_ph_chk[];', 'extern const unsigned gp_ph_chk_n;', '#endif',
            'extern const unsigned gp_ph_nup;', '', '#endif']
@@ -443,6 +491,16 @@ def main():
     o.append('const gp_dn_t gp_ph_dn[GP_DN_N] = {')
     for frm, row in dn_rows:
         o.append('    { %s },  /* %d->%d */' % (', '.join(('%du' % v) if t == 'c8' else ('0x%06Xu' % p) for nm, t, p, v in row), frm, frm - 1))
+    o.append('};')
+    o.append('/* the class-0 single down-shift rows (from = 2..8) */')
+    o.append('const gp_dn_t gp_ph_dn0[GP_DN_N] = {')
+    for frm, row in dn_rows0:
+        o.append('    { %s },  /* %d->%d */' % (', '.join(('%du' % v) if t_ == 'c8' else ('0x%06Xu' % p_) for nm, t_, p_, v in row), frm, frm - 1))
+    o.append('};')
+    o.append('/* the 11 skip down-shift rows (class 1), in the stock index order 7..17 */')
+    o.append('const gp_sk_t gp_ph_sk[GP_SK_N] = {')
+    for frm, to, row in dn_sk:
+        o.append('    { { %s }, %du, %du },  /* %d->%d */' % (', '.join(('%du' % v) if t_ == 'c8' else ('0x%06Xu' % p_) for nm, t_, p_, v in row), frm, to, frm, to))
     o.append('};')
     o.append('')
     o.append('#if defined(GP_CAL_CHECK)')

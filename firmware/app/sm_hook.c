@@ -54,6 +54,13 @@ void sm_hook_30ms(void)
     const sensors_in_t *sn = sensors_in();
     const vehicle_in_t *v = vehicle_in();
     const uint8_t qs = (sn->q_output_speed == Q_OK && sn->output_speed > 0) ? 1u : 0u;
+    {   /* the lock-up request producer's by-value inputs (sm_shadow.h): the dump's values, healthy (reaction 49 = 0),
+         * A68E = the conditioned fluid temperature byte 0x89C13 (read-only, the cold-start latch) */
+        sml_in_t li;
+        sm_lock_default_inputs(&li);
+        li.temp_byte = LIVE_U8(0xFFF89C13u);
+        sm_lock_set_inputs(&li);
+    }
     sm_hook_feed(qs ? (uint16_t)sn->output_speed : 0u, qs,
                  (uint16_t)v->pedal, (v->q_pedal == Q_OK) ? 1u : 0u,
                  LIVE_U8(0xFFF93B33u));                         /* 0x93B33 */

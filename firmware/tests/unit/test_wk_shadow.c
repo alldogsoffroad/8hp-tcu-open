@@ -147,21 +147,40 @@ static void test_vehicle_closed(void)
     wk_shadow_host_req(1u);
     in.req_idx = 1u;
     in.live_wk = 500u;
-    step(&in, 5u);
-    CHECK(ST->state == 2u && ST->b4ac == 0u, "request 1 + 1800 / 1750 rpm: prefill (state %u)", ST->state);
-    CHECK(ST->wk_i > 2500u && ST->wk_i < 4000u, "prefill is a mid-range current (%u)", ST->wk_i);
-    seen_pre = ST->wk_i;
-    step(&in, WK_SI_PREFILL_N + 2u);
-    CHECK(ST->state == 3u, "the fill ramp (state %u)", ST->state);
+    /* 2026-11-20 (gaps3): the stock's open-loop ramps: prefill 1 pass (D10+0x1F0 all 0, p = 0), the fill 13 .. 36 passes at p = D098
+     * (the maps D10+0x1E8 / 0x1EC / 0x200), the engage 80 .. 150 passes (D10+0x1F8), then closed */
     {
-        const uint16_t a = ST->b2aa;
-        step(&in, 5u);
-        CHECK(ST->b2aa > a, "the fill ramp raises the pressure (%u -> %u)", a, ST->b2aa);
+        unsigned n[8] = { 0u }, k;
+        float pe_prev = 0.0f;
+        int mono = 1;
+        for (k = 0u; k < 500u && ST->state != 6u; k++) {
+            step(&in, 1u);
+            if (ST->state < 8u) {
+                n[ST->state]++;
+            }
+            if (ST->state == 2u) {
+                CHECK(ST->b4ac == 0u && ST->p_bar == 0.0f, "prefill: curve law, p %.3f", (double)ST->p_bar);
+            }
+            if (ST->state == 3u) {
+                CHECK(fabsf(ST->p_bar - WK_SI_D098_BAR) < 0.01f, "fill: p = D098 (%.3f)", (double)ST->p_bar);
+            }
+            if (ST->state == 4u) {
+                if (ST->p_bar + 0.0001f < pe_prev) {
+                    mono = 0;
+                }
+                pe_prev = ST->p_bar;
+            }
+        }
+        CHECK(n[2] == 1u, "prefill lasted %u pass(es) (1: the prefill time map is all 0)", n[2]);
+        CHECK(n[3] >= 13u && n[3] <= 36u, "fill lasted %u passes (13 .. 36)", n[3]);
+        CHECK(n[3] == (unsigned)ST->fill_len, "fill passes %u = the fill length %u", n[3], (unsigned)ST->fill_len);
+        CHECK(n[4] >= 80u && n[4] <= 151u, "engage lasted %u passes (80 .. 150 + the entry pass)", n[4]);
+        CHECK(n[4] == 81u, "engage at 80 C / slip 50 lasted %u passes (80 + 1: D10+0x1F8 at x 120 / y 50)", n[4]);
+        CHECK(mono != 0, "the engage ramp is monotone (the linear form)");
+        CHECK(ST->state == 6u, "closed (state %u)", ST->state);
+        seen_pre = (uint16_t)n[2];
+        CHECK(ST->f2c == 0u, "B5E2 off once closed");
     }
-    step(&in, WK_SI_FILL_N);
-    CHECK(ST->state == 4u, "the engaged ramp (state %u)", ST->state);
-    CHECK(ST->f2c == 1u && ST->b5e2 == 1u, "B5E2 raised while engaging");
-    step(&in, WK_SI_ENGAGE_N + 4u);
     CHECK(ST->state == 6u && ST->closed == 1u, "closed (state %u closed %u)", ST->state, ST->closed);
     CHECK(ST->wk_i == 8500u, "locked: WK at 8500 (%u)", ST->wk_i);
     CHECK(ST->gate == 1u && ST->mode_out == 0u && ST->req_mbar >= 11000u, "request %u mode %u", ST->req_mbar, ST->mode_out);
@@ -186,7 +205,7 @@ static void test_vehicle_closed(void)
     CHECK(ST->state == 1u && ST->b4ac == 1u && ST->wk_i == 500u, "released to open (state %u wk %u)", ST->state, ST->wk_i);
     /* an abort (E353) from the closed state */
     in.req_idx = 1u;
-    step(&in, 5u + WK_SI_PREFILL_N + WK_SI_FILL_N + WK_SI_ENGAGE_N + 10u);
+    step(&in, 300u);
     CHECK(ST->state == 6u, "re-engaged (state %u)", ST->state);
     in.e353 = 1u;
     step(&in, 1u);
@@ -195,7 +214,7 @@ static void test_vehicle_closed(void)
     /* a hot converter / fluid blocks the entry */
     in.temp_c = 140; in.temp_byte = 180u;
     step(&in, 5u);
-    CHECK(ST->state == 1u || ST->state == 2u, "overheat: no further engagement (%u)", ST->state);
+    CHECK(ST->state <= 3u, "overheat: no closure within 5 passes (%u; the prefill is 1 pass now)", ST->state);
     CHECK(ST->w.err_n == 0u, "no table error");
 }
 
@@ -266,12 +285,18 @@ static void test_b5e(void)
     wk_shadow_init();
     in.req_idx = 1u;
     in.tq = 200;
-    step(&in, 5u + WK_SI_PREFILL_N + 3u);                /* into the fill ramp: B5E2 = 1 */
+    {
+        unsigned k;
+        for (k = 0u; k < 40u && ST->state != 3u; k++) {
+            step(&in, 1u);
+        }
+        step(&in, 3u);                                   /* into the fill ramp: B5E2 = 1 */
+    }
     CHECK(ST->f2b == 1u && wk_b5e2() == 1u, "fill ramp: B5E2 (%u)", wk_b5e2());
     in.tq = 150;                                         /* the torque falls while engaging: the raise is the drop */
     step(&in, 1u);
     CHECK(wk_b5e1() > 0u, "B5E1 raised by the drop (%u)", wk_b5e1());
-    step(&in, WK_SI_FILL_N + WK_SI_ENGAGE_N + 10u);
+    step(&in, 300u);
     CHECK(ST->state == 6u && wk_b5e2() == 0u, "closed: B5E2 off (%u)", wk_b5e2());
 }
 
@@ -291,6 +316,43 @@ static void test_cal(void)
     CHECK(cal_u32(CAL_WK_ZMAP) == 4u && cal_u32(CAL_WK_ZMAP + 4u) == 2u, "zmap header");
     for (i = 0u; i < 8u; i++) {
         if (cal_u32(CAL_WK_ZMAP + 8u + 4u * (4u + 2u + i)) != 0u) { fails++; printf("FAIL zmap z %u\n", i); }
+    }
+    /* 2026-11-20 (gaps3): the open-loop ramps' calibration: the D10 pointer entries and the decode's numbers */
+    {
+        static const struct { uint32_t off, addr; } d10[] = {
+            { 0x168u, CAL_WK_ENG_HOLD }, { 0x16Cu, CAL_WK_FILL_P }, { 0x1E8u, CAL_WK_FILL_LEN }, { 0x1ECu, CAL_WK_FILL_TMP },
+            { 0x1F0u, CAL_WK_PRE_MAP }, { 0x1F4u, CAL_WK_PRE_CRV }, { 0x1F8u, CAL_WK_ENG_T0 }, { 0x1FCu, CAL_WK_ENG_T1 },
+            { 0x200u, CAL_WK_FILL_M2 }, { 0x224u, CAL_WK_REL_CRV }, { 0x234u, CAL_WK_ENG_FORM }, { 0x248u, CAL_WK_ST7 },
+        };
+        for (i = 0u; i < sizeof d10 / sizeof d10[0]; i++) {
+            if (cal_u32(0x54680u + d10[i].off) != d10[i].addr) { fails++; printf("FAIL D10+0x%X = %X (%X)\n", d10[i].off, cal_u32(0x54680u + d10[i].off), d10[i].addr); }
+        }
+        CHECK(cal_u32(CAL_WK_PRE_MAP) == 2u && cal_u32(CAL_WK_PRE_MAP + 4u) == 2u, "prefill map header");
+        for (i = 0u; i < 4u; i++) {
+            CHECK(cal_s16(CAL_WK_PRE_MAP + 8u + 2u * (2u + 2u + i)) == 0, "prefill time z[%u] is 0", i);
+            CHECK(i >= 2u || cal_f32(CAL_WK_PRE_CRV + 4u + 8u + 4u * i) == 0.0f, "prefill pressure curve y[%u] is 0", i);
+        }
+        CHECK(cal_u32(CAL_WK_ENG_FORM) == 0u || cal_u8(CAL_WK_ENG_FORM) == 0u, "D10+0x234 = 0 (the linear engage form)");
+        CHECK(cal_f32(CAL_WK_ST7) == 0.25f && cal_u8(CAL_WK_CFG278) == 0u, "state 7's 0.25 and D10+0x278 = 0");
+        for (i = 0u; i < 4u; i++) {
+            CHECK(cal_f32(CAL_WK_REL_CRV + 4u + 16u + 4u * i) == 1.0f, "release curve y[%u] = 1.0", i);
+        }
+        /* the engage time map (temperature byte x slip): 150 / 120 / 80 at x 120 over the slip rows, 100 everywhere in +0x1FC */
+        {
+            static const int ey[6] = { 150, 150, 120, 80, 100, 100 };
+            for (i = 0u; i < 6u; i++) {
+                CHECK(cal_s16(CAL_WK_ENG_T0 + 8u + 2u * (6u + 6u + 6u * i + 4u)) == ey[i], "engage time z[%u][4] = %d", i,
+                      cal_s16(CAL_WK_ENG_T0 + 8u + 2u * (6u + 6u + 6u * i + 4u)));
+                CHECK(cal_s16(CAL_WK_ENG_T1 + 8u + 2u * (6u + 6u + 6u * i + 4u)) == 100, "engage time (+0x1FC) z[%u][4]", i);
+            }
+        }
+        /* the fill length: 17 .. 10 over slip x engine, the temperature part 15 10 5 4 2 0, the third map 4 2 0 */
+        CHECK(cal_s16(CAL_WK_FILL_LEN + 8u + 2u * 12u) == 17 && cal_s16(CAL_WK_FILL_LEN + 8u + 2u * (12u + 35u)) == 10, "fill length map corners 17 / 10");
+        CHECK(cal_s16(CAL_WK_FILL_TMP + 4u + 12u) == 15 && cal_s16(CAL_WK_FILL_TMP + 4u + 12u + 10u) == 0 && cal_s16(CAL_WK_FILL_TMP + 4u + 12u + 6u) == 4 &&
+                  cal_s16(CAL_WK_FILL_TMP + 4u) == 40 && cal_s16(CAL_WK_FILL_TMP + 4u + 10u) == 160, "fill temperature curve 15 .. 0 over 40 .. 160");
+        CHECK(cal_s16(CAL_WK_FILL_M2 + 8u + 2u * 12u) == 4 && cal_s16(CAL_WK_FILL_M2 + 8u + 2u * 13u) == 2 && cal_s16(CAL_WK_FILL_M2 + 8u + 2u * 14u) == 0,
+              "fill third map 4 2 0");
+        CHECK(cal_s16(CAL_WK_ENG_HOLD + 8u + 2u * 12u) == 90 && cal_s16(CAL_WK_ENG_HOLD + 8u + 2u * (12u + 35u)) == 100, "hold map corners 90 / 100");
     }
     /* the request-level table [0, 1, 2, 3] and the thresholds the decode quotes */
     CHECK(cal_u32(CAL_WK_REQTAB) == 4u && cal_u8(CAL_WK_REQTAB + 4u) == 0u && cal_u8(CAL_WK_REQTAB + 7u) == 3u, "request table");

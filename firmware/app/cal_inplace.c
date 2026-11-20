@@ -48,6 +48,22 @@ static void mutate(void)
     /* the torque-intervention 1->2 class-0 up-shift base map (E584E block 0, 0x1AD3B4): the cell at x 94 / y 84 moves 4 (the -90 Nm trace moves) */
     s_img[0x1AD3B4u + 8u + 6u + 10u + 6u * 6u + 2u] += 4u;
 #endif
+#if defined(WK_NEG_RAMP)
+    /* gaps3: the lock-up shadow's engage time map D10+0x1F8 (0x1A5638): z[3][4] (80 C, slip 40) 80 -> 88 passes */
+    s_img[0x1A5638u + 8u + 2u * (6u + 6u + 3u * 6u + 4u) + 1u] += 8u;
+#endif
+#if defined(GP_NEG_CLS0)
+    /* gaps3: the class-0 2->1 off-going slip map (blk50+0, 0x1C42E0): y[0] 500 -> 501 */
+    s_img[0x1C42E0u + 4u + 8u + 1u] += 1u;
+#endif
+#if defined(GP_NEG_SKIP)
+    /* gaps3: the 3->1 skip's off-going slip map (0x1C620C): y[0] 600 -> 601 */
+    s_img[0x1C620Cu + 4u + 8u + 1u] += 1u;
+#endif
+#if defined(LU_NEG_MAP)
+    /* gaps3: the lock-up request producer's threshold map 0 (0x1FC068): 6th gear (p = 6) column 21 (t = 1, the 0 -> 1 engage), pedal row 0: 1050 -> 1114 */
+    s_img[0x1FC068u + 8u + 2u * (40u + 10u) + 2u * 21u + 1u] += 0x40u;
+#endif
 #if defined(GP_NEG_DNMAP)
     /* the 2->1 class-1 down-shift on-coming kiss map (blk58+0xC = 0x1DBD04): the y at the 105 degC point 100 -> 101 */
     s_img[0x1DBD04u + 4u + 2u * 10u + 2u * 6u + 1u] += 1u;

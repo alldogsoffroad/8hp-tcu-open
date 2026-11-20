@@ -206,6 +206,100 @@ _Static_assert(offsetof(sm_t, in) == 0x94u, "sm_t layout (witness_sm.py)");
 _Static_assert(offsetof(sm_t, tr) == 0xA0u, "sm_t layout (witness_sm.py)");
 _Static_assert(sizeof(sm_t) == 0x120u, "sm_t is 0x120 bytes (.sm_shadow, witness_sm.py)");
 
+/* ══ THE LOCK-UP REQUEST PRODUCER (2026-11-20, ~/tcu_sweep/gaps3_port.md; decode gaps3_decode.md section 1) ═══
+ * 0x124570(L = 0xFFF8A5E4, S = 0xFFF8A4E4) in the 30 ms list's entry 16 (0xC22DA -> 0xF83F2 -> 0xF84EE), right
+ * before 0xF7864: the level state machine L+0x22 (0 open, 1 closed, 2 closed level 2, 3 slip) stepped once per pass on
+ * the filtered output speed AB30 against nine pedal-row threshold maps (family / gear / program selection through the
+ * struct 0x62A6C, the two-weight blend 0x1249DA, the hysteresis columns 0x124C6A), the inhibit byte L+0x32 (0x1250F4),
+ * the speed cap 0x12D7DC, the cold-start latch 0x1251BC; the setter 0x12D7D4 writes AB94; 0xF7864 copies it to A0A1
+ * (0 while AB34 == 2) and 0xB912C to 0x89CEC every 10 ms (not modelled: the WK hook reads A0A1).
+ * The calibration is read IN PLACE (cal_inplace.h CAL_LU_*). Inputs BY VALUE (sml_in_t): everything the producer
+ * reads that this shadow does not model, each at the stock driving dump's value and COUNTED:
+ *   react49   AB97 = A004+0x61 = fault reaction 49 (inhibit bit 2). The bench has it ACTIVE (dump L+0x32 = 0x04);
+ *             the shadow holds it 0 = THE HEALTHY VEHICLE, labelled (like the line-pressure shadow's reaction 50);
+ *   ovr_*     A1F8+0xE4 / +0xA4 / +0xC2 (the family overrides; dump 0, cal-gated off for the first);
+ *   a1f8_34   the per-gear offset enable (dump 0); a3bc_55 inhibit bit 7 (dump 0, [I] a special mode);
+ *   ab9a / a666 the coast flag / the speed of the cap (the cap table is all 0 -> never applies);
+ *   temp_byte A68E (= the conditioned fluid temperature byte 0x89C13, dump 0x43) for the cold-start latch: below 57
+ *             (17 C) the request is capped at level 1 (cap table 0 1 1 1).
+ * Dead here by calibration (counted if a cal byte ever changes): inhibit bits 3 / 4 / 5 (enables 0x1FED97 / 0x1FED9B and
+ * the all-zero gate table 0x1FE0D8), the slip / grade correction 0x1FED96, the cap's context flag table 0x1FE5E8. */
+typedef struct {
+    uint8_t  react49;     /* +0 AB97 (held 0: the healthy vehicle) */
+    uint8_t  ovr_e4;      /* +1 A1F8+0xE4 */
+    uint8_t  ovr_a4;      /* +2 A1F8+0xA4 */
+    uint8_t  ovr_c2;      /* +3 A1F8+0xC2 */
+    uint8_t  a1f8_34;     /* +4 */
+    uint8_t  a3bc_55;     /* +5 */
+    uint8_t  ab9a;        /* +6 AB9A (= B525): 0 = coast */
+    uint8_t  temp_byte;   /* +7 A68E */
+    uint16_t a666;        /* +8 */
+    uint8_t  a65a;        /* +10 */
+    uint8_t  pad;         /* +11 */
+} sml_in_t;
+_Static_assert(sizeof(sml_in_t) == 12u, "sml_in_t is 12 bytes");
+
+typedef struct {
+    /* +0x00 L = 0xFFF8A5E4 (the stock offsets in the names) */
+    uint8_t  l0;          /* L+0 */
+    uint8_t  l1;          /* L+1 the latch flag (1251BC's param) */
+    uint8_t  l2;          /* L+2 the latch temperature (A65A + 10) */
+    uint8_t  l3;          /* L+3 the latch state: 0 start, 1 capped, 2 released */
+    uint8_t  col[4];      /* L+4..7 the column bases (p1, p3, p2, p4) */
+    uint32_t s_d8;        /* L+8 */
+    uint32_t s_d0;        /* L+0xC */
+    uint8_t  l10;         /* L+0x10 */
+    uint8_t  allow[4];    /* L+0x11..0x14 the map index p of the four programs (0 = no lock-up) */
+    uint8_t  w1;          /* L+0x15 (S+0xCB) */
+    uint8_t  w2;          /* L+0x16 (S+0xCC) */
+    uint8_t  fam[4];      /* L+0x17..0x1A the families */
+    uint8_t  mi[4];       /* L+0x1B..0x1E (map index + 1 after the call) */
+    uint8_t  g1f;         /* L+0x1F */
+    uint8_t  g20;         /* L+0x20 */
+    uint8_t  req;         /* L+0x21 THE REQUEST */
+    uint8_t  lvl;         /* L+0x22 the level */
+    uint8_t  lvl_new;     /* L+0x23 */
+    uint8_t  y;           /* L+0x24 the pedal row */
+    uint8_t  colx;        /* L+0x25 */
+    int16_t  corr;        /* L+0x26 */
+    uint16_t thr_dn;      /* L+0x28 the down threshold */
+    uint16_t thr_up;      /* L+0x2A the up threshold */
+    uint8_t  b3;          /* L+0x2C */
+    uint8_t  pad2d[3];
+    uint8_t  b4;          /* L+0x30 */
+    uint8_t  b5;          /* L+0x31 */
+    uint8_t  inh;         /* L+0x32 the inhibit byte */
+    uint8_t  pad33;
+    /* +0x34 AB90 block and the results */
+    uint8_t  ab94;        /* AB94 the request (AB90+4) */
+    uint8_t  a0a1;        /* A0A1 = AB94 (0 while AB34 == 2) */
+    uint8_t  gate_ok;     /* 1 = this pass ran the maps (no inhibit, all four programs allowed) */
+    uint8_t  dg;          /* the dead-gates scan cache: 0 not yet scanned, 1 dead (every cal byte 0), 2 live (counted) */
+    sml_in_t in;          /* +0x38 the last inputs (by value) */
+    /* +0x44 witnesses */
+    uint32_t pass_n;      /* producer passes */
+    uint16_t inh_n[8];    /* passes with inhibit bit n set (saturating) */
+    uint32_t chg_n;       /* request changes */
+    uint32_t err_n;       /* index errors (event 0x68 / 0x61) */
+    uint32_t cap_n;       /* the cold-start cap applied */
+    uint32_t speedcap_n;  /* 0x12D7DC reduced the level */
+    uint32_t unp_n;       /* a cal-gated unported branch reached */
+    uint32_t lvl_n[4];    /* passes per level */
+    uint32_t si_n;        /* passes the by-value stand-ins were used */
+} sml_t;
+_Static_assert(offsetof(sml_t, req) == 0x21u, "sml_t layout (L offsets)");
+_Static_assert(offsetof(sml_t, lvl) == 0x22u, "sml_t layout (L offsets)");
+_Static_assert(offsetof(sml_t, thr_dn) == 0x28u, "sml_t layout (L offsets)");
+_Static_assert(offsetof(sml_t, inh) == 0x32u, "sml_t layout (L offsets)");
+_Static_assert(offsetof(sml_t, ab94) == 0x34u, "sml_t layout");
+_Static_assert(offsetof(sml_t, in) == 0x38u, "sml_t layout");
+_Static_assert(sizeof(sml_t) == 0x80u, "sml_t is 0x80 bytes (.sm_lock, witness_sm.py)");
+
+const volatile sml_t *sm_lock_state(void);
+uint8_t sm_lock_request(void);                        /* A0A1: the lock-up request index the WK shadow reads */
+void sm_lock_set_inputs(const sml_in_t *in);          /* by value; the hook / host seam */
+void sm_lock_default_inputs(sml_in_t *in);            /* the dump's values (healthy: react49 0) */
+
 void sm_shadow_init(void);
 void sm_shadow_pass(const sm_in_t *in);     /* the 30 ms entries 5 (part), 14, 15, 16 */
 const volatile sm_t *sm_shadow_state(void);

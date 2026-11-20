@@ -112,6 +112,8 @@ static uint8_t s_on_seq[16], s_on_n, s_off_seq[16], s_off_n;
 static int8_t s_last_on_ph = -1, s_last_off_ph = -1;
 static uint32_t s_commits, s_last_commit_n, s_last_end_n;
 static int s_up_seen[9], s_dn_seen[9];
+static int s_allow_skip;                 /* gaps3: skip downshift commits are judged, not refused */
+static unsigned s_skip_seen[9][9];       /* [from][to] */
 static int s_seq_checked;
 
 static void seq_reset(void)
@@ -124,7 +126,27 @@ static void seq_reset(void)
  * last 0 passes — a phase that lasts 0 passes is left in the entry pass and never observed */
 static const uint8_t k_on_dn_c1[]  = { 2, 0x13, 5, 9, 0x0B, 0x0C, 0x0D, 0x12 };
 static const uint8_t k_off_dn_c1[] = { 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x11 };
-static int s_cur_c1;            /* the block's class at the commit (1: the class-1 rows apply) */
+static const gp_dn_t *s_cur_row;     /* the downshift row of the commit's (class, to, from), NULL when the pair keeps the counted stand-in */
+static int s_cur_cls;                /* the block's class at the commit */
+/* gaps3: the row a downshift runs: the class-1 / class-0 single rows, or the skip rows (always class 1) */
+static const gp_dn_t *row_for(int8_t f, int8_t t, uint8_t cls)
+{
+    if (f < 2 || f > 8 || t < 1 || t >= f) {
+        return NULL;
+    }
+    if (t == f - 1) {
+        return cls == 1u ? &gp_ph_dn[f - 2] : (cls == 0u ? &gp_ph_dn0[f - 2] : NULL);
+    }
+    if (cls != 1u) {
+        return NULL;
+    }
+    for (unsigned i = 0u; i < GP_SK_N; i++) {
+        if (gp_ph_sk[i].from == (uint8_t)f && gp_ph_sk[i].to == (uint8_t)t) {
+            return &gp_ph_sk[i].d;
+        }
+    }
+    return NULL;
+}
 static unsigned s_len_0d, s_len_off_0b, s_len_off_0f, s_len_on_0a;    /* observed passes per phase */
 static int s_dn_out_0d = -1, s_dn_out_12 = -1, s_dn_off0b_first = -1, s_dn_off0b_last = -1, s_dn_off0b_up;   /* the driven down-body values */
 
@@ -165,7 +187,8 @@ static void seq_check(int8_t from, int8_t to)
     /* 2026-11-20 (phases2): the class-1 single downshifts from = 2..8 run the PORTED down bodies; their phases that last 0 passes
      * (phase 1, 0x13 at once, 0x0A for a 0-pass duration, 0x0C when BD76 already meets its exit) are never observed, so the observed
      * phases are an ordered subsequence of the decode's */
-    const int c1 = (!up) && s_cur_c1 && from >= 2 && from <= 8 && to == from - 1;
+    const gp_dn_t *crow = up ? NULL : s_cur_row;
+    const int c1 = crow != NULL;
     const uint8_t *eon = up ? k_on_up : k_on_dn;
     const uint8_t *eoff = up ? k_off_up : k_off_dn;
     const unsigned non = up ? sizeof k_on_up : sizeof k_on_dn;
@@ -173,16 +196,25 @@ static void seq_check(int8_t from, int8_t to)
     if (c1) {
         /* the decoded durations: lock count (BD30 >= it: the passes of 0x0B / 0x0C already count), 0x0B / 0x0F (class 1,
          * torque class 34) */
-        const gp_dn_t *d = &gp_ph_dn[from - 2];
+        const gp_dn_t *d = crow;
         CHECK(s_len_0d <= d->on_lock && (from > 3 || s_len_0d + 12u >= d->on_lock),
-              "class-1 %d->%d: the 0x0D lock lasted %u passes (count %u)", from, to, s_len_0d, (unsigned)d->on_lock);
+              "class-%d %d->%d: the 0x0D lock lasted %u passes (count %u)", s_cur_cls, from, to, s_len_0d, (unsigned)d->on_lock);
         {
             /* the driven values: the lock holds the kiss level of the shift's temperature byte, the final ramp reaches 20000 and the
              * off-going 0x0B blends from the slip level (O50+0 vs 0x89C1C) down without rising */
             const int kiss = (int)gp_host_m1s16(cal_p8(d->on_kiss), gp_shadow_state()->bd22);
-            CHECK(s_dn_out_0d == (kiss < 0 ? 0 : kiss), "class-1 %d->%d: the 0x0D lock output %d (the kiss level %d)", from, to,
+            const int skip = (to != from - 1);
+            /* a shift whose preceding ramps ended early (a fast synchronisation: skips, the 2->1 after one) enters the lock below the
+             * kiss level: the exact level is only judged for the plain single shifts */
+            CHECK(skip || s_dn_out_0d == (kiss < 0 ? 0 : kiss) || s_cur_cls == 0, "class-%d %d->%d: the 0x0D lock output %d (the kiss level %d)", s_cur_cls, from, to,
                   s_dn_out_0d, kiss);
-            CHECK(s_dn_out_12 == 20000, "class-1 %d->%d: the final ramp reached %d", from, to, s_dn_out_12);
+            /* the final ramp: 1 pass for the singles (to 20000 at once); a skip's runs 10 passes (d138 + 8 = 10) and the completion
+             * (the on-coming output >= 13030 = applied, 0xB8246) ends the shift before its last passes */
+            if (d->fin == 1u) {
+                CHECK(s_dn_out_12 == 20000 || s_cur_cls == 0 || skip, "class-%d %d->%d: the final ramp reached %d", s_cur_cls, from, to, s_dn_out_12);
+            } else {
+                CHECK(d->fin == 10u && s_dn_out_12 >= 13030 && s_dn_out_12 <= 20000, "skip %d->%d: the final ramp (10 passes) reached %d", from, to, s_dn_out_12);
+            }
             if (s_len_off_0b != 0u) {
                 const int slip = (int)gp_host_m1s16(cal_p8(d->of_slip), X_CLS1C());
                 CHECK(s_dn_off0b_first == (slip < 0 ? 0 : slip) && s_dn_off0b_up == 0 && s_dn_off0b_last <= s_dn_off0b_first,
@@ -190,12 +222,14 @@ static void seq_check(int8_t from, int8_t to)
                       s_dn_off0b_last, slip, s_dn_off0b_up);
             }
         }
-        if (from == 2 || from == 3) {
+        if ((from == 2 || from == 3) && to == from - 1) {
             CHECK(d->on_lock == (from == 2 ? 50u : 40u), "class-1 %d->%d lock count %u", from, to, (unsigned)d->on_lock);
             int cls = (int)s_tq / 6 + 34;
             cls = cls < 0 ? 0 : (cls > 255 ? 255 : cls);
+            if (s_cur_cls == 1)
             CHECK(s_len_off_0b == dec_off(from, 0, cls), "class-1 %d->%d (torque class %d): off 0x0B lasted %u passes (%u)",
                   from, to, cls, s_len_off_0b, dec_off(from, 0, cls));
+            if (s_cur_cls == 1)
             CHECK(s_len_off_0f == dec_off(from, 1, cls), "class-1 %d->%d (torque class %d): off 0x0F lasted %u passes (%u)",
                   from, to, cls, s_len_off_0f, dec_off(from, 1, cls));
         }
@@ -235,7 +269,10 @@ static void seq_check(int8_t from, int8_t to)
             }
             CHECK(seen != 0u, "shift %d->%d: the on-coming phase %02X was never entered", from, to, need_on[k]);
         }
-        CHECK(s_off_n >= 1u && s_off_seq[s_off_n - 1u] == 0x11u, "shift %d->%d: the off-going object did not end in 0x11", from, to);
+        /* gaps3: a class-0 downshift at a high torque class has long off-going durations (0x0B 30 passes, 0x0F 20) that can outlast
+         * the on-coming lock (BD30 >= 20): the shift (the completion needs the on-coming side) ends with the off-going in 0x0F */
+        CHECK(s_off_n >= 1u && (s_off_seq[s_off_n - 1u] == 0x11u || (crow != NULL && (s_cur_cls == 0 || to != from - 1) && s_off_seq[s_off_n - 1u] >= 0x0Fu)),
+              "shift %d->%d: the off-going object did not end in 0x11", from, to);
         if (up) {
             CHECK(s_len_0d <= gp_ph_ua[from - 1].f14 && s_len_0d + 3u >= gp_ph_ua[from - 1].f14, "shift %d->%d: the lock phase 0x0D lasted %u passes (UA+0x14 = %u: BD30 >= it)", from, to,
                   s_len_0d, (unsigned)gp_ph_ua[from - 1].f14);
@@ -431,13 +468,17 @@ static void judge_tick(int check_seq)
         s_last_commit_n = gp->w.commit_n;
         const int8_t f = gp->a.from, t = gp->a.to;
         s_commits++;
+        if (getenv("GP_SKIPDBG") != NULL && s_allow_skip) {
+            printf("  commit %d->%d at tick %u\n", f, t, s_tick);
+        }
         s_cur_from = f;
         s_cur_to = t;
         s_len_0d = s_len_off_0b = s_len_off_0f = s_len_on_0a = 0u;
         s_dn_out_0d = s_dn_out_12 = s_dn_off0b_first = s_dn_off0b_last = -1;
         s_dn_off0b_up = 0;
         seq_reset();
-        s_cur_c1 = (gp_shadow_x()->blk[0].cls[0] == 1u);
+        s_cur_cls = (int)gp_shadow_x()->blk[0].cls[0];
+        s_cur_row = row_for(f, t, gp_shadow_x()->blk[0].cls[0]);
         /* the start pass already stepped: re-seed from the current phases (and the passes spent in them) */
         s_len_0d = (gp->a.on.elem != 0u && gp->a.on.phase == 0x0Du);
         s_len_on_0a = (gp->a.on.elem != 0u && gp->a.on.phase == 0x0Au);
@@ -460,7 +501,10 @@ static void judge_tick(int check_seq)
                   gp->bd16, gp->bd15);
             return;
         }
-        CHECK(t - f == 1 || f - t == 1, "commit %d->%d is not one gear", f, t);
+        CHECK(t - f == 1 || f - t == 1 || (s_allow_skip && f - t >= 2), "commit %d->%d is not one gear", f, t);
+        if (f - t >= 2) {
+            s_skip_seen[f][t]++;
+        }
         if (t == f + 1) {
             s_up_seen[f]++;
             CHECK(gp->a.on.elem == k_up_on[f] && gp->a.off.elem == k_up_off[f],
@@ -512,7 +556,8 @@ static void reset_all(void)
     s_commits_judged = 0u;
     s_prev_tin = 0u;
     s_prev_ph = 0xFFu;
-    s_cur_c1 = 0;
+    s_cur_row = NULL;
+    s_cur_cls = 0;
     gp_shadow_host_ae31(0u);
 }
 
@@ -585,8 +630,10 @@ static void test_ramp_tq(int16_t tq, int ekind, int ecls)
                   "class-1 ramp: down-body stand-ins %u (0), class-1 reads %u, ported-term stand-ins %u", (unsigned)ph->w.dn_si,
                   (unsigned)gp_shadow_x()->w.c1_n, (unsigned)ph->w.x_si);
         } else {
-            CHECK(ph->w.dn_si != 0u && gp_shadow_x()->w.c1_n == 0u, "class-0 ramp: the down stand-in %u, class-1 reads %u",
-                  (unsigned)ph->w.dn_si, (unsigned)gp_shadow_x()->w.c1_n);
+            /* gaps3: the class-0 single rows are ported too (the same bodies, the class-0 on+0x60 / off+0x50 fields) */
+            CHECK(ph->w.dn_si == 0u && gp_shadow_x()->w.c0_n != 0u && gp_shadow_x()->w.sk_n == 0u,
+                  "class-0 ramp: the down stand-in %u (0), class-0 row lookups %u, skip lookups %u (0)",
+                  (unsigned)ph->w.dn_si, (unsigned)gp_shadow_x()->w.c0_n, (unsigned)gp_shadow_x()->w.sk_n);
         }
     }
     printf("ramp (tq %d, kind %d class %d judged on %u commits, class-1 durations %u): commits %u (ends %u, "
@@ -1026,6 +1073,59 @@ static int cal_check(void)
             CHECK(U32(m) == 4u && m >= 0x80000u, "class-1 map header");
         }
     }
+    /* 2026-11-20 (gaps3): the index tables are 9 x 9 u32 [to][from] (row = to), symmetric; the class-0 single rows and the 11 skip
+     * rows against the stock blocks they stand for */
+#define IX_(tab, to_, from_) U32((tab) + 4u * ((to_) * 9u + (from_)))
+    {
+        const gp_dn_t *rows[2 + GP_SK_N];
+        (void)rows;
+        for (unsigned f = 0u; f < GP_DN_N; f++) {
+            const uint32_t from = 2u + f, to = from - 1u;
+            /* the single's [from-1][from] entry is row 0's [from]: no class-1 value moved with the 9 x 9 indexing */
+            CHECK(IX_(0x5F014u, to, from) == U32(0x5F014u + 4u * from) && IX_(0x5E1ECu, to, from) == U32(0x5E1ECu + 4u * from) &&
+                      IX_(0x61280u, to, from) == U32(0x61280u + 4u * from) && IX_(0x5F8F0u, to, from) == U32(0x5F8F0u + 4u * from) &&
+                      IX_(0x5E984u, to, from) == U32(0x5E984u + 4u * from), "singles: [to][from] != row 0 [from], from %u", (unsigned)from);
+            CHECK(IX_(0x5F7ACu, to, from) == f && IX_(0x5E840u, to, from) == f, "class-0 single index tables, from %u", (unsigned)from);
+            const uint32_t b58 = U32(0x5CD5Cu + 8u * f), b60 = U32(0x5C65Cu + 8u * f), b48 = U32(0x5A21Cu + 8u * f),
+                           b50 = U32(0x59E34u + 8u * f), b138 = U32(0x57BCCu + 8u * f);
+            const gp_dn_t *d = &gp_ph_dn0[f];
+            bad2 += (d->on_lock != img[U32(b58)]) + (d->on_delay != img[U32(b58 + 4u)]) + (d->on_dur0a != img[U32(b58 + 0x14u)]) +
+                    (d->fin != img[U32(b138 + 8u)]) + (d->on_kiss != U32(b58 + 0xCu)) + (d->on_t5 != U32(b58 + 0x40u)) +
+                    (d->on_lvl != U32(b60 + 0x28u)) + (d->on_ex0c != U32(b60 + 0x2Cu)) + (d->of_pct != U32(b48 + 0xCu)) +
+                    (d->of_thr != U32(b48 + 0x10u)) + (d->of_t0a != U32(b48 + 0x1Cu)) + (d->of_slip != U32(b50)) +
+                    (d->of_d0b != U32(b50 + 0xCu)) + (d->of_p1 != U32(b50 + 0x14u)) + (d->of_d1 != U32(b50 + 0x1Cu)) +
+                    (d->of_d0f != U32(b50 + 0x28u)) + (d->of_l0d != U32(b50 + 0x2Cu));
+            n2 += 17u;
+            CHECK(d->on_lvl != gp_ph_dn[f].on_lvl && d->of_slip != gp_ph_dn[f].of_slip, "class 0 and class 1 rows %u share their d60 / d50 maps", f);
+        }
+        unsigned nsk = 0u;
+        for (unsigned to = 1u; to <= 8u; to++) {
+            for (unsigned from = to + 2u; from <= 8u; from++) {
+                const uint32_t k = IX_(0x5F014u, to, from);
+                if (k < 7u) {
+                    continue;
+                }
+                CHECK(IX_(0x5E1ECu, to, from) == k && IX_(0x61280u, to, from) == k && IX_(0x5F8F0u, to, from) == 7u + k &&
+                          IX_(0x5E984u, to, from) == 7u + k, "skip %u->%u index tables", from, to);
+                CHECK(IX_(0x5EED0u, to, from) == from - 2u && IX_(0x5E0A8u, to, from) == from - 2u,
+                      "skip %u->%u: the d54 / d44 rows are the from gear's single row", from, to);
+                CHECK(k - 7u < GP_SK_N && gp_ph_sk[k - 7u].from == from && gp_ph_sk[k - 7u].to == to, "skip row %u is not %u->%u", (unsigned)k - 7u, from, to);
+                const uint32_t b58 = U32(0x5CD5Cu + 8u * k), b60 = U32(0x5C65Cu + 8u * (7u + k)), b48 = U32(0x5A21Cu + 8u * k),
+                               b50 = U32(0x59E34u + 8u * (7u + k)), b138 = U32(0x57BCCu + 8u * k);
+                const gp_dn_t *d = &gp_ph_sk[k - 7u].d;
+                bad2 += (d->on_lock != img[U32(b58)]) + (d->on_delay != img[U32(b58 + 4u)]) + (d->on_dur0a != img[U32(b58 + 0x14u)]) +
+                        (d->fin != img[U32(b138 + 8u)]) + (d->on_kiss != U32(b58 + 0xCu)) + (d->on_t5 != U32(b58 + 0x40u)) +
+                        (d->on_lvl != U32(b60 + 0x28u)) + (d->on_ex0c != U32(b60 + 0x2Cu)) + (d->of_pct != U32(b48 + 0xCu)) +
+                        (d->of_thr != U32(b48 + 0x10u)) + (d->of_t0a != U32(b48 + 0x1Cu)) + (d->of_slip != U32(b50)) +
+                        (d->of_d0b != U32(b50 + 0xCu)) + (d->of_p1 != U32(b50 + 0x14u)) + (d->of_d1 != U32(b50 + 0x1Cu)) +
+                        (d->of_d0f != U32(b50 + 0x28u)) + (d->of_l0d != U32(b50 + 0x2Cu));
+                n2 += 17u;
+                nsk++;
+            }
+        }
+        CHECK(nsk == GP_SK_N, "%u skip pairs in the index tables (%u)", nsk, (unsigned)GP_SK_N);
+    }
+#undef IX_
     CHECK(bad2 == 0u, "%u kind / class table values differ from the image", bad2);
     /* 2026-11-20: the phase-body maps, byte for byte at their stock addresses, and every row struct member against the
      * stock block it stands for (block array T[idx * 8] variant 0, member = block + offset) */
@@ -1423,6 +1523,146 @@ static void test_sim_absent(void)
     printf("sim absent / timeout: ok\n");
 }
 
+
+/* ── 2026-11-20 (gaps3): the decode's numbers (gaps3_decode.md section 3.3) of the class-0 single rows and the skip rows, read
+ * through the row structs' in-place maps (y arrays of {u32 4, x[4], y[4]}). A moved stock byte of any of them fails here. */
+#define Y8(m, i)  ((unsigned)cal_u8((m) + 4u + 4u + (i)))
+#define Y16(m, i) ((int)cal_s16((m) + 4u + 8u + 2u * (i)))
+static unsigned chk4_8(uint32_t m, unsigned a, unsigned b, unsigned c, unsigned d)
+{
+    return (cal_u32(m) == 4u) && Y8(m, 0) == a && Y8(m, 1) == b && Y8(m, 2) == c && Y8(m, 3) == d;
+}
+static unsigned chk4_16(uint32_t m, int a, int b, int c, int d)
+{
+    return (cal_u32(m) == 4u) && Y16(m, 0) == a && Y16(m, 1) == b && Y16(m, 2) == c && Y16(m, 3) == d;
+}
+static void test_gaps3_numbers(void)
+{
+    /* class 0 singles: of_slip / of_d0b / of_d0f y arrays (2->1, 3->2, 4->3, 7->6, 8->7) */
+    static const struct { unsigned f; int s[4]; unsigned b[4]; unsigned z[4]; } c0[5] = {
+        { 2u, { 500, 500, 800, 800 }, { 20, 20, 16, 10 }, { 15, 15, 20, 20 } },
+        { 3u, { 400, 400, 1000, 1000 }, { 20, 20, 10, 10 }, { 7, 10, 10, 10 } },
+        { 4u, { 500, 500, 1000, 1500 }, { 25, 25, 15, 15 }, { 7, 15, 15, 15 } },
+        { 7u, { 0, 200, 1000, 1500 }, { 15, 15, 15, 15 }, { 10, 20, 20, 20 } },
+        { 8u, { 1000, 1500, 1500, 1500 }, { 20, 30, 30, 30 }, { 10, 20, 20, 20 } },
+    };
+    for (unsigned i = 0u; i < 5u; i++) {
+        const gp_dn_t *d = &gp_ph_dn0[c0[i].f - 2u];
+        CHECK(chk4_16(d->of_slip, c0[i].s[0], c0[i].s[1], c0[i].s[2], c0[i].s[3]), "class-0 %u->%u of_slip", c0[i].f, c0[i].f - 1u);
+        CHECK(chk4_8(d->of_d0b, c0[i].b[0], c0[i].b[1], c0[i].b[2], c0[i].b[3]), "class-0 %u->%u of_d0b", c0[i].f, c0[i].f - 1u);
+        CHECK(chk4_8(d->of_d0f, c0[i].z[0], c0[i].z[1], c0[i].z[2], c0[i].z[3]), "class-0 %u->%u of_d0f", c0[i].f, c0[i].f - 1u);
+    }
+    /* the skips: from, to, lock count, of_slip, of_d0b, of_d0f */
+    static const struct { unsigned f, t, lock; int s[4]; unsigned b[4]; unsigned z[4]; } sk[11] = {
+        { 3u, 1u, 18u, { 600, 400, 400, 500 }, { 10, 10, 10, 10 }, { 50, 20, 20, 20 } },
+        { 4u, 2u, 15u, { 0, 200, 400, 500 }, { 8, 8, 8, 8 }, { 20, 18, 5, 5 } },
+        { 5u, 3u, 15u, { 1000, 2000, 2000, 2000 }, { 6, 6, 6, 6 }, { 10, 20, 20, 20 } },
+        { 6u, 4u, 15u, { 3000, 2000, 2000, 2000 }, { 15, 15, 15, 10 }, { 10, 20, 20, 20 } },
+        { 7u, 5u, 15u, { 0, 0, 0, 0 }, { 6, 6, 6, 6 }, { 10, 20, 20, 20 } },
+        { 8u, 6u, 15u, { 400, 400, 400, 500 }, { 6, 6, 6, 6 }, { 10, 20, 20, 20 } },
+        { 5u, 1u, 15u, { 350, 400, 450, 500 }, { 10, 10, 10, 10 }, { 10, 20, 20, 20 } },
+        { 6u, 3u, 15u, { 2000, 2000, 2000, 2000 }, { 6, 6, 6, 6 }, { 10, 20, 20, 20 } },
+        { 7u, 1u, 15u, { 350, 400, 450, 500 }, { 10, 10, 10, 10 }, { 10, 20, 20, 20 } },
+        { 8u, 2u, 15u, { 0, 0, 0, 0 }, { 10, 10, 10, 10 }, { 10, 20, 20, 20 } },
+        { 8u, 4u, 15u, { 0, 200, 400, 500 }, { 6, 6, 6, 6 }, { 0, 0, 0, 0 } },
+    };
+    for (unsigned i = 0u; i < GP_SK_N; i++) {
+        const gp_sk_t *k = &gp_ph_sk[i];
+        CHECK(k->from == sk[i].f && k->to == sk[i].t, "skip row %u is %u->%u (%u->%u)", i, (unsigned)k->from, (unsigned)k->to, sk[i].f, sk[i].t);
+        CHECK(k->d.on_lock == sk[i].lock && k->d.fin == 10u && k->d.on_delay == 0u && k->d.on_dur0a == 0u,
+              "skip %u->%u: lock %u fin %u delay %u dur0a %u", sk[i].f, sk[i].t, (unsigned)k->d.on_lock, (unsigned)k->d.fin,
+              (unsigned)k->d.on_delay, (unsigned)k->d.on_dur0a);
+        CHECK(chk4_16(k->d.of_slip, sk[i].s[0], sk[i].s[1], sk[i].s[2], sk[i].s[3]), "skip %u->%u of_slip", sk[i].f, sk[i].t);
+        CHECK(chk4_8(k->d.of_d0b, sk[i].b[0], sk[i].b[1], sk[i].b[2], sk[i].b[3]), "skip %u->%u of_d0b", sk[i].f, sk[i].t);
+        CHECK(chk4_8(k->d.of_d0f, sk[i].z[0], sk[i].z[1], sk[i].z[2], sk[i].z[3]), "skip %u->%u of_d0f", sk[i].f, sk[i].t);
+    }
+    /* the class-0 on-coming 0x0C exit offsets (-0x80): 2->1 -20 at 80 C (the decode's table, first column) */
+    CHECK(gp_host_m1u8(cal_p8(gp_ph_dn0[0].on_ex0c), 80u) == 108u, "class-0 2->1 0x0C exit %u (108 = 128 - 20)", gp_host_m1u8(cal_p8(gp_ph_dn0[0].on_ex0c), 80u));
+    CHECK(gp_host_m1u8(cal_p8(gp_ph_dn0[1].on_ex0c), 80u) == 118u, "class-0 3->2 0x0C exit %u (118 = 128 - 10)", gp_host_m1u8(cal_p8(gp_ph_dn0[1].on_ex0c), 80u));
+}
+#undef Y8
+#undef Y16
+
+/* ── 2026-11-20 (gaps3): the 11 SKIP downshifts (class 1, always) run the ported down bodies ──────────────────────────
+ * Each skip pair from -> to: ramp up to gear `from` (the ported up bodies), then step the output speed to where the
+ * shift-map walk from `from` selects `to`; the gear chain commits the direct skip (tables 0x4F6A4 / 0x4F9DC), the phase
+ * sequences are an ordered subsequence of the on-coming down sequence 1 2 0x13 5 9 0x0A 0x0B 0x0C 0x0D 0x12 and the
+ * off-going one of a downshift (phases of 0 passes are never observed), the lock count = the row's, the final ramp
+ * 10 passes. */
+static int skip_try(int from, int to, int x)
+{
+    reset_all();
+    gp_shadow_host_si(0u, 0u);
+    settle();
+    s_tq = 0;
+    s_expect_kind = 0;
+    s_allow_skip = 1;
+    const volatile gf_t *gc = gp_gear_state();
+    const volatile gp_t *gp = gp_shadow_state();
+    drive_t d = { 0u, 1u, 0u, 800u };
+    /* ramp up to gear `from`; the moment the gear code reaches it (the upshift into `from` still running: the engine is busy,
+     * so the strategy's target keeps falling while the shift runs) the output speed steps to x; the first commit after that
+     * upshift ends is the DIRECT skip from -> (the then-current target) */
+    unsigned ramp = 0u;
+    int stepped = 0;
+    for (unsigned i = 0u; i < 9000u; i++) {
+        if (!stepped && gc->e69f == from) {
+            stepped = 1;
+            s_skip_seen[from][to] = 0u;
+        }
+        if (!stepped) {
+            ramp = i;
+        }
+        d.out = stepped ? (uint16_t)x : (uint16_t)((2600u * ramp) / 6000u);
+        tick(&d);
+        judge_tick(1);
+        if (stepped && i > ramp + 2500u) {
+            break;
+        }
+    }
+    if (!stepped) {
+        s_allow_skip = 0;
+        return -1;
+    }
+    (void)gp;
+    s_allow_skip = 0;
+    return s_skip_seen[from][to] != 0u;
+}
+
+static void test_skip(int from, int to)
+{
+    int lo = -1, hi = -1;
+    for (int s = 0; s <= 3200; s += 5) {
+        uint8_t cand = 0u;
+        sm_shadow_init();
+        if (sm_shadow_walk((uint8_t)from, (uint16_t)s, 23u, &cand) == 0 && cand == (uint8_t)to) {
+            if (lo < 0) {
+                lo = s;
+            }
+            hi = s;
+        }
+    }
+    CHECK(lo >= 0, "no speed selects %d from %d", to, from);
+    int ok = 0;
+    for (int k = 0; k < 6 && !ok && lo >= 0; k++) {
+        const int x = lo + ((hi - lo) * (k * 2 + 1)) / 12;       /* the middle of the band, then the points 1/12 .. 11/12 of it */
+        ok = skip_try(from, to, x) == 1;
+    }
+    CHECK(ok, "skip %d->%d (band %d..%d rpm): the direct skip was not committed", from, to, lo, hi);
+    CHECK(!ok || gp_shadow_x()->w.sk_n != 0u, "skip %d->%d: the skip row was not looked up", from, to);
+}
+
+static void test_skips(void)
+{
+    static const uint8_t pairs[11][2] = { { 3, 1 }, { 4, 2 }, { 5, 3 }, { 6, 4 }, { 7, 5 }, { 8, 6 }, { 5, 1 }, { 6, 3 }, { 7, 1 }, { 8, 2 }, { 8, 4 } };
+    for (unsigned i = 0u; i < 11u; i++) {
+        test_skip(pairs[i][0], pairs[i][1]);
+    }
+    const volatile gp_ph_t *ph = gp_shadow_ph();
+    printf("skips: 11 pairs run through the ported down bodies (down stand-in %u, skip lookups %u, class-0 lookups %u)\n",
+           (unsigned)ph->w.dn_si, (unsigned)gp_shadow_x()->w.sk_n, (unsigned)gp_shadow_x()->w.c0_n);
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1 && strcmp(argv[1], "--cal") == 0) {
@@ -1431,6 +1671,8 @@ int main(int argc, char **argv)
     test_class_fn();
     test_ramp_tq(0, 4, 1);               /* in the window: kind 4 / class 1 (up and down, bytes) */
     test_ramp_tq(1500, 2, 0);            /* above the upper torque limit: kind 2 / class 0 */
+    test_gaps3_numbers();
+    test_skips();
     test_override();
     test_bd1b();
     test_counters();

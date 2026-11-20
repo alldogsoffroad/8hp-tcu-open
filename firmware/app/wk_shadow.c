@@ -149,6 +149,120 @@ static int32_t map_s16(const int16_t *a, int16_t x, int16_t y)
 #undef Z
 }
 
+/* 0xB7164 on a map IN PLACE: {u32 nx, u32 ny, s16 x[nx], s16 y[ny], s16 z[ny][nx]} at the stock address m */
+static int32_t map_s16c(uint32_t m, int16_t x, int16_t y)
+{
+    const int32_t nx = (int32_t)cal_u32(m);
+    const int32_t ny = (int32_t)cal_u32(m + 4u);
+#define X(i) ((int32_t)cal_s16(m + 8u + 2u * (uint32_t)(i)))
+#define Y(i) ((int32_t)cal_s16(m + 8u + 2u * (uint32_t)(nx + (i))))
+#define Z(i) ((int32_t)cal_s16(m + 8u + 2u * (uint32_t)(i)))
+    int32_t kx = 0, ky = 0;
+    float fx = 0.0f, dx = 0.0f, fy = 0.0f, dy;
+    if (X(0) < x) {
+        if (x < X(nx - 1)) {
+            int32_t p = 0;
+            while (X(p) < x) {
+                p++;
+            }
+            kx = p - 1;
+            dx = (float)(X(p) - X(kx));
+            fx = (float)(x - X(kx));
+        } else {
+            dx = 1.0f;
+            fx = 1.0f;
+            kx = nx - 2;
+        }
+    }
+    if (Y(0) < y) {
+        if (y < Y(ny - 1)) {
+            int32_t p = 0;
+            while (Y(p) < y) {
+                p++;
+            }
+            ky = p - 1;
+            dy = (float)(Y(p) - Y(ky));
+            fy = (float)(y - Y(ky));
+        } else {
+            dy = 1.0f;
+            fy = 1.0f;
+            ky = ny - 2;
+        }
+    } else {
+        dy = (float)(Y(1) - Y(0));
+    }
+    {
+        const int32_t b0 = nx * ky + nx + ny + kx;
+        int32_t a0 = Z(b0);
+        int32_t c;
+        if (fx == 0.0f) {
+            c = (int32_t)(int16_t)Z(b0 + nx);
+        } else {
+            const int32_t z01 = Z(b0 + 1);
+            int32_t d = a0 - z01;
+            if (z01 < a0) {
+                d = -(int32_t)(((float)d * fx) / dx);
+            } else {
+                d = (int32_t)(((float)-d * fx) / dx);
+            }
+            a0 = d + a0;
+            {
+                const int32_t z10 = (int16_t)Z(b0 + nx);
+                const int32_t z11 = Z(b0 + nx + 1);
+                const int32_t e = z10 - z11;
+                if (z11 < z10) {
+                    c = (int16_t)(z10 - (int16_t)(int32_t)(((float)e * fx) / dx));
+                } else {
+                    c = (int16_t)((int16_t)(int32_t)(((float)-e * fx) / dx) + z10);
+                }
+            }
+        }
+        if (fy != 0.0f) {
+            const int32_t a16 = (int16_t)a0;
+            const int32_t d = a16 - c;
+            if (a16 <= c) {
+                return (int32_t)(int16_t)(int32_t)(((float)-d * fy) / dy) + a16;
+            }
+            a0 = a16 - (int32_t)(int16_t)(int32_t)(((float)d * fy) / dy);
+        }
+        return a0;
+    }
+#undef X
+#undef Y
+#undef Z
+}
+
+/* 0xB6E10 on a 1-D s16 curve IN PLACE: {u32 n, s16 x[n], s16 y[n]} */
+static int16_t curve_s16c(uint32_t m, int16_t x)
+{
+    const int32_t n = (int32_t)cal_u32(m);
+#define CX(i) ((int32_t)cal_s16(m + 4u + 2u * (uint32_t)(i)))
+#define CY(i) ((int32_t)cal_s16(m + 4u + 2u * (uint32_t)(n + (i))))
+    if (x <= CX(0)) {
+        return (int16_t)CY(0);
+    }
+    if (x >= CX(n - 1)) {
+        return (int16_t)CY(n - 1);
+    }
+    {
+        int32_t j = 1;
+        while (j < n - 1 && x > CX(j)) {
+            j++;
+        }
+        {
+            const int32_t i = j - 1;
+            const float num = (float)((int32_t)x - CX(i));
+            const float den = (float)(CX(j) - CX(i));
+            if (CY(j) >= CY(i)) {
+                return (int16_t)(CY(i) + (int32_t)(((float)(CY(j) - CY(i)) * num) / den));
+            }
+            return (int16_t)(CY(i) - (int32_t)(((float)(CY(i) - CY(j)) * num) / den));
+        }
+    }
+#undef CX
+#undef CY
+}
+
 /* 0xB6F5C: float curve {u32 n; f32 x[n]; f32 y[n]} in the stock calibration */
 static float curve_f(uint32_t m, float x)
 {
@@ -291,7 +405,7 @@ static uint8_t request_level(void)
 {
     const uint32_t n = cal_u32(CAL_WK_REQTAB);
     uint8_t lvl = 0u;
-    W.si_req_n++;                                       /* the index's producer is unlocated: a by-value input */
+    W.si_req_n++;                                       /* the index (0xFFF8A0A1) is a by-value input: the shift-map shadow's lock-up producer */
     if ((uint32_t)I.req_idx < n) {
         lvl = cal_u8(CAL_WK_REQTAB + 4u + I.req_idx);
     }
@@ -476,6 +590,111 @@ static void enter_open(void)                     /* case 1's action 0x10B248 / t
     K.t_s10 = 0u;
     K.slip_run = 0u;
     K.integ = 0.0f;
+    K.fill_len = 0u;
+    K.t_hold = 0u;
+    K.ol24 = 0.0f;
+    K.ol28 = 0.0f;
+}
+
+/* ── the open-loop ramps (gaps3_decode.md section 2; the calibration in place) ───────────────────────────────── */
+/* 0x10BB42 (state 1 -> 2): OL byte 0, B2A8 0, B294+0 0; OL+0x40 = the prefill time (D10+0x1F0 over B284 x B60C, both stood in 0:
+ * the map is all 0), OL+0x28 = OL+0x40 / 100, OL+0x24 = 0 */
+static void ramp_prefill_entry(void)
+{
+    const int32_t v = map_s16c(CAL_WK_PRE_MAP, 0, 0);
+    K.t_pre = (v < 0) ? 0u : sat_u16(v);
+    K.ol28 = (float)K.t_pre / 100.0f;
+    K.ol24 = 0.0f;
+    K.p_bar = 0.0f;
+    W.si_flag_n++;                                                        /* B284 / B60C by value 0 */
+}
+
+/* 0x10BB8A (state 2): OL+0x24 += 0.01 (up to OL+0x28), OL+0x40--, p = the curve D10+0x1F4 of the fraction (0 .. 100) */
+static void ramp_prefill_pass(void)
+{
+    float c24 = K.ol24 + 0.01f;
+    float den = K.ol28;
+    float fr;
+    if (c24 > K.ol28) {
+        c24 = K.ol28;
+    }
+    K.ol24 = c24;
+    if (K.t_pre != 0u) {
+        K.t_pre--;
+    }
+    if (den < 0.01f) {
+        den = 0.01f;
+    }
+    fr = clampf(c24 / den, 0.0f, 100.0f);
+    K.p_bar = curve_f(CAL_WK_PRE_CRV, fr);
+}
+
+/* 0x10BC24 (state 2 -> 3): the fill length OL+0x38 = sat(map D10+0x1E8 (slip x engine) + curve D10+0x1EC (temperature byte)
+ * + [B294+0x2D == 0: map D10+0x200 (temperature byte x E5C0, stood in 0)]); OL+0x34 = the adaptation read 0xAEE0E (held
+ * 0: the EEPROM-backed store, never ported); OL+0x36 = +0x38 + +0x34; OL+0x42 = 0 then ++ (1); p = D098 + the B532 curve */
+static void ramp_fill_entry(void)
+{
+    int32_t len = map_s16c(CAL_WK_FILL_LEN, K.slip, (int16_t)I.eng);
+    len += (int32_t)curve_s16c(CAL_WK_FILL_TMP, (int16_t)I.temp_byte);
+    if (K.fl_ok == 0u) {
+        len += map_s16c(CAL_WK_FILL_M2, (int16_t)I.temp_byte, 0);
+    }
+    K.fill_maps = sat_u16(len);
+    K.fill_len = sat_u16((int32_t)K.fill_maps + 0);                       /* + OL+0x34: 0xAEE0E held 0 */
+    K.t_fill = 1u;
+    K.closed = 0u;
+    K.p_bar = WK_SI_D098_BAR + curve_f(CAL_WK_FILL_P, 0.0f);
+    W.si_ramp_n++;                                                        /* D098 (0x108652) is the stand-in */
+}
+
+/* 0x10B534 (state 3 -> 4): OL+0x40 = the engage time (D10+0x1F8, or +0x1FC while B2BE (0): temperature byte x slip),
+ * OL+0x28 = / 100, OL+0x24 = 0, OL+0x10 = 0x10B79E (the target: stand-in 0), OL+0x30 = its slope (stand-in: to the ceiling
+ * over OL+0x28), p = D098 + OL+0x10, OL+0x46 = the hold timer (D10+0x168: turbine x slip) */
+static void ramp_engage_entry(void)
+{
+    const int32_t v = map_s16c(CAL_WK_ENG_T0, (int16_t)I.temp_byte, K.slip);
+    K.t_pre = (v < 0) ? 0u : sat_u16(v);
+    K.ol28 = (float)K.t_pre / 100.0f;
+    K.ol24 = 0.0f;
+    K.tgt = 0.0f;
+    K.slope = (K.ol28 > 0.0f && K.ceil > WK_SI_D098_BAR) ? (K.ceil - WK_SI_D098_BAR) / K.ol28 : 0.0f;
+    K.p_bar = WK_SI_D098_BAR + K.tgt;
+    K.closed = 0u;
+    {
+        const int32_t h = map_s16c(CAL_WK_ENG_HOLD, (int16_t)I.turb, K.slip);
+        K.t_hold = (h < 0) ? 0u : sat_u16(h);
+    }
+    W.si_ramp_n++;                                                        /* D098 / 0x10B79E: stand-ins */
+}
+
+/* 0x10B5F8 (state 4, D10+0x234 == 0, the linear form): OL+0x40--, OL+0x46--, p = D098 + target + slope x OL+0x24,
+ * OL+0x24 = min(OL+0x24 + 0.01, OL+0x28) */
+static void ramp_engage_pass(void)
+{
+    if (K.t_pre != 0u) {
+        K.t_pre--;
+    }
+    if (K.t_hold != 0u) {
+        K.t_hold--;
+    }
+    if (cal_u8(CAL_WK_ENG_FORM) == 0u) {
+        K.p_bar = WK_SI_D098_BAR + K.tgt + K.slope * K.ol24;
+    } else {
+        W.si_ramp_n++;                                                    /* D10+0x234 == 1: the integrating form is not ported */
+    }
+    if (K.p_bar > K.ceil) {
+        K.p_bar = K.ceil;
+    }
+    K.ol24 = (K.ol24 + 0.01f >= K.ol28) ? K.ol28 : K.ol24 + 0.01f;
+    W.si_ramp_n++;
+}
+
+/* 0x10C7E0 (state 7): p = PT1(0, D10+0x248 = 0.25) of the state's own float (reset to 0 at the entry 0x10C7AC) + D098 */
+static void ramp_st7(void)
+{
+    K.p_bar = WK_SI_D098_BAR;
+    (void)CAL_WK_ST7;
+    W.si_ramp_n++;
 }
 
 static void wk_machine(void)
@@ -488,36 +707,31 @@ static void wk_machine(void)
         if (entry_ok()) {
             go(2);
             K.b4ac = 0u;
-            K.t_pre = (uint16_t)WK_SI_PREFILL_N;
-            K.p_bar = (float)WK_SI_PREFILL_MBAR / 1000.0f;
-            W.si_ramp_n++;
+            ramp_prefill_entry();
         }
         break;
     case 2:
-        if (K.t_pre == 0u) {                                              /* 0xDF738 */
+        if (K.t_pre == 0u) {                                              /* 0xDF738: OL+0x40 == 0 */
             go(3);
-            K.t_fill = 0u;
+            ramp_fill_entry();
         } else if (close_req()) {                                         /* 0xDF61C */
             go(1);
             enter_open();
         } else {
-            K.t_pre--;                                                    /* 0x10BB8A */
-            K.p_bar = (float)WK_SI_PREFILL_MBAR / 1000.0f;
-            W.si_ramp_n++;
+            ramp_prefill_pass();                                          /* 0x10BB8A */
         }
         break;
     case 3:
-        if (K.t_fill >= (uint16_t)WK_SI_FILL_N) {                         /* 0xDF300 */
+        if (K.fill_len <= K.t_fill) {                                     /* 0xDF300: OL+0x36 <= OL+0x42 */
             go(4);                                                        /* (0xAEE26: the learner, KEPT OUT) */
-            K.t_pre = (uint16_t)WK_SI_ENGAGE_N;
+            ramp_engage_entry();
         } else if (close_req()) {                                         /* 0xDF63A */
             go(1);
             enter_open();
         } else {
-            K.t_fill++;                                                   /* 0x10BD7E */
-            K.p_bar = ((float)WK_SI_PREFILL_MBAR +
-                       ((float)WK_SI_ENGAGE_MBAR - (float)WK_SI_PREFILL_MBAR) * (float)K.t_fill / (float)WK_SI_FILL_N) / 1000.0f;
-            W.si_ramp_n++;
+            if (K.t_fill < 0xFFFFu) {
+                K.t_fill++;                                               /* 0x10BD7E: OL+0x42++ (the pressure stays) */
+            }
         }
         break;
     case 4:
@@ -534,14 +748,10 @@ static void wk_machine(void)
                 K.p_bar = K.ceil;
             } else {
                 go(7);
+                ramp_st7();
             }
         } else {
-            K.t_pre--;                                                    /* 0x10B5F8 */
-            K.p_bar += WK_SI_BAR_STEP;
-            if (K.p_bar > K.ceil) {
-                K.p_bar = K.ceil;
-            }
-            W.si_ramp_n++;
+            ramp_engage_pass();                                           /* 0x10B5F8 */
         }
         break;
     case 5:
@@ -585,7 +795,7 @@ static void wk_machine(void)
             go(9);
             slip_entry();
         } else {
-            W.si_ramp_n++;                                                /* 0x10C7E0: the pressure holds */
+            ramp_st7();                                                   /* 0x10C7E0: p = 0.25 PT1 of 0 (state 0) + D098 */
         }
         break;
     case 9:
@@ -630,7 +840,9 @@ static void wk_machine(void)
             go(1);
             enter_open();
         } else {
-            K.p_bar -= (float)WK_SI_REL_MBAR / 1000.0f;                   /* 0x10B2EA: the release ramp (stand-in) */
+            /* 0x10B2EA: p += 0.01 x rate x curve(D10+0x224, pedal): the curve is 1.0 everywhere (evaluated in place, pedal stood in 0);
+             * the rate (a PT1 of B61C over a map chosen by 0x89CF4) is the stand-in WK_SI_REL_RATE */
+            K.p_bar += 0.01f * (-WK_SI_REL_RATE) * curve_f(CAL_WK_REL_CRV, 0.0f);
             if (K.p_bar < 0.0f) {
                 K.p_bar = 0.0f;
             }

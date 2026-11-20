@@ -1350,13 +1350,38 @@ static void off_out_up(gp_blk_t *c, gp_po_t *o, const gp_rows_t *r)
  * 0x114C50 / 0x114930 (on-coming torque / inertia terms), 0x1111FE / 0x111254 / the 0x111860 ramp (off-going base level), ctx+0xC4,
  * ctx+0x20, the 0x117D30 / 0x117DE6 remaining-to-sync timers (the phase 5 / 0x0B timers and the phase 9 exit stay the earlier
  * stand-ins), 0x0xEAEFC's shape (linear), the 0x0A term O48+0x1C (not applied). Producer ids 1..4 carry the values (recorded). */
+/* 2026-11-20 (gaps3, ~/tcu_sweep/gaps3_decode.md section 3): the row of a downshift by (class, to, from): the class-1 singles
+ * gp_ph_dn[], the CLASS-0 singles gp_ph_dn0[] (only the on+0x60 / off+0x50 fields differ), and the 11 SKIP rows gp_ph_sk[]
+ * (always class 1: 0xEC182 returns 1 for type 4 at kinds 2 and 4; the final ramp 10 passes). A skip not in the 11 (a pair
+ * the stock does not run as a direct downshift), or any class above 1, keeps the counted stand-in. The skips' type-4-only
+ * terms 0x114BDC / 0x114C16 (d54 + 0x10 / + 0x14 vs 0x89D00) read the from gear's single row of d54 / d44, whose y is 0 on this
+ * calibration (asserted by tools/gen_gp_cal.py): 0, counted as sk_zero_n. */
 static const gp_dn_t *dn_get(const gp_blk_t *c)
 {
     const gp_xblk_t *x = &X.blk[bidx(c)];
-    if (x->cls[0] != 1u || c->from < 2 || c->from > 8 || c->to != (int8_t)(c->from - 1)) {
+    if (c->from < 2 || c->from > 8 || c->to < 1 || c->to >= c->from) {
         return NULL;
     }
-    return &gp_ph_dn[(unsigned)(c->from - 2)];
+    if (c->to == (int8_t)(c->from - 1)) {
+        if (x->cls[0] == 1u) {
+            return &gp_ph_dn[(unsigned)(c->from - 2)];
+        }
+        if (x->cls[0] == 0u) {
+            XW.c0_n = sat16(XW.c0_n);                /* a class-0 single row */
+            return &gp_ph_dn0[(unsigned)(c->from - 2)];
+        }
+        return NULL;
+    }
+    if (x->cls[0] != 1u) {
+        return NULL;
+    }
+    for (unsigned i = 0u; i < GP_SK_N; i++) {
+        if ((int8_t)gp_ph_sk[i].from == c->from && (int8_t)gp_ph_sk[i].to == c->to) {
+            XW.sk_n = sat16(XW.sk_n);                /* a skip row */
+            return &gp_ph_sk[i].d;
+        }
+    }
+    return NULL;
 }
 static void dn_read(void)
 {

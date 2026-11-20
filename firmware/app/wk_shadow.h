@@ -32,14 +32,17 @@
  *   verified all zero -, clamp 500 .. 8500).
  *
  * STOOD IN (each counted in wk_w_t, named wk_in_t field or WK_SI_* constant):
- *   - the strategy's request index 0xFFF8A0A1 (the stock writer is unlocated: a counted by-value input,
- *     the hook feeds 0); the abort / inhibit flags E352 (0xDFE68, 314 instructions), the converter-object
+ *   - the strategy's request index 0xFFF8A0A1: (2026-11-20, gaps3) produced by the shift-map shadow (app/sm_shadow.c
+ *     lu_pass = 0x124570, ~/tcu_sweep/gaps3_port.md) and fed by the hook as a by-value input; the abort / inhibit flags E352 (0xDFE68, 314 instructions), the converter-object
  *     flags 0xBA2A4 / 0xBA2AC(E612), the busy test 0xBB13E(E61C, 5), the range-change test 0xDFB7C and the
  *     B6AC / B6AD / B6DA flags: BY-VALUE inputs (the hook feeds 0 / the dump's values);
  *   - the speed conditioning 0xE1AF6 (PT1 filters, slip gradients): the filtered values = the raw ones;
- *   - the state ACTIONS' ramp generators (0x10B172 / 0x10BB8A / 0x10BD7E / 0x10B5F8 / 0x10C7E0 / 0x10C8A6 /
- *     0x10B2EA / 0x10B534 / 0x10B4AE, the prefill map 0x10BC24, the fill adaptation reader 0xAEE0E - held
- *     CONSTANT 0): prefill / fill / engage / release pressures and durations are the WK_SI_* constants;
+ *   - the state ACTIONS' ramp generators: (2026-11-20, gaps3) the open-loop DURATIONS and STRUCTURE are ported from the bytes - the
+ *     prefill (0x10BB42 / 0x10BB8A: 1 pass at p = 0), the fill length (0x10BC24: the maps D10+0x1E8 / 0x1EC / 0x200 + the adaptation
+ *     read 0xAEE0E held CONSTANT 0; p = D098 + the B532 curve), the engage (0x10B534 / 0x10B5F8: the time map D10+0x1F8, the hold map
+ *     D10+0x168, the linear form D10+0x234 = 0), state 7 (0x10C7E0), the release's form (0x10B2EA); COUNTED stand-ins stay for
+ *     the base pressure D098 (0x108652's filter), the engage target and slope (0x10B79E) and the release rate (WK_SI_*), and the
+ *     closed hold (states 5/6/8: the ceiling; the micro-slip controllers B388 / B424 are not decoded);
  *   - the inhibit's other terms (+0x33), the converter limit B5E1's hold input, the output mode 0xDF0A8.
  *
  * KEPT OUT: 0xBF8E8 (the engagement counter written to EEPROM block 0x0304: the shadow only COUNTS the
@@ -59,15 +62,14 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-/* the stand-ins' constants (labelled; the stock's values sit behind the unported ramp generators) */
-#define WK_SI_PREFILL_N     20u      /* passes of the prefill state */
-#define WK_SI_FILL_N        30u      /* passes of the fill ramp */
-#define WK_SI_ENGAGE_N      20u      /* passes of the engaged ramp */
+/* the stand-ins' constants (labelled; the stock's values sit behind the undecoded 0x108652 / 0x10B79E / 0x10B2EA terms).
+ * (2026-11-20, gaps3) the prefill / fill / engage DURATIONS, the prefill pressure (0) and the structure of every ramp are
+ * the stock's, read from the calibration (CAL_WK_*): what stays a counted stand-in is the base pressure D098 (D08C+0xC,
+ * the 0x108652 filter output), the engage target / slope (0x10B79E) and the release rate (0x10B2EA's map). */
+#define WK_SI_D098_BAR      1.0f     /* D098: the additive base pressure of the fill / engage / state 7 (0x108652, mode-dependent), bar */
 #define WK_SI_S10_N         50u      /* the controlled-slip ramp-out timer (0x27A) */
-#define WK_SI_PREFILL_MBAR  1000     /* prefill pressure, mbar */
-#define WK_SI_ENGAGE_MBAR   3000     /* the fill ramp's end, mbar */
-#define WK_SI_REL_MBAR      250      /* the release ramp's step per pass, mbar */
-#define WK_SI_BAR_STEP      0.20f    /* bar per pass: engaged ramp up to the closed pressure, ramp-out */
+#define WK_SI_REL_RATE      25.0f    /* the release rate of 0x10B2EA (a PT1 / map result), bar per second: p += 0.01 x -rate x curve */
+#define WK_SI_BAR_STEP      0.20f    /* bar per pass: the state-10 ramp-out toward the closed pressure */
 
 /* the inputs, BY VALUE (app/wk_hook.c): the stock cell each one stands for */
 typedef struct {
@@ -156,8 +158,18 @@ typedef struct {
     uint16_t wk_i;        /* +0x32 the would-be WK current, 0.1 mA */
     wk_in_t  in;          /* +0x34 the last inputs */
     wk_w_t   w;           /* +0x54 */
+    /* +0x9C (gaps3) the open-loop ramps' state; the stock offsets are those of the sub-object OL = B294+0x218 */
+    float    ol24;        /* +0x9C OL+0x24 the ramp clock, s (+0.01 per pass up to OL+0x28) */
+    float    ol28;        /* +0xA0 OL+0x28 the ramp time, s (= OL+0x40 / 100 at the entry) */
+    float    tgt;         /* +0xA4 OL+0x10 the engage target, bar (0x10B79E: stand-in 0) */
+    float    slope;       /* +0xA8 OL+0x30 the engage slope, bar / s (stand-in: to the ceiling over OL+0x28) */
+    uint16_t fill_len;    /* +0xAC OL+0x36 the fill length, passes (the maps + the adaptation read 0) */
+    uint16_t t_hold;      /* +0xAE OL+0x46 the engaged hold timer, passes (D10+0x168) */
+    uint16_t fill_maps;   /* +0xB0 OL+0x38 the maps' part of the fill length (witness) */
+    uint16_t pad_b2;
 } wk_t;
-_Static_assert(sizeof(wk_t) == 0x9Cu, "wk_t is 0x9C bytes (.wk_shadow)");
+_Static_assert(sizeof(wk_t) == 0xB4u, "wk_t is 0xB4 bytes (.wk_shadow; 0x9C before the gaps3 ramps)");
+_Static_assert(offsetof(wk_t, ol24) == 0x9Cu, "wk_t layout (witness_wk.py)");
 
 void wk_shadow_init(void);
 void wk_shadow_pass(const wk_in_t *in);        /* the 10 ms pass: slots 37..39 (modes 1..3) */

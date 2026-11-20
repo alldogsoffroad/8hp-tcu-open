@@ -32,6 +32,9 @@ OUT_PATTERNS = [
     r"\.sm_shadow\b", r"\bsm_in_t\b", r"\bsm_t\b",
     r"\bsm_gear", r"\bgf_t\b", r"\bgf_in_t\b", r"\bgf_tr_t\b", r"\.sm_gear\b", r"\bGF_SI_", r"\bs_gf\b",
     r"0[xX][fF]{3}86[89][0-9a-fA-F]{2}",
+    # (2026-11-20) the lock-up request producer (sml_t, .sm_lock 0xFFF9369C..0xFFF9371F)
+    r"\bsm_lock", r"\bsml_[a-z]+", r"\bs_lu\b", r"\.sm_lock\b", r"\bSML[A-Z_]*",
+    r"0[xX][fF]{3}936[9a-fA-F][0-9a-fA-F]", r"0[xX][fF]{3}937[01][0-9a-fA-F]",
 ]
 SHADOW_PATTERNS = [
     # (2026-11-20) app/gp_shadow.h: the read-only gear-pair shadow, whose
