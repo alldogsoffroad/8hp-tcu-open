@@ -60,7 +60,8 @@
  * makes them #error); every live value arrives by value in gs_in_t.
  *
  * PORTED (stock order per 10 ms pass, list 0x4DA2C slots):
- *   26  0xB983C/B9854 the mode flag → the shadow's 0x89C3D (GS_FORCED: 0)
+ *   26  0xB983C/B9854 the mode flag → the shadow's 0x89C3D (GS_C3D_FORCED: 0;
+ *       G5c GSE_C3D_IN: the live flag by value)
  *   27  0xB912C subset: 0x89CDC, 0x89CD0 = E90E, 0x89D06 = E910 (0x13BF66)
  *   28  timers: 0x106848 (E4AC+6, sub +0x32/+0x34/+0xE/+0x3C), 0xD0C66
  *       (E28E +6/+8), 0xDBEEC/0xDC35E (E6C5), the 0x89CF8 time base, the
@@ -152,8 +153,19 @@
 #ifndef GSE_STAGE
 #  define GSE_STAGE(k) ((void)0)
 #endif
-#if defined(GSE_BOOT_ENTRY) && (GS_FORCED != 1)
-#error "gs_cand: the G6a candidate runs D-G6-2 (0x89C3D forced 0) and D-G6-3 (gear target 1st): GS_FORCED must be 1"
+#if defined(GSE_BOOT_ENTRY) && (GS_TARGET_1ST != 1)
+#error "gs_cand: the engine of the image runs D-G6-3 / D-G5-5 (a), the gear target 1st: GS_FORCED / GS_TARGET_1ST must be 1"
+#endif
+/* G5c (2026-11-19, ~/tcu_sweep/g5c_port.md): the engine's 0x89C3D (slot 26).
+ * GS_C3D_FORCED 1: 0 (the old D-G6-2 behaviour; instance 1, host negatives);
+ * GSE_C3D_IN (the engine of the image): the live flag by value; else
+ * (instance 1's stock-faithful host variant) derived from the OS mode */
+#if GS_C3D_FORCED
+#  define GSE_C3D_OF(in)   ((uint8_t)0u)
+#elif defined(GSE_C3D_IN)
+#  define GSE_C3D_OF(in)   ((in)->c3d)
+#else
+#  define GSE_C3D_OF(in)   ((uint8_t)(((in)->os_mode == 1u) ? 1u : 0u))
 #endif
 
 #if defined(TCU_RAM_APP)
@@ -211,7 +223,7 @@ _Static_assert(GS_C06 == 0u && GS_C08 == 0u && GS_C10 == 0u && GS_C1A == 0 &&
                "gs_shadow: every dump-held input equals the stock driving dump");
 /* the gear target: forced = the fault-free strategy's 1st (0xFFF8A697 = 1);
  * stock-faithful = the bench's code 0x20 → 0xDB63C → gear 3 */
-#if GS_FORCED
+#if GS_TARGET_1ST
 #  define GS_TARGET   1
 #else
 #  define GS_TARGET   3
@@ -638,7 +650,10 @@ static uint8_t s_host_mask;         /* gs_shadow_host_standins */
 static uint8_t s_host_ceca_cls;     /* gs_shadow_host_ceca: the old class test */
 static int16_t s_host_bd76;
 static uint8_t s_host_bd30;
+static gs_host_g5c_t s_host_g5c;    /* G5c (host only): gs_shadow_host_g5c */
+#  define G5C_HOST(stmt) do { stmt; } while (0)
 #else
+#  define G5C_HOST(stmt) ((void)0)
 #  define s_host_mask 0u
 #endif
 static uint8_t s_park_model;      /* 0xFFF8BC70[0], this pass (live, by value) */
@@ -1418,8 +1433,10 @@ static void eb76(gs_sub_t *s)
 
 /* r04s: 0x106698's prologue and epilogue (slot 35, 0xEB348 → 0xEB382 →
  * 0xEEB56 → 0x106698(E4AC), every pass whatever BD17 [O bytes]):
- *   0x89C3D != 0 → +5 = 1 (D-G6-2 forces our 0x89C3D to 0: never — +5 keeps
- *   GS_E4B1 from boot until the first stop, as before);
+ *   0x89C3D != 0 → +5 = 1 (G5c: the engine of the image reads the live flag
+ *   — every mode-1 pass re-arms +5, as the stock; instance 1 / host
+ *   negatives with GS_C3D_FORCED: never — +5 keeps GS_E4B1 from boot until
+ *   the first stop);
  *   0x106AB6 → 0x106C16 (+7 / +2) and 0x106C4A (+4);
  *   +9 = 0;
  *   0x10D10C(D148) (class 3 with +9 and 0x10CDFA(D148, 1)) → 0x1067D6 (+8 =
@@ -2263,8 +2280,14 @@ static void r3f56(void)
 /* 0xD15A6 (0xD1B10 / 0xD1990: the gear target, stand-in) */
 static void d15a6(void)
 {
-    if (G.c3d != 0u && V_E69B == 1u) {
+    /* G5c: the stock returns here [O bytes 0xD15AA..0xD15D0: 0x89C3D != 0,
+     * E69B == 1, AE2C == 0 → E6A1 = E69F, bra 0xD1654 (the epilogue)];
+     * r04b..r04u fell through and overwrote E6A1 with the target (unreachable
+     * while 0x89C3D was forced 0). AE2C: stand-in 0 (0x103F56 above) */
+    if (G.c3d != 0u && V_E69B == 1u /* && AE2C == 0 */) {
         V_E6A1 = V_E69F;
+        G5C_HOST(s_host_g5c.d15a6_ret++);
+        return;
     }
     if (V_E6EF == 2u || V_E69B == 2u) {
         V_E6A1 = -1;
@@ -2296,8 +2319,35 @@ static void cfd1a(void)
     if (G.e69c0 == 1u) {
         ok = false;
     }
+#if !defined(__sh__)
+    if (ok && !pending() && V_E6EF != V_E69B && V_E6EF != 0u && !dc37e()) {
+        /* G5c (host only): a nonzero commit refused by 0xDC37E, by cause */
+        if (G.c3d != 0u) {
+            s_host_g5c.ref_c3d++;
+        } else if (s_park_model != 1u) {
+            s_host_g5c.ref_park++;
+        } else {
+            s_host_g5c.ref_settle++;
+        }
+    }
+#endif
     if (ok && !pending() && V_E6EF != V_E69B && (V_E6EF == 0u || dc37e())) {
         const uint8_t old = V_E69B;
+#if !defined(__sh__)
+        if (V_E6EF != 0u) {
+            s_host_g5c.commit_e6c5 = V_E6C5;
+            s_host_g5c.commit_c3d = G.c3d;
+            s_host_g5c.commit_pass = W.passes;
+            s_host_g5c.commit_e4ac5 = EAC.e4ac5;
+            if (s_host_g5c.nz_commits == 0u) {
+                s_host_g5c.first_pass = W.passes;
+                s_host_g5c.first_e6c5 = V_E6C5;
+                s_host_g5c.first_c3d = G.c3d;
+                s_host_g5c.first_e4ac5 = EAC.e4ac5;
+            }
+            s_host_g5c.nz_commits++;
+        }
+#endif
         V_E69B = V_E6EF;
         G.pf = V_E6EF;                                   /* 0x89C30 */
         G.commit_now = 1u;
@@ -2803,7 +2853,11 @@ void gs_shadow_init(void)
     }
 #endif
     G.rec_on = 0xFFu;
-    G.c3d = GS_FORCED ? 0u : 1u;
+#if GS_C3D_FORCED || defined(GSE_C3D_IN)
+    G.c3d = 0u;                 /* G5c: stock bss; the tick head sets it before any use */
+#else
+    G.c3d = 1u;
+#endif
     fill_bind();
     for (uint8_t e = 1u; e <= 5u; e++) {
         gsf_construct(req_obj(e), 0xFFF84D20u + 4u * (uint32_t)(e - 1u), e);
@@ -2811,6 +2865,10 @@ void gs_shadow_init(void)
     s_booted = false;
 #if !defined(__sh__)
     s_host_r04s_n = 0u;
+    {
+        const gs_host_g5c_t z = { 0 };
+        s_host_g5c = z;
+    }
 #endif
 }
 
@@ -2823,7 +2881,7 @@ void gs_shadow_init(void)
     G.done_now = 0u;                                                            \
     G.commit_now = 0u;                                                          \
     /* slot 26: the one-hot mode flag */                                        \
-    G.c3d = GS_FORCED ? 0u : (((in)->os_mode == 1u) ? 1u : 0u);                 \
+    G.c3d = GSE_C3D_OF(in);                                                     \
     /* slot 27: 0xB912C (0x13BF66: E90E held while 0x108 is invalid) */         \
     G.rngd = (in)->rngd;                                                        \
     if ((in)->eng_valid != 0u && (in)->eng_speed != 0xFFFFu) {                  \
@@ -2969,6 +3027,14 @@ void gs_shadow_tick_10ms(const gs_in_t *in)
         return;
     }
     GSE_STAGE(0u);                                       /* the head (inputs, fill_bind) */
+#if !defined(__sh__)
+    if (G.c3d != 0u) {
+        s_host_g5c.c3d_passes++;
+        s_host_g5c.m2_first = 0xFFFFFFFFu;               /* G5c: re-armed by every mode-1 pass */
+    } else if (s_host_g5c.m2_first == 0xFFFFFFFFu || s_host_g5c.m2_first == 0u) {
+        s_host_g5c.m2_first = W.passes;                  /* the first pass with 0x89C3D 0 after mode 1 */
+    }
+#endif
     /* slot 28: 0xEC0E0 — BD30 / BD2E (+= *0xFFF8E220 = 1), then 0x106848 */
     KB.bd30 = sat8p1(KB.bd30);
     KB.bd2e = sat16p1(KB.bd2e);
@@ -2981,11 +3047,10 @@ void gs_shadow_tick_10ms(const gs_in_t *in)
     cf4e(&SUB[2]);
     if (E28.t6 > 0u) { E28.t6--; }
     if (E28.t8 > 0u) { E28.t8--; }
-    if (G.c3d != 0u) {
-        V_E6C5 = 0u;                                     /* 0xDC35E */
-    } else {
-        V_E6C5 = sat8p1(V_E6C5);                         /* 0xDBEEC */
-    }
+    /* G5c: 0xBAEB4 → 0xB85E0 → 0xDBEEC (E6BF+6 via 0xBAE46: + the pass's
+     * elapsed 10 ms units, saturating) — EVERY pass, whatever the mode [O
+     * bytes 0xBAF16, 0xDBEEC..0xDBEF6]; the mode-1 clear is slot 40 below */
+    V_E6C5 = sat8p1(V_E6C5);                             /* 0xDBEEC */
     G.tb = (uint16_t)(G.tb + 10u);
     gsf_e5624();
     gsf_e566c();
@@ -3055,6 +3120,15 @@ void gs_shadow_tick_10ms(const gs_in_t *in)
     ceca(&SUB[2]);
     ceca(&SUB[0]);
     GSE_STAGE(6u);                                       /* slot 35 */
+    /* slot 40: 0xA30B2 → 0xB85B8(0) → 0xDC35E(E6BF, 0): 0xDA0C4(E328) (the
+     * E32A hold source: not ported, a bench no-op — b2_slots_subobj_decode),
+     * then E6C5 = 0 while 0x89C3D != 0 [O bytes 0xA30BA..0xA30C0,
+     * 0xDC35E..0xDC378]. G5c: moved here from slot 28 (r04b..r04u cleared it
+     * at slot 28 instead of incrementing — the same value at the slot-31 gate
+     * in mode 2; in mode 1 the gate refuses on 0x89C3D anyway) */
+    if (G.c3d != 0u) {
+        V_E6C5 = 0u;                                     /* 0xDC35E */
+    }
     /* slot 42: the producer + actuators */
     gsf_set_pf(G.pf, G.c2f);
     dc4c4();
@@ -3167,6 +3241,16 @@ void gs_shadow_host_rel(uint8_t k, int16_t v[4])
  * start's flag, E6C1, E6C2, E33C+0x12 (sat. 255), BD44, BD1C | BD1D << 1,
  * D0DC +0x1E, D1B4 +0x1E, D1B4 +0x3A (low byte), the pass (2 bytes);
  * returns the number of starts so far */
+/* G5c (host only): the 0x89C3D witnesses (gs_host_g5c_t, app/gs_shadow.h) */
+void gs_shadow_host_g5c(gs_host_g5c_t *o)
+{
+    *o = s_host_g5c;
+    o->e6c5 = V_E6C5;
+    o->e4ac5 = EAC.e4ac5;
+    o->c3d = G.c3d;
+    o->passes = W.passes;
+}
+
 uint8_t gs_shadow_host_r04s(uint8_t k, uint8_t v[12])
 {
     const uint8_t n = s_host_r04s_n;

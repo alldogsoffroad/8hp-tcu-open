@@ -64,6 +64,13 @@ static int g6r_holder_cell(uint32_t abs)
     return 0;
 }
 static unsigned long g6r_holder_bytes_differ;   /* G6R_NOREP: the holder cells that differ (info) */
+#if defined(G5C_MASK)
+/* G5c (~/tcu_sweep/g5c_port.md): the engine's request objects' +0x57 byte —
+ * set by 0xE552C on the first mode-1 pass now that 0x89C3D is honest (its
+ * only current term, the cal +0x50 map, reads 0 for all five elements) —
+ * not compared at the end, counted and printed */
+static unsigned long g5c_57_differ;
+#endif
 
 static void g6c_tag(char *out, size_t n, const char *name)
 {
@@ -289,6 +296,14 @@ static unsigned g6c_gold_cmp(const char *name, const gr_t *g, const res_t *r, co
                     continue;               /* G5b: the OS-mode cells (masked in both builds) */
                 }
 #endif
+#if defined(G5C_MASK)
+                if (abs >= 0xFFF925C0u && abs < 0xFFF925C0u + 7u * 0x60u && ((abs - 0xFFF925C0u) % 0x60u) == 0x57u) {
+                    if (gw[i] != win[i]) {
+                        g5c_57_differ++;    /* G5c: the request objects' +0x57 (0xE552C, by design) */
+                    }
+                    continue;
+                }
+#endif
 #if defined(G6R_NOREP) && !defined(G5B_HASH_MASK)
                 if (g6r_holder_cell(abs)) {
                     if (gw[i] != win[i]) {
@@ -324,6 +339,11 @@ static unsigned g6c_gold_cmp(const char *name, const gr_t *g, const res_t *r, co
     printf("   r04r no-replica [%s]: the retired holder's cells differing from the golden at the end: %lu B "
            "(not compared); per-frame cell hash not compared, wire hash compared\n", name, g6r_holder_bytes_differ);
     g6r_holder_bytes_differ = 0u;
+#endif
+#if defined(G5C_MASK)
+    printf("   G5c [%s]: request objects' +0x57 bytes differing at the end (not compared): %lu\n", name,
+           g5c_57_differ);
+    g5c_57_differ = 0u;
 #endif
     printf("   vs the golden [%s]: frames differ %u (first F%u), ticks differ %u of %u, gsb_t %u B, windows %u B, "
            "release %u, end window %u B => %s\n", name, fd, f_first == 0xFFFFFFFFu ? 0u : f_first, td, gtk, bd, wd,

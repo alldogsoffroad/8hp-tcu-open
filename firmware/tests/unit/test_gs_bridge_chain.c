@@ -101,6 +101,22 @@ static bool g5b_one_done;
  * 0x112 code 4 (ignition on) from power-on, code 0 (off: the keyoff-check
  * path) from m1 + off, code 4 again from m1 + on */
 static unsigned g5b_keyoff_from, g5b_keyon_from;
+/* G5c (~/tcu_sweep/g5c_port.md, host injection): the post-hook 0x68EFE
+ * suppressed — the selector still asks 2, but 0x93B5E keeps 1, so the OS
+ * mode stays 1 with the brake + engine sims on (the stock's "mode 2 not
+ * granted": e.g. the supply outside 6000..17000 mV, which the harness cannot
+ * set without disturbing the supervisor path) */
+static bool g5c_hold_m1;
+/* G5c (host injection): the engine's 0x89C3D input forced 1 on the 10 ms
+ * tasks of frames [m1 + from, m1 + to) while the OS mode stays 2 — the
+ * 0xD15A6 mode-1 return (0x89C3D, E69B 1, AE2C 0) is unreachable on the real
+ * chain (key-off's auto-P commits power flow 0 before the mode-1 apply), so
+ * this is how the rule is exercised (0 = off) */
+static unsigned g5c_c3d_from, g5c_c3d_to;
+#  define G5C_C3D_IN(p, m1) ((uint8_t)(*(const volatile uint8_t *)(uintptr_t)0xFFF89C3Du |                 \
+        ((g5c_c3d_from != 0u && (m1) != 0u && (p) >= (m1) + g5c_c3d_from && (p) < (m1) + g5c_c3d_to) ? 1u : 0u)))
+#else
+#  define G5C_C3D_IN(p, m1) (*(const volatile uint8_t *)(uintptr_t)0xFFF89C3Du)
 #endif
 static unsigned g6a_m1;         /* the mode-1 frame of the current run */
 #if defined(G6B_TEST)
@@ -169,6 +185,9 @@ void g6a_boot_pass(void)
         .out_rpm = 0u,
         .tur_rpm = 0u,
         .ae28 = *(const volatile uint8_t *)0xFFF8AE28u,
+#if defined(GS_IN_HAS_C3D)
+        .c3d = *(const volatile uint8_t *)(uintptr_t)0xFFF89C3Du,   /* G5c: app/main.c gs_in_build */
+#endif
     };
     g6a_boot(&gi);
     gs_bridge_boot_pass();          /* r04q: as app/main.c g6a_boot_pass */
@@ -489,6 +508,9 @@ static void task10(gr_t *g, unsigned p)
 #if defined(G6A_TEST)
             .ae28 = *(const volatile uint8_t *)0xFFF8AE28u,   /* app/main.c gs_in_build */
 #endif
+#if defined(GS_IN_HAS_C3D)
+            .c3d = G5C_C3D_IN(p, g->m1),    /* G5c: slot 26 (os_sel, G5B_SEL) [+ the host injection] */
+#endif
         };
         /* G6c: no shadow (instance 1 is deleted from app/main.c) */
 #if defined(G6A_TEST) && GS_G6B
@@ -559,7 +581,12 @@ static void task10(gr_t *g, unsigned p)
     }
 #endif
 #if defined(G5B_SEL)
-    os_sel_handoff_10ms(mode);      /* G5b: app/main.c's task tail (0x68EFE) */
+#  if defined(G5B_SCEN)
+    if (!g5c_hold_m1)
+#  endif
+    {
+        os_sel_handoff_10ms(mode);  /* G5b: app/main.c's task tail (0x68EFE) */
+    }
     if (CELL_OS_REQ_APP == 2u && g->g5b_h2 == 0u) {
         g->g5b_h2 = p;              /* G5b: the first hand-off of a 2 to 0x93B5E */
         g5b_h2_pending = true;

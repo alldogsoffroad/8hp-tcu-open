@@ -272,6 +272,10 @@ static void gs_in_build(gs_in_t *gi)
         .tur_rpm = gs_rpm(sn->turbine_speed, sn->q_turbine_speed),
         /* G6a: park_law's 0xCFFDE direction request (the candidate's AE28) */
         .ae28 = *(const volatile uint8_t *)0xFFF8AE28u,
+        /* G5c (~/tcu_sweep/g5c_port.md): slot 26's 0x89C3D (safety/os_sel.c
+         * os_sel_flags_10ms, before this in task_10ms; 0 at the boot pass in
+         * OS mode 0 — the stock's bss, slot 26 not yet run) */
+        .c3d = *(const volatile uint8_t *)(uintptr_t)OS_FLG_C3D,
     };
     *gi = g;
 }
@@ -370,8 +374,8 @@ static void task_10ms(void)
 #if !defined(TCU_RAM_APP)
     /* G5b: slot 26 (0xA2EAC / 0xA2EA4 / 0xA2EB4) — the one-hot mode flags
      * 0x89C3C..3E / 0x89C53..55, before 0xB912C (slot 27, park_tick). Live
-     * cells; nothing of ours reads them yet (the engine's c3d stays forced
-     * 0, D-G5-6; park_law keeps its own c3c from the mode below) */
+     * cells; G5c: the engine reads 0x89C3D (gs_in_build, below); park_law
+     * keeps its own c3c from the mode) */
     os_sel_flags_10ms(os0);
 #endif
     park_set_os_mode(sup_mode());   /* 0x89C3C for the fault-reaction park request */

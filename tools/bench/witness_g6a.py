@@ -26,7 +26,8 @@ E6EF and the shift object BD14 (BD16, BD17, BD2E, BD30, BD6C, BD76, BD8E) —
 dump-comparable cells (the driving dump, P long-idle, holds E28E 00, E4B1 01,
 E4B2 FF, E6A8 01 00 00 00 02, BD2E FFFF, BD30 FF, BD6C 01, BD6D 03, BD76 7FFF,
 BD8E FFFF; ours differ by decision in E4A7 / E69F / E6A1 (1st, D-G6-3) and
-E6C5 (FF: 0x89C3D forced 0, D-G6-2)).
+E6C5 (r04b..r04u FF: 0x89C3D forced 0, D-G6-2; r04v G5c: 00 in OS mode 1 — the
+stock's slot-40 clear — and counting to FF from the mode-2 entry)).
 
 Reads over meas (6 bytes per request; NOT atomic — read in P, after the lever
 sequence): g6a_t 1008 B at 0xFFF93C08 (.g6a): the head (164 B), the records,

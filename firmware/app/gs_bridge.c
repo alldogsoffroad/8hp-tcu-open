@@ -53,8 +53,8 @@ void gs_bridge_tick_10ms(const gsb_in_t *in) { (void)in; }
 
 #else
 
-#if (GS_LIVE_DIR != 0) && (GS_FORCED == 0)
-#  error "gs bridge: a live bridge needs the forced garage shadow (GS_FORCED 1): the stock-faithful shadow never commits"
+#if (GS_LIVE_DIR != 0) && (GS_TARGET_1ST == 0)
+#  error "gs bridge: a live bridge needs the forced garage shadow (GS_FORCED / GS_TARGET_1ST 1): the gear-3 variant is a host reference"
 #endif
 
 /* the directions the WITNESS evaluates (both: the G1 recorder shows D and R

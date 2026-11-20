@@ -35,6 +35,8 @@
  *           addresses (.os_flg1 / .os_flg2 NOLOAD; 0x93B56 inside .sup_fsm).
  *   D-G5-6  0x89C3D is written here but the engine does NOT read it (its
  *           GS_FORCED c3d = 0 stays): G5b changes only the OS mode.
+ *           G5c (r04v, ~/tcu_sweep/g5c_port.md): the engine reads it now
+ *           (app/main.c gs_in_build → gs_in_t.c3d, after this task's slot 26).
  *
  * NOT PORTED: 0x14DC70 / 0x14E170 (the overvoltage detector, mode 3), the
  * row-9 init list of modes 2 / 3 (0x7DC30: 0xFFF80D1C, below our RAM), and

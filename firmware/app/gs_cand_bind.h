@@ -51,7 +51,8 @@
  *   - AE28 = the live 0xFFF8AE28 by value (GSE_AE28_IN, the G6b form);
  *   - its own boot-state-1 pass (GSE_BOOT_ENTRY, the G6b slot);
  *   - D-G6-2 0x89C3D forced 0 and D-G6-3 gear target 1st: GS_FORCED 1
- *     (asserted below). */
+ *     (asserted below). G5c: 0x89C3D honest (GS_C3D_FORCED 0, GSE_C3D_IN),
+ *     the gear target still 1st (GS_TARGET_1ST 1). */
 #if defined(__sh__) || defined(GSC_G6A)
 #  define GSC_SH_FORM   1
 #else
@@ -72,6 +73,17 @@
  * identity must still hold) */
 #    define GSE_NEG_C3D_HOOK() (G.c3d = 1u)
 #  endif
+/* G5c (2026-11-19, ~/tcu_sweep/g5c_port.md): 0x89C3D HONEST — the engine
+ * reads the live slot-26 flag by value (gs_in_t.c3d); the forced 0
+ * (GS_C3D_FORCED 1) is a host negative only. The gear target stays 1st
+ * (GS_TARGET_1ST 1, D-G5-5 (a), labelled: the healthy vehicle). */
+#  ifndef GS_C3D_FORCED
+#    define GS_C3D_FORCED 0
+#  endif
+#  if defined(__sh__) && (GS_C3D_FORCED != 0)
+#    error "gs_cand: 0x89C3D is honest in the image since G5c (GS_C3D_FORCED 0); the forced 0 is a host negative"
+#  endif
+#  define GSE_C3D_IN      1
 #  define GSC_REQ_BASE    0xFFF925C0u               /* .gsc_req (linker.ld ASSERTs it) */
 #  define GSE_REC         0
 #  define GSE_AE28_IN     1
@@ -134,6 +146,7 @@ void g6a_stage(unsigned k);
 #define gs_shadow_ae28_x        gs_cand_ae28_x
 #define gs_shadow_cfb6          gs_cand_cfb6
 #define gs_shadow_host_r04s     gs_cand_host_r04s
+#define gs_shadow_host_g5c      gs_cand_host_g5c
 
 /* the fill instance's exports (app/gs_fill.h, app/gs_fill.c) */
 #define gs_fill_cells           gcf_fill_cells

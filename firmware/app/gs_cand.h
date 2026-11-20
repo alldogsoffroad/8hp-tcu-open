@@ -44,6 +44,9 @@ void     gs_cand_host_rel(uint8_t k, int16_t v[4]);
 void     gs_cand_host_standins(uint8_t mask, int16_t bd76, uint8_t bd30);
 void     gs_cand_host_sub(uint8_t k, int16_t v[6]);
 uint8_t  gs_cand_host_r04s(uint8_t k, uint8_t v[12]);
+#if !defined(__sh__)
+void     gs_cand_host_g5c(gs_host_g5c_t *o);     /* G5c (host only) */
+#endif
 const volatile void *gs_cand_host_state(uint8_t k, uint32_t *n);
 /* the candidate fill instance's own counters (app/gs_cand_fill.c) */
 uint32_t gcf_unp_n(void);

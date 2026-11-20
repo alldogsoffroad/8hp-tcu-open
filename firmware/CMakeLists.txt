@@ -775,6 +775,12 @@ else()
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_FORCED=0 ${CMAKE_SOURCE_DIR}/app/gs_cand.c)
     add_test(NAME g6a_sh_guard_cand_neg
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGSC_NEG_C3D=1 ${CMAKE_SOURCE_DIR}/app/gs_cand.c)
+    # G5c (~/tcu_sweep/g5c_port.md): 0x89C3D is honest in the image — the
+    # forced 0 (GS_C3D_FORCED 1) is refused for SH
+    add_test(NAME g5c_sh_guard_c3d_forced
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DGS_C3D_FORCED=1 ${CMAKE_SOURCE_DIR}/app/gs_cand.c)
+    set_tests_properties(g5c_sh_guard_c3d_forced PROPERTIES
+        PASS_REGULAR_EXPRESSION "0x89C3D is honest in the image since G5c")
     add_test(NAME g6a_sh_guard_output
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DTCU_OUTPUT_PATH ${CMAKE_SOURCE_DIR}/app/g6a.c)
     set_tests_properties(gs_sh_guard_engine_alone PROPERTIES
@@ -796,7 +802,7 @@ else()
     set_tests_properties(g6a_sh_guard_cand_ram PROPERTIES
         PASS_REGULAR_EXPRESSION "the G6a candidate is for the code-flash application only")
     set_tests_properties(g6a_sh_guard_cand_forced PROPERTIES
-        PASS_REGULAR_EXPRESSION "GS_FORCED must be 1")
+        PASS_REGULAR_EXPRESSION "GS_TARGET_1ST must be 1")
     set_tests_properties(g6a_sh_guard_cand_neg PROPERTIES
         PASS_REGULAR_EXPRESSION "the binding negatives are host-only tests")
     set_tests_properties(g6a_sh_guard_output PROPERTIES
@@ -1532,21 +1538,43 @@ else()
     set(G5B_SOURCES ${G6B_NOREP_SOURCES} safety/os_sel.c)
     set(G5B_DEFS ${G6B_DEFS} G6R_HOLDER_REPLICA=0 G6R_NOREP=1 G5B_SEL=1 G5B_SCEN=1 G5B_HASH_MASK=1
         GS_M2_XCHECK=1)
-    add_executable(test_g5b ${G5B_SOURCES})
-    target_compile_definitions(test_g5b PRIVATE ${G5B_DEFS})
-    add_test(NAME g5b_wire_vs_r04t COMMAND test_g5b)
-    add_executable(test_g5b_englim ${G5B_SOURCES})
-    target_compile_definitions(test_g5b_englim PRIVATE ${G5B_DEFS} GSB_ENG_PASSES=50u G6A_ENGLIM=1)
-    add_test(NAME g5b_wire_vs_r04t_englim COMMAND test_g5b_englim)
-    # the negative: a mode-2-dependent output (park_law's c3c fed "mode 3"
-    # while the OS mode is 2: the aux park request turns the park outputs
-    # off) must FAIL the same comparison
-    add_executable(test_g5b_neg ${G5B_SOURCES})
-    target_compile_definitions(test_g5b_neg PRIVATE ${G5B_DEFS} G5B_NEG_MODE2_PARK=1)
-    add_test(NAME g5b_wire_vs_r04t_negative COMMAND test_g5b_neg)
-    set_tests_properties(g5b_wire_vs_r04t_negative PROPERTIES WILL_FAIL TRUE)
-    set_tests_properties(g5b_wire_vs_r04t g5b_wire_vs_r04t_englim g5b_wire_vs_r04t_negative PROPERTIES
-        ENVIRONMENT "G6C_GOLD_IN=${CMAKE_BINARY_DIR}/g5b_r04t/gold")
+    # G5c: the G5b runs are now part of test_g5c below (the request objects'
+    # +0x57 differs at the end since 0x89C3D is honest, and the stray-frame
+    # run's D commit waits for the settle counter — both by design); the
+    # r04t goldens are kept unpacked for the record only
+    # G5c (2026-11-19, ~/tcu_sweep/g5c_port.md): 0x89C3D HONEST — the engine
+    # reads slot 26's live flag. test_g5c = test_g5b (the image's
+    # configuration, the live selector) + the G5c cases (G5C_SCEN) + the
+    # request objects' +0x57 not compared at the end (G5C_MASK, counted),
+    # against the r04u goldens (written by HEAD 5698464's engine with this
+    # harness, G6C_GOLD_OUT; g5c_r04u_test_g6b.tgz): every from-power-on run
+    # and every monitor negative must stay IDENTICAL (wire, ticks, gsb_t,
+    # windows, cell window per frame and at the end); the five G5c cases
+    # (mode 2 not granted, lever D inside the 240 ms settle, the stray frame,
+    # the two key-off cycles) must follow the stock's rule (g5c_check). The
+    # negative: the forced 0 (GS_C3D_FORCED 1) must FAIL.
+    file(ARCHIVE_EXTRACT INPUT ${CMAKE_SOURCE_DIR}/tests/unit/golden/g5c_r04u_test_g6b.tgz
+        DESTINATION ${CMAKE_BINARY_DIR}/g5c_r04u)
+    set(G5C_DEFS ${G5B_DEFS} G5C_SCEN=1 G5C_MASK=1)
+    add_executable(test_g5c ${G5B_SOURCES})
+    target_compile_definitions(test_g5c PRIVATE ${G5C_DEFS})
+    add_test(NAME g5c_wire_vs_r04u COMMAND test_g5c)
+    add_executable(test_g5c_englim ${G5B_SOURCES})
+    target_compile_definitions(test_g5c_englim PRIVATE ${G5C_DEFS} GSB_ENG_PASSES=50u G6A_ENGLIM=1)
+    add_test(NAME g5c_wire_vs_r04u_englim COMMAND test_g5c_englim)
+    add_executable(test_g5c_neg_forced ${G5B_SOURCES})
+    target_compile_definitions(test_g5c_neg_forced PRIVATE ${G5C_DEFS} GS_C3D_FORCED=1)
+    add_test(NAME g5c_forced_c3d_negative COMMAND test_g5c_neg_forced)
+    set_tests_properties(g5c_forced_c3d_negative PROPERTIES WILL_FAIL TRUE)
+    # the G5b negative, carried over: a mode-2-dependent output (park_law's
+    # c3c fed "mode 3" in mode 2) must FAIL the same comparison
+    add_executable(test_g5c_neg_park ${G5B_SOURCES})
+    target_compile_definitions(test_g5c_neg_park PRIVATE ${G5C_DEFS} G5B_NEG_MODE2_PARK=1)
+    add_test(NAME g5c_wire_vs_r04u_negative COMMAND test_g5c_neg_park)
+    set_tests_properties(g5c_wire_vs_r04u_negative PROPERTIES WILL_FAIL TRUE)
+    set_tests_properties(g5c_wire_vs_r04u g5c_wire_vs_r04u_englim g5c_forced_c3d_negative
+        g5c_wire_vs_r04u_negative PROPERTIES
+        ENVIRONMENT "G6C_GOLD_IN=${CMAKE_BINARY_DIR}/g5c_r04u/gold")
     # THE SHIFT-MAP SHADOW (2026-11-19, ~/tcu_sweep/sm_shadow_port.md): the
     # stock's shift target (30 ms entries 5 / 14 / 15 / 16 → A697 / A0AA /
     # 0x89CE8) as a read-only shadow (app/sm_shadow.c). sm_shadow: the dump

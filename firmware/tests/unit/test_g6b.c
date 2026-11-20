@@ -77,6 +77,9 @@ void g6a_boot_pass(void)
         .out_rpm = 0u,
         .tur_rpm = 0u,
         .ae28 = *(const volatile uint8_t *)0xFFF8AE28u,
+#if defined(GS_IN_HAS_C3D)
+        .c3d = *(const volatile uint8_t *)(uintptr_t)0xFFF89C3Du,   /* G5c: app/main.c gs_in_build */
+#endif
     };
     g6a_boot(&gi);
     gs_bridge_boot_pass();          /* r04q: as app/main.c g6a_boot_pass */
@@ -123,6 +126,9 @@ typedef struct {
     unsigned engon;         /* G5b: 0x108 only from m1 + engon (the sim started after boot) */
     unsigned engone;        /* G5b: ONE 0x108 frame at m1 + engone (a stray frame) */
     unsigned keyoff, keyon; /* G5b: 0x112 off from m1 + keyoff, on again from m1 + keyon */
+    bool holdm1;            /* G5c: the hand-off 0x68EFE suppressed (mode 2 never granted) */
+    unsigned c3d_from, c3d_to;  /* G5c: the engine's 0x89C3D forced 1 on [m1 + from, m1 + to) (host injection) */
+    uint8_t g5c;            /* G5c: a case that CHANGES behaviour by design (1 a, 2 b, 3 c, 4 d) */
 #endif
     const neg_t *neg;
     uint32_t anchors[4];    /* negatives: from the base run */
@@ -141,6 +147,10 @@ typedef struct {
     uint32_t m5_guard;      /* r04r: drv_reqlaw.c's guard fallbacks (drv_rq_m5_guard_n) */
     run_r_t  r;
     unsigned m1, u, tk_n;
+#if defined(GS_IN_HAS_C3D)
+    gs_host_g5c_t g5c;      /* G5c: the engine's 0x89C3D witnesses (host only) */
+#endif
+    unsigned g5b_m2, g5b_back1, g5b_again2;
 } res_t;
 
 static uint8_t g_win[2][WIN_N];
@@ -177,6 +187,9 @@ static void run_child(const scen_t *sc, bool g6b, gr_t *g, res_t *res, uint8_t *
         g5b_eng_one = sc->engone;
         g5b_keyoff_from = sc->keyoff;
         g5b_keyon_from = sc->keyon;
+        g5c_hold_m1 = sc->holdm1;
+        g5c_c3d_from = sc->c3d_from;
+        g5c_c3d_to = sc->c3d_to;
 #endif
         if (sc->neg != NULL) {
             const neg_t *n = sc->neg;
@@ -252,6 +265,14 @@ static void run_child(const scen_t *sc, bool g6b, gr_t *g, res_t *res, uint8_t *
         res->m1 = g->m1;
         res->u = g->r.u_frame;
         res->tk_n = g_tk_n;
+#if defined(GS_IN_HAS_C3D)
+        gs_cand_host_g5c(&res->g5c);
+#endif
+#if defined(G5B_SEL)
+        res->g5b_m2 = g->g5b_m2;
+        res->g5b_back1 = g->g5b_back1;
+        res->g5b_again2 = g->g5b_again2;
+#endif
         memcpy(tks, g_tk, sizeof g_tk);
         memcpy(win, (const void *)(uintptr_t)0xFFF80000u, WIN_N);
         {
@@ -403,6 +424,124 @@ static void g5b_check(const char *name, bool sims, unsigned engon, unsigned engo
 }
 #endif
 
+#if defined(G5C_SCEN)
+/* G5c (~/tcu_sweep/g5c_port.md): the 0x89C3D cases. The engine's witnesses
+ * (gs_cand_host_g5c, host only), the ticks (the staged A..E words) and the
+ * monitor; gd = the differences from the r04u engine in the same scenario
+ * (the HEAD goldens) — expected nonzero where the stock's gate acts. */
+static unsigned g5c_runs_ok;
+static unsigned tick_bpass_at_frame(unsigned frame)
+{
+    for (unsigned i = 0u; i < g_rb.tk_n; i++) {
+        if (g_tks[1][i].frame >= frame) {
+            return (unsigned)g_tks[1][i].bpass;
+        }
+    }
+    return 0xFFFFu;
+}
+/* the staged words equal up to the setpoint rounding phase ((I + 0/4/1) / 6:
+ * one count) and the same command bits */
+static bool g5c_same_content(const uint16_t *a, const uint16_t *b)
+{
+    for (unsigned c = 0u; c < 5u; c++) {
+        if ((a[c] & 0xF800u) != (b[c] & 0xF800u) || absd(a[c] & 0x7FFu, b[c] & 0x7FFu) > 1u) {
+            return false;
+        }
+    }
+    return true;
+}
+static void g5c_check(const scen_t *sc, unsigned gd)
+{
+#if !defined(GS_IN_HAS_C3D)
+    /* a HEAD (r04u) build writing the goldens: no G5c witnesses */
+    printf("   G5c [%s]: (r04u engine: golden only) OS mode 2 F%u back to 1 F%u 2 again F%u, D commit monitor pass "
+           "%u\n", sc->name, g_rb.g5b_m2, g_rb.g5b_back1, g_rb.g5b_again2, (unsigned)g_rb.b.slot[0].t0);
+    (void)gd;
+    (void)tick_bpass_at_frame;
+    (void)g5c_same_content;
+    return;
+#else
+    const gs_host_g5c_t *h = &g_rb.g5c;
+    const gsb_t *b = &g_rb.b;
+    const g6a_t *c = &g_rb.c;
+    bool ok = b->trip_n == 0u && g_rb.w.latch == 0u && c->cls_n[G6A_C_UNEXP] == 0u && c->law_x == 0u &&
+              c->guard_x == 0u && g_rb.r.fatal_tot == 0u && g_rb.r.switched_off == 0u &&
+              g_rb.r.fw_set_events == 0u;
+    printf("   G5c [%s]: engine passes %u, 0x89C3D passes %u, first 0x89C3D-0 pass %u | nonzero commits %u "
+           "(first at pass %u: E6C5 %u c3d %u E4AC+5 %u; last at pass %u: E6C5 %u c3d %u E4AC+5 %u) | 0xDC37E refusals: c3d %u park %u settle %u | 0xD15A6 "
+           "returns %u | now E6C5 %u E4AC+5 %u c3d %u | OS mode 2 F%u, back to 1 F%u, 2 again F%u | vs r04u: %u "
+           "differences | monitor trips %u latch %02X UNEXP %u\n", sc->name, (unsigned)h->passes,
+           (unsigned)h->c3d_passes, (unsigned)h->m2_first, (unsigned)h->nz_commits, (unsigned)h->first_pass,
+           h->first_e6c5, h->first_c3d, h->first_e4ac5, (unsigned)h->commit_pass,
+           h->commit_e6c5, h->commit_c3d, h->commit_e4ac5, (unsigned)h->ref_c3d, (unsigned)h->ref_park,
+           (unsigned)h->ref_settle, (unsigned)h->d15a6_ret, h->e6c5, h->e4ac5, h->c3d, g_rb.g5b_m2,
+           g_rb.g5b_back1, g_rb.g5b_again2, gd, b->trip_n, g_rb.w.latch, (unsigned)c->cls_n[G6A_C_UNEXP]);
+    switch (sc->g5c) {
+    case 1u: {
+        /* (a) the stock's gate: no nonzero commit while 0x89C3D = 1; the
+         * staged A..E words stay the P content on every tick after the boot
+         * window (= the last tick's) */
+        unsigned off = 0u;
+        const tick_t *last = &g_tks[1][g_rb.tk_n - 1u];
+        unsigned i0 = 0u;
+        while (i0 < g_rb.tk_n && g_tks[1][i0].bpass < (uint32_t)b->boot_p0 + b->boot_len) {
+            i0++;               /* the first tick after the monitor's boot allowance (A's boot fill) */
+        }
+        printf("   G5c (a): the P content from tick %u (F%u)\n", i0, i0 < g_rb.tk_n ? g_tks[1][i0].frame : 0u);
+        for (unsigned i = i0; i < g_rb.tk_n; i++) {
+            if (!g5c_same_content(g_tks[1][i].st, last->st)) {
+                if (off < 6u || getenv("G5C_DUMP") != NULL) {
+                    printf("      off P: tick %u F%u pass %u lev %u src %u words %04X %04X %04X %04X %04X\n", i,
+                           g_tks[1][i].frame, (unsigned)g_tks[1][i].bpass, g_tks[1][i].lev, g_tks[1][i].src,
+                           g_tks[1][i].st[0], g_tks[1][i].st[1], g_tks[1][i].st[2], g_tks[1][i].st[3],
+                           g_tks[1][i].st[4]);
+                }
+                off++;
+            }
+        }
+        printf("   G5c (a): ticks off the P content after the boot window %u (P content %04X %04X %04X %04X %04X) "
+               "| OS mode at the end %u\n", off, last->st[0], last->st[1], last->st[2], last->st[3], last->st[4],
+               g_win[1][0x13B33u]);
+        ok = ok && h->nz_commits == 0u && h->ref_c3d > 0u && h->ref_settle == 0u && off == 0u &&
+             g_win[1][0x13B33u] == 1u && h->c3d == 1u && h->e6c5 == 0u;
+        break;
+    }
+    case 2u: {
+        /* (b) the settle counter: the commit waits until the 24th mode-2 pass */
+        const unsigned m2p = tick_bpass_at_frame(g_rb.g5b_m2);
+        printf("   G5c (b): mode 2 at F%u (monitor pass %u); D commit at monitor pass %u; engine: first mode-2 "
+               "pass %u, commit pass %u = the %u-th mode-2 pass, refused for the settle counter on %u passes\n",
+               g_rb.g5b_m2, m2p, (unsigned)b->slot[0].t0, (unsigned)h->m2_first, (unsigned)h->first_pass,
+               (unsigned)(h->first_pass - h->m2_first + 1u), (unsigned)h->ref_settle);
+        ok = ok && h->nz_commits >= 1u && h->ref_settle > 0u && h->first_e6c5 == 24u && h->first_c3d == 0u &&
+             (h->first_pass - h->m2_first + 1u) == 24u && gd != 0u;
+        break;
+    }
+    case 5u:
+        /* (e) the mode-1 return taken on the injected passes with D engaged,
+         * the wire identical to r04u's */
+        ok = ok && h->d15a6_ret > 0u && h->ref_settle == 0u && gd == 0u;
+        break;
+    case 3u:
+    case 4u:
+        /* (c)/(d) the key-off cycle: no nonzero commit while the OS mode
+         * is 1; (d): the R engagement after the cycle starts with E4AC+5
+         * re-armed by the mode-1 passes */
+        ok = ok && g_rb.g5b_back1 != 0u && g_rb.g5b_again2 != 0u && h->ref_settle == 0u &&
+             (sc->g5c != 4u || h->commit_e4ac5 == 1u);
+        break;
+    default:
+        ok = false;
+        break;
+    }
+    if (ok) {
+        g5c_runs_ok++;
+    }
+    GCHECK(ok, "G5c %s: as the stock's rule", sc->name);
+#endif
+}
+#endif
+
 static void scenario(const scen_t *sc)
 {
     const g6a_t *c = &g_rb.c;
@@ -434,6 +573,12 @@ static void scenario(const scen_t *sc)
     for (unsigned i = 0u; i < c->urec_n; i++) {
         print_rec("UNEX", &c->urec[i]);
     }
+#if defined(G5C_SCEN)
+    if (sc->g5c != 0u) {
+        g5c_check(sc, gd);          /* G5c: a behaviour change by design (not the golden's identity) */
+        return;
+    }
+#endif
     GCHECK(gd == 0u, "%s: differs from the golden (%u)", sc->name, gd);
 #if defined(G5B_SEL)
     g5b_check(sc->name, !sc->nosim,
@@ -666,11 +811,39 @@ int main(void)
          * the engine sim started 1 s after the mode-1 switch, and a single
          * stray frame 0.5 s after it (the rest of the gs-check unchanged) */
         { .name = "G5b: engine sim starts 1 s after mode 1", .info = true, .engon = 100u },
+#  if defined(G5C_SCEN)
+        /* G5c: mode 2 enters 50 ms before lever D — the commit now waits for
+         * the settle counter (0xDC37E, E6C5 >= 24): a behaviour change by
+         * design, checked as case (b) */
+        { .name = "G5b: one stray 0x108 frame 0.5 s after mode 1", .info = true, .engone = 50u, .g5c = 2u },
+#  else
         { .name = "G5b: one stray 0x108 frame 0.5 s after mode 1", .info = true, .engone = 50u },
+#  endif
         /* key-off in D (0x112 code 4 → 0 at m1 + 3 s, after the D engagement
          * completed), key-on 1.5 s later: mode 2 → 1 → 2 (the engine sim
          * still running); the wire is r04t's (key-off auto-P included) */
         { .name = "G5b: key-off in D, key-on 1.5 s later", .info = true, .keyoff = 300u, .keyon = 450u },
+#  if defined(G5C_SCEN)
+        /* G5c (~/tcu_sweep/g5c_port.md): the cases that CHANGE behaviour by
+         * design — 0x89C3D honest. Each is compared with what the r04u
+         * engine does in the same scenario (the HEAD goldens) and checked
+         * against the stock's rule (g5c_check). */
+        { .name = "G5c (a): mode 2 not granted (hand-off held), lever D in mode 1", .info = true,
+          .holdm1 = true, .g5c = 1u },
+        { .name = "G5c (b): engine sim from m1+250 ms, lever D 50 ms later", .info = true, .engon = 50u,
+          .g5c = 2u },
+        { .name = "G5c (c): key-off mid-engagement in D, key-on 1.7 s later", .info = true, .keyoff = 110u,
+          .keyon = 450u, .g5c = 3u },
+        { .name = "G5c (d): key-off after D, key-on after the release, then R", .info = true, .keyoff = 300u,
+          .keyon = 600u, .g5c = 4u },
+        /* (e) the 0xD15A6 mode-1 return and the slot-40 clear exercised: the
+         * engine's 0x89C3D forced 1 for 0.5 s while D is engaged (OS mode
+         * 2; host injection) — E6A1 = E69F (1 = the target: no wire change),
+         * E6C5 cleared, no commit; the r04u golden ran the same scenario
+         * without the input (no .c3d) — the wire must be identical */
+        { .name = "G5c (e): 0x89C3D injected for 0.5 s in D (0xD15A6 return)", .info = true, .c3d_from = 300u,
+          .c3d_to = 400u, .g5c = 5u },
+#  endif
 #endif
     };
     /* the negatives (G6b form), anchored on the base run's D commit, R commit
@@ -747,6 +920,9 @@ int main(void)
 #endif
 #if defined(G5B_SEL)
     printf("G5b: %u runs checked, %u entered mode 2 as required\n", g5b_runs, g5b_m2_runs);
+#endif
+#if defined(G5C_SCEN)
+    printf("G5c: %u of 6 G5c cases as the stock's rule\n", g5c_runs_ok);
 #endif
     if (g_fails == 0) {
         printf("test_g6b: ok\n");

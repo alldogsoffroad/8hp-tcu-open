@@ -54,6 +54,31 @@
 #if (GS_FORCED != 0) && (GS_FORCED != 1)
 #  error "gs_shadow: GS_FORCED is 0 (stock-faithful) or 1 (forced commit), nothing else"
 #endif
+/* G5c (2026-11-19, ~/tcu_sweep/g5c_port.md): GS_FORCED split in two.
+ *   GS_TARGET_1ST  the gear target: 1 = the fault-free strategy's 1st
+ *                  (D-G5-5 (a), D-G6-3: the healthy vehicle, labelled — the
+ *                  stock on THIS bench would hold code 0x20 → gear 3);
+ *                  0 = the bench's code 0x20 → gear 3. The engine of the image
+ *                  builds 1.
+ *   GS_C3D_FORCED  1 = the engine's 0x89C3D forced 0 (the r04b..r04u
+ *                  behaviour, D-G6-2: kept for instance 1, the host
+ *                  reference, and as a host negative); 0 = honest — the
+ *                  engine of the image (app/gs_cand_bind.h, GSE_C3D_IN) reads
+ *                  the live slot-26 flag 0xFFF89C3D BY VALUE (gs_in_t.c3d,
+ *                  safety/os_sel.c writes it before the engine's pass).
+ * Both default to GS_FORCED (the legacy umbrella of the host builds). */
+#ifndef GS_TARGET_1ST
+#  define GS_TARGET_1ST GS_FORCED
+#endif
+#ifndef GS_C3D_FORCED
+#  define GS_C3D_FORCED GS_FORCED
+#endif
+#if (GS_TARGET_1ST != 0) && (GS_TARGET_1ST != 1)
+#  error "gs_shadow: GS_TARGET_1ST is 0 (the bench's gear 3) or 1 (1st), nothing else"
+#endif
+#if (GS_C3D_FORCED != 0) && (GS_C3D_FORCED != 1)
+#  error "gs_shadow: GS_C3D_FORCED is 0 (honest 0x89C3D) or 1 (forced 0), nothing else"
+#endif
 
 /* the live values the shadow reads, BY VALUE (app/main.c fills them) */
 typedef struct {
@@ -78,7 +103,13 @@ typedef struct {
      * GSE_AE28_IN (the G6a candidate, the G6b form); instance 1 recomputes
      * its own from rngd and ignores it */
     uint8_t  ae28;
+    /* G5c (2026-11-19, ~/tcu_sweep/g5c_port.md): the live slot-26 flag
+     * 0xFFF89C3D (OS mode 1; safety/os_sel.c), BY VALUE — read only by a
+     * binding built with GSE_C3D_IN (the engine of the image); a builder
+     * that leaves it 0 gets the old forced-0 behaviour */
+    uint8_t  c3d;
 } gs_in_t;
+#define GS_IN_HAS_C3D 1     /* G5c: gs_in_t carries .c3d (the harnesses test it) */
 
 /* one recorder entry = one 10 ms pass from a nonzero commit (28 bytes) */
 typedef struct {
@@ -253,6 +284,23 @@ void gs_shadow_host_standins(uint8_t mask, int16_t bd76, uint8_t bd30);
 void gs_shadow_host_sub(uint8_t k, int16_t v[6]);
 /* r04s: the last 8 starts' reversal inputs (app/gs_engine.c) */
 uint8_t gs_shadow_host_r04s(uint8_t k, uint8_t v[12]);
+/* G5c (host only): the 0x89C3D witnesses of the engine */
+typedef struct {
+    uint32_t d15a6_ret;     /* 0xD15A6's mode-1 early return taken */
+    uint32_t ref_c3d;       /* nonzero commits refused by 0xDC37E: 0x89C3D != 0 */
+    uint32_t ref_park;      /*   park model not released */
+    uint32_t ref_settle;    /*   E6C5 < 24 (the settle counter) */
+    uint32_t nz_commits;    /* nonzero commits */
+    uint32_t first_pass;    /* the FIRST nonzero commit's pass (W.passes) */
+    uint8_t  first_e6c5, first_c3d, first_e4ac5, pad0;
+    uint32_t commit_pass;   /* the last nonzero commit's pass (W.passes) */
+    uint32_t c3d_passes;    /* passes with 0x89C3D != 0 */
+    uint32_t m2_first;      /* the first pass with 0x89C3D == 0 after the last one with 1 */
+    uint32_t passes;        /* W.passes now */
+    uint8_t  commit_e6c5, commit_c3d, commit_e4ac5;
+    uint8_t  e6c5, e4ac5, c3d;  /* now */
+} gs_host_g5c_t;
+void gs_shadow_host_g5c(gs_host_g5c_t *o);
 /* G6-0: the instance's state block k (0 gs_t, 1 the witnesses, 2 the
  * progress block, 3/4 the recorder slots, 5 the release object, 6 the
  * request objects, 7 the fill cells, 8..10 the per-pass input latches);

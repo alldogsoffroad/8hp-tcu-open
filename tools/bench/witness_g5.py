@@ -25,8 +25,20 @@ n2 0. With the engine sim (>= 150 rpm) or a turbine >= 100 rpm from any
 moment in mode 1: mode 2 within one 5 ms batch of the requesting 10 ms task,
 flags 3E/53, LATCHED until power-off / a key-off (E9FF 4). Disagree 0.
 
+G5c (r04v, ~/tcu_sweep/g5c_port.md): the ENGINE line — the engine reads
+0x89C3D honestly now. Its commit gate 0xDC37E = park model 0xFFF8BC70 == 1
+(released) AND 0x89C3D == 0 AND the settle counter E6C5 (0xFFF8E6C5) >= 24;
+E6C5 is +1 per 10 ms pass (slot 28, saturating at 255) and cleared every
+mode-1 pass (slot 40). E4AC+5 (0xFFF8E4B1) is set every mode-1 pass (the
+0x106698 prologue), cleared at an engagement stop; E4AC+9 0 every pass.
+Expected: plain boot (mode 1): E6C5 00, E4AC+5 01, gate SHUT (3D); with the
+sims from power-on: E6C5 FF (saturated ~2.5 s after the mode-2 entry), gate
+OPEN whenever the park model reads 1.
+
 Addresses: re-check with sh-elf-nm build/sh2a/tcu_app.elf before every use
-(_tcu_rq_retired_pad must be 0xFFF95F7C, _s_gsb 0xFFF87220). `meas 0x02`
+(_tcu_rq_retired_pad must be 0xFFF95F7C, _s_gsb 0xFFF87220, _g_e6c5 0xFFF8E6C5,
+_g_e4ac 0xFFF8E4AC, _g_e69b 0xFFF8E69B, _g_e6ef 0xFFF8E6EF, _g_e69f 0xFFF8E69F,
+_g_e6a1 0xFFF8E6A1). `meas 0x02`
 hygiene first (CLAUDE rule 6).
 
     witness_g5.py [rounds]
@@ -108,6 +120,21 @@ def show_round(b):
     e9 = byte(b, 0xFFF8E9FF)
     sup = read(b, 1, 0xFFF94F86, 2)
     print("  IN    E9FF %s | supply 0x94F86 %s mV" % (e9, u16(sup, 0) if sup else "??"))
+    # G5c (r04v): the engine's 0x89C3D consumers and the commit gate 0xDC37E
+    e6c5 = byte(b, 0xFFF8E6C5)
+    ea = read(b, 1, 0xFFF8E4AC, 10)
+    pm = byte(b, 0xFFF8BC70)
+    f3d = byte(b, 0xFFF89C3D)
+    e69b, e6ef, e69f, e6a1 = (byte(b, a) for a in (0xFFF8E69B, 0xFFF8E6EF, 0xFFF8E69F, 0xFFF8E6A1))
+    if None in (e6c5, pm, f3d) or ea is None:
+        print("  ENGINE: read FAIL")
+    else:
+        why = [w for w, bad in (("park", pm != 1), ("3D", f3d != 0), ("settle", e6c5 < 24)) if bad]
+        print("  ENGINE E6C5 %02X (%u) | E4AC+5 %02X +9 %02X | park model %u | 3D %u | GATE 0xDC37E %s | "
+              "E69B %s E6EF %s E69F %s E6A1 %s"
+              % (e6c5, e6c5, ea[5], ea[9], pm, f3d, "OPEN" if not why else "SHUT (" + ", ".join(why) + ")",
+                 e69b, e6ef, None if e69f is None else struct.unpack("b", bytes([e69f]))[0],
+                 None if e6a1 is None else struct.unpack("b", bytes([e6a1]))[0]))
     m = read(b, 1, M2, 32)
     if m is None:
         print("  m2: read FAIL")
