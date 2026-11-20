@@ -14,6 +14,7 @@ static const struct {
 
 static com_tx_state_t s_st[FCA_TX_MSG_COUNT];
 static uint16_t s_val[FCA_TX_FIELD_COUNT];
+static bool     s_set[FCA_TX_FIELD_COUNT];   /* written since fca_tx_init() */
 
 static void pack(uint8_t idx, uint8_t data[8])
 {
@@ -28,6 +29,7 @@ void fca_tx_init(void)
 {
     for (uint8_t f = 0u; f < FCA_TX_FIELD_COUNT; f++) {
         s_val[f] = 0u;
+        s_set[f] = false;
     }
     com_tx_init(s_msg, s_st, FCA_TX_MSG_COUNT, pack);
 }
@@ -36,6 +38,7 @@ void fca_tx_set(fca_tx_field_t f, uint16_t raw)
 {
     if (f < FCA_TX_FIELD_COUNT) {
         s_val[f] = (uint16_t)(raw & ((1u << s_field[f].sig.len) - 1u));
+        s_set[f] = true;
     }
 }
 
@@ -44,9 +47,30 @@ uint16_t fca_tx_get(fca_tx_field_t f)
     return f < FCA_TX_FIELD_COUNT ? s_val[f] : 0u;
 }
 
-void fca_tx_enable(fca_tx_msg_t m, bool on)
+/* The torque-request messages (0x037, 0x2F9: 13-bit Nm*4+2000 fields) may only
+ * go out once every 13-bit field has been written: their power-on value 0 is a
+ * -500 Nm request. Ours, not stock (the stock always fills them first). */
+static bool torque_fields_ready(fca_tx_msg_t m)
 {
+    if (m != FCA_M_037 && m != FCA_M_2F9) {
+        return true;
+    }
+    for (uint8_t f = 0u; f < FCA_TX_FIELD_COUNT; f++) {
+        if (s_field[f].msg == m && s_field[f].sig.len == 13u && !s_set[f]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool fca_tx_enable(fca_tx_msg_t m, bool on)
+{
+    if (on && !torque_fields_ready(m)) {
+        com_tx_enable((uint8_t)m, false);
+        return false;
+    }
     com_tx_enable((uint8_t)m, on);
+    return true;
 }
 
 void fca_tx_tick_1ms(void)

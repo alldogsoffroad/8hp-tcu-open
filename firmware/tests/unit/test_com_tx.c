@@ -71,7 +71,26 @@ int main(void)
 
     /* periods (bench measurement): 0x037 every 16 ms, 0x144 every 31 ms, 0x3D1 every 781 ms;
      * over 800 ms: 0x037 at 0, 16, ... 784 = 50, 0x144 at 0, 31, ... 775 = 26, 0x3D1 at 0, 781 = 2 */
-    fca_tx_enable(FCA_M_037, true);
+    /* 0x037 / 0x2F9 refuse to go out with an unset (0 = -500 Nm) torque field */
+    CHECK(fca_tx_enable(FCA_M_037, false));
+    CHECK(!fca_tx_enable(FCA_M_037, true));
+    CHECK(!fca_tx_enable(FCA_M_2F9, true));
+    fca_tx_set(FCA_F_037_B0_4, 2000u);       /* 0 Nm */
+    fca_tx_set(FCA_F_037_B2_4, 2000u);
+    CHECK(!fca_tx_enable(FCA_M_037, true));  /* one 13-bit field still unset */
+    for (int i = 0; i < 100; i++) {
+        fca_tx_tick_1ms();
+    }
+    CHECK(count_id(0x037u) == 0u && stub.n_tx == 0u);
+    fca_tx_set(FCA_F_037_B4_4, 2000u);
+    CHECK(fca_tx_enable(FCA_M_037, true));
+    CHECK(fca_tx_enable(FCA_M_037, false));
+    fca_tx_init();
+    fca_tx_set(FCA_F_3D1_B0_7, 0x1234u);
+    fca_tx_set(FCA_F_037_B0_4, 2000u);
+    fca_tx_set(FCA_F_037_B2_4, 2000u);
+    fca_tx_set(FCA_F_037_B4_4, 2000u);
+    CHECK(fca_tx_enable(FCA_M_037, true));
     fca_tx_enable(FCA_M_144, true);
     fca_tx_enable(FCA_M_3D1, true);
     {

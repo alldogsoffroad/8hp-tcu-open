@@ -22,7 +22,11 @@ void fca_tx_init(void);
 /* Set a raw field value (low `len` bits are used). */
 void fca_tx_set(fca_tx_field_t f, uint16_t raw);
 uint16_t fca_tx_get(fca_tx_field_t f);
-void fca_tx_enable(fca_tx_msg_t m, bool on);
+/* Enable or disable a message. Returns false (and leaves the message off) when
+ * enabling 0x037 or 0x2F9 before every 13-bit torque field of that message has
+ * been set since fca_tx_init(): an all-zero field encodes Nm*4+2000 = 0, i.e.
+ * a -500 Nm torque request to the engine (line_pressure_torque_decode.md). */
+bool fca_tx_enable(fca_tx_msg_t m, bool on);
 /* Send due messages; call every 1 ms (periods are 16, 31, 156 and 781 ms). */
 void fca_tx_tick_1ms(void);
 
