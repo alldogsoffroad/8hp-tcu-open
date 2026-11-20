@@ -140,6 +140,14 @@ static void ss_frame_10ms(uint8_t mode)
 #    error "LP_TEST needs GP_TEST (the shadows read the coupled gear chain's cells)"
 #  endif
 #endif
+#if defined(WK_TEST)
+/* (2026-11-20, ~/tcu_sweep/wk_shadow_port.md): THE LOCK-UP (WK) SHADOW's live identity - its 10 ms pass at
+ * app/main.c's slot (right after the line-pressure shadow), the live cells BY VALUE; needs LP_TEST */
+#include "app/wk_shadow.h"
+#  if !defined(LP_TEST)
+#    error "WK_TEST needs LP_TEST (the shadow reads the line-pressure shadow's target)"
+#  endif
+#endif
 
 #include <sys/wait.h>
 #include <unistd.h>
@@ -799,6 +807,35 @@ static void task10(gr_t *g, unsigned p)
 #endif
         }
 #endif
+#if defined(WK_TEST)
+        {
+            /* app/wk_hook.c's gather, from the harness's values */
+            static uint16_t wk_ms;
+            const sensors_in_t *wsn = sensors_in();
+            const vehicle_in_t *wv = vehicle_in();
+            const volatile uint8_t *wbd = (const volatile uint8_t *)gs_cand_host_state(14u, &n);
+            wk_in_t wi;
+            memset(&wi, 0, sizeof wi);
+            wi.os_mode = gin.os_mode;
+            wi.c3d = (uint8_t)((gin.os_mode == 1u) ? 1u : 0u);
+            wi.c2f = gin.e6ee; wi.c30 = gin.e69b;
+            wi.e612_b = 1u; wi.range_ok = 1u;
+            wi.shift_busy = (uint8_t)((wbd[2] != 0u) ? 1u : 0u);
+            wi.temp_byte = gin.cd2; wi.temp_c = (int16_t)((int)gin.cd2 - 40);
+            wi.eng = (wv->q_engine_speed == Q_OK) ? (uint16_t)wv->engine_speed : 0u;
+            wi.turb = (wsn->q_turbine_speed == Q_OK && wsn->turbine_speed > 0) ? (uint16_t)wsn->turbine_speed : 0u;
+            wi.tq = (wv->q_torque_actual == Q_OK) ? (int16_t)(wv->torque_actual / 10) : (int16_t)0;
+            wi.line = lp_shadow_state()->res;
+            wk_ms = (uint16_t)(wk_ms + 10u);
+            wi.now_ms = wk_ms;
+            wi.live_wk = 500u;
+            wk_hook_feed(&wi);
+#if defined(WK_NEG_LEAK)
+            /* the negative: a leak of the would-be WK current into the live 0x89CF6 */
+            *(volatile uint8_t *)(uintptr_t)0xFFF89CF6u = (uint8_t)(0x60u + (wk_shadow_state()->wk_i & 0x3Fu));
+#endif
+        }
+#endif
     }
     if (mode < 1u || mode > 3u) {
         s_sm_on = 0u;
@@ -882,6 +919,9 @@ static void run_g(gr_t *g)
 #endif
 #if defined(LP_TEST)
     lp_hook_init();                 /* app/main.c's shadow init block */
+#endif
+#if defined(WK_TEST)
+    wk_hook_init();                 /* app/main.c's shadow init block */
 #endif
 #if defined(DIAG_TEMPS)
     for (unsigned d = 0u; d < 2u; d++) {

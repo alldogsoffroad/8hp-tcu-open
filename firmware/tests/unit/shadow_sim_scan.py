@@ -22,7 +22,7 @@ import sys
 NAME = [r"\bshadow_sim\w*", r"\bSHADOW_SIM\w*", r"\bDIAG_(ID|BUS)_SHADOW_SIM\b", r"\bTCU_SHADOW_SIM\b"]
 ALLOW = {
     "io/vehicle/shadow_sim.c", "io/vehicle/shadow_sim.h", "io/vehicle/diag_ids.h",
-    "app/sm_hook.c", "app/gp_hook.c", "app/fr_hook.c", "app/main.c",
+    "app/sm_hook.c", "app/gp_hook.c", "app/fr_hook.c", "app/wk_hook.c", "app/main.c",
 }
 MAIN_OK = {"shadow_sim_init", "shadow_sim_rx", "shadow_sim_tick_10ms"}
 HOOK_PATTERNS = [

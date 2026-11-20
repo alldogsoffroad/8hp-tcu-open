@@ -471,6 +471,15 @@ SECTIONS
            ".lp_shadow: lp_t is off 0xFFF8BA40 or leaves the dump-zero run (witness_lp.py)")
     ASSERT(__ti_shadow_start == 0xFFF929C0 && SIZEOF(.ti_shadow) == 0x5C && __ti_shadow_end <= 0xFFF92C68,
            ".ti_shadow: ti_t is off 0xFFF929C0 or leaves the dump-zero run (witness_lp.py)")
+    /* THE TORQUE-CONVERTER LOCK-UP (WK) SHADOW (2026-11-20, ~/tcu_sweep/wk_shadow_port.md; app/wk_shadow.c, ours -
+     * not stock cells): struct wk_t (0x9C) at 0xFFF935D0 inside the dump-zero run 0xFFF935C6..0xFFF9372E (re-checked
+     * all zero in stockram_driving_20261104.bin; nothing of ours there). Cleared by wk_shadow_init. */
+    .wk_shadow 0xFFF935D0 (NOLOAD) : {
+        __wk_shadow_start = .; *(.wk_shadow) *wk_shadow.c.obj(.bss .bss.* COMMON)
+        . = ALIGN(4); __wk_shadow_end = .;
+    } > RAM
+    ASSERT(__wk_shadow_start == 0xFFF935D0 && SIZEOF(.wk_shadow) == 0x9C && __wk_shadow_end <= 0xFFF9372E,
+           ".wk_shadow: wk_t is off 0xFFF935D0 or leaves the dump-zero run")
     /* the fault-reaction shadow's FAULT MANAGER (app/fr_fm.c, ours; RAM
      * only, written by that TU alone): struct fr_fm_t in the dump-zero gap
      * between the A-DMAC ring (+ its guard 0x88728) and the range chain's

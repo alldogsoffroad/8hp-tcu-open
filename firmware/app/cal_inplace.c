@@ -40,6 +40,10 @@ static void mutate(void)
     /* the line-pressure shadow's N / P demand map 0x1DE7A0 (cal+0x58): z[0] 6000 -> 6004 (the 7265 idle Sys moves) */
     s_img[0x1DE7A0u + 8u + 2u * 6u + 1u] += 4u;
 #endif
+#if defined(WK_NEG_MAP)
+    /* the lock-up shadow's torque feed-forward map 0x1A3C04 (D10+0x140): z[0][3] (300 Nm) 0x40A9999A (5.3) -> 0x40B9999A (5.8) */
+    s_img[0x1A3C04u + 8u + 4u * (6u + 6u + 3u) + 1u] += 0x10u;
+#endif
 #if defined(GP_NEG_DNMAP)
     /* the 2->1 class-1 down-shift on-coming kiss map (blk58+0xC = 0x1DBD04): the y at the 105 degC point 100 -> 101 */
     s_img[0x1DBD04u + 4u + 2u * 10u + 2u * 6u + 1u] += 1u;

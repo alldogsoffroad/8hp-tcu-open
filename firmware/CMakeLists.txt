@@ -154,6 +154,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         # line-pressure (Sys) and torque-intervention shadows (own RAM .lp_shadow /
         # .ti_shadow) - code-flash application only
         app/lp_shadow.c app/lp_cal.c app/ti_shadow.c app/lp_hook.c
+        # (2026-11-20, ~/tcu_sweep/wk_shadow_port.md): the READ-ONLY torque-converter
+        # lock-up (WK) shadow (own RAM .wk_shadow) - code-flash application only
+        app/wk_shadow.c app/wk_cal.c app/wk_hook.c
     )
     # keep GCC from turning the memset/memcpy loops into calls to themselves
     set_source_files_properties(platform/sh7254r/libc_min.c PROPERTIES
@@ -205,6 +208,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py nvm ${SH_NM}
             CMakeFiles/tcu_app.elf.dir/app/lp_shadow.c.obj CMakeFiles/tcu_app.elf.dir/app/ti_shadow.c.obj
             CMakeFiles/tcu_app.elf.dir/app/lp_cal.c.obj CMakeFiles/tcu_app.elf.dir/app/lp_hook.c.obj
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py nvm ${SH_NM}
+            CMakeFiles/tcu_app.elf.dir/app/wk_shadow.c.obj CMakeFiles/tcu_app.elf.dir/app/wk_cal.c.obj
+            CMakeFiles/tcu_app.elf.dir/app/wk_hook.c.obj
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6c_sections.py ${SH_OBJDUMP} tcu_app.elf
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py retired ${SH_NM} tcu_app.elf
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py image ${SH_NM} tcu_app.elf
@@ -292,7 +298,8 @@ else()
         app/gs_cand.c app/gs_cand_fill.c app/g6a.c
         app/fr_shadow.c app/fr_fm.c app/fr_cal.c app/fr_hook.c   # F1: as the image
         app/gp_shadow.c app/gp_cal.c app/gp_gear.c app/gp_hook.c
-        app/lp_shadow.c app/lp_cal.c app/ti_shadow.c app/lp_hook.c)
+        app/lp_shadow.c app/lp_cal.c app/ti_shadow.c app/lp_hook.c
+        app/wk_shadow.c app/wk_cal.c app/wk_hook.c)
     target_compile_definitions(tcu_sim PRIVATE GSC_G6A=1)   # the image's candidate form
 
     enable_testing()
@@ -1990,7 +1997,7 @@ else()
             ${CMAKE_SOURCE_DIR}/tests/unit/ss_scan_fixture_main.c)
     add_test(NAME shadow_sim_scan_hooks
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/shadow_sim_scan.py hooks ${CMAKE_SOURCE_DIR}/app/sm_hook.c
-            ${CMAKE_SOURCE_DIR}/app/gp_hook.c ${CMAKE_SOURCE_DIR}/app/fr_hook.c)
+            ${CMAKE_SOURCE_DIR}/app/gp_hook.c ${CMAKE_SOURCE_DIR}/app/fr_hook.c ${CMAKE_SOURCE_DIR}/app/wk_hook.c)
     add_test(NAME shadow_sim_scan_hooks_negative
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/shadow_sim_scan.py hooks
             ${CMAKE_SOURCE_DIR}/tests/unit/ss_scan_fixture_hook.c)
@@ -2159,6 +2166,92 @@ else()
             -DSH_GUARD_LP_LIVE_${hdr} ${LP_SH_SRC})
         set_tests_properties(lp_sh_guard_live_${hdr} PROPERTIES
             PASS_REGULAR_EXPRESSION "line-pressure shadow is read-only: it may not include a live header")
+    endforeach()
+    # THE TORQUE-CONVERTER LOCK-UP (WK) SHADOW (2026-11-20, ~/tcu_sweep/wk_shadow_port.md): the stock's 12-state
+    # lock-up machine (0xDEA5E on object 0xFFF8B294), its producer gate 0xDCE40, the output stage 0xDF004, the slip
+    # controller (the I-only PID toward 40 rpm) and the WK current law, as a read-only shadow whose would-be WK
+    # current is compared with the live 500 every pass. wk_shadow: the gate truth table, the law, every dry-bench
+    # input = never permitted, a vehicle-shaped scenario to closed / controlled slip (a plant), the releases;
+    # wk_cal_bytes re-derives wk_cal.c from the stock image; _neg_MAP (a moved feed-forward map byte) must FAIL.
+    # wk_identity: test_g6b with the shadow ticking (every bus-A word, the park demands, the cell window) passes
+    # unchanged and the shadow ran; the leak negative must FAIL. The scans (outputs / shadow / hook, nvm) and the
+    # SH compile checks.
+    set(WK_TEST_SOURCES tests/unit/test_wk_shadow.c app/wk_shadow.c app/wk_cal.c app/wk_hook.c)
+    add_executable(test_wk_shadow ${WK_TEST_SOURCES})
+    target_compile_definitions(test_wk_shadow PRIVATE _POSIX_C_SOURCE=200809L WK_HOOK_NO_GATHER=1)
+    target_link_libraries(test_wk_shadow PRIVATE m)
+    add_test(NAME wk_shadow COMMAND test_wk_shadow)
+    add_test(NAME wk_cal_bytes COMMAND test_wk_shadow --cal)
+    set_tests_properties(wk_cal_bytes PROPERTIES SKIP_RETURN_CODE 77)
+    add_executable(test_wk_shadow_neg_MAP ${WK_TEST_SOURCES})
+    target_compile_definitions(test_wk_shadow_neg_MAP PRIVATE _POSIX_C_SOURCE=200809L WK_HOOK_NO_GATHER=1 WK_NEG_MAP=1)
+    target_link_libraries(test_wk_shadow_neg_MAP PRIVATE m)
+    add_test(NAME wk_shadow_neg_MAP COMMAND test_wk_shadow_neg_MAP)
+    set_tests_properties(wk_shadow_neg_MAP PROPERTIES WILL_FAIL TRUE)
+    set(WK_APP_SOURCES app/wk_shadow.c app/wk_cal.c app/wk_hook.c)
+    add_executable(test_g6b_wk ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c io/vehicle/shadow_sim.c
+        ${GP_APP_SOURCES} ${LP_APP_SOURCES} ${WK_APP_SOURCES})
+    target_compile_definitions(test_g6b_wk PRIVATE ${G6B_DEFS} SM_TEST=1 SM_HOOK_NO_GATHER=1
+        GP_TEST=1 GP_HOOK_NO_GATHER=1 LP_TEST=1 LP_HOOK_NO_GATHER=1 WK_TEST=1 WK_HOOK_NO_GATHER=1)
+    add_test(NAME wk_identity COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/wk_identity.py
+        $<TARGET_FILE:test_g6b_wk>)
+    add_executable(test_g6b_wkleak ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c io/vehicle/shadow_sim.c
+        ${GP_APP_SOURCES} ${LP_APP_SOURCES} ${WK_APP_SOURCES})
+    target_compile_definitions(test_g6b_wkleak PRIVATE ${G6B_DEFS} SM_TEST=1 SM_HOOK_NO_GATHER=1
+        GP_TEST=1 GP_HOOK_NO_GATHER=1 LP_TEST=1 LP_HOOK_NO_GATHER=1 WK_TEST=1 WK_HOOK_NO_GATHER=1 WK_NEG_LEAK=1)
+    add_test(NAME wk_identity_negative_leak COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/wk_identity.py
+        $<TARGET_FILE:test_g6b_wkleak>)
+    set_tests_properties(wk_identity wk_identity_negative_leak PROPERTIES ENVIRONMENT "${G6C_GOLD_ENV}")
+    set_tests_properties(wk_identity_negative_leak PROPERTIES WILL_FAIL TRUE)
+    set(WK_OUTPUT_PATHS ${LP_OUTPUT_PATHS} ${CMAKE_SOURCE_DIR}/app/lp_shadow.c ${CMAKE_SOURCE_DIR}/app/lp_hook.c)
+    add_test(NAME wk_shadow_scan_outputs
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/wk_shadow_scan.py outputs ${WK_OUTPUT_PATHS})
+    add_test(NAME wk_shadow_scan_outputs_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/wk_shadow_scan.py outputs
+            ${CMAKE_SOURCE_DIR}/tests/unit/wk_scan_fixture_output.c)
+    add_test(NAME wk_shadow_scan_shadow
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/wk_shadow_scan.py shadow
+            ${CMAKE_SOURCE_DIR}/app/wk_shadow.c ${CMAKE_SOURCE_DIR}/app/wk_shadow.h
+            ${CMAKE_SOURCE_DIR}/app/wk_cal.c ${CMAKE_SOURCE_DIR}/app/wk_cal.h)
+    add_test(NAME wk_shadow_scan_shadow_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/wk_shadow_scan.py shadow
+            ${CMAKE_SOURCE_DIR}/tests/unit/wk_scan_fixture_shadow.c)
+    add_test(NAME wk_shadow_scan_hook
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/wk_shadow_scan.py hook ${CMAKE_SOURCE_DIR}/app/wk_hook.c)
+    add_test(NAME wk_shadow_scan_hook_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/wk_shadow_scan.py hook
+            ${CMAKE_SOURCE_DIR}/tests/unit/wk_scan_fixture_hook.c)
+    set_tests_properties(wk_shadow_scan_outputs_negative wk_shadow_scan_shadow_negative
+        wk_shadow_scan_hook_negative PROPERTIES WILL_FAIL TRUE)
+    add_library(wk_nvm_objs OBJECT ${WK_APP_SOURCES})
+    target_compile_definitions(wk_nvm_objs PRIVATE WK_HOOK_NO_GATHER=1)
+    add_test(NAME wk_scan_nvm
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py nvm nm $<TARGET_OBJECTS:wk_nvm_objs>
+        COMMAND_EXPAND_LISTS)
+    add_library(wk_nvm_fixture OBJECT tests/unit/wk_nvm_fixture.c)
+    add_test(NAME wk_scan_nvm_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py nvm nm $<TARGET_OBJECTS:wk_nvm_fixture>)
+    set_tests_properties(wk_scan_nvm_negative PROPERTIES WILL_FAIL TRUE)
+    set(WK_SH_SRC ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard_wk.c)
+    add_test(NAME wk_sh_guard_control COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${WK_SH_SRC})
+    add_test(NAME wk_sh_guard_shadow
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion -Werror ${CMAKE_SOURCE_DIR}/app/wk_shadow.c)
+    add_test(NAME wk_sh_guard_cal
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/wk_cal.c)
+    add_test(NAME wk_sh_guard_hook
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform -Wall -Wextra -Wconversion
+            ${CMAKE_SOURCE_DIR}/app/wk_hook.c)
+    foreach(g OUTPUT OUTCAL OUTTU)
+        add_test(NAME wk_sh_guard_${g} COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform
+            -DSH_GUARD_WK_${g} ${WK_SH_SRC})
+        set_tests_properties(wk_sh_guard_${g} PROPERTIES
+            PASS_REGULAR_EXPRESSION "is read-only: an output path may not include")
+    endforeach()
+    foreach(hdr sup_cells drv_cells drv_odiag drv_temp platform)
+        add_test(NAME wk_sh_guard_live_${hdr} COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform
+            -DSH_GUARD_WK_LIVE_${hdr} ${WK_SH_SRC})
+        set_tests_properties(wk_sh_guard_live_${hdr} PROPERTIES
+            PASS_REGULAR_EXPRESSION "lock-up shadow is read-only: it may not include a live header")
     endforeach()
     # r04r: the retired holder stays out of the image (the POST_BUILD scan of
     # tcu_app.elf runs the same rule on the real link map); its fixtures
@@ -2438,7 +2531,7 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Generic")
             if(_s MATCHES "(^|/)app/cal_inplace\\.c$")
                 set(_has_ip ON)
             endif()
-            if(_s MATCHES "(^|/)app/(sm_shadow|sm_gear|sm_cal|fr_shadow|fr_fm|fr_cal|gp_shadow|gp_gear|gp_cal|lp_shadow)\\.c$")
+            if(_s MATCHES "(^|/)app/(sm_shadow|sm_gear|sm_cal|fr_shadow|fr_fm|fr_cal|gp_shadow|gp_gear|gp_cal|lp_shadow|wk_shadow)\\.c$")
                 set(_needs_ip ON)
             endif()
         endforeach()

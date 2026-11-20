@@ -50,6 +50,9 @@
 #if defined(TCU_TI_SHADOW_TU)
 #error "the torque-intervention shadow is read-only: it may not include a live header (drv_odiag.h)"
 #endif
+#if defined(TCU_WK_SHADOW_TU)
+#error "the lock-up shadow is read-only: it may not include a live header (drv_odiag.h)"
+#endif
 
 /* THE FEEDBACK SHADOW IS READ-ONLY (app/fb_shadow.c defines TCU_FB_SHADOW_TU):
  * it may not include a live output header */

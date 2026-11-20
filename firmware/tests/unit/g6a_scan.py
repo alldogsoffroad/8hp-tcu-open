@@ -158,14 +158,22 @@ STOCK_FORBIDDEN = ["e8bfa", "e8cf6", "d229e", "f71ec", "a2028", "a1712", "bddb0"
                    # 0xAEACE / 0xAEB8C / 0xAEAFA: their values are stood in, never defined or called); the event log
                    # 0xB79E4, the range-error fatal 0xB75B4 / 0xB75A6, the DSM reporter 0xA105E and the NV shift /
                    # abort counters 0xBA538 / 0xBA52C -> 0xE8512 are already above
-                   "f31b2", "aea24", "aea5c", "aeac0", "aeace", "aeb8c", "aeafa"]
+                   "f31b2", "aea24", "aea5c", "aeac0", "aeace", "aeb8c", "aeafa",
+                   # (2026-11-20, ~/tcu_sweep/wk_shadow_port.md, ti_amounts_wk_decode.md section C): the lock-up shadow's
+                   # keep-outs - 0xBF8E8 (the engagement counter written to EEPROM block 0x0304, dirty flag
+                   # 0xFFF85175; its reader 0xBF89E is read-only and safe) and the WK fill-adaptation learner
+                   # 0xAEE26 / 0xAEE1C / 0xAEE2E -> 0xCEE94 / 0xCE48C / 0xCE00C (stubbed; the reader 0xAEE0E is
+                   # held constant): never defined or called
+                   "bf8e8", "aee26", "aee1c", "aee2e", "cee94", "ce48c", "ce00c"]
 LIT_FORBIDDEN = [0xFFF85174, 0xFFF85175, 0xFFF85176]
 # F1: the EEPROM / NVM / DSM-record / fatal-log cells no fault-reaction shadow
 # object may hold as a literal or a movi20 operand (plan §5, f0 §7)
 LIT_FORBIDDEN_FR = LIT_FORBIDDEN + [0xFFF8E613, 0xFFF8BA30, 0xFFF8E621, 0xFFF8E622, 0xFFF89BEC, 0xFFF80D24, 0xFFF800E6,
                                     0xFFF800ED, 0xFFF80E0F, 0xFFF82EF4, 0xFFF82F78, 0xFFF82F79,
                                     0xFFF830AC, 0xFFF830B0, 0xFFF830F0, 0xFFF897E8, 0xFFF8E57A,
-                                    0xFFF8E575, 0xFFF8E577]
+                                    0xFFF8E575, 0xFFF8E577,
+                                    # the lock-up engagement counter's mirror (0xBF8E8, ~/tcu_sweep/wk_shadow_port.md)
+                                    0xFFF81B72]
 # the DSM image (memory 1 / the ring / the pointer / the UDS status bytes) and
 # the record counts: no literal or movi20 operand inside
 RANGE_FORBIDDEN_FR = [(0xFFF81D58, 0xFFF82E13), (0xFFF85114, 0xFFF85117),
@@ -185,7 +193,7 @@ RANGE_FORBIDDEN_FR = [(0xFFF81D58, 0xFFF82E13), (0xFFF85114, 0xFFF85117),
 # 0xE8BFA / 0xF71EC): the bulk-save hook 0xE9340, the record write-back
 # 0xBCAD6, the ratio / slip monitor 0xF02EA (+ 0xF0D5C, 0xF0728), the WK
 # lock-up active list 0xE0FE4 / 0xE105C / 0xE106E and its engagement SM
-# 0xDEA5E, 0xD46A0, 0xCA65C, the restart sequencer 0xD8122 / 0xD8C3A, 0xDD2C4
+# 0xDEA5E (the read-only shadow app/wk_shadow.c ports them under descriptive names, never these hex ones), 0xD46A0, 0xCA65C, the restart sequencer 0xD8122 / 0xD8C3A, 0xDD2C4
 MODE2_FORBIDDEN = ["e9340", "bcad6", "f02ea", "f0d5c", "f0728", "e0fe4", "e105c", "e106e", "dea5e",
                    "d46a0", "ca65c", "d8122", "d8c3a", "dd2c4"]
 

@@ -263,6 +263,15 @@ static void run_child(const scen_t *sc, bool g6b, gr_t *g, res_t *res, uint8_t *
                     (unsigned)ti->w.err_n);
         }
 #endif
+#if defined(WK_TEST)
+        {
+            const volatile wk_t *wk = wk_shadow_state();
+            fprintf(stderr, "WK run '%s': passes %u reset %u gate %u cmp %u diff %u perm %u err %u state %u wk %u\n", sc->name,
+                    (unsigned)wk->w.pass_n, (unsigned)wk->w.reset_n, (unsigned)wk->w.gate_n, (unsigned)wk->w.cmp_n,
+                    (unsigned)wk->w.diff_n, (unsigned)wk->w.perm_n, (unsigned)wk->w.err_n, (unsigned)wk->state,
+                    (unsigned)wk->wk_i);
+        }
+#endif
 #if defined(FR_TEST)
         {
             /* F1: the fault-reaction shadow ran: its verdicts, the comparators */

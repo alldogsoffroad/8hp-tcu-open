@@ -50,6 +50,7 @@
 #include "app/fr_shadow.h"
 #include "app/gp_shadow.h"
 #include "app/lp_shadow.h"   /* 2026-11-20: the read-only line-pressure / torque-intervention shadows */
+#include "app/wk_shadow.h"   /* 2026-11-20: the read-only torque-converter lock-up (WK) shadow */
 #include "app/park_law.h"
 #if !defined(TCU_RAM_APP)
 #include "app/g6a.h"
@@ -451,6 +452,9 @@ static void task_10ms(void)
          * (Sys) AND TORQUE-INTERVENTION SHADOWS (app/lp_shadow.c, app/ti_shadow.c, their own
          * RAM .lp_shadow / .ti_shadow): nothing is applied, offered or transmitted */
         lp_hook_10ms();
+        /* (2026-11-20, ~/tcu_sweep/wk_shadow_port.md) THE READ-ONLY TORQUE-CONVERTER LOCK-UP
+         * (WK) SHADOW (app/wk_shadow.c, its own RAM .wk_shadow): the stock slots 37..39 */
+        wk_hook_10ms();
     }
 #endif
     bench_tick_10ms();
@@ -616,6 +620,7 @@ int main(void)
     shadow_sim_init();
     /* the read-only line-pressure / torque-intervention shadows (their RAM cleared) */
     lp_hook_init();
+    wk_hook_init();                     /* the read-only lock-up shadow (its RAM cleared) */
 #endif
     park_pair_init();                   /* park sensor: 0x141B1C (safety layer) */
     sensors_init(&s_sensors_cfg);
