@@ -65,9 +65,9 @@ the live path) · **MISSING** (not ported) · **UNDECODED** (inside a ported fun
 
 ## 5. What remains before the fork
 
-1. **UNDECODED → decoded and shadowed:** the torque-intervention amounts and dwells; WK lock-up (in progress 2026-11-20, `~/tcu_sweep/ti_amounts_wk_decode.md`); class-0 / skip downshifts.
+1. **UNDECODED → decoded and shadowed:** torque-intervention amounts — SHADOW (r05e); WK lock-up — SHADOW (r05e) with the per-state ramps and the request producer decoded (`~/tcu_sweep/gaps3_decode.md`) but not yet ported; class-0 / skip downshifts — decoded, not yet ported. Remaining undecoded: the WK closed micro-slip hold (B388/B424).
 2. **Flash space:** solved 2026-11-20 — the app limit was wrongly held at 0x80000; it is now 0xA0000 (136 KB spare at r05d; the application block runs to 0x17FFFF). Reading the live path's calibration in place is optional now.
-3. **Fork prep:** the 11 FCA-frame host tests re-based on the `vehicle_in` injector; a neutral transmit seam.
+3. **Fork prep:** DONE 2026-11-20 — the transmission tests run on the `vehicle_in` injector (lockstep-equivalent to the FCA profile), the neutral transmit seam `io/vehicle/vehicle_tx.h`; image unchanged.
 4. **Decisions for the fork, not the FCA build:** D-N1 the lever source; D-N4 debug IDs on bus 2; which shadows go live in which order once the Nissan inputs exist.
 5. **Hardware, not blocking the fork:** an assembled transmission (park polarity, real shifts); the Nissan ECU capture (`docs/reference/nissan-ecu-bench-capture-plan.md`).
 
