@@ -2412,12 +2412,28 @@ static void r3de2(void)
     }
 }
 
-/* 0x104A28 (+ OUR stand-in for its undecoded sequencing branch: with no
- * change pending in power flow 0, E4A7 follows E6A1, so a gear code of −1
- * left by an R engagement returns to the target in N/P) */
+/* 0xD0D1C: E28E in an exception state (1, 2, 4, 5, 7, 8, 9, 12, 13) */
+static bool d0d1c(void)
+{
+    const uint8_t s = E28.st;
+    return s == 1u || s == 2u || s == 4u || s == 5u || s == 7u || s == 8u || s == 9u ||
+           s == 12u || s == 13u;
+}
+
+/* 0x104A28. Head from the bytes (0x104A30..0x104A58 → LAB_104B86
+ * 0x104B86..0x104B92): a change pending (0xCFE62(E69B): E6EE != E69B) or
+ * E28E in an exception state (0xD0D1C) with AE2C == 0 (stand-in 0) HOLDS the
+ * commanded gear at E69F — r04y (~/tcu_sweep/e4a7_fix_port.md); up to r04w
+ * ours wrote E6A1 there. Not pending: 0x104A5C..0x104A7A (E4A7 == E6A1 →
+ * return; AE2C / AE2B (stand-ins 0) or E6A1 == −1 → E6A1), then OUR stand-in
+ * for the 0xBAA96 / LAB_104AFC branches (BD14+1 / AE56 / CCE4 not ported in
+ * this engine): with power flow 0, E4A7 follows E6A1, so a gear code of −1
+ * left by an R engagement returns to the target in N/P */
 static void r4a28(void)
 {
-    if (pending() || (V_E4A7 != V_E6A1 && V_E6A1 == -1)) {
+    if (pending() || d0d1c() /* && AE2C == 0 (stand-in 0) */) {
+        V_E4A7 = V_E69F;                                 /* LAB_104B86 */
+    } else if (V_E4A7 != V_E6A1 && V_E6A1 == -1) {
         V_E4A7 = V_E6A1;
     } else if (V_E69B == 0u && V_E4A7 != V_E6A1) {
         W.seq_n++;
