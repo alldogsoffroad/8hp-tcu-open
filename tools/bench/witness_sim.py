@@ -5,11 +5,11 @@ TCU_SHADOW_SIM; ~/tcu_sweep/shadow_sim_port.md).
 Reads the 0x20-byte witness at __shadow_sim_start (section .shadow_sim, 0xFFF87F10; the address is
 resolved from the ELF by nm) over meas and prints: frames received (good / refused / valid->invalid
 timeouts), the last values (output rpm, turbine rpm, torque Nm, pedal raw), the valid flag, the age
-in 10 ms ticks and the magic (53534944 'SSIM' once shadow_sim_init has run).
+in 10 ms ticks and the magic (5353494d 'SSIM' once shadow_sim_init has run).
 
     witness_sim.py [rounds] [--elf PATH]
 
-On a plain boot with no frames: frames 0, valid 0, magic 53534944. During `tcu_bench.py drive-cycle`:
+On a plain boot with no frames: frames 0, valid 0, magic 5353494d. During `tcu_bench.py drive-cycle`:
 frames climbing at ~100/s, valid 1, age 0..1. After the command ends: valid 0 within 100 ms,
 timeouts +1. `meas 0x02` hygiene first (CLAUDE rule 6).
 """
@@ -58,7 +58,7 @@ def main():
               "valid %u age %u | magic %s%s" %
               (r, time.strftime("%H:%M:%S"), u(0, 4), u(4, 4), u(8, 4), u(12, 2), u(14, 2),
                int.from_bytes(d[16:18], "big", signed=True), d[18], d[19], d[20], d[24:28].hex(),
-               "" if d[24:28].hex() == "53534944" else "  (NOT INITIALISED)"), flush=True)
+               "" if d[24:28].hex() == "5353494d" else "  (NOT INITIALISED)"), flush=True)
         time.sleep(1.0)
 
 

@@ -1990,7 +1990,7 @@ def cmd_drive_cycle(b, args):
             u = lambda o, n: int.from_bytes(sw[o:o + n], "big", signed=False)
             print(f"sim input witness: frames {u(0, 4)} bad {u(4, 4)} timeouts {u(8, 4)} last out {u(12, 2)} turb {u(14, 2)} "
                   f"tq {int.from_bytes(sw[16:18], 'big', signed=True)} pedal {sw[18]} valid {sw[19]} age {sw[20]} "
-                  f"magic {sw[24:28].hex()} (53534944 = ok); sent here {ss.sent}")
+                  f"magic {sw[24:28].hex()} (5353494d = ok); sent here {ss.sent}")
     finally:
         ss.stop.set()
         sim.stop.set()
