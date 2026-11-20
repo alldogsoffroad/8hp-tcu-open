@@ -24,6 +24,12 @@
 #if defined(TCU_GP_SHADOW_TU)
 #error "the gear-pair shadow is read-only: it may not include a live header (sup_cells.h)"
 #endif
+#if defined(TCU_LP_SHADOW_TU)
+#error "the line-pressure shadow is read-only: it may not include a live header (sup_cells.h)"
+#endif
+#if defined(TCU_TI_SHADOW_TU)
+#error "the torque-intervention shadow is read-only: it may not include a live header (sup_cells.h)"
+#endif
 
 /* THE PA7 SHADOW IS READ-ONLY (app/pa7_shadow.c defines TCU_PA7_SHADOW_TU):
  * it may not include a live header */

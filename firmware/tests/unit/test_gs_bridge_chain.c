@@ -130,6 +130,16 @@ static void ss_frame_10ms(uint8_t mode)
     }
 }
 #endif
+#if defined(LP_TEST)
+/* (2026-11-20, ~/tcu_sweep/lp_ti_shadow_port.md): THE LINE-PRESSURE / TORQUE-INTERVENTION SHADOWS'
+ * live identity - their 10 ms pass at app/main.c's slot (right after the gear-pair shadow), the live
+ * cells BY VALUE; needs GP_TEST (the gear cells come from the coupled chain) */
+#include "app/lp_shadow.h"
+#include "app/ti_shadow.h"
+#  if !defined(GP_TEST)
+#    error "LP_TEST needs GP_TEST (the shadows read the coupled gear chain's cells)"
+#  endif
+#endif
 
 #include <sys/wait.h>
 #include <unistd.h>
@@ -755,6 +765,40 @@ static void task10(gr_t *g, unsigned p)
 #endif
         }
 #endif
+#if defined(LP_TEST)
+        {
+            /* app/lp_hook.c's gather, from the harness's values (the candidate's accessors, our sensors / vehicle) */
+            static uint16_t lp_ms;
+            const volatile uint8_t *bd = (const volatile uint8_t *)gs_cand_host_state(14u, &n);
+            const volatile gf_t *gg = gp_gear_state();
+            const sensors_in_t *lsn = sensors_in();
+            const vehicle_in_t *lv = vehicle_in();
+            lp_in_t li;
+            ti_in_t ti;
+            memset(&li, 0, sizeof li);
+            li.c25 = gg->c25[0]; li.c26 = (uint8_t)gg->c25[1]; li.c27 = gg->c25[2];
+            li.c2b = gg->c2b[0]; li.c2c = (uint8_t)gg->c2b[1]; li.c2d = gg->c2b[2];
+            li.c2f = gin.e6ee; li.c30 = gin.e69b;
+            li.bd15 = bd[1]; li.bd16 = bd[2];
+            li.bd8b = 0u; li.bd72 = 0u; li.bd74 = 0u;
+            li.cf4 = 1u; li.temp = gin.cd2; li.cd2 = gin.cd2; li.range = 8u; li.pos = 3u; li.d1d = 0x9Eu; li.c18 = 0x4Bu;
+            li.os_mode = gin.os_mode;
+            li.eng = gin.cd0;
+            li.out = (lsn->q_output_speed == Q_OK && lsn->output_speed > 0) ? (uint16_t)lsn->output_speed : 0u;
+            lp_ms = (uint16_t)(lp_ms + 10u);
+            li.now_ms = lp_ms;
+            li.t1 = (lv->q_torque_actual == Q_OK) ? (int16_t)(lv->torque_actual / 10) : (int16_t)0;
+            li.live_sys = 500u;
+            lp_hook_feed(&li);
+            memset(&ti, 0, sizeof ti);
+            ti.os_mode = li.os_mode; ti.bd16 = li.bd16; ti.t3 = li.t3; ti.now_ms = li.now_ms;
+            ti_hook_feed(&ti);
+#if defined(LP_NEG_LEAK)
+            /* the negative: a leak of the would-be Sys current into the live 0x89CF5 */
+            *(volatile uint8_t *)(uintptr_t)0xFFF89CF5u = (uint8_t)(0x60u + (lp_shadow_state()->sys_i & 0x3Fu));
+#endif
+        }
+#endif
     }
     if (mode < 1u || mode > 3u) {
         s_sm_on = 0u;
@@ -835,6 +879,9 @@ static void run_g(gr_t *g)
 #endif
 #if defined(GP_TEST)
     gp_hook_init();                 /* app/main.c's shadow init block */
+#endif
+#if defined(LP_TEST)
+    lp_hook_init();                 /* app/main.c's shadow init block */
 #endif
 #if defined(DIAG_TEMPS)
     for (unsigned d = 0u; d < 2u; d++) {

@@ -49,6 +49,7 @@
 #include "app/sm_shadow.h"
 #include "app/fr_shadow.h"
 #include "app/gp_shadow.h"
+#include "app/lp_shadow.h"   /* 2026-11-20: the read-only line-pressure / torque-intervention shadows */
 #include "app/park_law.h"
 #if !defined(TCU_RAM_APP)
 #include "app/g6a.h"
@@ -446,6 +447,10 @@ static void task_10ms(void)
          * app/gp_gear.c, their own RAM .gp_shadow / .gp_gear): the stock
          * slots 30..35 with the shift object 0xFFF8BD14 as a shadow */
         gp_hook_10ms();
+        /* (2026-11-20, ~/tcu_sweep/lp_ti_shadow_port.md) THE READ-ONLY HEALTHY LINE-PRESSURE
+         * (Sys) AND TORQUE-INTERVENTION SHADOWS (app/lp_shadow.c, app/ti_shadow.c, their own
+         * RAM .lp_shadow / .ti_shadow): nothing is applied, offered or transmitted */
+        lp_hook_10ms();
     }
 #endif
     bench_tick_10ms();
@@ -609,6 +614,8 @@ int main(void)
     /* BENCH-ONLY simulated speeds for the shadows (io/vehicle/shadow_sim.c): registers
      * 0x7F6 on bus 2 before plat_can_rx_commit below */
     shadow_sim_init();
+    /* the read-only line-pressure / torque-intervention shadows (their RAM cleared) */
+    lp_hook_init();
 #endif
     park_pair_init();                   /* park sensor: 0x141B1C (safety layer) */
     sensors_init(&s_sensors_cfg);

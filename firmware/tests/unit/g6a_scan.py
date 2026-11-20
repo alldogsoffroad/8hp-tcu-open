@@ -151,7 +151,14 @@ STOCK_FORBIDDEN = ["e8bfa", "e8cf6", "d229e", "f71ec", "a2028", "a1712", "bddb0"
                    # (2026-11-20, ~/tcu_sweep/gp_phases2_port.md, shift_phase_bodies_decode.md section 5): the E5BB
                    # shift-adaptation notifications (0xAEE06 ph 2 first pass, 0xAEDFE ph 4 / 5 entry, 0xAED02, 0xAECD8) and
                    # the phase-9 / 0x10FFBE adaptation reads (0xAED5C, 0xAED7A, 0xAED98): stood in, never defined in the image
-                   "aee06", "aedfe", "aed02", "aecd8", "aed5c", "aed7a", "aed98"]
+                   "aee06", "aedfe", "aed02", "aecd8", "aed5c", "aed7a", "aed98",
+                   # (2026-11-20, ~/tcu_sweep/lp_ti_shadow_port.md, line_pressure_torque_decode.md section 4): the
+                   # line-pressure / torque-intervention shadows' keep-outs - the fault monitor behind reason 0x0F
+                   # (0xF31B2) and the adaptation readers behind 0xEA4C8's reasons (0xAEA24 / 0xAEA5C / 0xAEAC0 /
+                   # 0xAEACE / 0xAEB8C / 0xAEAFA: their values are stood in, never defined or called); the event log
+                   # 0xB79E4, the range-error fatal 0xB75B4 / 0xB75A6, the DSM reporter 0xA105E and the NV shift /
+                   # abort counters 0xBA538 / 0xBA52C -> 0xE8512 are already above
+                   "f31b2", "aea24", "aea5c", "aeac0", "aeace", "aeb8c", "aeafa"]
 LIT_FORBIDDEN = [0xFFF85174, 0xFFF85175, 0xFFF85176]
 # F1: the EEPROM / NVM / DSM-record / fatal-log cells no fault-reaction shadow
 # object may hold as a literal or a movi20 operand (plan §5, f0 §7)

@@ -32,6 +32,12 @@
 #if defined(TCU_GP_SHADOW_TU)
 #error "the gear-pair shadow is read-only: it may not include a live header (drv_temp.h)"
 #endif
+#if defined(TCU_LP_SHADOW_TU)
+#error "the line-pressure shadow is read-only: it may not include a live header (drv_temp.h)"
+#endif
+#if defined(TCU_TI_SHADOW_TU)
+#error "the torque-intervention shadow is read-only: it may not include a live header (drv_temp.h)"
+#endif
 
 #include <stdint.h>
 

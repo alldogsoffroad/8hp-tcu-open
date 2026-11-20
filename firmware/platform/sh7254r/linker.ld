@@ -454,6 +454,23 @@ SECTIONS
     ASSERT(__shadow_sim_start == 0xFFF87F10 && __shadow_sim_start >= __gp_phase_end &&
            __shadow_sim_end <= 0xFFF88120 && SIZEOF(.shadow_sim) <= 0x20,
            ".shadow_sim: the simulated-speed witness is off 0xFFF87F10 or leaves the dump-zero run")
+    /* THE LINE-PRESSURE (Sys) AND TORQUE-INTERVENTION SHADOWS (2026-11-20, ~/tcu_sweep/lp_ti_shadow_port.md;
+     * app/lp_shadow.c / ti_shadow.c, ours - not stock cells): struct lp_t (0xB4) at 0xFFF8BA40 inside the dump-zero
+     * run 0xFFF8BA30..0xFFF8BC70 (below the stock line-pressure object 0xFFF8BCB0 and nothing of ours), and
+     * struct ti_t (0x5C) at 0xFFF929C0 inside the dump-zero run 0xFFF929B0..0xFFF92C68 (right above .gsc_obj).
+     * Both re-checked all zero in stockram_driving_20261104.bin. Cleared by lp_shadow_init / ti_shadow_init. */
+    .lp_shadow 0xFFF8BA40 (NOLOAD) : {
+        __lp_shadow_start = .; *(.lp_shadow) *lp_shadow.c.obj(.bss .bss.* COMMON)
+        . = ALIGN(4); __lp_shadow_end = .;
+    } > RAM
+    .ti_shadow 0xFFF929C0 (NOLOAD) : {
+        __ti_shadow_start = .; *(.ti_shadow) *ti_shadow.c.obj(.bss .bss.* COMMON)
+        . = ALIGN(4); __ti_shadow_end = .;
+    } > RAM
+    ASSERT(__lp_shadow_start == 0xFFF8BA40 && SIZEOF(.lp_shadow) == 0xB4 && __lp_shadow_end <= 0xFFF8BC70,
+           ".lp_shadow: lp_t is off 0xFFF8BA40 or leaves the dump-zero run (witness_lp.py)")
+    ASSERT(__ti_shadow_start == 0xFFF929C0 && SIZEOF(.ti_shadow) == 0x5C && __ti_shadow_end <= 0xFFF92C68,
+           ".ti_shadow: ti_t is off 0xFFF929C0 or leaves the dump-zero run (witness_lp.py)")
     /* the fault-reaction shadow's FAULT MANAGER (app/fr_fm.c, ours; RAM
      * only, written by that TU alone): struct fr_fm_t in the dump-zero gap
      * between the A-DMAC ring (+ its guard 0x88728) and the range chain's

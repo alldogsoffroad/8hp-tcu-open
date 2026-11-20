@@ -36,6 +36,10 @@ static void mutate(void)
     /* the down-shift f8 array t[1] = 1 -> 0 */
     s_img[CAL_GP_F8_DN + 4u + 1u] -= 1u;
 #endif
+#if defined(LP_NEG_MAP)
+    /* the line-pressure shadow's N / P demand map 0x1DE7A0 (cal+0x58): z[0] 6000 -> 6004 (the 7265 idle Sys moves) */
+    s_img[0x1DE7A0u + 8u + 2u * 6u + 1u] += 4u;
+#endif
 #if defined(GP_NEG_DNMAP)
     /* the 2->1 class-1 down-shift on-coming kiss map (blk58+0xC = 0x1DBD04): the y at the 105 degC point 100 -> 101 */
     s_img[0x1DBD04u + 4u + 2u * 10u + 2u * 6u + 1u] += 1u;

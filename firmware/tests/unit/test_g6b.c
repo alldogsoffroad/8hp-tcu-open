@@ -251,6 +251,18 @@ static void run_child(const scen_t *sc, bool g6b, gr_t *g, res_t *res, uint8_t *
                     (unsigned)sm_shadow_state()->walk_n);
         }
 #endif
+#if defined(LP_TEST)
+        {
+            const volatile lp_t *lp = lp_shadow_state();
+            const volatile ti_t *ti = ti_shadow_state();
+            fprintf(stderr, "LP run '%s': passes %u cmp %u diff %u err %u fill %u sysbin %u res %u sys %u | TI passes %u "
+                    "arms %u/%u/%u ends %u phases %u err %u\n", sc->name, (unsigned)lp->w.pass_n, (unsigned)lp->w.cmp_n,
+                    (unsigned)lp->w.diff_n, (unsigned)lp->w.err_n, (unsigned)lp->w.fill_n, (unsigned)lp->w.sys_bin_n,
+                    (unsigned)lp->res, (unsigned)lp->sys_i, (unsigned)ti->w.pass_n, (unsigned)ti->w.arm_n[1],
+                    (unsigned)ti->w.arm_n[2], (unsigned)ti->w.arm_n[3], (unsigned)ti->w.end_n, (unsigned)ti->w.phase_n,
+                    (unsigned)ti->w.err_n);
+        }
+#endif
 #if defined(FR_TEST)
         {
             /* F1: the fault-reaction shadow ran: its verdicts, the comparators */

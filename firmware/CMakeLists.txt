@@ -150,6 +150,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         # shift-engine shadow + its coupled gear chain (own RAM .gp_shadow /
         # .gp_gear) — code-flash application only
         app/gp_shadow.c app/gp_cal.c app/gp_gear.c app/gp_hook.c
+        # (2026-11-20, ~/tcu_sweep/lp_ti_shadow_port.md): the READ-ONLY healthy
+        # line-pressure (Sys) and torque-intervention shadows (own RAM .lp_shadow /
+        # .ti_shadow) - code-flash application only
+        app/lp_shadow.c app/lp_cal.c app/ti_shadow.c app/lp_hook.c
     )
     # keep GCC from turning the memset/memcpy loops into calls to themselves
     set_source_files_properties(platform/sh7254r/libc_min.c PROPERTIES
@@ -198,6 +202,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py nvm ${SH_NM}
             CMakeFiles/tcu_app.elf.dir/app/gp_shadow.c.obj CMakeFiles/tcu_app.elf.dir/app/gp_gear.c.obj
             CMakeFiles/tcu_app.elf.dir/app/gp_cal.c.obj CMakeFiles/tcu_app.elf.dir/app/gp_hook.c.obj
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py nvm ${SH_NM}
+            CMakeFiles/tcu_app.elf.dir/app/lp_shadow.c.obj CMakeFiles/tcu_app.elf.dir/app/ti_shadow.c.obj
+            CMakeFiles/tcu_app.elf.dir/app/lp_cal.c.obj CMakeFiles/tcu_app.elf.dir/app/lp_hook.c.obj
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6c_sections.py ${SH_OBJDUMP} tcu_app.elf
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py retired ${SH_NM} tcu_app.elf
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py image ${SH_NM} tcu_app.elf
@@ -284,7 +291,8 @@ else()
     add_executable(tcu_sim platform/host/plat_host.c ${CORE_SOURCES}
         app/gs_cand.c app/gs_cand_fill.c app/g6a.c
         app/fr_shadow.c app/fr_fm.c app/fr_cal.c app/fr_hook.c   # F1: as the image
-        app/gp_shadow.c app/gp_cal.c app/gp_gear.c app/gp_hook.c)
+        app/gp_shadow.c app/gp_cal.c app/gp_gear.c app/gp_hook.c
+        app/lp_shadow.c app/lp_cal.c app/ti_shadow.c app/lp_hook.c)
     target_compile_definitions(tcu_sim PRIVATE GSC_G6A=1)   # the image's candidate form
 
     enable_testing()
@@ -2060,6 +2068,98 @@ else()
         set_tests_properties(gp_sh_guard_live_${hdr} PROPERTIES
             PASS_REGULAR_EXPRESSION "the gear-pair shadow is read-only: it may not include a live header")
     endforeach()
+    # THE LINE-PRESSURE (Sys) AND TORQUE-INTERVENTION SHADOWS (2026-11-20, ~/tcu_sweep/lp_ti_shadow_port.md):
+    # the stock's healthy line-pressure target 0xE9CE0 (the max of demands, reasons 0x01 0x10 0x11 0x13 0x18
+    # 0x19 ... with the Sys law and the input torque 0xDDFD8) and the shift / engagement torque-intervention
+    # request (0xE5A20 .. 0xD31D0 -> the 13-bit fields of 0x2F9 / 0x037), as read-only shadows with the
+    # fault reaction 50 / 23 HELD 0 (the healthy case). lp_shadow: the decode's Sys values at 38.9 / 80 C, the
+    # garage and upshift demands, leaving P, reaction 50 -> 500, the input torque, the TI sequences and fields;
+    # lp_cal_bytes re-derives lp_cal.c from the stock image; _neg_MAP / _neg_TABLE (a moved stock map byte, a
+    # mutated phase-table row) must FAIL. lp_identity: test_g6b with the shadows ticking (every bus-A word, the
+    # park demands, the cell window) must pass unchanged and the shadows must have run; the leak negative must
+    # FAIL. The scans (outputs / shadow / hook, nvm) and the SH compile checks.
+    set(LP_TEST_SOURCES tests/unit/test_lp_shadow.c app/lp_shadow.c app/lp_cal.c app/ti_shadow.c app/lp_hook.c)
+    add_executable(test_lp_shadow ${LP_TEST_SOURCES})
+    target_compile_definitions(test_lp_shadow PRIVATE _POSIX_C_SOURCE=200809L LP_HOOK_NO_GATHER=1)
+    add_test(NAME lp_shadow COMMAND test_lp_shadow)
+    add_test(NAME lp_cal_bytes COMMAND test_lp_shadow --cal)
+    set_tests_properties(lp_cal_bytes PROPERTIES SKIP_RETURN_CODE 77)
+    add_executable(test_lp_shadow_neg_MAP ${LP_TEST_SOURCES})
+    target_compile_definitions(test_lp_shadow_neg_MAP PRIVATE _POSIX_C_SOURCE=200809L LP_HOOK_NO_GATHER=1 LP_NEG_MAP=1)
+    add_test(NAME lp_shadow_neg_MAP COMMAND test_lp_shadow_neg_MAP)
+    add_executable(test_lp_shadow_neg_TABLE ${LP_TEST_SOURCES})
+    target_compile_definitions(test_lp_shadow_neg_TABLE PRIVATE _POSIX_C_SOURCE=200809L LP_HOOK_NO_GATHER=1 TI_NEG_TABLE=1)
+    add_test(NAME lp_shadow_neg_TABLE COMMAND test_lp_shadow_neg_TABLE)
+    set_tests_properties(lp_shadow_neg_MAP lp_shadow_neg_TABLE PROPERTIES WILL_FAIL TRUE)
+    set(LP_APP_SOURCES app/lp_shadow.c app/lp_cal.c app/ti_shadow.c app/lp_hook.c)
+    add_executable(test_g6b_lp ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c
+        ${GP_APP_SOURCES} ${LP_APP_SOURCES})
+    target_compile_definitions(test_g6b_lp PRIVATE ${G6B_DEFS} SM_TEST=1 SM_HOOK_NO_GATHER=1
+        GP_TEST=1 GP_HOOK_NO_GATHER=1 LP_TEST=1 LP_HOOK_NO_GATHER=1)
+    add_test(NAME lp_identity COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/lp_identity.py
+        $<TARGET_FILE:test_g6b_lp>)
+    add_executable(test_g6b_lpleak ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c
+        ${GP_APP_SOURCES} ${LP_APP_SOURCES})
+    target_compile_definitions(test_g6b_lpleak PRIVATE ${G6B_DEFS} SM_TEST=1 SM_HOOK_NO_GATHER=1
+        GP_TEST=1 GP_HOOK_NO_GATHER=1 LP_TEST=1 LP_HOOK_NO_GATHER=1 LP_NEG_LEAK=1)
+    add_test(NAME lp_identity_negative_leak COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/lp_identity.py
+        $<TARGET_FILE:test_g6b_lpleak>)
+    set_tests_properties(lp_identity lp_identity_negative_leak PROPERTIES ENVIRONMENT "${G6C_GOLD_ENV}")
+    set_tests_properties(lp_identity_negative_leak PROPERTIES WILL_FAIL TRUE)
+    set(LP_OUTPUT_PATHS ${GP_OUTPUT_PATHS} ${CMAKE_SOURCE_DIR}/app/gp_shadow.c ${CMAKE_SOURCE_DIR}/app/gp_hook.c
+        ${CMAKE_SOURCE_DIR}/app/gp_gear.c)
+    add_test(NAME lp_shadow_scan_outputs
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/lp_ti_shadow_scan.py outputs ${LP_OUTPUT_PATHS})
+    add_test(NAME lp_shadow_scan_outputs_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/lp_ti_shadow_scan.py outputs
+            ${CMAKE_SOURCE_DIR}/tests/unit/lp_scan_fixture_output.c)
+    add_test(NAME lp_shadow_scan_shadow
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/lp_ti_shadow_scan.py shadow
+            ${CMAKE_SOURCE_DIR}/app/lp_shadow.c ${CMAKE_SOURCE_DIR}/app/lp_shadow.h
+            ${CMAKE_SOURCE_DIR}/app/ti_shadow.c ${CMAKE_SOURCE_DIR}/app/ti_shadow.h
+            ${CMAKE_SOURCE_DIR}/app/lp_cal.c ${CMAKE_SOURCE_DIR}/app/lp_cal.h)
+    add_test(NAME lp_shadow_scan_shadow_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/lp_ti_shadow_scan.py shadow
+            ${CMAKE_SOURCE_DIR}/tests/unit/lp_scan_fixture_shadow.c)
+    add_test(NAME lp_shadow_scan_hook
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/lp_ti_shadow_scan.py hook ${CMAKE_SOURCE_DIR}/app/lp_hook.c)
+    add_test(NAME lp_shadow_scan_hook_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/lp_ti_shadow_scan.py hook
+            ${CMAKE_SOURCE_DIR}/tests/unit/lp_scan_fixture_hook.c)
+    set_tests_properties(lp_shadow_scan_outputs_negative lp_shadow_scan_shadow_negative
+        lp_shadow_scan_hook_negative PROPERTIES WILL_FAIL TRUE)
+    add_library(lp_nvm_objs OBJECT ${LP_APP_SOURCES})
+    target_compile_definitions(lp_nvm_objs PRIVATE LP_HOOK_NO_GATHER=1)
+    add_test(NAME lp_scan_nvm
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py nvm nm $<TARGET_OBJECTS:lp_nvm_objs>
+        COMMAND_EXPAND_LISTS)
+    add_library(lp_nvm_fixture OBJECT tests/unit/lp_nvm_fixture.c)
+    add_test(NAME lp_scan_nvm_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py nvm nm $<TARGET_OBJECTS:lp_nvm_fixture>)
+    set_tests_properties(lp_scan_nvm_negative PROPERTIES WILL_FAIL TRUE)
+    set(LP_SH_SRC ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard_lp.c)
+    add_test(NAME lp_sh_guard_control COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${LP_SH_SRC})
+    add_test(NAME lp_sh_guard_shadow
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion -Werror ${CMAKE_SOURCE_DIR}/app/lp_shadow.c)
+    add_test(NAME lp_sh_guard_ti
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion -Werror ${CMAKE_SOURCE_DIR}/app/ti_shadow.c)
+    add_test(NAME lp_sh_guard_cal
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/lp_cal.c)
+    add_test(NAME lp_sh_guard_hook
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform -Wall -Wextra -Wconversion
+            ${CMAKE_SOURCE_DIR}/app/lp_hook.c)
+    foreach(g OUTPUT OUTTI OUTCAL OUTTU)
+        add_test(NAME lp_sh_guard_${g} COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform
+            -DSH_GUARD_LP_${g} ${LP_SH_SRC})
+        set_tests_properties(lp_sh_guard_${g} PROPERTIES
+            PASS_REGULAR_EXPRESSION "is read-only: an output path may not include")
+    endforeach()
+    foreach(hdr sup_cells drv_cells drv_odiag drv_temp platform)
+        add_test(NAME lp_sh_guard_live_${hdr} COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform
+            -DSH_GUARD_LP_LIVE_${hdr} ${LP_SH_SRC})
+        set_tests_properties(lp_sh_guard_live_${hdr} PROPERTIES
+            PASS_REGULAR_EXPRESSION "line-pressure shadow is read-only: it may not include a live header")
+    endforeach()
     # r04r: the retired holder stays out of the image (the POST_BUILD scan of
     # tcu_app.elf runs the same rule on the real link map); its fixtures
     add_test(NAME g6r_scan_retired_ok
@@ -2338,7 +2438,7 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Generic")
             if(_s MATCHES "(^|/)app/cal_inplace\\.c$")
                 set(_has_ip ON)
             endif()
-            if(_s MATCHES "(^|/)app/(sm_shadow|sm_gear|sm_cal|fr_shadow|fr_fm|fr_cal|gp_shadow|gp_gear|gp_cal)\\.c$")
+            if(_s MATCHES "(^|/)app/(sm_shadow|sm_gear|sm_cal|fr_shadow|fr_fm|fr_cal|gp_shadow|gp_gear|gp_cal|lp_shadow)\\.c$")
                 set(_needs_ip ON)
             endif()
         endforeach()
