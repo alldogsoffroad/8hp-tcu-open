@@ -28,6 +28,14 @@ source scans.
                                 EEPROM dirty flag 0xFFF85175 / lock cells
                                 0xFFF85174..76 as a literal (objdump -s of
                                 the data/literal sections)
+  g6a_scan.py nvm NM OBJ...     F1: the fault-reaction shadow's objects name
+                                no forbidden stock routine (STOCK_FORBIDDEN,
+                                defined or referenced) and hold no EEPROM /
+                                NVM / DSM-record / fatal-log cell
+                                (LIT_FORBIDDEN_FR) and no address in the DSM
+                                image 0xFFF81D58..0xFFF82E13 or the record
+                                counts 0xFFF85114..17, as a data / literal
+                                word or a movi20 operand
   g6a_scan.py image NM ELF      G5b (D-G5-7): no defined symbol of the WHOLE
   g6a_scan.py image --nm-text FILE   image names one of the stock routines
                                 above (STOCK_FORBIDDEN) or a mode-2-only
@@ -104,8 +112,28 @@ NM_ALLOW = {
 NM_ALLOW_RE = [r"^gs_cand_", r"^gcf_", r"^__[a-z0-9_]+$", r"^_?_?gsc_obj_(start|end)$",
                r"^__stack_chk", r"^_GLOBAL_OFFSET_TABLE_$"]
 STOCK_FORBIDDEN = ["e8bfa", "e8cf6", "d229e", "f71ec", "a2028", "a1712", "bddb0", "bd84e",
-                   "6ab8e", "71594", "720c8", "b79e4", "a0e70", "6865c"]
+                   "6ab8e", "71594", "720c8", "b79e4", "a0e70", "6865c",
+                   # F1 (2026-11-19, ~/tcu_sweep/fault_reaction_gearcode_plan.md §5 and
+                   # f0_fault_chain_decode.md §7): the DSM record / aging / counters /
+                   # UDS cycle / clear / integrity / init, the event log, the fatal
+                   # handler and the safety-layer fatal pair, the NV engines and the
+                   # warm-start signature — none may be defined in the image
+                   "ac324", "9ce52", "ac550", "a0074", "ab79c", "ac114", "a0db4", "ac8fe",
+                   "ac97e", "a0816", "9fa5e", "a086a", "ac570", "9f7aa", "abf28", "abf40",
+                   "b767e", "bc912", "bc9c0", "bc9e2", "bcc00", "6a86c", "ae906",
+                   "abf98", "9d0ca", "9cff0", "9cfc4", "9da1a", "9d232", "9ccae", "9ccf6",
+                   "9d090", "ab7b6", "ac07a", "a016a", "a0bd6", "68736", "66f82", "7a914",
+                   "794c8"]
 LIT_FORBIDDEN = [0xFFF85174, 0xFFF85175, 0xFFF85176]
+# F1: the EEPROM / NVM / DSM-record / fatal-log cells no fault-reaction shadow
+# object may hold as a literal or a movi20 operand (plan §5, f0 §7)
+LIT_FORBIDDEN_FR = LIT_FORBIDDEN + [0xFFF8E621, 0xFFF8E622, 0xFFF89BEC, 0xFFF80D24, 0xFFF800E6,
+                                    0xFFF800ED, 0xFFF80E0F, 0xFFF82EF4, 0xFFF82F78, 0xFFF82F79,
+                                    0xFFF830AC, 0xFFF830B0, 0xFFF830F0, 0xFFF897E8, 0xFFF8E57A,
+                                    0xFFF8E575, 0xFFF8E577]
+# the DSM image (memory 1 / the ring / the pointer / the UDS status bytes) and
+# the record counts: no literal or movi20 operand inside
+RANGE_FORBIDDEN_FR = [(0xFFF81D58, 0xFFF82E13), (0xFFF85114, 0xFFF85117)]
 # G5b (2026-11-19, ~/tcu_sweep/g5b_port.md, D-G5-7): the stock's mode-2-only
 # functions stay out of the image (with STOCK_FORBIDDEN's 0xE8CF6 / 0xD229E /
 # 0xE8BFA / 0xF71EC): the bulk-save hook 0xE9340, the record write-back
@@ -207,6 +235,37 @@ def scan_link(nm, objs, bad):
                 bad.append("%s: holds the EEPROM cell 0x%08X as a literal" % (o, lit))
 
 
+def scan_nvm(nm, objs, bad):
+    """F1: the fault-reaction shadow's objects (and the negative fixture): no
+    symbol (defined or referenced) names a forbidden stock routine, no data /
+    literal word is a forbidden cell or inside a forbidden range, no movi20
+    operand either (the shadow keeps its own RAM)."""
+    objdump = nm.replace("nm", "objdump")
+    for o in objs:
+        names = [ln.split()[-1] for ln in subprocess.run([nm, o], capture_output=True, text=True,
+                                                         check=True).stdout.lower().splitlines() if ln.split()]
+        for k in STOCK_FORBIDDEN:
+            if any(k in nmx for nmx in names):
+                bad.append("%s: a symbol names the stock routine 0x%s (EEPROM / NVM / DSM record / event log / fatal)"
+                           % (o, k.upper()))
+        dump = subprocess.run([objdump, "-s", o], capture_output=True, text=True).stdout.lower()
+        words = []
+        for m in re.finditer(r"^ ([0-9a-f]+) ((?:[0-9a-f]{2,8} ?){1,4})", dump, flags=re.M):
+            for chunk in m.group(2).split():
+                if len(chunk) == 8:             # one 4-byte aligned word of the section
+                    words.append(int(chunk, 16))
+        dis = subprocess.run([objdump, "-d", o], capture_output=True, text=True).stdout
+        for m in re.finditer(r"movi20\s+#(-?\d+)", dis):
+            words.append(int(m.group(1)) & 0xFFFFFFFF)
+        for w in set(words):
+            if w in LIT_FORBIDDEN_FR:
+                bad.append("%s: holds the EEPROM / NVM / DSM cell 0x%08X (a literal or movi20)" % (o, w))
+            for (lo, hi) in RANGE_FORBIDDEN_FR:
+                if lo <= w <= hi:
+                    bad.append("%s: holds 0x%08X inside the DSM image / record counts 0x%08X..0x%08X"
+                               % (o, w, lo, hi))
+
+
 def scan_image(lines, src, bad):
     for ln in lines:
         p = ln.split()
@@ -253,6 +312,9 @@ def main():
         n = 1
     elif mode == "link":
         scan_link(sys.argv[2], sys.argv[3:], bad)
+        n = len(sys.argv) - 3
+    elif mode == "nvm":
+        scan_nvm(sys.argv[2], sys.argv[3:], bad)
         n = len(sys.argv) - 3
     else:
         files = sys.argv[2:]

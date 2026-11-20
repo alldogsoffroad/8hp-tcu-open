@@ -378,6 +378,31 @@ SECTIONS
     ASSERT(__sm_gear_start >= __sm_shadow_end, ".sm_gear overlaps .sm_shadow")
     ASSERT(__sm_gear_end <= 0xFFF86A00, ".sm_gear runs into .fb_shadow")
     ASSERT(__sm_gear_start == 0xFFF86920 && SIZEOF(.sm_gear) == 0x9C, ".sm_gear: gf_t is off 0xFFF86920 (witness_sm.py)")
+    /* THE FAULT-REACTION SHADOW (app/fr_shadow.c + fr_hook.c, ours — not
+     * stock cells; F1 2026-11-19, ~/tcu_sweep/f1_fr_shadow_port.md): struct
+     * fr_t in the rest of the retired M5 recorder's window 0xFFF86000..
+     * 0xFFF86800 (.m5_rec is empty since r04r; the driving dump holds
+     * 0xFFF85400..0xFFF88100 all zero) — NOT the stock comm object
+     * 0xFFF95750.. (our .bss sits there). Cleared by fr_shadow_init. */
+    .fr_shadow 0xFFF86000 (NOLOAD) : {
+        __fr_shadow_start = .; *(.fr_shadow) *fr_shadow.c.obj(.bss .bss.* COMMON)
+        *fr_hook.c.obj(.bss .bss.* COMMON) *fr_cal.c.obj(.bss .bss.* COMMON)
+        . = ALIGN(4); __fr_shadow_end = .;
+    } > RAM
+    ASSERT(__m5_rec_end == __m5_rec_start, ".m5_rec is no longer empty: .fr_shadow sits in its window")
+    ASSERT(__fr_shadow_start == 0xFFF86000 && __fr_shadow_end <= __sm_shadow_start,
+           ".fr_shadow runs into .sm_shadow (witness_fr.py)")
+    /* the fault-reaction shadow's FAULT MANAGER (app/fr_fm.c, ours; RAM
+     * only, written by that TU alone): struct fr_fm_t in the dump-zero gap
+     * between the A-DMAC ring (+ its guard 0x88728) and the range chain's
+     * 0x893E0 object — NOT the stock DSM arrays 0xFFF8D714 / D89A / DBA6 /
+     * DD2C or the masks 0xFFF897D0..E7. Cleared by fr_fm_init. */
+    .fr_fm 0xFFF88740 (NOLOAD) : {
+        __fr_fm_start = .; *(.fr_fm) *fr_fm.c.obj(.bss .bss.* COMMON)
+        . = ALIGN(4); __fr_fm_end = .;
+    } > RAM
+    ASSERT(__fr_fm_start == 0xFFF88740 && __fr_fm_start >= ADDR(.adc_ring) + SIZEOF(.adc_ring) + 0x10 &&
+           __fr_fm_end <= 0xFFF893C8 && __fr_fm_end <= ADDR(.rng_893e0), ".fr_fm leaves the dump-zero gap 0xFFF8872A..0xFFF893C9 (witness_fr.py)")
     .m5_wit 0xFFF84D40 (NOLOAD) : {
         __m5_wit_start = .; *(.m5_wit) . = ALIGN(4); __m5_wit_end = .;
     } > RAM

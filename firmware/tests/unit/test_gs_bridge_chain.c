@@ -65,6 +65,19 @@ static bool g5b_h2_pending;     /* G5b: a hand-off of 2 not yet seen by a 5 ms b
 static uint8_t s_sm_ph, s_sm_on;
 #endif
 
+#if defined(FR_TEST)
+/* F1 (2026-11-19, ~/tcu_sweep/f1_fr_shadow_port.md): THE FAULT-REACTION
+ * SHADOW's live identity — the raw frames (g_send, before vehicle_rx) and the
+ * 10 ms tick at app/main.c's slot (after the monitor, before the gear chain);
+ * needs SM_TEST (the hinge's healthy-chain inputs) */
+#include "app/fr_shadow.h"
+#include "app/park_cells.h"
+#include "safety/park_pair.h"
+#  if !defined(SM_TEST)
+#    error "FR_TEST needs SM_TEST (the fault-fed hinge reads the gear chain's state)"
+#  endif
+#endif
+
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -209,6 +222,9 @@ static void g_send(can_bus_t bus, uint16_t id, uint8_t dlc, bool prot, const uin
         f.data[dlc - 2u] = (uint8_t)((f.data[dlc - 2u] & 0x0Fu) | (uint8_t)(g_ctr[id] << 4));
         f.data[dlc - 1u] = crc8_j1850(f.data, (uint8_t)(dlc - 1u));
     }
+#if defined(FR_TEST)
+    fr_hook_rx((uint8_t)bus, f.id, f.dlc, f.data);    /* app/main.c: the raw frame first */
+#endif
     vehicle_rx(bus, &f);
 }
 
@@ -561,6 +577,57 @@ static void task10(gr_t *g, unsigned p)
 #endif
     }
     drv_rq_request_set(7u, park_slot7_release());   /* ch 7: the park release (SH: DRV_RQ_PSET) */
+#if defined(FR_TEST)
+    {
+        /* app/fr_hook.c's gather, the harness's values (its sensors: 0 rpm
+         * valid; the engine's cells through the candidate's accessors; the
+         * group-98 report the harness hands rng_chain: failed + tested) */
+        uint32_t n = 0u;
+        const vehicle_in_t *fv = vehicle_in();
+        const rng_chain_model_t *rm = rng_chain_model();
+        const volatile gf_t *gf = sm_gear_state();
+        fr_in_t fi;
+        memset(&fi, 0, sizeof fi);
+        fi.os_mode = mode;
+        fi.e9fe = kl15_e9fe();
+        fi.e9ff = kl15_e9ff();
+        fi.d6d6 = PCELL_TGT;
+        fi.d6da = 0u;
+        fi.e69b = *(const volatile uint8_t *)gs_cand_host_state(16u, &n);
+        fi.e6ee = *(const volatile uint8_t *)gs_cand_host_state(21u, &n);
+        fi.e6ef = *(const volatile uint8_t *)gs_cand_host_state(22u, &n);
+        fi.c3d = *(const volatile uint8_t *)(uintptr_t)0xFFF89C3Du;
+        fi.u_failed = rm->u_failed;
+        fi.u_tested = rm->u_tested;
+        fi.rng_g109 = rm->g109;
+        fi.rng_g98 = rm->g98;
+        fi.eng_st = (fv->q_engine_speed == Q_OK) ? 0u : 2u;
+        fi.out_st = 0u;
+        fi.gf_e4a5 = gf->e4a5;
+        fi.gf_e69c1 = gf->e69c[1];
+        fi.gf_e69f = gf->e69f;
+        fi.gf_e343 = gf->e343;
+        fi.gf_cce4 = gf->cce4[0];
+        fi.gf_c25 = gf->c25[0];
+        fi.gf_c28 = gf->c28[0];
+        fi.gf_c2b = gf->c2b[0];
+        fi.gf_e6a1 = gf->e6a1;
+        fi.ce8 = sm_shadow_state()->ce8;
+        fi.cd2 = *(const volatile uint8_t *)(uintptr_t)0xFFF89CD2u;
+        fi.g98_failed = 1u;
+        fi.g98_tested = 1u;
+        fi.rep109_n = rm->u_rep_n;
+        fi.rep98_n = rm->fm98.rep_n;
+        fi.sup_mv = *(const volatile uint16_t *)(uintptr_t)0xFFF94F86u;
+        fi.eng = (fv->q_engine_speed == Q_OK) ? (uint16_t)fv->engine_speed : 0u;
+        fi.cd0 = fi.eng;
+        fr_hook_feed(&fi);
+#if defined(FR_NEG_LEAK)
+        /* the negative: a leak of the shadow's code into the live cell window */
+        *(volatile uint8_t *)(uintptr_t)0xFFF89C43u = (uint8_t)(0x40u + (uint8_t)fr_shadow_state()->cd.c43);
+#endif
+    }
+#endif
 #if defined(SM_TEST)
     {
         /* the gear feedback chain (app/main.c's sm_hook_10ms, after the
@@ -661,6 +728,9 @@ static void run_g(gr_t *g)
     sm_hook_init();                 /* app/main.c's shadow init block */
     s_sm_on = 0u;
     s_sm_ph = 0u;
+#endif
+#if defined(FR_TEST)
+    fr_hook_init();                 /* app/main.c's shadow init block */
 #endif
 #if defined(DIAG_TEMPS)
     for (unsigned d = 0u; d < 2u; d++) {

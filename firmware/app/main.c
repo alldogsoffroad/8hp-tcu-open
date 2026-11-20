@@ -45,6 +45,7 @@
 #include "app/pa7_shadow.h"
 #include "app/tsel_shadow.h"
 #include "app/sm_shadow.h"
+#include "app/fr_shadow.h"
 #include "app/park_law.h"
 #if !defined(TCU_RAM_APP)
 #include "app/g6a.h"
@@ -205,6 +206,11 @@ static void task_1ms(void)
         for (uint8_t n = 0u; n < 8u && plat_can_recv((can_bus_t)bus, &f); n++) {
             (void)uds_rx((can_bus_t)bus, &f);
             (void)meas_rx((can_bus_t)bus, &f);
+#if !defined(TCU_RAM_APP)
+            /* F1: the read-only fault-reaction shadow takes the RAW frame
+             * (app/fr_hook.c) before our com layer judges it (D-FR-8) */
+            fr_hook_rx(bus, f.id, f.dlc, f.data);
+#endif
             vehicle_rx((can_bus_t)bus, &f);
         }
     }
@@ -421,6 +427,12 @@ static void task_10ms(void)
          * (0x10485E / 0xD15A6 / 0x104A28 / 0x103B36 / 0xD140C / 0xDD954) on
          * its own cells, the engine's power-flow cells BY VALUE after its
          * pass; the shadow's 0x89C28 is the 30 ms pass's gear_in */
+        /* F1 (2026-11-19, ~/tcu_sweep/f1_fr_shadow_port.md): THE READ-ONLY
+         * FAULT-REACTION / GEAR-CODE SHADOW (app/fr_shadow.c + fr_fm.c, its
+         * own RAM .fr_shadow / .fr_fm): the RX status, the comm monitor, the
+         * generic fault manager, the code chain, 0x89CF5 and the fault-fed
+         * hinge — before the gear chain (the stock's slot 27 precedes 30) */
+        fr_hook_10ms();
         sm_hook_10ms();
     }
 #endif
@@ -576,6 +588,9 @@ int main(void)
     tsel_hook_init();
     /* the read-only shift-map shadow (app/sm_shadow.c, its own RAM) */
     sm_hook_init();
+    /* F1: the read-only fault-reaction shadow (its RAM cleared; the fault
+     * manager's masks 0 — nothing stored) */
+    fr_hook_init();
 #endif
     park_pair_init();                   /* park sensor: 0x141B1C (safety layer) */
     sensors_init(&s_sensors_cfg);

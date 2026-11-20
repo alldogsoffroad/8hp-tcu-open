@@ -114,6 +114,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         # (instance 2 of the garage engine template, its own RAM .gsc_req /
         # .gsc_obj) and the comparator (.g6a) — code-flash application only
         app/gs_cand.c app/gs_cand_fill.c app/g6a.c
+        # F1 (2026-11-19, ~/tcu_sweep/f1_fr_shadow_port.md): the READ-ONLY
+        # fault-reaction / gear-code shadow (its own RAM .fr_shadow / .fr_fm)
+        # — code-flash application only
+        app/fr_shadow.c app/fr_fm.c app/fr_cal.c app/fr_hook.c
     )
     # keep GCC from turning the memset/memcpy loops into calls to themselves
     set_source_files_properties(platform/sh7254r/libc_min.c PROPERTIES
@@ -156,6 +160,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py link ${SH_NM}
             CMakeFiles/tcu_app.elf.dir/app/gs_cand.c.obj CMakeFiles/tcu_app.elf.dir/app/gs_cand_fill.c.obj
             CMakeFiles/tcu_app.elf.dir/app/g6a.c.obj
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py nvm ${SH_NM}
+            CMakeFiles/tcu_app.elf.dir/app/fr_shadow.c.obj CMakeFiles/tcu_app.elf.dir/app/fr_fm.c.obj
+            CMakeFiles/tcu_app.elf.dir/app/fr_cal.c.obj CMakeFiles/tcu_app.elf.dir/app/fr_hook.c.obj
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6c_sections.py ${SH_OBJDUMP} tcu_app.elf
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py retired ${SH_NM} tcu_app.elf
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py image ${SH_NM} tcu_app.elf
@@ -222,7 +229,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
 else()
     # ---- Host build: simulator and unit tests ------------------------------
     add_executable(tcu_sim platform/host/plat_host.c ${CORE_SOURCES}
-        app/gs_cand.c app/gs_cand_fill.c app/g6a.c)
+        app/gs_cand.c app/gs_cand_fill.c app/g6a.c
+        app/fr_shadow.c app/fr_fm.c app/fr_cal.c app/fr_hook.c)   # F1: as the image
     target_compile_definitions(tcu_sim PRIVATE GSC_G6A=1)   # the image's candidate form
 
     enable_testing()
@@ -1691,6 +1699,112 @@ else()
             -DSH_GUARD_SM_LIVE_${hdr} ${SM_SH_SRC})
         set_tests_properties(sm_sh_guard_live_${hdr} PROPERTIES
             PASS_REGULAR_EXPRESSION "the shift-map shadow is read-only: it may not include a live header")
+    endforeach()
+    # THE FAULT-REACTION SHADOW (F1, 2026-11-19, ~/tcu_sweep/f1_fr_shadow_port.md):
+    # the RX status, the comm monitor, the generic fault manager (RAM only, all
+    # 195 configs), the substitute-gear code, 0x89CF5 and the fault-fed hinge as
+    # a read-only shadow (app/fr_shadow.c, fr_fm.c). fr_shadow: the RX status,
+    # the plain boot / sims / heal / key-cycle timelines, the dump's masks, the
+    # cell window untouched; fr_cal_bytes; _neg_CFG (group 136's fail time +2)
+    # must FAIL. fr_identity: test_g6b_norep / test_g6b with the shadow ticking
+    # (the goldens: every bus-A word, the park demands, the cell window) must
+    # pass unchanged, the shadow must have run, its U1267 / P0850 verdicts must
+    # agree with rng_chain's pass for pass; the leak negative must FAIL. The
+    # scans (outputs / shadow / cal / hook, nvm) and the SH compile checks.
+    set(FR_TEST_SOURCES tests/unit/test_fr_shadow.c app/fr_shadow.c app/fr_fm.c app/fr_cal.c app/fr_hook.c
+        app/sm_cal.c bsw/com/crc8.c)
+    add_executable(test_fr_shadow ${FR_TEST_SOURCES})
+    target_compile_definitions(test_fr_shadow PRIVATE _POSIX_C_SOURCE=200809L FR_HOOK_NO_GATHER=1
+        "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"" "TCU_STOCK_DUMP=\"${TCU_STOCK_DUMP}\"")
+    add_test(NAME fr_shadow COMMAND test_fr_shadow)
+    add_test(NAME fr_cal_bytes COMMAND test_fr_shadow --cal)
+    set_tests_properties(fr_cal_bytes PROPERTIES SKIP_RETURN_CODE 77)
+    add_executable(test_fr_shadow_neg_CFG ${FR_TEST_SOURCES})
+    target_compile_definitions(test_fr_shadow_neg_CFG PRIVATE _POSIX_C_SOURCE=200809L FR_HOOK_NO_GATHER=1
+        FR_NEG_CFG=1)
+    add_test(NAME fr_shadow_neg_CFG COMMAND test_fr_shadow_neg_CFG)
+    set_tests_properties(fr_shadow_neg_CFG PROPERTIES WILL_FAIL TRUE)
+    set(FR_APP_SOURCES app/fr_shadow.c app/fr_fm.c app/fr_cal.c app/fr_hook.c)
+    add_executable(test_g6b_norep_fr ${G6B_NOREP_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c
+        ${FR_APP_SOURCES})
+    target_compile_definitions(test_g6b_norep_fr PRIVATE ${G6B_DEFS} G6R_HOLDER_REPLICA=0 G6R_NOREP=1
+        SM_TEST=1 SM_HOOK_NO_GATHER=1 FR_TEST=1 FR_HOOK_NO_GATHER=1)
+    add_test(NAME fr_identity COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fr_identity.py
+        $<TARGET_FILE:test_g6b_norep_fr>)
+    add_executable(test_g6b_fr ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c
+        ${FR_APP_SOURCES})
+    target_compile_definitions(test_g6b_fr PRIVATE ${G6B_DEFS} SM_TEST=1 SM_HOOK_NO_GATHER=1
+        FR_TEST=1 FR_HOOK_NO_GATHER=1)
+    add_test(NAME fr_identity_cells COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fr_identity.py
+        $<TARGET_FILE:test_g6b_fr>)
+    add_executable(test_g6b_frleak ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c
+        ${FR_APP_SOURCES})
+    target_compile_definitions(test_g6b_frleak PRIVATE ${G6B_DEFS} SM_TEST=1 SM_HOOK_NO_GATHER=1
+        FR_TEST=1 FR_HOOK_NO_GATHER=1 FR_NEG_LEAK=1)
+    add_test(NAME fr_identity_negative_leak COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fr_identity.py
+        $<TARGET_FILE:test_g6b_frleak>)
+    set_tests_properties(fr_identity fr_identity_cells fr_identity_negative_leak
+        PROPERTIES ENVIRONMENT "${G6C_GOLD_ENV}")
+    set_tests_properties(fr_identity_negative_leak PROPERTIES WILL_FAIL TRUE)
+    set(FR_OUTPUT_PATHS ${SM_OUTPUT_PATHS} ${CMAKE_SOURCE_DIR}/app/sm_shadow.c ${CMAKE_SOURCE_DIR}/app/sm_gear.c
+        ${CMAKE_SOURCE_DIR}/app/sm_hook.c ${CMAKE_SOURCE_DIR}/bsw/com/com.c ${CMAKE_SOURCE_DIR}/io/vehicle/profile_fca.c)
+    add_test(NAME fr_shadow_scan_outputs
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fr_shadow_scan.py outputs ${FR_OUTPUT_PATHS})
+    add_test(NAME fr_shadow_scan_outputs_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fr_shadow_scan.py outputs
+            ${CMAKE_SOURCE_DIR}/tests/unit/fr_scan_fixture_output.c)
+    add_test(NAME fr_shadow_scan_shadow
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fr_shadow_scan.py shadow
+            ${CMAKE_SOURCE_DIR}/app/fr_shadow.c ${CMAKE_SOURCE_DIR}/app/fr_shadow.h
+            ${CMAKE_SOURCE_DIR}/app/fr_fm.c ${CMAKE_SOURCE_DIR}/app/fr_cal.h)
+    add_test(NAME fr_shadow_scan_shadow_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fr_shadow_scan.py shadow
+            ${CMAKE_SOURCE_DIR}/tests/unit/fr_scan_fixture_shadow.c)
+    add_test(NAME fr_shadow_scan_cal
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fr_shadow_scan.py cal ${CMAKE_SOURCE_DIR}/app/fr_cal.c)
+    add_test(NAME fr_shadow_scan_cal_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fr_shadow_scan.py cal
+            ${CMAKE_SOURCE_DIR}/tests/unit/fr_scan_fixture_cal.c)
+    add_test(NAME fr_shadow_scan_hook
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fr_shadow_scan.py hook ${CMAKE_SOURCE_DIR}/app/fr_hook.c)
+    add_test(NAME fr_shadow_scan_hook_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fr_shadow_scan.py hook
+            ${CMAKE_SOURCE_DIR}/tests/unit/fr_scan_fixture_hook.c)
+    set_tests_properties(fr_shadow_scan_outputs_negative fr_shadow_scan_shadow_negative
+        fr_shadow_scan_cal_negative fr_shadow_scan_hook_negative PROPERTIES WILL_FAIL TRUE)
+    # the NVM / EEPROM / DSM-record / fatal scan (g6a_scan.py nvm) on the host
+    # objects (the SH objects: tcu_app.elf's POST_BUILD) and its negative
+    add_library(fr_nvm_objs OBJECT ${FR_APP_SOURCES})
+    target_compile_definitions(fr_nvm_objs PRIVATE FR_HOOK_NO_GATHER=1)
+    add_test(NAME fr_scan_nvm
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py nvm nm $<TARGET_OBJECTS:fr_nvm_objs>
+        COMMAND_EXPAND_LISTS)
+    add_library(fr_nvm_fixture OBJECT tests/unit/fr_nvm_fixture.c)
+    add_test(NAME fr_scan_nvm_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py nvm nm $<TARGET_OBJECTS:fr_nvm_fixture>)
+    set_tests_properties(fr_scan_nvm_negative PROPERTIES WILL_FAIL TRUE)
+    set(FR_SH_SRC ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard_fr.c)
+    add_test(NAME fr_sh_guard_control COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${FR_SH_SRC})
+    add_test(NAME fr_sh_guard_shadow
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/fr_shadow.c)
+    add_test(NAME fr_sh_guard_fm
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/fr_fm.c)
+    add_test(NAME fr_sh_guard_cal
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/fr_cal.c)
+    add_test(NAME fr_sh_guard_hook
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform -Wall -Wextra -Wconversion
+            ${CMAKE_SOURCE_DIR}/app/fr_hook.c)
+    foreach(g OUTPUT OUTCAL OUTTU)
+        add_test(NAME fr_sh_guard_${g} COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform
+            -DSH_GUARD_FR_${g} ${FR_SH_SRC})
+        set_tests_properties(fr_sh_guard_${g} PROPERTIES
+            PASS_REGULAR_EXPRESSION "the fault-reaction shadow is read-only: an output path may not include")
+    endforeach()
+    foreach(hdr sup_cells drv_cells drv_odiag drv_temp platform)
+        add_test(NAME fr_sh_guard_live_${hdr} COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform
+            -DSH_GUARD_FR_LIVE_${hdr} ${FR_SH_SRC})
+        set_tests_properties(fr_sh_guard_live_${hdr} PROPERTIES
+            PASS_REGULAR_EXPRESSION "the fault-reaction shadow is read-only: it may not include a live header")
     endforeach()
     # r04r: the retired holder stays out of the image (the POST_BUILD scan of
     # tcu_app.elf runs the same rule on the real link map); its fixtures

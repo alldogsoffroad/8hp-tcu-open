@@ -226,6 +226,35 @@ static void run_child(const scen_t *sc, bool g6b, gr_t *g, res_t *res, uint8_t *
                     (unsigned)gf->err_n, (unsigned)sm->neg9_n, (int)sm->in.gear_in);
         }
 #endif
+#if defined(FR_TEST)
+        {
+            /* F1: the fault-reaction shadow ran: its verdicts, the comparators */
+            const volatile fr_t *fr = fr_shadow_state();
+            const volatile fr_fm_t *fm = fr_fm_state();
+            unsigned c136 = 0u, c109 = 0u, c98 = 0u, c139 = 0u, c143 = 0u;
+            for (unsigned i = 0u; i < fm->rec_n; i++) {
+                if (fm->rec[i].kind == FR_EV_CONFIRM) {
+                    switch (fm->rec[i].g) {
+                    case 136u: c136 = (unsigned)fm->rec[i].ms; break;
+                    case 109u: c109 = (unsigned)fm->rec[i].ms; break;
+                    case 98u:  c98 = (unsigned)fm->rec[i].ms; break;
+                    case 139u: c139 = (unsigned)fm->rec[i].ms; break;
+                    case 143u: c143 = (unsigned)fm->rec[i].ms; break;
+                    default: break;
+                    }
+                }
+            }
+            fprintf(stderr, "FR run '%s': passes %u mon %u frames %u other %u u11e4 %u u1267 %u p0850 %u "
+                    "u0100 %u u11e3 %u m0 %08X m1 %08X code %u c43 %d cf5 %u ff %d c109dis %u c98dis %u "
+                    "d661dis %u tgtdis %u rep109 %u rep98 %u unp %u fferr %u badg %u\n", sc->name,
+                    (unsigned)fr->w.passes, (unsigned)fr->w.mon_passes, (unsigned)fr->w.rx_frames,
+                    (unsigned)fr->w.rx_other, c136, c109, c98, c139, c143, (unsigned)fm->m0, (unsigned)fm->m1,
+                    (unsigned)fr->cd.c41, (int)fr->cd.c43, (unsigned)fr->cd.cf5, (int)fr->cd.ff_e6a1,
+                    (unsigned)fr->w.c109_dis_n, (unsigned)fr->w.c98_dis_n, (unsigned)fr->w.d661_dis_n,
+                    (unsigned)fr->w.tgt_dis_n, (unsigned)fr->w.rep109_n, (unsigned)fr->w.rep98_n,
+                    (unsigned)fr->w.unp_n, (unsigned)fr->w.ff_err_n, (unsigned)fm->bad_g_n);
+        }
+#endif
         if (getenv("G6C_DUMP_PINNED") != NULL &&
             (strcmp(getenv("G6C_DUMP_PINNED"), sc->name) == 0 || strcmp(getenv("G6C_DUMP_PINNED"), "*") == 0)) {
             printf("PINRUN %s\n", sc->name);
