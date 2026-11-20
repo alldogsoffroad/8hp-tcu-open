@@ -392,6 +392,29 @@ SECTIONS
     ASSERT(__m5_rec_end == __m5_rec_start, ".m5_rec is no longer empty: .fr_shadow sits in its window")
     ASSERT(__fr_shadow_start == 0xFFF86000 && __fr_shadow_end <= __sm_shadow_start,
            ".fr_shadow runs into .sm_shadow (witness_fr.py)")
+    /* THE GEAR-PAIR SHIFT-ENGINE SHADOW (app/gp_shadow.c + gp_hook.c / gp_cal.c,
+     * ours — not stock cells; 2026-11-20, ~/tcu_sweep/gp_shadow_port.md):
+     * struct gp_t (0x188) and the coupled gear chain's gf_t (app/gp_gear.c,
+     * 0x9C) in the rest of the retired M5 recorder's window, between
+     * .fr_shadow (ends 0xFFF86568) and .sm_shadow 0xFFF86800 — stock RAM the
+     * driving dump holds all zero (0xFFF85400..0xFFF88100; 0xFFF86568..
+     * 0xFFF86800 re-checked: 664 B, all zero). NOT the stock shift object
+     * 0xFFF8BD14 (the live engine's) nor E33C. Cleared by gp_shadow_init /
+     * gp_gear_init. */
+    .gp_shadow 0xFFF86570 (NOLOAD) : {
+        __gp_shadow_start = .; *(.gp_shadow) *gp_shadow.c.obj(.bss .bss.* COMMON)
+        *gp_hook.c.obj(.bss .bss.* COMMON) *gp_cal.c.obj(.bss .bss.* COMMON)
+        . = ALIGN(4); __gp_shadow_end = .;
+    } > RAM
+    .gp_gear 0xFFF866F8 (NOLOAD) : {
+        __gp_gear_start = .; *(.gp_gear) *gp_gear.c.obj(.bss .bss.* COMMON)
+        . = ALIGN(4); __gp_gear_end = .;
+    } > RAM
+    ASSERT(__gp_shadow_start >= __fr_shadow_end && __gp_shadow_end <= __gp_gear_start,
+           ".gp_shadow overlaps .fr_shadow / .gp_gear (witness_gp.py)")
+    ASSERT(__gp_shadow_start == 0xFFF86570 && SIZEOF(.gp_shadow) == 0x188, ".gp_shadow: gp_t is off 0xFFF86570 (witness_gp.py)")
+    ASSERT(__gp_gear_start == 0xFFF866F8 && SIZEOF(.gp_gear) == 0x9C && __gp_gear_end <= __sm_shadow_start,
+           ".gp_gear: gf_t is off 0xFFF866F8 or runs into .sm_shadow (witness_gp.py)")
     /* the fault-reaction shadow's FAULT MANAGER (app/fr_fm.c, ours; RAM
      * only, written by that TU alone): struct fr_fm_t in the dump-zero gap
      * between the A-DMAC ring (+ its guard 0x88728) and the range chain's

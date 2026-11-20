@@ -123,11 +123,23 @@ STOCK_FORBIDDEN = ["e8bfa", "e8cf6", "d229e", "f71ec", "a2028", "a1712", "bddb0"
                    "b767e", "bc912", "bc9c0", "bc9e2", "bcc00", "6a86c", "ae906",
                    "abf98", "9d0ca", "9cff0", "9cfc4", "9da1a", "9d232", "9ccae", "9ccf6",
                    "9d090", "ab7b6", "ac07a", "a016a", "a0bd6", "68736", "66f82", "7a914",
-                   "794c8"]
+                   "794c8",
+                   # (2026-11-20, ~/tcu_sweep/gp_shadow_port.md): the gear-pair shift
+                   # engine's NV writers — the end 0xEBB6C's shift counter 0xBA538 →
+                   # 0xE8774 → 0xE82AC → 0xE8512, the gear-pair end 0xEBC60's counter
+                   # 0xBA52C → 0xE874A → 0xE82A4 → 0xE8512, the park-qualifier event
+                   # 0xBA54C → 0xE8842, and the shift adaptation learners (slot 41
+                   # 0xA30CC → 0xAEE7A → 0xCA3A6 → 0xB45E0 → 0xCC9EE → 0xCDF42 /
+                   # 0xCDBB4 / 0xA17CC; the E32A kiss path 0xDD400 → 0xAEB9A → 0xB59F8 →
+                   # 0xB68D0; 0xCB7EC, 0xCBD0E, 0x10338C → 0x125308, 0x1036E0 →
+                   # 0x125364) — none may be defined in the image
+                   "ba538", "ba52c", "e8774", "e874a", "e82ac", "e82a4", "e8512", "ba54c", "e8842",
+                   "aee7a", "ca3a6", "b45e0", "cc9ee", "cdf42", "cdbb4", "a17cc", "dd400", "aeb9a",
+                   "b59f8", "b68d0", "cb7ec", "cbd0e", "10338c", "125308", "1036e0", "125364"]
 LIT_FORBIDDEN = [0xFFF85174, 0xFFF85175, 0xFFF85176]
 # F1: the EEPROM / NVM / DSM-record / fatal-log cells no fault-reaction shadow
 # object may hold as a literal or a movi20 operand (plan §5, f0 §7)
-LIT_FORBIDDEN_FR = LIT_FORBIDDEN + [0xFFF8E621, 0xFFF8E622, 0xFFF89BEC, 0xFFF80D24, 0xFFF800E6,
+LIT_FORBIDDEN_FR = LIT_FORBIDDEN + [0xFFF8E613, 0xFFF8BA30, 0xFFF8E621, 0xFFF8E622, 0xFFF89BEC, 0xFFF80D24, 0xFFF800E6,
                                     0xFFF800ED, 0xFFF80E0F, 0xFFF82EF4, 0xFFF82F78, 0xFFF82F79,
                                     0xFFF830AC, 0xFFF830B0, 0xFFF830F0, 0xFFF897E8, 0xFFF8E57A,
                                     0xFFF8E575, 0xFFF8E577]

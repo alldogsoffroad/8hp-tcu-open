@@ -34,7 +34,10 @@ OUT_PATTERNS = [
     r"0[xX][fF]{3}86[89][0-9a-fA-F]{2}",
 ]
 SHADOW_PATTERNS = [
-    r'#\s*include\s*"(?!app/sm_shadow\.h"|app/sm_cal\.h")[^"]*"',
+    # (2026-11-20) app/gp_shadow.h: the read-only gear-pair shadow, whose
+    # coupled instance compiles app/sm_gear.c (SMG_COUPLED; ~/tcu_sweep/
+    # gp_shadow_port.md) — a shadow, not a live header (gp_shadow_scan.py)
+    r'#\s*include\s*"(?!app/sm_shadow\.h"|app/sm_cal\.h"|app/gp_shadow\.h")[^"]*"',
     r"\b(rq_prod|drv|sup|park|plat|vehicle|sensors|rng_chain|kl15|tmp_chain|tmp_safe|sol|com|meas|gs|g6a|od|fb|pa7|tsel|sched)_[a-z0-9_]+\s*\(",
     r"\bP?CELL_[A-Z0-9_]+",
     r"0[xX][fF]{3}[89][0-9a-fA-F]{4}",

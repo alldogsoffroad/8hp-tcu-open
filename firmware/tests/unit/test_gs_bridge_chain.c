@@ -78,6 +78,17 @@ static uint8_t s_sm_ph, s_sm_on;
 #  endif
 #endif
 
+#if defined(GP_TEST)
+/* (2026-11-20, ~/tcu_sweep/gp_shadow_port.md): THE GEAR-PAIR SHADOW's live
+ * identity — its 10 ms pass at app/main.c's slot (right after the gear
+ * chain), the live shift object's bytes BY VALUE (here the candidate's
+ * accessors); needs SM_TEST (it reads the r04w chain's state as a witness) */
+#include "app/gp_shadow.h"
+#  if !defined(SM_TEST)
+#    error "GP_TEST needs SM_TEST (the gear-pair shadow follows the gear chain's slot)"
+#  endif
+#endif
+
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -654,6 +665,29 @@ static void task10(gr_t *g, unsigned p)
         /* the negative: a leak of the chain's commanded gear into the cell window */
         *(volatile uint8_t *)(uintptr_t)0xFFF89C28u = (uint8_t)(0x50 + sm_gear_state()->e4a7);
 #endif
+#if defined(GP_TEST)
+        {
+            /* app/gp_hook.c's gather: the gear chain's inputs as above, the
+             * live shift object's bytes (the candidate's BD14 / D0DC) BY VALUE */
+            const volatile uint8_t *bd = (const volatile uint8_t *)gs_cand_host_state(14u, &n);
+            const volatile uint8_t *sub = (const volatile uint8_t *)gs_cand_host_state(23u, &n);
+            gp_in_t gpi;
+            gpi.gf = gin;
+            gpi.lbd15 = bd[1];
+            gpi.lbd16 = bd[2];
+            gpi.lbd17 = bd[3];
+            gpi.lbd41 = bd[0x2D];
+            gpi.ld151 = sub[0x6C + 9];          /* 0xFFF8D151 = D148 + 9 */
+            gpi.ld0e0 = sub[4];                 /* 0xFFF8D0E0 = D0DC + 4 */
+            gpi.r_e4a7 = sm_gear_state()->e4a7;
+            gpi.r_e69f = sm_gear_state()->e69f;
+            gp_hook_feed(&gpi);
+#if defined(GP_NEG_LEAK)
+            /* the negative: a leak of the shadow's BD15 into the live shift object */
+            *(volatile uint8_t *)(uintptr_t)0xFFF89C2Bu = (uint8_t)(0x60u + gp_shadow_state()->bd15);
+#endif
+        }
+#endif
     }
     if (mode < 1u || mode > 3u) {
         s_sm_on = 0u;
@@ -731,6 +765,9 @@ static void run_g(gr_t *g)
 #endif
 #if defined(FR_TEST)
     fr_hook_init();                 /* app/main.c's shadow init block */
+#endif
+#if defined(GP_TEST)
+    gp_hook_init();                 /* app/main.c's shadow init block */
 #endif
 #if defined(DIAG_TEMPS)
     for (unsigned d = 0u; d < 2u; d++) {

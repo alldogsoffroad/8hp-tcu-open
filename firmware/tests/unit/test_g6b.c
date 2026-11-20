@@ -226,6 +226,21 @@ static void run_child(const scen_t *sc, bool g6b, gr_t *g, res_t *res, uint8_t *
                     (unsigned)gf->err_n, (unsigned)sm->neg9_n, (int)sm->in.gear_in);
         }
 #endif
+#if defined(GP_TEST)
+        {
+            const volatile gp_t *gp = gp_shadow_state();
+            const volatile gf_t *gc = gp_gear_state();
+            fprintf(stderr, "GP run '%s': passes %u presel %u t0 %u commit %u ps %u done %u end %u gend %u "
+                    "nv_end %u nv_abort %u own %u err %u report %u dis %u e4a7 %d e69f %d bd15 %u bd16 %u "
+                    "bd17 %u strobes %u\n", sc->name, (unsigned)gp->w.pass_n, (unsigned)gp->w.presel_n,
+                    (unsigned)gp->w.presel_t0_n, (unsigned)gp->w.commit_n, (unsigned)gp->w.commit_ps_n,
+                    (unsigned)gp->w.done_n, (unsigned)gp->w.end_n, (unsigned)gp->w.gend_n,
+                    (unsigned)gp->w.nv_end_n, (unsigned)gp->w.nv_abort_n, (unsigned)gp->w.own_n,
+                    (unsigned)gp->w.err_n, (unsigned)gp->w.report_n, (unsigned)gp->w.dis_n, (int)gc->e4a7,
+                    (int)gc->e69f, (unsigned)gp->bd15, (unsigned)gp->bd16, (unsigned)gp->bd17,
+                    (unsigned)gc->strobe_n);
+        }
+#endif
 #if defined(FR_TEST)
         {
             /* F1: the fault-reaction shadow ran: its verdicts, the comparators */

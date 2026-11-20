@@ -1,0 +1,5 @@
+# a fixture of the whole-image scan (tests/unit/g6a_scan.py image): an nm excerpt with the gear-pair end's NV shift counter 0xBA538 linked; the scan must FAIL on it
+00067e70 T _gcf_107c3e
+0006a1c0 T _gp_shadow_pass
+0006b000 T _nv_ba538_shift_counter
+fff86570 b _s_gp

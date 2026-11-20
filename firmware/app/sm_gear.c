@@ -37,8 +37,24 @@
 
 #include <stdbool.h>
 
+/* (2026-11-20, ~/tcu_sweep/gp_shadow_port.md) THE COUPLED INSTANCE: app/
+ * gp_gear.c compiles this file a second time with SMG_COUPLED = 1 (its own
+ * state on its own RAM .gp_gear, its own function names) and binds the shift
+ * object 0xFFF8BD14's stand-ins below to the READ-ONLY gear-pair shadow
+ * (app/gp_shadow.c): BD15 / BD16 / +0x2C, 0xEB7BC, 0xDDA54's BD15 term,
+ * 0xEB1F0 → 0xEDA48, 0xBAAC8 → 0xDDDE8 (the commit), 0xBAAE4 → 0xDDE78 (the
+ * end), the full 0xDD954 / 0xDE190 (the pre-select). Without SMG_COUPLED
+ * (this TU, app/sm_gear.c, the r04w chain) every hook is the idle stand-in
+ * it always was — the object code is unchanged. */
+#if !defined(SMG_COUPLED)
+#define SMG_COUPLED 0
+#endif
+#if !defined(SMG_SECTION)
+#define SMG_SECTION ".sm_gear"
+#endif
+
 #if defined(__sh__)
-#define GFSEC __attribute__((section(".sm_gear")))
+#define GFSEC __attribute__((section(SMG_SECTION)))
 #else
 #define GFSEC
 #endif
@@ -52,19 +68,44 @@ static gf_t s_gf GFSEC;
 #define GF_SI_AE70   0u     /* 0xFFF8AE70[1] */
 #define GF_SI_AE71   0u     /* 0xFFF8AE71 */
 #define GF_SI_E298   0u     /* 0xFFF8E298 state (0xD11D0) */
+#if SMG_COUPLED == 0
 #define GF_SI_BD14_1 0u     /* 0xFFF8BD15 = BD14+1 (0xEB7BC: 0 → 1) */
 #define GF_SI_BD14_2 0u     /* BD14+2 (0xEB1F0) */
 #define GF_SI_BD15   0u     /* 0xFFF8BD15 (0xBABD8) */
 #define GF_SI_BD40   0u     /* BD14+0x2C (0xEADA6) */
+#endif
 #define GF_SI_9BC0   0u     /* 0xFFF89BC0 (0xB5B2E: == 0 → 1) */
 #define GF_SI_AFD4   0u     /* 0xFFF8AFD4 */
 #define GF_SI_9B36   0u     /* 0xFFF89B36 (0xAEA3A: == 2) */
 #define GF_SI_9CA0   0      /* 0xFFF89CA0 (s16) */
 _Static_assert(GF_SI_AE2B == 0u && GF_SI_AE2C == 0u && GF_SI_AE56 == 0u && GF_SI_AE70 == 0u &&
-               GF_SI_AE71 == 0u && GF_SI_E298 == 0u && GF_SI_BD14_1 == 0u && GF_SI_BD14_2 == 0u &&
-               GF_SI_BD15 == 0u && GF_SI_9BC0 == 0u && GF_SI_AFD4 == 0u && GF_SI_9B36 == 0u &&
+               GF_SI_AE71 == 0u && GF_SI_E298 == 0u &&
+               GF_SI_9BC0 == 0u && GF_SI_AFD4 == 0u && GF_SI_9B36 == 0u &&
                GF_SI_9CA0 == 0,
                "sm_gear: every stand-in equals the stock driving dump (stockram_driving_20261104)");
+#if SMG_COUPLED == 0
+_Static_assert(GF_SI_BD14_1 == 0u && GF_SI_BD14_2 == 0u && GF_SI_BD15 == 0u,
+               "sm_gear: the idle shift object (the dump's BD15 00 / BD16 00)");
+/* the idle shift object's hooks (the r04w chain) */
+#define GF_EB7BC(c7, t)          (GF_SI_BD14_1 == 0u)
+#define GF_DDA54(base)           (base)
+#define GF_EB1F0(in)             (GF_SI_BD14_2 == 0u)
+#define GF_UNP_EB1F0()           (s_gf.unp_n++)
+#define GF_UNP_AFC()             (g->unp_n++)
+#define GF_DDE78(g0, sk, ps)     ((void)0)
+#define GF_DDDE8(o, n, sk, ps)   ((void)0)
+#else
+#include "app/gp_shadow.h"
+#define GF_SI_BD15               gp_cpl_bd15()          /* 0xBABD8 */
+#define GF_SI_BD40               gp_cpl_bd40()          /* 0xBAB50 → 0xEADA6: BD14+0x2C */
+#define GF_EB7BC(c7, t)          gp_cpl_eb7bc((c7), (t))
+#define GF_DDA54(base)           gp_cpl_dda54(base)
+#define GF_EB1F0(in)             gp_cpl_eb1f0((in)->e69b, s_gf.e344)
+#define GF_UNP_EB1F0()           ((void)0)              /* ported in the coupled instance */
+#define GF_UNP_AFC()             ((void)0)              /* LAB_104AFC: reachable and ported */
+#define GF_DDE78(g0, sk, ps)     gp_cpl_dde78((g0), (sk), (ps))
+#define GF_DDDE8(o, n, sk, ps)   gp_cpl_ddde8((o), (n), (sk), (ps), s_gf.e69c[1])
+#endif
 
 /* the fault-reaction inputs: compile-time 0 (healthy) on SH; host seam */
 #if defined(__sh__)
@@ -356,7 +397,7 @@ static void r4a28(const gf_in_t *in)
         return;
     }
     /* 0xBAA96 → 0xDD940 → 0xEB7BC(BD14, E33C+7, E6A1): BD14+1 == 0 → 1 */
-    const bool baa96 = (GF_SI_BD14_1 == 0u);
+    const bool baa96 = GF_EB7BC(g->e343, g->e6a1);
     if (baa96) {
         /* 0xD0304(AE30, CCE4[0], E6A1): the AE30 sequencer object, not run */
         if (in->e69b != 1u || GF_AE2D != 0u) {
@@ -369,7 +410,7 @@ static void r4a28(const gf_in_t *in)
         }
     }
     /* LAB_104AFC (unreachable with the idle shift object; ported) */
-    g->unp_n++;
+    GF_UNP_AFC();
     if (!d0232(g->cce4[0], g->e69f, g->e6a1)) {
         return;
     }
@@ -395,7 +436,7 @@ static void r3cec(const gf_in_t *in)
         if (g->cce4[1] == 0) {
             /* 0xBA84E → 0xDDA54(E33C, E4A7): E33C+7 == g and 0x89C2F == 0x89C30 == 1
              * (BD14+1 == 0: the notification branch skipped) */
-            g->cce4[2] = (int8_t)((g->e343 == g->e4a7 && in->e6ee == in->e69b && in->e69b == 1u) ? 1 : 0);
+            g->cce4[2] = (int8_t)GF_DDA54((g->e343 == g->e4a7 && in->e6ee == in->e69b && in->e69b == 1u) ? 1 : 0);
         }
     }
     if (GF_SI_AE2C == 0u && GF_SI_AE2B == 0u && g->cce4[1] == 0 &&
@@ -416,10 +457,10 @@ static void r3cec(const gf_in_t *in)
 /* 0x103C2A: the completion test */
 static bool r3c2a(const gf_in_t *in)
 {
-    if (GF_SI_BD14_2 == 0u) {                        /* 0xBAB5E → 0xEB1F0: BD14+2 == 0 → 1 */
+    if (GF_EB1F0(in)) {                              /* 0xBAB5E → 0xEB1F0: BD14+2 == 0 → 1 */
         return true;
     }
-    s_gf.unp_n++;
+    GF_UNP_EB1F0();
     const bool pend = in->e6ee != in->e69b;
     if (!pend && in->e69b == 1u && GF_SI_AE2B == 0u && s_gf.ae2e != 1u && !d0d1c(in->e28e) &&
         GF_SI_AE71 != 2u && s_gf.e4a5 != 1u) {
@@ -452,7 +493,11 @@ static void r3b36(const gf_in_t *in, bool p2)
         g->e69c[1] = 0u;
         g->e69c[2] = 0u;
         g->done_n++;
-        /* 0xBAAE4 / 0xBB0E6 / 0xAEE62 / 0xAEA54 / 0xD0574: notifications, not run */
+        /* 0xBAAE4(E61A, CCE4[0], CCE4[1] && CCE4[3], CCE4[2] && CCE4[3]) →
+         * 0xDDE78 → 0xEBC60: the gear-pair END (the coupled instance only) */
+        GF_DDE78(g->cce4[0], (uint8_t)((g->cce4[1] != 0 && g->cce4[3] != 0) ? 1u : 0u),
+                 (uint8_t)((g->cce4[2] != 0 && g->cce4[3] != 0) ? 1u : 0u));
+        /* 0xBB0E6 / 0xAEE62 / 0xAEA54 / 0xD0574: notifications, not run */
         if (g->e4a5 == 2u) {
             g->e4a5 = 0u;                            /* 0x104986(E4A4) */
         }
@@ -477,11 +522,16 @@ static bool d140c(void)
     if (old != g->cce4[0]) {
         g->unp_n++;                                  /* 0xB79E4 event 0x9A: counted, not raised */
     }
-    /* 0xD052E, 0xBB0DE, 0xBAAC8 (→ 0xDDDE8 → 0xEBA6E: the gear-pair start),
-     * 0xB7B5C, 0xB83CA, 0xAEE6A / 0xAEA4C: not run */
+    /* 0xD052E, 0xBB0DE: not run; 0xBAAC8(E61A, old, new, CCE4[1] && CCE4[3],
+     * CCE4[2] && CCE4[3]) → 0xDDDE8 → 0xEBA6E: the gear-pair start (the
+     * coupled instance only; pool 0xD1564, args 0xD14C0..0xD14EC); 0xB7B5C,
+     * 0xB83CA, 0xAEE6A / 0xAEA4C: not run */
+    GF_DDDE8(old, g->e69f, (uint8_t)((g->cce4[1] != 0 && g->cce4[3] != 0) ? 1u : 0u),
+             (uint8_t)((g->cce4[2] != 0 && g->cce4[3] != 0) ? 1u : 0u));
     return true;
 }
 
+#if SMG_COUPLED == 0
 /* ── 0xDE190: the coordinator's gear ───────────────────────────────────── */
 static int8_t de190(uint8_t pf, int8_t c25, int8_t c2b, int8_t c28, int8_t cur7, int8_t prev)
 {
@@ -520,6 +570,94 @@ static void dd954(const gf_in_t *in)
     g->x519f = g->c2b[0];
     g->e344 = (uint8_t)((g->e343 != g->c2b[0] && g->e343 == g->c28[0]) ? 1u : 0u);
 }
+#else /* SMG_COUPLED */
+/* ── 0xDE190 (bytes 0xDE190..0xDE2AA): the coordinator's gear, WITH the
+ *    early next gear of the coupled instance. Args as 0xDD954 passes them:
+ *    (pf 0x89C30, c25 0x89C25, c2b 0x89C2B, c28 0x89C28, cur7 E33C+7,
+ *    prev 0x8519F) ─────────────────────────────────────────────────────── */
+static int8_t de190(uint8_t pf, int8_t c25, int8_t c2b, int8_t c28, int8_t cur7, int8_t prev,
+                    const gf_in_t *in)
+{
+    gf_t *g = &s_gf;
+    const int8_t k = B7C14(c25, c2b);                /* 0xDE1A8: 0xB7C14(E5C0, c25, c2b) */
+    if (c2b != prev) {
+        g->x51a0 = 0u;                               /* 0xDE1BC: 0x851A0 = 0 */
+    }
+    if (k == 0 || pf != 1u || c2b != prev) {
+        return c2b;                                  /* 0xDE2A4 */
+    }
+    if (c2b == cur7) {
+        int8_t nx = cur7;
+        if (g->x51a0 != 0u) {
+            return cur7;                             /* 0xDE1D8 -> 0xDE2A0 */
+        }
+        g->x51a0 = 1u;                               /* 0xDE1E2 */
+        if (c2b < c25) {
+            nx = (int8_t)(c2b - 1);                  /* 0xDE1E4: continue down */
+        } else if (c25 < c2b) {
+            nx = (int8_t)(c2b + 1);                  /* 0xDE1EE: continue up */
+        }
+        if (nx < 1 || nx > 8) {
+            return c2b;                              /* 0xDE1F6..0xDE1FE -> 0xDE29E */
+        }
+        /* 0xBB044(E61C) -> 0xDB9FA: 0x89C43 != 0 (a substitute gear) */
+        if (GF_C43 != 0) {
+            return c2b;
+        }
+        /* 0xDE210: 0xEB5A6(BD14, c25, c2b, next) — the chained-shift
+         * permission (0xEC956's cal / speed / mode gates, undecoded): the
+         * gear-pair shadow's stand-in, counted there.
+         * 0xDE21E..0xDE264: the engine (0x89CD0) and turbine (0x89CBA)
+         * speeds the stock hands 0xB6BBC, scaled by ratio(c2b) / ratio(c25)
+         * (0xD7C8C, divs, 0xB785C) */
+        const uint32_t r25 = (uint32_t)gp_cpl_ratio(c25);
+        const uint32_t r2b = (uint32_t)gp_cpl_ratio(c2b);
+        uint32_t ne = 0u, nt = 0u;
+        if (r25 != 0u) {
+            ne = ((uint32_t)in->cd0 * r2b) / r25;
+            nt = ((uint32_t)in->cba * r2b) / r25;
+        }
+        if (ne > 0xFFFFu) {
+            ne = 0xFFFFu;                            /* 0xB785C */
+        }
+        if (nt > 0xFFFFu) {
+            nt = 0xFFFFu;
+        }
+        /* 0xB6BBC(E5BD, c2b, next, ne, nt) -> 0xD165A (0xD16BA / 0xD1854 on
+         * those speeds, 0xD17CC): == next -> next (stand-in in the shadow) */
+        if (gp_cpl_early_ok(c25, c2b, nx, (uint16_t)ne, (uint16_t)nt)) {
+            return nx;
+        }
+        return c2b;
+    }
+    if (cur7 == c28) {
+        return cur7;                                 /* 0xDE280..0xDE284 */
+    }
+    /* 0xDE286: 0xEB73E(BD14) == 0 && 0xBB044 == 0 -> hold cur7; 0xEB73E is
+     * stood in by the gear-pair shadow (counted) */
+    if (gp_cpl_eb73e() == 0u && GF_C43 == 0) {
+        return cur7;
+    }
+    return c2b;
+}
+
+/* ── 0xDD954 (bytes 0xDD954..0xDDA52): the gear-pair coordinator ──────── */
+static void dd954(const gf_in_t *in)
+{
+    gf_t *g = &s_gf;
+    const int8_t c3 = de190(in->e69b, g->c25[0], g->c2b[0], g->c28[0], g->e343, g->x519f, in);
+    if (c3 != g->e343) {
+        g->gp_n++;
+        /* the +0x14 pre-select-pending block, E33C+7 = c3, then 0xDDBB4(E33C,
+         * c2b, c3, 1) and 0xEB9EC(BD14, c2b, c3, +5, +6) — on the shadow's
+         * own E33C copy */
+        g->e343 = c3;
+        gp_cpl_dd954_change(c3, g->c2b[0], g->c25[0], g->x519f);
+    }
+    g->x519f = g->c2b[0];                            /* 0xDDA3E: 0x8519F = 0x89C2B */
+    g->e344 = (uint8_t)((g->e343 != g->c2b[0] && g->e343 == g->c28[0]) ? 1u : 0u);
+}
+#endif /* SMG_COUPLED */
 
 static void witness(const gf_in_t *in)
 {

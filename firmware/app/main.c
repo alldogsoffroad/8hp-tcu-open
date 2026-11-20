@@ -46,6 +46,7 @@
 #include "app/tsel_shadow.h"
 #include "app/sm_shadow.h"
 #include "app/fr_shadow.h"
+#include "app/gp_shadow.h"
 #include "app/park_law.h"
 #if !defined(TCU_RAM_APP)
 #include "app/g6a.h"
@@ -434,6 +435,11 @@ static void task_10ms(void)
          * hinge — before the gear chain (the stock's slot 27 precedes 30) */
         fr_hook_10ms();
         sm_hook_10ms();
+        /* (2026-11-20, ~/tcu_sweep/gp_shadow_port.md) THE READ-ONLY GEAR-PAIR
+         * SHIFT-ENGINE SHADOW (app/gp_shadow.c + the coupled gear chain
+         * app/gp_gear.c, their own RAM .gp_shadow / .gp_gear): the stock
+         * slots 30..35 with the shift object 0xFFF8BD14 as a shadow */
+        gp_hook_10ms();
     }
 #endif
     bench_tick_10ms();
@@ -591,6 +597,9 @@ int main(void)
     /* F1: the read-only fault-reaction shadow (its RAM cleared; the fault
      * manager's masks 0 — nothing stored) */
     fr_hook_init();
+    /* the read-only gear-pair shadow (its RAM cleared; the coupled chain's
+     * init = 0xCFFDE(1)'s, as the r04w chain) */
+    gp_hook_init();
 #endif
     park_pair_init();                   /* park sensor: 0x141B1C (safety layer) */
     sensors_init(&s_sensors_cfg);

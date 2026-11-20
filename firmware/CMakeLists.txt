@@ -118,6 +118,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         # fault-reaction / gear-code shadow (its own RAM .fr_shadow / .fr_fm)
         # — code-flash application only
         app/fr_shadow.c app/fr_fm.c app/fr_cal.c app/fr_hook.c
+        # (2026-11-20, ~/tcu_sweep/gp_shadow_port.md): the READ-ONLY gear-pair
+        # shift-engine shadow + its coupled gear chain (own RAM .gp_shadow /
+        # .gp_gear) — code-flash application only
+        app/gp_shadow.c app/gp_cal.c app/gp_gear.c app/gp_hook.c
     )
     # keep GCC from turning the memset/memcpy loops into calls to themselves
     set_source_files_properties(platform/sh7254r/libc_min.c PROPERTIES
@@ -163,6 +167,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py nvm ${SH_NM}
             CMakeFiles/tcu_app.elf.dir/app/fr_shadow.c.obj CMakeFiles/tcu_app.elf.dir/app/fr_fm.c.obj
             CMakeFiles/tcu_app.elf.dir/app/fr_cal.c.obj CMakeFiles/tcu_app.elf.dir/app/fr_hook.c.obj
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py nvm ${SH_NM}
+            CMakeFiles/tcu_app.elf.dir/app/gp_shadow.c.obj CMakeFiles/tcu_app.elf.dir/app/gp_gear.c.obj
+            CMakeFiles/tcu_app.elf.dir/app/gp_cal.c.obj CMakeFiles/tcu_app.elf.dir/app/gp_hook.c.obj
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6c_sections.py ${SH_OBJDUMP} tcu_app.elf
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py retired ${SH_NM} tcu_app.elf
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py image ${SH_NM} tcu_app.elf
@@ -230,7 +237,8 @@ else()
     # ---- Host build: simulator and unit tests ------------------------------
     add_executable(tcu_sim platform/host/plat_host.c ${CORE_SOURCES}
         app/gs_cand.c app/gs_cand_fill.c app/g6a.c
-        app/fr_shadow.c app/fr_fm.c app/fr_cal.c app/fr_hook.c)   # F1: as the image
+        app/fr_shadow.c app/fr_fm.c app/fr_cal.c app/fr_hook.c   # F1: as the image
+        app/gp_shadow.c app/gp_cal.c app/gp_gear.c app/gp_hook.c)
     target_compile_definitions(tcu_sim PRIVATE GSC_G6A=1)   # the image's candidate form
 
     enable_testing()
@@ -1805,6 +1813,105 @@ else()
             -DSH_GUARD_FR_LIVE_${hdr} ${FR_SH_SRC})
         set_tests_properties(fr_sh_guard_live_${hdr} PROPERTIES
             PASS_REGULAR_EXPRESSION "the fault-reaction shadow is read-only: it may not include a live header")
+    endforeach()
+    # THE GEAR-PAIR SHIFT-ENGINE SHADOW (2026-11-20, ~/tcu_sweep/gp_shadow_port.md):
+    # the stock shift object 0xFFF8BD14 (pre-select 0xEB9EC, commit 0xEBA6E /
+    # 0xECB14, completion 0xEDA48, end 0xEBC60 / 0xEBB6C with the NV calls
+    # counted, never made) and the coupled gear chain (app/gp_gear.c = app/
+    # sm_gear.c with SMG_COUPLED) as a read-only shadow. gp_shadow: the speed
+    # model in D (one gear per shift, the decode's element pairs and phase
+    # sequences, BD15 / BD16 / BD17, the pre-select and the swap with the host
+    # seams, the dry bench, a non-converging shift); gp_cal_bytes; _neg_TABLE
+    # (the 1->2 on-coming element E -> D) must FAIL. gp_identity: test_g6b with
+    # the shadow ticking (every bus-A word, the park demands, the cell window)
+    # must pass unchanged and the shadow must have run; the leak negative must
+    # FAIL. The scans (outputs / shadow / hook, nvm) and the SH compile checks.
+    set(GP_TEST_SOURCES tests/unit/test_gp_shadow.c app/gp_shadow.c app/gp_cal.c app/gp_gear.c app/gp_hook.c
+        app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c)
+    add_executable(test_gp_shadow ${GP_TEST_SOURCES})
+    target_compile_definitions(test_gp_shadow PRIVATE _POSIX_C_SOURCE=200809L GP_HOOK_NO_GATHER=1
+        SM_HOOK_NO_GATHER=1 "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"")
+    add_test(NAME gp_shadow COMMAND test_gp_shadow)
+    add_test(NAME gp_cal_bytes COMMAND test_gp_shadow --cal)
+    set_tests_properties(gp_cal_bytes PROPERTIES SKIP_RETURN_CODE 77)
+    add_executable(test_gp_shadow_neg_TABLE ${GP_TEST_SOURCES})
+    target_compile_definitions(test_gp_shadow_neg_TABLE PRIVATE _POSIX_C_SOURCE=200809L GP_HOOK_NO_GATHER=1
+        SM_HOOK_NO_GATHER=1 GP_NEG_TABLE=1)
+    add_test(NAME gp_shadow_neg_TABLE COMMAND test_gp_shadow_neg_TABLE)
+    set_tests_properties(gp_shadow_neg_TABLE PROPERTIES WILL_FAIL TRUE)
+    set(GP_APP_SOURCES app/gp_shadow.c app/gp_cal.c app/gp_gear.c app/gp_hook.c)
+    add_executable(test_g6b_gp ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c
+        ${GP_APP_SOURCES})
+    target_compile_definitions(test_g6b_gp PRIVATE ${G6B_DEFS} SM_TEST=1 SM_HOOK_NO_GATHER=1
+        GP_TEST=1 GP_HOOK_NO_GATHER=1)
+    add_test(NAME gp_identity COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/gp_identity.py
+        $<TARGET_FILE:test_g6b_gp>)
+    add_executable(test_g6b_gpleak ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c
+        ${GP_APP_SOURCES})
+    target_compile_definitions(test_g6b_gpleak PRIVATE ${G6B_DEFS} SM_TEST=1 SM_HOOK_NO_GATHER=1
+        GP_TEST=1 GP_HOOK_NO_GATHER=1 GP_NEG_LEAK=1)
+    add_test(NAME gp_identity_negative_leak COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/gp_identity.py
+        $<TARGET_FILE:test_g6b_gpleak>)
+    set_tests_properties(gp_identity gp_identity_negative_leak PROPERTIES ENVIRONMENT "${G6C_GOLD_ENV}")
+    set_tests_properties(gp_identity_negative_leak PROPERTIES WILL_FAIL TRUE)
+    set(GP_OUTPUT_PATHS ${FR_OUTPUT_PATHS} ${CMAKE_SOURCE_DIR}/app/fr_shadow.c ${CMAKE_SOURCE_DIR}/app/fr_hook.c)
+    # app/sm_gear.c is the coupled chain's template (its SMG_COUPLED part binds
+    # the hooks); its r04w instance compiles to the same object code as before
+    list(REMOVE_ITEM GP_OUTPUT_PATHS ${CMAKE_SOURCE_DIR}/app/sm_gear.c)
+    add_test(NAME gp_shadow_scan_outputs
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/gp_shadow_scan.py outputs ${GP_OUTPUT_PATHS})
+    add_test(NAME gp_shadow_scan_outputs_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/gp_shadow_scan.py outputs
+            ${CMAKE_SOURCE_DIR}/tests/unit/gp_scan_fixture_output.c)
+    add_test(NAME gp_shadow_scan_shadow
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/gp_shadow_scan.py shadow
+            ${CMAKE_SOURCE_DIR}/app/gp_shadow.c ${CMAKE_SOURCE_DIR}/app/gp_shadow.h
+            ${CMAKE_SOURCE_DIR}/app/gp_gear.c ${CMAKE_SOURCE_DIR}/app/gp_cal.c ${CMAKE_SOURCE_DIR}/app/gp_cal.h)
+    add_test(NAME gp_shadow_scan_shadow_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/gp_shadow_scan.py shadow
+            ${CMAKE_SOURCE_DIR}/tests/unit/gp_scan_fixture_shadow.c)
+    add_test(NAME gp_shadow_scan_hook
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/gp_shadow_scan.py hook ${CMAKE_SOURCE_DIR}/app/gp_hook.c)
+    add_test(NAME gp_shadow_scan_hook_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/gp_shadow_scan.py hook
+            ${CMAKE_SOURCE_DIR}/tests/unit/gp_scan_fixture_hook.c)
+    set_tests_properties(gp_shadow_scan_outputs_negative gp_shadow_scan_shadow_negative
+        gp_shadow_scan_hook_negative PROPERTIES WILL_FAIL TRUE)
+    add_library(gp_nvm_objs OBJECT ${GP_APP_SOURCES})
+    target_compile_definitions(gp_nvm_objs PRIVATE GP_HOOK_NO_GATHER=1)
+    add_test(NAME gp_scan_nvm
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py nvm nm $<TARGET_OBJECTS:gp_nvm_objs>
+        COMMAND_EXPAND_LISTS)
+    add_library(gp_nvm_fixture OBJECT tests/unit/gp_nvm_fixture.c)
+    add_test(NAME gp_scan_nvm_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py nvm nm $<TARGET_OBJECTS:gp_nvm_fixture>)
+    set_tests_properties(gp_scan_nvm_negative PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME gp_scan_image_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py image --nm-text
+            ${CMAKE_SOURCE_DIR}/tests/unit/gp_image_fixture_nm.txt)
+    set_tests_properties(gp_scan_image_negative PROPERTIES WILL_FAIL TRUE)
+    set(GP_SH_SRC ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard_gp.c)
+    add_test(NAME gp_sh_guard_control COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${GP_SH_SRC})
+    add_test(NAME gp_sh_guard_shadow
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion -Werror ${CMAKE_SOURCE_DIR}/app/gp_shadow.c)
+    add_test(NAME gp_sh_guard_gear
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion -Werror ${CMAKE_SOURCE_DIR}/app/gp_gear.c)
+    add_test(NAME gp_sh_guard_cal
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/gp_cal.c)
+    add_test(NAME gp_sh_guard_hook
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform -Wall -Wextra -Wconversion
+            ${CMAKE_SOURCE_DIR}/app/gp_hook.c)
+    foreach(g OUTPUT OUTCAL OUTTU)
+        add_test(NAME gp_sh_guard_${g} COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform
+            -DSH_GUARD_GP_${g} ${GP_SH_SRC})
+        set_tests_properties(gp_sh_guard_${g} PROPERTIES
+            PASS_REGULAR_EXPRESSION "the gear-pair shadow is read-only: an output path may not include")
+    endforeach()
+    foreach(hdr sup_cells drv_cells drv_odiag drv_temp platform)
+        add_test(NAME gp_sh_guard_live_${hdr} COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform
+            -DSH_GUARD_GP_LIVE_${hdr} ${GP_SH_SRC})
+        set_tests_properties(gp_sh_guard_live_${hdr} PROPERTIES
+            PASS_REGULAR_EXPRESSION "the gear-pair shadow is read-only: it may not include a live header")
     endforeach()
     # r04r: the retired holder stays out of the image (the POST_BUILD scan of
     # tcu_app.elf runs the same rule on the real link map); its fixtures

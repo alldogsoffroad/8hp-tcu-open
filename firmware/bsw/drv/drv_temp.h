@@ -29,6 +29,9 @@
 #if defined(TCU_FR_SHADOW_TU)
 #error "the fault-reaction shadow is read-only: it may not include a live header (drv_temp.h)"
 #endif
+#if defined(TCU_GP_SHADOW_TU)
+#error "the gear-pair shadow is read-only: it may not include a live header (drv_temp.h)"
+#endif
 
 #include <stdint.h>
 
