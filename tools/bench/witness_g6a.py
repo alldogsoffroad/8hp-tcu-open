@@ -57,7 +57,10 @@ E28E, request), s31/32 (commit, strobe), s34 (sync progress), s35 (element
 steps / outputs), s42 (producer + actuators), tail — max, last and AT THE
 candidate's max pass (names the peak's source); the monitor; the comparison.
 """
+import os
+import shutil
 import struct
+import subprocess
 import sys
 import time
 
@@ -189,6 +192,17 @@ def show_r04s(b):
                  "" if pv == want else " (POINTERS NOT THE STOCK CELLS)", u32(s, 0x64), u32(s, 0x68)))
 
 
+def sched_syms():
+    """(_s_status, _s_rings) addresses from nm of build/sh2a/tcu_app.elf (None if unavailable)."""
+    elf = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "build", "sh2a", "tcu_app.elf")
+    nm = shutil.which("sh-elf-nm")
+    if not nm or not os.path.exists(elf):
+        return None, None
+    out = subprocess.run([nm, elf], capture_output=True, text=True).stdout
+    syms = {l.split()[2]: int(l.split()[0], 16) for l in out.splitlines() if len(l.split()) == 3}
+    return syms.get("_s_status"), syms.get("_s_rings")
+
+
 def main():
     rounds = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else 1
     recs = "--recs" in sys.argv
@@ -251,6 +265,15 @@ def main():
             p, i = u32(wk, 0), u32(wk, 4)
             print("  walk: poll %u isr %u (poll share %.1f %%) now_ms %u" % (p, i, 100.0 * p / max(1, p + i),
                                                                              u32(nw, 0)))
+        # THE CPU BUDGET (2026-11-20): the real stop rule is the scheduler's — missed ticks 0, no ring
+        # overflow, walk polled share <= 10 %; task_10ms max is reported, not a limit (see CLAUDE.md)
+        sa, ra = sched_syms()
+        if sa and ra:
+            st, rg = read(b, 1, sa, 12), read(b, 1, ra, 12 * 5)
+            if st and rg:
+                ovf = [rg[12 * k + 11] for k in range(5)]
+                print("  CPU budget: missed ticks %u (want 0) | ring overflow 1ms/5ms/10ms/100ms/event %s (want all 0)"
+                      % (u32(st, 4), "/".join(str(x) for x in ovf)))
         if recs and r == rounds - 1:
             rn, un = d[142], d[143]
             rd = read(b, 1, G6A + 164, 32 * 24)
