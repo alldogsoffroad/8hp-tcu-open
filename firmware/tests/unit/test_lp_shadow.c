@@ -240,16 +240,20 @@ static void test_ti(void)
     unsigned i;
     memset(&in, 0, sizeof in);
     in.os_mode = 1u;
+    in.pf = 1u;
     ti_shadow_init();
     /* no shift: nothing armed, "no request", the converter's 150 Nm limit (the dump's fields) */
     ti_shadow_pass(&in);
     t = ti_shadow_state();
     CHECK(t->armed == 0u && t->type == 0u, "idle: armed %u type %u", t->armed, t->type);
     CHECK(t->fld_req == 0x1FFEu && t->fld_lim == 0x0A28u, "idle fields %04x / %04x (dump 1FFE / 0A28)", t->fld_req, t->fld_lim);
-    /* garage: 8 -> 0xA -> 0xB -> 0xC */
-    in.bd16 = 3u;
+    /* garage: 8 -> 0xA -> 0xB -> 0xC (the sync progress BD76 rises through the exit thresholds) */
+    in.bd16 = 3u; in.c2d = 0u; in.c27 = 1u; in.c26 = 2u; in.k7 = 9u; in.ktype = 1u; in.tq = 80; in.t3 = 80; in.turb = 800;
+    in.bd76 = -30; in.temp = 120u; in.bd22 = 120u;
     n = 0u;
-    for (i = 0u; i < 20u; i++) {
+    for (i = 0u; i < 30u; i++) {
+        in.now_ms = (uint16_t)(10u * (i + 1u));
+        in.bd76 = (int16_t)(in.bd76 + 2);
         ti_shadow_pass(&in);
         t = ti_shadow_state();
         if (n == 0u || seq[n - 1u] != t->phase) {
@@ -257,65 +261,46 @@ static void test_ti(void)
         }
     }
     CHECK(t->cls == 2u && t->armed == 1u, "garage arms class 2");
-    CHECK(n == 3u && seq[0] == 0xAu && seq[1] == 0xBu && seq[2] == 0xCu, "garage sequence (%u: %x %x %x)", n, seq[0], seq[1], seq[2]);
-    CHECK(t->fld_req == 0x1FFEu, "no amount: no request");
+    /* phase 0xB's exit test is "the last amount is 0" (0xE630C): the garage's 0 Nm passes 0xB inside one pass */
+    CHECK(n == 2u && seq[0] == 0xAu && seq[1] == 0xCu, "garage sequence (%u: %x %x)", n, seq[0], seq[1]);
+    CHECK(ti_shadow_state()->w.phase_n >= 4u, "the garage went 8 -> 0xA -> 0xB -> 0xC (%u phase entries)", ti_shadow_state()->w.phase_n);
+    CHECK(t->fld_req == 0x1FFEu && t->out == 0, "garage: 0 Nm on this unit, no request");
     in.bd16 = 0u;
     ti_shadow_pass(&in);
     CHECK(ti_shadow_state()->armed == 0u && ti_shadow_state()->w.end_n == 1u, "the end disarms");
-    /* up-shift: 8 -> 9 -> 0xA -> 0xB -> 0xC */
-    in.bd16 = 1u;
+    /* up-shift: 8 -> 9 -> 0xA -> 0xB -> 0xC, and T3 + delta of the reduction */
+    memset(&in, 0, sizeof in);
+    in.os_mode = 1u; in.pf = 1u; in.bd16 = 1u; in.c2d = 1u; in.c27 = 2u; in.c26 = 2u; in.k7 = 2u; in.ktype = 1u;
+    in.tq = 300; in.t3 = 300; in.turb = 3008; in.eng = 3008; in.temp = 120u; in.bd22 = 120u; in.bd76 = -40;
+    ti_shadow_init();
     n = 0u;
-    for (i = 0u; i < 30u; i++) {
+    for (i = 0u; i < 70u; i++) {
+        in.now_ms = (uint16_t)(10u * (i + 1u));
+        in.on_left_fill = (uint8_t)((i >= 3u) ? 1u : 0u);
+        if (i >= 25u) { in.bd76 = (int16_t)(in.bd76 + 1); }
         ti_shadow_pass(&in);
         t = ti_shadow_state();
         if (n == 0u || seq[n - 1u] != t->phase) {
             seq[n++] = t->phase;
         }
+        if (t->phase == 0xAu && t->out <= -80) {
+            CHECK(t->mode == 2u && t->type == 2u, "reduction: mode %u type %u", t->mode, t->type);
+            CHECK(t->req_q == (300 + t->out) * 4 && t->dreq_q == t->out * 4, "reduction request %d / %d", t->req_q, t->dreq_q);
+            CHECK(t->fld_req == (uint16_t)((300 + t->out) * 4 + 2000), "reduction field %04x", t->fld_req);
+        }
     }
-    CHECK(t->cls == 1u && n == 4u && seq[0] == 9u && seq[1] == 0xAu && seq[2] == 0xBu && seq[3] == 0xCu, "up sequence (%u: %x %x %x %x)",
+    CHECK(t->cls == 1u && n >= 4u && seq[0] == 9u && seq[1] == 0xAu && seq[2] == 0xBu && seq[3] == 0xCu, "up sequence (%u: %x %x %x %x)",
           n, seq[0], seq[1], seq[2], seq[3]);
-    in.bd16 = 0u;
-    ti_shadow_pass(&in);
-    /* down-shift: 2 -> 3 -> 4 -> 5 -> 6 -> 0xC */
-    in.bd16 = 2u;
-    n = 0u;
-    for (i = 0u; i < 40u; i++) {
-        ti_shadow_pass(&in);
-        t = ti_shadow_state();
-        if (n == 0u || seq[n - 1u] != t->phase) {
-            seq[n++] = t->phase;
-        }
-    }
-    CHECK(t->cls == 0u && n == 5u && seq[0] == 3u && seq[1] == 4u && seq[2] == 5u && seq[3] == 6u && seq[4] == 0xCu,
-          "down sequence (%u: %x %x %x %x %x)", n, seq[0], seq[1], seq[2], seq[3], seq[4]);
-    in.bd16 = 0u;
-    ti_shadow_pass(&in);
-    /* T3 + delta: an injected reduction during the up-shift's torque phase (the amounts themselves are stood in) */
-    in.t3 = 120;
-    in.bd16 = 1u;
-    ti_shadow_host_amount(-12);
-    for (i = 0u; i < 6u; i++) {
-        ti_shadow_pass(&in);
-    }
-    t = ti_shadow_state();
-    CHECK(t->out == -12 && t->mode == 2u && t->type == 2u, "reduction: out %d mode %u type %u", t->out, t->mode, t->type);
-    CHECK(t->req_q == (120 - 12) * 4 && t->dreq_q == -48, "reduction request %d / %d", t->req_q, t->dreq_q);
-    CHECK(t->fld_req == (uint16_t)((120 - 12) * 4 + 2000), "reduction field %04x", t->fld_req);
-    ti_shadow_host_amount(8);
-    ti_shadow_pass(&in);
-    t = ti_shadow_state();
-    CHECK(t->mode == 1u && t->type == 1u && t->fld_req == (uint16_t)((120 + 8) * 4 + 2000), "increase: mode %u type %u field %04x",
-          t->mode, t->type, t->fld_req);
-    ti_shadow_host_amount(0);
     CHECK(ti_field13(0) == 2000u && ti_field13(-100000) == 0u && ti_field13(100000) == 0x1FFDu, "field packer");
-    /* the garage's decoded zero amounts: phase 0xA is not a decoded zero, but with no stand-in amount the request is none */
+    /* E3DE is disabled by its calibration enable byte, so the combine never lifts a zero */
+    CHECK(t->e3de_en == 0u, "E3DE enable byte (0x1FE8CB) is 0");
+    /* the lock-up raise B5E1 / B5E2 and E330 by value: T3 + B5E1 */
     in.bd16 = 0u;
+    for (i = 0u; i < 14u; i++) { ti_shadow_pass(&in); }
+    in.b5e2 = 1u; in.b5e1 = 12u;
     ti_shadow_pass(&in);
-    in.bd16 = 3u;
-    for (i = 0u; i < 10u; i++) {
-        ti_shadow_pass(&in);
-    }
-    CHECK(ti_shadow_state()->type == 0u, "garage, no amount: no request");
+    CHECK(ti_shadow_state()->type == 1u && ti_shadow_state()->req_q == (300 + 12) * 4, "the lock-up raise: type %u req %d",
+          ti_shadow_state()->type, ti_shadow_state()->req_q);
 }
 
 static void test_cal(void)

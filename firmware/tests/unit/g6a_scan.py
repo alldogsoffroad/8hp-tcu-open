@@ -159,12 +159,13 @@ STOCK_FORBIDDEN = ["e8bfa", "e8cf6", "d229e", "f71ec", "a2028", "a1712", "bddb0"
                    # 0xB79E4, the range-error fatal 0xB75B4 / 0xB75A6, the DSM reporter 0xA105E and the NV shift /
                    # abort counters 0xBA538 / 0xBA52C -> 0xE8512 are already above
                    "f31b2", "aea24", "aea5c", "aeac0", "aeace", "aeb8c", "aeafa",
-                   # (2026-11-20, ~/tcu_sweep/wk_shadow_port.md, ti_amounts_wk_decode.md section C): the lock-up shadow's
-                   # keep-outs - 0xBF8E8 (the engagement counter written to EEPROM block 0x0304, dirty flag
-                   # 0xFFF85175; its reader 0xBF89E is read-only and safe) and the WK fill-adaptation learner
-                   # 0xAEE26 / 0xAEE1C / 0xAEE2E -> 0xCEE94 / 0xCE48C / 0xCE00C (stubbed; the reader 0xAEE0E is
-                   # held constant): never defined or called
-                   "bf8e8", "aee26", "aee1c", "aee2e", "cee94", "ce48c", "ce00c"]
+                   # (2026-11-20, ~/tcu_sweep/ti_amounts_wk_decode.md section C, ti_amounts_port.md): the torque-intervention
+                   # amounts' and the lock-up (WK) keep-outs - the lock-up engagement counter written into EEPROM block 0x0304
+                   # (0xBF8E8, dirty flag 0xFFF85175), the WK fill-adaptation learner calls 0xAEE26 / 0xAEE1C / 0xAEE2E
+                   # (-> 0xCEE94 / 0xCE48C / 0xCE00C) and its reader 0xAEE0E -> 0xCEDC6, the WK DSM report 0xE10A6 and the
+                   # lock-up events 0x10C6CC / 0x10C99E (-> 0xB79E4): never defined in the image (0xB75B4, 0xB79E4,
+                   # 0xA105E, 0xEBB6C / 0xEBC60's NV counters are above)
+                   "bf8e8", "aee26", "aee1c", "aee2e", "aee0e", "cee94", "ce48c", "ce00c", "cedc6", "e10a6", "10c6cc", "10c99e"]
 LIT_FORBIDDEN = [0xFFF85174, 0xFFF85175, 0xFFF85176]
 # F1: the EEPROM / NVM / DSM-record / fatal-log cells no fault-reaction shadow
 # object may hold as a literal or a movi20 operand (plan §5, f0 §7)

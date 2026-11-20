@@ -75,6 +75,13 @@
 #define CAL_GP_SYNC       0x1FF1F6u   /* u16 */
 #define CAL_GP_THR        0x1FF1FAu   /* s16[5] */
 #define CAL_GP_OV_MAP     0x1B78A0u   /* {u32 4, s16 x[4], s16 y[4]} */
+/* torque-intervention shadow (ti_*): the maps / curves the per-type blocks (app/ti_cal.c) point at, and its scalars */
+#define CAL_TI_MAPS       0x1AAB84u   /* maps and curves 0x1AAB84 .. 0x1B52FF (the variant-0 block words, the common block's maps) */
+#define CAL_TI_MAPS_LEN   0xA77Cu
+#define CAL_TI_SC1        0x1FE83Eu   /* scalars: thresholds, enables, ramp lengths (0x1FE83E .. 0x1FE8CB) */
+#define CAL_TI_SC1_LEN    0x8Eu
+#define CAL_TI_SC2        0x1FF126u   /* scalars: timeouts, thresholds, gains (0x1FF126 .. 0x1FF1AF) */
+#define CAL_TI_SC2_LEN    0x8Au
 
 /* lock-up (WK) shadow (wk_*): every address is a stock address >= 0xA0000, reached through the config
  * struct 0x54680 (*0xFFF84D10; the D10+offset in each comment) or a direct literal */
@@ -154,7 +161,10 @@
     X(wk_ki,      CAL_WK_KI,      4u) \
     X(wk_outmap,  CAL_WK_OUTMAP,  184u) \
     X(wk_b2ac,    CAL_WK_B2AC,    2u) \
-    X(wk_zmap,    CAL_WK_ZMAP,    64u)
+    X(wk_zmap,    CAL_WK_ZMAP,    64u) \
+    X(ti_maps,    CAL_TI_MAPS,    CAL_TI_MAPS_LEN) \
+    X(ti_sc1,     CAL_TI_SC1,     CAL_TI_SC1_LEN) \
+    X(ti_sc2,     CAL_TI_SC2,     CAL_TI_SC2_LEN)
 
 /* ── the accessors ──────────────────────────────────────────────────────── */
 #if defined(__sh__)

@@ -51,5 +51,8 @@ static const cal_golden_t cal_golden[] = {
     { "wk_outmap", 0x1A2834u, 184u, 0x09183D2Du },
     { "wk_b2ac", 0x1FF072u, 2u, 0x0776880Fu },
     { "wk_zmap", 0x1A8638u, 64u, 0x943F3D26u },
+    { "ti_maps", 0x1AAB84u, 42876u, 0x6097D13Eu },
+    { "ti_sc1", 0x1FE83Eu, 142u, 0x59EF37EFu },
+    { "ti_sc2", 0x1FF126u, 138u, 0xED66752Du },
 };
 #endif

@@ -3,7 +3,7 @@
 (firmware/app/lp_shadow.c, firmware/app/ti_shadow.c; ~/tcu_sweep/lp_ti_shadow_port.md).
 
 Resolves its addresses FROM THE ELF by symbol (sh-elf-nm): __lp_shadow_start (struct lp_t, 0xB4 bytes,
-section .lp_shadow) and __ti_shadow_start (struct ti_t, 0x5C bytes, section .ti_shadow). Reads them over
+section .lp_shadow) and __ti_shadow_start (struct ti_t, 0xC0 bytes, section .ti_shadow). Reads them over
 meas (NOT atomic - fields tear between blocks) and prints the would-be line-pressure target / reason /
 Sys current against the LIVE Sys current (0xFFF94ED4 + 12, the law's channel 6), and the torque-intervention
 object, request and the 13-bit fields of 0x2F9 / 0x037 (NEVER transmitted).
@@ -28,11 +28,11 @@ import tcu_bench  # noqa: E402
 import witness_sm  # noqa: E402
 
 LP_SIZE = 0xB4
-TI_SIZE = 0x5C
+TI_SIZE = 0xC0
 LPW = ["pass", "skip_mode", "cmp", "diff", "err", "si_cond", "si_r0a", "si_class2", "si_var", "sys_bin", "fault",
        "fill", "pt1"]
 TIW = ["pass", "skip_mode", "arm[0]", "arm_up", "arm_down", "arm_garage", "end", "phase", "si_dwell", "si_amount",
-       "si_misc", "req", "r23", "err"]
+       "si_misc", "req", "r23", "err", "red", "inc", "ramp", "rsvd0", "rsvd1"]
 
 
 def elf_syms(elf):
@@ -69,8 +69,14 @@ def show_ti(d):
           "limit %d Nm  FIELDS req %04X lim %04X (never sent)" %
           (d[0], d[1], d[2], d[3], u16(d, 4), s16(d, 6), d[9], d[10], s16(d, 12), s16(d, 14), s16(d, 16),
            s16(d, 18), u16(d, 20), u16(d, 22)))
-    w = struct.unpack(">14I", d[36:36 + 56])
+    w = struct.unpack(">19I", d[0x3C:0x3C + 0x4C])
     print("  TIW   " + " ".join("%s %u" % (n, v) for n, v in zip(TIW, w)))
+    # the amounts of the 2026-11-20 port (ti_amounts_port.md): the stock object's own fields
+    print("  TIX   inc %u  a22 %d v6 %d v8 %d v2a %d flare %d last20 %d  blend start %d frac %d  pc %u t1a %u rc %u rlen %u  hd %u  "
+          "bd78 %u c18 %u c1c %u c12 %u  idx gear %u up %u dn %u d4 %u c %u  E3DE-en %u" %
+          (d[0x0B], s16(d, 0x88), s16(d, 0x8A), s16(d, 0x8C), s16(d, 0x8E), s16(d, 0xBA), s16(d, 0x92), s16(d, 0x98),
+           struct.unpack(">i", d[0x9C:0xA0])[0], u16(d, 0xA0), u16(d, 0xA2), d[0xA4], d[0xA5], d[0xA6],
+           d[0xAF], d[0xB4], d[0xB5], d[0xB6], d[0xAA], d[0xAB], d[0xAC], d[0xAD], d[0xAE], d[0xBC]))
 
 
 def main():

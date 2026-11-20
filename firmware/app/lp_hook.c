@@ -38,6 +38,11 @@ void lp_hook_init(void)
 #include "io/vehicle/vehicle.h"
 #include "bsw/sched/sched.h"
 
+static int16_t sat16_rpm(int32_t v)
+{
+    return (v > 32767) ? (int16_t)32767 : ((v < -32768) ? (int16_t)-32768 : (int16_t)v);
+}
+
 static int16_t nm_of(nm10_t v, quality_t q)
 {
     return (q == Q_OK) ? (int16_t)(v / 10) : (int16_t)0;
@@ -106,12 +111,36 @@ void lp_hook_10ms(void)
     lp_hook_feed(&in);
     ti.os_mode = in.os_mode;
     ti.bd16 = bd16;
+    ti.bd17 = p->bd17;
+    ti.bd18 = p->bd18;
     ti.bd1a = bd1a;
-    ti.pad3 = 0u;
+    ti.bd1b = p->bd1b;
+    ti.bd22 = p->bd22;
+    ti.pf = in.c30;
     ti.t3 = in.t3;
-    ti.e3de = 0;                                         /* 0xFFF8E3DE: the second torque source, stood in (dump 0) */
+    ti.tq = gp_shadow_x()->in2.tq;                       /* 0x89CA0 / 0x89C1A: the input torque, Nm (the gear-pair hook's stand-in) */
+    ti.turb = (sn->q_turbine_speed == Q_OK) ? sat16_rpm(sn->turbine_speed) : (int16_t)0;
+    ti.eng = (int16_t)((in.eng > 32767u) ? 32767 : (int16_t)in.eng);
+    {
+        const int32_t out = (int32_t)in.out;
+        const int32_t rto = (int32_t)gp_cpl_ratio((int8_t)in.c27);
+        const int32_t rfr = (int32_t)gp_cpl_ratio((int8_t)in.c2d);
+        ti.sync_to = sat16_rpm((out * rto) / 1000);                       /* ctx+0x2A */
+        ti.bd80 = sat16_rpm((int32_t)ti.turb - (out * rfr) / 1000);       /* 0x118082: turbine - output x ratio(old gear) / 1000 */
+    }
+    ti.bd76 = gp_shadow_ph()->blk[0].bd76;
     ti.now_ms = in.now_ms;
-    ti.pad10 = 0u;
+    ti.c2d = (uint8_t)in.c2d;
+    ti.c27 = (uint8_t)in.c27;
+    ti.c26 = in.c26;
+    ti.k7 = gp_shadow_x()->blk[0].k7;
+    ti.ktype = p->a.kind;
+    ti.temp = in.temp;
+    ti.on_left_fill = (uint8_t)((p->a.on.phase >= 4u) ? 1u : 0u);        /* the phase-9 exit stand-in: the on-coming object left its fill */
+    ti.b5e1 = 0u;                                        /* 0xFFF8B5E1: the lock-up torque raise - BY VALUE hook for the lock-up shadow */
+    ti.b5e2 = 0u;                                        /* 0xFFF8B5E2 */
+    ti.e330 = 0;                                         /* 0xFFF8E330 (0xFFF8AFA0's term: dump 0, enable +0x34 = 0) */
+    ti.sync_a = p->a.sync;
     ti_hook_feed(&ti);
 }
 #endif

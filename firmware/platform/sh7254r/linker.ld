@@ -469,7 +469,7 @@ SECTIONS
     } > RAM
     ASSERT(__lp_shadow_start == 0xFFF8BA40 && SIZEOF(.lp_shadow) == 0xB4 && __lp_shadow_end <= 0xFFF8BC70,
            ".lp_shadow: lp_t is off 0xFFF8BA40 or leaves the dump-zero run (witness_lp.py)")
-    ASSERT(__ti_shadow_start == 0xFFF929C0 && SIZEOF(.ti_shadow) == 0x5C && __ti_shadow_end <= 0xFFF92C68,
+    ASSERT(__ti_shadow_start == 0xFFF929C0 && SIZEOF(.ti_shadow) == 0xC0 && __ti_shadow_end <= 0xFFF92C68,
            ".ti_shadow: ti_t is off 0xFFF929C0 or leaves the dump-zero run (witness_lp.py)")
     /* THE TORQUE-CONVERTER LOCK-UP (WK) SHADOW (2026-11-20, ~/tcu_sweep/wk_shadow_port.md; app/wk_shadow.c, ours -
      * not stock cells): struct wk_t (0x9C) at 0xFFF935D0 inside the dump-zero run 0xFFF935C6..0xFFF9372E (re-checked

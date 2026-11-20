@@ -7,7 +7,7 @@ Comments are stripped first.
                                         the monitor, the range and park chain, the supervisor,
                                         the temperature chain, the other shadows) may name either
                                         shadow: headers, API, types, macros, RAM (.lp_shadow
-                                        0xFFF8BA40..0xFFF8BAF3, .ti_shadow 0xFFF929C0..0xFFF92A1B)
+                                        0xFFF8BA40..0xFFF8BAF3, .ti_shadow 0xFFF929C0..0xFFF92A7F)
   lp_ti_shadow_scan.py shadow FILE...   the shadows (lp_shadow.c / .h, ti_shadow.c / .h, lp_cal.c / .h)
                                         include only their own headers (+ app/cal_inplace.h), call no
                                         live module and NO TRANSMIT path (fca_*, com_*, can), name no
@@ -25,15 +25,15 @@ import re
 import sys
 
 OUT_PATTERNS = [
-    r"\blp_shadow", r"\blp_hook", r"\blp_cal", r"\blp_in_t\b", r"\blp_t\b", r"\blp_w_t\b", r"\blp_sys_law\b",
+    r"\blp_shadow", r"\blp_hook", r"\blp_cal", r"\bti_cal", r"\blp_in_t\b", r"\blp_t\b", r"\blp_w_t\b", r"\blp_sys_law\b",
     r"\blp_input_torque\b", r"\bLP_[A-Z0-9_]+", r"\bLPV_", r"\bs_lp\b", r"\.lp_shadow\b",
     r"\bti_shadow", r"\bti_hook", r"\bti_in_t\b", r"\bti_t\b", r"\bti_w_t\b", r"\bti_field13\b", r"\bTI_[A-Z0-9_]+",
     r"\bs_ti\b", r"\.ti_shadow\b",
     r"0[xX][fF]{3}8[bB][aA][4-9a-fA-F][0-9a-fA-F]",
-    r"0[xX][fF]{3}929[c-fC-F][0-9a-fA-F]", r"0[xX][fF]{3}92[aA][01][0-9a-fA-F]",
+    r"0[xX][fF]{3}929[c-fC-F][0-9a-fA-F]", r"0[xX][fF]{3}92[aA][0-7][0-9a-fA-F]",
 ]
 SHADOW_PATTERNS = [
-    r'#\s*include\s*"(?!app/lp_shadow\.h"|app/lp_cal\.h"|app/ti_shadow\.h"|app/cal_inplace\.h")[^"]*"',
+    r'#\s*include\s*"(?!app/lp_shadow\.h"|app/lp_cal\.h"|app/ti_shadow\.h"|app/ti_cal\.h"|app/cal_inplace\.h")[^"]*"',
     r"\b(rq_prod|drv|sup|park|plat|vehicle|sensors|rng_chain|kl15|tmp_chain|tmp_safe|sol|com|meas|gs|g6a|"
     r"od|fb|pa7|tsel|sched|sm_shadow|sm_hook|fr|gp|crc8|os_sel|fca|can|uds)_[a-z0-9_]+\s*\(",
     r"\bfca_[a-z0-9_]+", r"\bcom_[a-z0-9_]+", r"\bplat_[a-z0-9_]+",

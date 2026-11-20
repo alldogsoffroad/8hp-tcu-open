@@ -153,7 +153,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         # (2026-11-20, ~/tcu_sweep/lp_ti_shadow_port.md): the READ-ONLY healthy
         # line-pressure (Sys) and torque-intervention shadows (own RAM .lp_shadow /
         # .ti_shadow) - code-flash application only
-        app/lp_shadow.c app/lp_cal.c app/ti_shadow.c app/lp_hook.c
+        app/lp_shadow.c app/lp_cal.c app/ti_shadow.c app/ti_cal.c app/lp_hook.c
         # (2026-11-20, ~/tcu_sweep/wk_shadow_port.md): the READ-ONLY torque-converter
         # lock-up (WK) shadow (own RAM .wk_shadow) - code-flash application only
         app/wk_shadow.c app/wk_cal.c app/wk_hook.c
@@ -207,7 +207,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
             CMakeFiles/tcu_app.elf.dir/app/gp_cal.c.obj CMakeFiles/tcu_app.elf.dir/app/gp_hook.c.obj
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py nvm ${SH_NM}
             CMakeFiles/tcu_app.elf.dir/app/lp_shadow.c.obj CMakeFiles/tcu_app.elf.dir/app/ti_shadow.c.obj
-            CMakeFiles/tcu_app.elf.dir/app/lp_cal.c.obj CMakeFiles/tcu_app.elf.dir/app/lp_hook.c.obj
+            CMakeFiles/tcu_app.elf.dir/app/lp_cal.c.obj CMakeFiles/tcu_app.elf.dir/app/ti_cal.c.obj CMakeFiles/tcu_app.elf.dir/app/lp_hook.c.obj
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py nvm ${SH_NM}
             CMakeFiles/tcu_app.elf.dir/app/wk_shadow.c.obj CMakeFiles/tcu_app.elf.dir/app/wk_cal.c.obj
             CMakeFiles/tcu_app.elf.dir/app/wk_hook.c.obj
@@ -298,7 +298,7 @@ else()
         app/gs_cand.c app/gs_cand_fill.c app/g6a.c
         app/fr_shadow.c app/fr_fm.c app/fr_cal.c app/fr_hook.c   # F1: as the image
         app/gp_shadow.c app/gp_cal.c app/gp_gear.c app/gp_hook.c
-        app/lp_shadow.c app/lp_cal.c app/ti_shadow.c app/lp_hook.c
+        app/lp_shadow.c app/lp_cal.c app/ti_shadow.c app/ti_cal.c app/lp_hook.c
         app/wk_shadow.c app/wk_cal.c app/wk_hook.c)
     target_compile_definitions(tcu_sim PRIVATE GSC_G6A=1)   # the image's candidate form
 
@@ -2085,7 +2085,7 @@ else()
     # mutated phase-table row) must FAIL. lp_identity: test_g6b with the shadows ticking (every bus-A word, the
     # park demands, the cell window) must pass unchanged and the shadows must have run; the leak negative must
     # FAIL. The scans (outputs / shadow / hook, nvm) and the SH compile checks.
-    set(LP_TEST_SOURCES tests/unit/test_lp_shadow.c app/lp_shadow.c app/lp_cal.c app/ti_shadow.c app/lp_hook.c)
+    set(LP_TEST_SOURCES tests/unit/test_lp_shadow.c app/lp_shadow.c app/lp_cal.c app/ti_shadow.c app/ti_cal.c app/lp_hook.c)
     add_executable(test_lp_shadow ${LP_TEST_SOURCES})
     target_compile_definitions(test_lp_shadow PRIVATE _POSIX_C_SOURCE=200809L LP_HOOK_NO_GATHER=1)
     add_test(NAME lp_shadow COMMAND test_lp_shadow)
@@ -2098,7 +2098,21 @@ else()
     target_compile_definitions(test_lp_shadow_neg_TABLE PRIVATE _POSIX_C_SOURCE=200809L LP_HOOK_NO_GATHER=1 TI_NEG_TABLE=1)
     add_test(NAME lp_shadow_neg_TABLE COMMAND test_lp_shadow_neg_TABLE)
     set_tests_properties(lp_shadow_neg_MAP lp_shadow_neg_TABLE PROPERTIES WILL_FAIL TRUE)
-    set(LP_APP_SOURCES app/lp_shadow.c app/lp_cal.c app/ti_shadow.c app/lp_hook.c)
+    set(LP_APP_SOURCES app/lp_shadow.c app/lp_cal.c app/ti_shadow.c app/ti_cal.c app/lp_hook.c)
+    # THE TORQUE-INTERVENTION AMOUNTS (2026-11-20, ~/tcu_sweep/ti_amounts_port.md): the decode's trace -
+    # 1->2 at 3000 rpm / 300 Nm warm = -90 Nm (class 0) / -132 Nm (class 1), -54 Nm at 2000 and -144 Nm at 5000, the
+    # temperature factor, the accelerating ramp-in, the fade against the sync progress, the 10-pass ramp-out, the coast
+    # down-shift blip within +40 .. +150 Nm, the garage = 0 Nm, the 13-bit field; ti_cal_bytes re-derives ti_cal.c from
+    # the stock image; the mutated-map negative (one stock byte of the 1->2 torque map moved) must FAIL.
+    set(TI_TEST_SOURCES tests/unit/test_ti_amounts.c app/ti_shadow.c app/ti_cal.c app/lp_cal.c)
+    add_executable(test_ti_amounts ${TI_TEST_SOURCES})
+    target_compile_definitions(test_ti_amounts PRIVATE _POSIX_C_SOURCE=200809L)
+    add_test(NAME ti_amounts COMMAND test_ti_amounts)
+    add_test(NAME ti_cal_bytes COMMAND test_ti_amounts --cal)
+    add_executable(test_ti_amounts_neg_AMT ${TI_TEST_SOURCES})
+    target_compile_definitions(test_ti_amounts_neg_AMT PRIVATE _POSIX_C_SOURCE=200809L TI_NEG_AMT=1)
+    add_test(NAME ti_amounts_neg_AMT COMMAND test_ti_amounts_neg_AMT)
+    set_tests_properties(ti_amounts_neg_AMT PROPERTIES WILL_FAIL TRUE)
     add_executable(test_g6b_lp ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c io/vehicle/shadow_sim.c
         ${GP_APP_SOURCES} ${LP_APP_SOURCES})
     target_compile_definitions(test_g6b_lp PRIVATE ${G6B_DEFS} SM_TEST=1 SM_HOOK_NO_GATHER=1
@@ -2124,6 +2138,7 @@ else()
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/lp_ti_shadow_scan.py shadow
             ${CMAKE_SOURCE_DIR}/app/lp_shadow.c ${CMAKE_SOURCE_DIR}/app/lp_shadow.h
             ${CMAKE_SOURCE_DIR}/app/ti_shadow.c ${CMAKE_SOURCE_DIR}/app/ti_shadow.h
+            ${CMAKE_SOURCE_DIR}/app/ti_cal.c ${CMAKE_SOURCE_DIR}/app/ti_cal.h
             ${CMAKE_SOURCE_DIR}/app/lp_cal.c ${CMAKE_SOURCE_DIR}/app/lp_cal.h)
     add_test(NAME lp_shadow_scan_shadow_negative
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/lp_ti_shadow_scan.py shadow
@@ -2150,6 +2165,8 @@ else()
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion -Werror ${CMAKE_SOURCE_DIR}/app/lp_shadow.c)
     add_test(NAME lp_sh_guard_ti
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion -Werror ${CMAKE_SOURCE_DIR}/app/ti_shadow.c)
+    add_test(NAME ti_sh_guard_cal
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/ti_cal.c)
     add_test(NAME lp_sh_guard_cal
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/lp_cal.c)
     add_test(NAME lp_sh_guard_hook
@@ -2531,7 +2548,7 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Generic")
             if(_s MATCHES "(^|/)app/cal_inplace\\.c$")
                 set(_has_ip ON)
             endif()
-            if(_s MATCHES "(^|/)app/(sm_shadow|sm_gear|sm_cal|fr_shadow|fr_fm|fr_cal|gp_shadow|gp_gear|gp_cal|lp_shadow|wk_shadow)\\.c$")
+            if(_s MATCHES "(^|/)app/(sm_shadow|sm_gear|sm_cal|fr_shadow|fr_fm|fr_cal|gp_shadow|gp_gear|gp_cal|lp_shadow|wk_shadow|ti_shadow)\\.c$")
                 set(_needs_ip ON)
             endif()
         endforeach()

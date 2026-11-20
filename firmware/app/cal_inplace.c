@@ -44,6 +44,10 @@ static void mutate(void)
     /* the lock-up shadow's torque feed-forward map 0x1A3C04 (D10+0x140): z[0][3] (300 Nm) 0x40A9999A (5.3) -> 0x40B9999A (5.8) */
     s_img[0x1A3C04u + 8u + 4u * (6u + 6u + 3u) + 1u] += 0x10u;
 #endif
+#if defined(TI_NEG_AMT)
+    /* the torque-intervention 1->2 class-0 up-shift base map (E584E block 0, 0x1AD3B4): the cell at x 94 / y 84 moves 4 (the -90 Nm trace moves) */
+    s_img[0x1AD3B4u + 8u + 6u + 10u + 6u * 6u + 2u] += 4u;
+#endif
 #if defined(GP_NEG_DNMAP)
     /* the 2->1 class-1 down-shift on-coming kiss map (blk58+0xC = 0x1DBD04): the y at the 105 degC point 100 -> 101 */
     s_img[0x1DBD04u + 4u + 2u * 10u + 2u * 6u + 1u] += 1u;
