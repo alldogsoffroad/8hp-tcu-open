@@ -5,7 +5,8 @@
       Save the current SH outputs (build/sh2a) as the flashed baseline
       build/flashed/<name>/ (app ELF/hex, RAM app, loader, flasher).
 
-  validate_build.py check <new> <base> [--no-build] [--allow-differ FILE ...]
+  validate_build.py check <new> <base> [--no-build] [--allow-differ FILE ...] [--allow-moved SYM ...]
+      (--allow-moved: a shadow's own section-end marker that grew inside its dump-zero window)
       1. build host + SH and run ctest (unless --no-build)
       2. RAM symbols (sh-elf-nm b/B/d/D): report added / removed / MOVED vs
          build/flashed/<base>/  -> FAIL on any removed or moved symbol
@@ -60,7 +61,7 @@ def snapshot(name):
     print(f"snapshot: build/sh2a outputs saved as build/flashed/{name}/")
 
 
-def check(new, base, build=True, allow=()):
+def check(new, base, build=True, allow=(), allow_moved=()):
     fails, notes = [], []
     bdir = os.path.join(FLASHED, base)
     if not os.path.isdir(bdir):
@@ -90,7 +91,10 @@ def check(new, base, build=True, allow=()):
     for s in removed:
         fails.append(f"RAM symbol removed: {s} (was {old[s]:08X})")
     for s in moved:
-        fails.append(f"RAM symbol MOVED: {s} {old[s]:08X} -> {cur[s]:08X}")
+        if s in allow_moved:
+            notes.append(f"RAM symbol moved (allowed): {s} {old[s]:08X} -> {cur[s]:08X}")
+        else:
+            fails.append(f"RAM symbol MOVED: {s} {old[s]:08X} -> {cur[s]:08X}")
     notes.append("RAM: " + (", ".join(f"{s} {cur[s]:08X}" for s in added) if added else "no new symbols"))
 
     for f in IDENTICAL:
@@ -165,8 +169,17 @@ def main():
         snapshot(a[1])
         return 0
     if len(a) >= 3 and a[0] == "check":
-        allow = a[a.index("--allow-differ") + 1:] if "--allow-differ" in a else []
-        return check(a[1], a[2], build="--no-build" not in a, allow=allow)
+        def opt(name):
+            if name not in a:
+                return []
+            out = []
+            for x in a[a.index(name) + 1:]:
+                if x.startswith("--"):
+                    break
+                out.append(x)
+            return out
+        return check(a[1], a[2], build="--no-build" not in a, allow=opt("--allow-differ"),
+                     allow_moved=opt("--allow-moved"))
     print(__doc__)
     return 2
 
