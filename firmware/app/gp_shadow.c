@@ -204,16 +204,6 @@ static int16_t map1(const int16_t *xs, const int16_t *ys, unsigned n, int16_t x)
     const float d = ((float)((int32_t)ys[i] - (int32_t)ys[j]) * num) / den;
     return (int16_t)((int32_t)ys[i] - (int32_t)d);
 }
-static uint8_t m1d(const uint8_t *xy, uint8_t x)
-{
-    int16_t xs[4], ys[4];
-    for (unsigned k = 0u; k < 4u; k++) {
-        xs[k] = xy[k];
-        ys[k] = xy[4u + k];
-    }
-    return (uint8_t)map1(xs, ys, 4u, (int16_t)x);
-}
-
 /* 0xEC182 / 0xEC1F0: the shift class from the kind, the call-site flag and the
  * pair type (ctx+5; type 4 = a skip downshift) [O bytes 0xEC182..0xEC208] */
 uint8_t gp_class_ec182(uint8_t kind, uint8_t flag, uint8_t type)
@@ -556,24 +546,6 @@ int16_t gp_ramp_step(gp_ramp_t *r, int16_t rate, uint16_t now)
     return b7910(v);
 }
 
-/* the class-1 rows (2->1 / 3->2 down-shifts, class 1): the decoded phase
- * durations replace the stand-in's for those phases */
-static bool cls1_down(const gp_blk_t *c)
-{
-    const gp_xblk_t *x = &X.blk[bidx(c)];
-    return x->cls[0] == 1u && (c->from == 2 || c->from == 3) && c->to == (int8_t)(c->from - 1);
-}
-static uint8_t c1_on(const gp_blk_t *c, unsigned col)
-{
-    XW.c1_n = sat16(XW.c1_n);
-    return gp_cal_c1_on[(unsigned)(c->from - 2)][col];
-}
-static uint8_t c1_off(const gp_blk_t *c, unsigned which)
-{
-    XW.c1_n = sat16(XW.c1_n);
-    return m1d(gp_cal_c1_off[(unsigned)(c->from - 2)][which], X.cls1c);
-}
-
 /* ── the progress (sync) part of the shift context ─────────────────────── */
 /* 0x117A74: slip = ratio(to)·0x89CB8/1000 − 0x89CBA (s1 = s2 = 1: dump) */
 static int16_t a74(const gp_blk_t *c)
@@ -762,6 +734,29 @@ static int32_t m1s16(const uint8_t *m, int16_t x)
         }
         return y0;
     }
+}
+
+/* the in-place map views (app/cal_inplace.h): the row structs hold the flash ADDRESS of a stock map */
+#define MP(a) cal_p8(a)
+/* the first x column of a stock 2-D s16 map {nx = 8; ny = 10; x[nx]; y[ny]; z[ny][nx]} as a 1-D map {n = ny; y; z[.][0]}
+ * (the x input, the stock's ctx+0xC, is a stand-in 0 below the axis: gp_cal_ph generator asserts x[0] >= 19) */
+static int32_t m1s16c0(uint32_t addr, int16_t x)
+{
+    const uint8_t *m = cal_p8(addr);
+    const uint32_t nx = be32(m), ny = be32(m + 4);
+    uint8_t buf[4u + 4u * 10u];
+    uint32_t i;
+    if (nx != 8u || ny != 10u) {
+        return 0;
+    }
+    buf[0] = 0u; buf[1] = 0u; buf[2] = 0u; buf[3] = (uint8_t)ny;
+    for (i = 0u; i < ny; i++) {
+        buf[4u + 2u * i] = m[8u + 2u * nx + 2u * i];
+        buf[5u + 2u * i] = m[9u + 2u * nx + 2u * i];
+        buf[4u + 2u * (ny + i)] = m[8u + 2u * (nx + ny) + 2u * i * nx];
+        buf[5u + 2u * (ny + i)] = m[9u + 2u * (nx + ny) + 2u * i * nx];
+    }
+    return m1s16(buf, x);
 }
 
 /* 0xB6D6C: {u32 n; u8 x[n]; u8 y[n]} */
@@ -1082,32 +1077,32 @@ static int cnt_idx(uint8_t elem)
 static int16_t b_kiss(const gp_rows_t *r)
 {
     PH.w.x_si = sat16(PH.w.x_si);                    /* 0x1132BC: ctx+0x1C == 0 */
-    return (int16_t)m2s16(r->ua->f1c, BTQ, BTMP);
+    return (int16_t)m2s16(MP(r->ua->f1c), BTQ, BTMP);
 }
 /* 0x112A54: the phase-4 duration UC+4(BD22, 0x89C0E) + UA+0x48(counter, temp) */
 static uint16_t b_dur4(const gp_rows_t *r, uint8_t elem)
 {
     const int ci = cnt_idx(elem);
-    int32_t v = (int32_t)m2u8(r->uc->f04, BTMP, X.c0e);
-    v += m2s16(r->ua->f48, (int16_t)(ci < 0 ? 0 : PH.cnt[ci]), (int16_t)BTMP);
+    int32_t v = (int32_t)m2u8(MP(r->uc->f04), BTMP, X.c0e);
+    v += m2s16(MP(r->ua->f48), (int16_t)(ci < 0 ? 0 : PH.cnt[ci]), (int16_t)BTMP);
     return (uint16_t)(v < 0 ? 0 : v);
 }
 /* 0x112BFC: the phase-9 duration UC+0x18(0x89C1C, 0x89C0E) x UA+0xC(BD22) / 100 */
 static uint16_t b_dur9(const gp_rows_t *r)
 {
-    return (uint16_t)(((uint32_t)m2u8(r->uc->f18, X.cls1c, X.c0e) * (uint32_t)m1u8(r->ua->f0c, BTMP)) / 100u);
+    return (uint16_t)(((uint32_t)m2u8(MP(r->uc->f18), X.cls1c, X.c0e) * (uint32_t)m1u8(MP(r->ua->f0c), BTMP)) / 100u);
 }
 /* 0x1144F0(x): UC+0x20(ctx+0xC, torque) + UA+0x28(x) [+ UA+0x44(BD80) while 0x89CC2 < UA+0x40: off] */
 static int32_t b_1144f0(const gp_rows_t *r, int16_t x)
 {
-    return m1s16(r->uc->f20, BTQ) + m1s16(r->ua->f28, x);
+    return m1s16c0(r->uc->f20, BTQ) + m1s16(MP(r->ua->f28), x);
 }
 
 /* 0x113C82 (up): BD1B == 0 -> BD76 >= UC+0(0x89C1C) - 0x80; BD1B != 0 -> false */
 static bool c82(const gp_blk_t *c, const gp_rows_t *r)
 {
     const gp_pb_t *b = &PH.blk[bidx(c)];
-    return G.bd1b == 0u && (int32_t)b->bd76 >= (int32_t)m1u8(r->uc->f00, X.cls1c) - 128;
+    return G.bd1b == 0u && (int32_t)b->bd76 >= (int32_t)m1u8(MP(r->uc->f00), X.cls1c) - 128;
 }
 
 /* the on-coming phase-done (0x1138FC) for an up row of block A / the pre-selected block's stand-ins */
@@ -1150,7 +1145,7 @@ static void on_entry_up(gp_blk_t *c, gp_po_t *o, const gp_rows_t *r)
         b->f44 = (uint8_t)((c->from == 1 && c->to == 2 && G.in.gf.cb8 == 0u) ? 1u : 0u);   /* 0x1138C6 (cal / 0x89C87 terms not read) */
         b->d32 = b_dur9(r);                                                      /* x the 0x84D6C map when f44: not scaled */
         b->ms16 = (uint16_t)X.in2.now_ms;
-        b->o36 = (int16_t)(0 + m2s16(r->uc->f38, BTQ, BTMP));                    /* +0x18 = 0xAED5C (the adaptation read): 0 */
+        b->o36 = (int16_t)(0 + m2s16(MP(r->uc->f38), BTQ, BTMP));                    /* +0x18 = 0xAED5C (the adaptation read): 0 */
         o->f4 = 1u;
         PH.w.x_si = sat16(PH.w.x_si);
         break;
@@ -1189,22 +1184,22 @@ static void on_out_up(gp_blk_t *c, gp_po_t *o, const gp_rows_t *r)
     int32_t v = 0;
     switch (o->phase) {
     case 0x13:
-        v = b->o36 + (com ? m1s16(r->ua->f08, ms_since(b)) : 0);
+        v = b->o36 + (com ? m1s16(MP(r->ua->f08), ms_since(b)) : 0);
         v = pos16(v);
         b->o2c = (int16_t)v;
         b->v2e = 1u;
         break;
     case 0x04:
-        v = b->o36 + m2s16(r->uc->f0c, BTURB, BTQ)                                /* 0x114CBE */
-            + gp_ramp_step(rp, (int16_t)m1s16(r->ua->f04, BTQ), (uint16_t)X.in2.now_ms)
-            + (com ? m1s16(r->ua->f08, ms_since(b)) : 0);
+        v = b->o36 + m2s16(MP(r->uc->f0c), BTURB, BTQ)                                /* 0x114CBE */
+            + gp_ramp_step(rp, (int16_t)m1s16(MP(r->ua->f04), BTQ), (uint16_t)X.in2.now_ms)
+            + (com ? m1s16(MP(r->ua->f08), ms_since(b)) : 0);
         v = pos16(v);
         b->o2c = (int16_t)v;
         b->v2e = 1u;
         break;
     case 0x09: {
         const uint16_t big = (uint16_t)(((uint32_t)b->d32 * (uint32_t)r->uc->f28) / 100u);   /* 0xEAEFC: blend over UC+0x28 % */
-        v = b->o36 + b_1144f0(r, 0) + m1s16(r->ua->f30, ms_since(b));
+        v = b->o36 + b_1144f0(r, 0) + m1s16(MP(r->ua->f30), ms_since(b));
         v = (int32_t)d1b94((uint16_t)o->tin, big, b->o2c, s16sat(v));                         /* [I] linear blend */
         v = pos16(v);
         if (v > 20000) {
@@ -1214,19 +1209,19 @@ static void on_out_up(gp_blk_t *c, gp_po_t *o, const gp_rows_t *r)
         break;
     }
     case 0x0A:
-        v = gp_ramp_step(rp, (int16_t)m2s16(r->uc->f30, BTQ, BTURB), (uint16_t)X.in2.now_ms)
+        v = gp_ramp_step(rp, (int16_t)m2s16(MP(r->uc->f30), BTQ, BTURB), (uint16_t)X.in2.now_ms)
             + b_1144f0(r, (int16_t)(X.blk[bidx(c)].on_cc > 255u ? 255u : X.blk[bidx(c)].on_cc))
-            + b->o36 + m1s16(r->ua->f30, ms_since(b));
+            + b->o36 + m1s16(MP(r->ua->f30), ms_since(b));
         v = pos16(v);
         if (v > 20000) {
             v = 20000;
         }
         break;
     case 0x0D: {
-        const int32_t rate = (m1s16(r->ua->f34, BTQ) * m1s16(r->ua->f3c, 0)) / 10;       /* 0x11483C: x UA+0x3C(0x89CC2 = 0) / 10 */
+        const int32_t rate = (m1s16(MP(r->ua->f34), BTQ) * m1s16(MP(r->ua->f3c), 0)) / 10;       /* 0x11483C: x UA+0x3C(0x89CC2 = 0) / 10 */
         v = gp_ramp_step(rp, s16sat(rate), (uint16_t)X.in2.now_ms)
             + b_1144f0(r, (int16_t)(o->tin + X.blk[bidx(c)].on_c34))
-            + m1s16(r->ua->f2c, (int16_t)o->tin)                                          /* 0x114B80 */
+            + m1s16(MP(r->ua->f2c), (int16_t)o->tin)                                          /* 0x114B80 */
             + b->o36;
         v = pos16(v);
         if (v > 20000) {
@@ -1251,7 +1246,7 @@ static void on_out_up(gp_blk_t *c, gp_po_t *o, const gp_rows_t *r)
 static int32_t off_t3(const gp_blk_t *c, const gp_rows_t *r)
 {
     (void)c;
-    return (int32_t)b_dur9(r) + (int32_t)m2u8(r->o4c->f04, X.cls1c, BTMP) - 128 + m1s16(r->o4c->f08, 0);
+    return (int32_t)b_dur9(r) + (int32_t)m2u8(MP(r->o4c->f04), X.cls1c, BTMP) - 128 + m1s16(MP(r->o4c->f08), 0);
 }
 
 static bool off_done_up(gp_blk_t *c, const gp_po_t *o, const gp_rows_t *r)
@@ -1271,7 +1266,7 @@ static bool off_done_up(gp_blk_t *c, const gp_po_t *o, const gp_rows_t *r)
     case 0x01: return o->tin >= b->p20;
     case 0x02: {
         /* 0x110430: leave |O4C+0xC(0x89C1C, BD22) - 0x80| passes after the on-coming's fill end [I: the sense] */
-        const int32_t lag = (int32_t)m2u8(r->o4c->f0c, X.cls1c, BTMP) - 128;
+        const int32_t lag = (int32_t)m2u8(MP(r->o4c->f0c), X.cls1c, BTMP) - 128;
         PH.w.x_si = sat16(PH.w.x_si);
         return (int32_t)b->pfill >= -lag && b->pfill != 0u;
     }
@@ -1300,7 +1295,7 @@ static void off_entry_up(gp_blk_t *c, gp_po_t *o, const gp_rows_t *r)
         break;
     case 0x03:
         b->p3s = b->p2;
-        b->p1a = (int16_t)(m1s16(r->o3c->f08, BTQ) + m1s16(r->o40->f04, BTQ));   /* the slip-hold level [I: O40+4 + O3C+8] */
+        b->p1a = (int16_t)(m1s16(MP(r->o3c->f08), BTQ) + m1s16c0(r->o40->f04, BTQ));   /* the slip-hold level [I: O40+4 + O3C+8] */
         PH.w.x_si = sat16(PH.w.x_si);
         break;
     case 0x04:
@@ -1322,7 +1317,7 @@ static void off_out_up(gp_blk_t *c, gp_po_t *o, const gp_rows_t *r)
         v = 20000;
         break;
     case 0x02:
-        v = m2s16(r->o40->f18, BTQ, BTMP) + d1b94((uint16_t)o->tin, r->o40->f10, r->o40->f0c, 0);
+        v = m2s16(MP(r->o40->f18), BTQ, BTMP) + d1b94((uint16_t)o->tin, r->o40->f10, r->o40->f0c, 0);
         v = pos16(v);
         b->p3s = (int16_t)v;
         break;
@@ -1334,7 +1329,267 @@ static void off_out_up(gp_blk_t *c, gp_po_t *o, const gp_rows_t *r)
         break;
     }
     case 0x04:
-        v = pos16((int32_t)b->p1a + gp_ramp_step(rp, (int16_t)m1s16(r->o40->f1c, BTQ), (uint16_t)X.in2.now_ms));
+        v = pos16((int32_t)b->p1a + gp_ramp_step(rp, (int16_t)m1s16(MP(r->o40->f1c), BTQ), (uint16_t)X.in2.now_ms));
+        break;
+    default:
+        v = 0;
+        break;
+    }
+    b->p2 = (int16_t)v;
+    PH.w.off_n = sat16(PH.w.off_n);
+}
+
+/* ── 2026-11-20 (phases2): THE DOWN-SHIFT BODIES, class 1, single downshifts from = 2..8 ────────────────────────
+ * Decode shift_phase_bodies_decode.md §2 / §3 (the down columns) and shift_class_counters_decode.md §6 (numbers for 2->1 /
+ * 3->2; the other pairs are the same blocks of the same arrays, value-unchecked). The on-coming sequence 1 -> 2 -> 0x13 -> 5 ->
+ * 9 -> 0x0A -> 0x0B -> 0x0C -> 0x0D -> 0x12, the off-going 1 -> 0 -> 0x0A .. 0x0F -> 0x11. Ported from the cal: the on-coming
+ * kiss level (blk58+0xC vs the temperature byte), the phase-5 term 0x114BAA (blk58+0x40 vs ms since the start), the phase-1 delay,
+ * the 0x0A duration, the 0x0C exit BD76 >= blk60+0x2C - 0x80, the 0x0D lock count (BD30), the final ramp (ctx+0x138 blk+8);
+ * off-going: the phase-1 threshold terms, the 0x0A slip level (O50+0 vs 0x89C1C), the 0x0B / 0x0F durations, the 0x0D level
+ * (O50+0x2C x O48+0xC / 100). COUNTED stand-ins (x_si): the terms 0x114CBE (turbine), 0x114688 / 0x1147B0 / 0x11477E /
+ * 0x114C50 / 0x114930 (on-coming torque / inertia terms), 0x1111FE / 0x111254 / the 0x111860 ramp (off-going base level), ctx+0xC4,
+ * ctx+0x20, the 0x117D30 / 0x117DE6 remaining-to-sync timers (the phase 5 / 0x0B timers and the phase 9 exit stay the earlier
+ * stand-ins), 0x0xEAEFC's shape (linear), the 0x0A term O48+0x1C (not applied). Producer ids 1..4 carry the values (recorded). */
+static const gp_dn_t *dn_get(const gp_blk_t *c)
+{
+    const gp_xblk_t *x = &X.blk[bidx(c)];
+    if (x->cls[0] != 1u || c->from < 2 || c->from > 8 || c->to != (int8_t)(c->from - 1)) {
+        return NULL;
+    }
+    return &gp_ph_dn[(unsigned)(c->from - 2)];
+}
+static void dn_read(void)
+{
+    XW.c1_n = sat16(XW.c1_n);                        /* a phase duration / term taken from the class-1 down rows */
+}
+static void dn_si(void)
+{
+    PH.w.x_si = sat16(PH.w.x_si);                    /* an undecoded down-shift term stood in */
+}
+
+/* on-coming phase done (0x1138FC, down column) */
+static bool on_done_dn(gp_blk_t *c, const gp_po_t *o, const gp_dn_t *d)
+{
+    const gp_pb_t *b = &PH.blk[bidx(c)];
+    const bool com = (c->act == 1u);
+    if (!com) {
+        dn_read();
+        return (o->phase == 0x00u) || (o->phase == 0x01u && o->tin >= d->on_delay);   /* block B: the stand-in as before */
+    }
+    switch (o->phase) {
+    case 0x00: return true;
+    case 0x01: dn_read(); return o->f7 != 0u || o->tin >= d->on_delay;
+    case 0x02: PH.w.fill_si = sat16(PH.w.fill_si); return o->f7 != 0u || o->tin >= GP_SI_T_FILL;
+    case 0x13: return true;                                              /* committed down: at once */
+    case 0x05: dn_si(); return o->tin >= GP_SI_T_TORQUE;                 /* 0x117DE6 (BD1B == 0): stood in */
+    case 0x09: dn_si(); return c->sync != 0u;                            /* the inertia phase ends synchronised */
+    case 0x0A: dn_read(); return o->f7 != 0u || o->tin >= d->on_dur0a;
+    case 0x0B: dn_si(); return o->f7 != 0u || G.bd1b != 0u || o->tin >= GP_SI_T_SHORT;   /* 0x117D30 + passes: stood in */
+    case 0x0C: {
+        dn_read();
+        const int32_t thr = (int32_t)m1u8(MP(d->on_ex0c), BTMP) - 128;   /* 0x1154BA: blk60+0x2C(temp) - 0x80 */
+        return o->f7 != 0u || G.bd1b != 0u || (int32_t)b->bd76 >= thr;
+    }
+    case 0x0D: dn_read(); return o->f7 != 0u || X.bd30 >= d->on_lock;
+    default:   return false;                                             /* 0x0E / 0x12 terminal */
+    }
+}
+
+/* the on-coming entry bodies (0x1132F4, down column) */
+static void on_entry_dn(gp_blk_t *c, gp_po_t *o, const gp_dn_t *d)
+{
+    gp_pb_t *b = &PH.blk[bidx(c)];
+    gp_ramp_t *rp = &s_gr[bidx(c)][0];
+    switch (o->phase) {
+    case 0x13:
+        b->o36 = (int16_t)m1s16(MP(d->on_kiss), BTMP);                   /* 0x113E88: blk58+0xC vs the temperature byte */
+        dn_read();
+        break;
+    case 0x05:
+        b->d32 = GP_SI_T_TORQUE;                                         /* 0x112A54: stood in */
+        b->o36 = (int16_t)m1s16(MP(d->on_kiss), BTMP);
+        dn_si();
+        break;
+    case 0x09:
+        b->d32 = GP_SI_T_SHORT;                                          /* 0x112BFC down: stood in (the exit is the sync) */
+        b->ms16 = (uint16_t)X.in2.now_ms;
+        /* +0x36 = +0xAED5C (0) + 0x114930 (stood in: the kiss level of phase 5 carried [I, decode 6: "held at kiss"]) */
+        o->f4 = 1u;
+        dn_si();
+        break;
+    case 0x0A:
+        b->d32 = d->on_dur0a;                                            /* 0x114C9A: blk58+0x14 */
+        gp_ramp_init(rp, 0, -20000, 20000, (uint16_t)X.in2.now_ms);
+        dn_read();
+        break;
+    case 0x0B:
+        b->o36 = (int16_t)(int32_t)o->out;                               /* +0x36 = +0x16 - (E9464 + 0x114688 + 0x114C50 + 0x11477E) */
+        dn_si();
+        break;
+    case 0x0D:
+        b->o36 = (int16_t)((int32_t)o->out - m2s16(MP(d->on_lvl), 0, BTQ));   /* - the 0x0B / 0x0C level (blk60+0x28), the rest stood in */
+        gp_ramp_init(rp, 0, -20000, 20000, (uint16_t)X.in2.now_ms);
+        dn_si();
+        break;
+    case 0x0E:
+    case 0x12:
+        b->d32 = d->fin;                                                 /* 0x1173EE (down): ctx+0x138 blk+8 */
+        if (G.bd1a != 0x0Au && G.bd1a != 0x1Eu) {
+            b->o36 = b->o2;
+        }
+        dn_read();
+        break;
+    default:
+        break;
+    }
+}
+
+/* the on-coming output (0x113F16, down column): +2 */
+static void on_out_dn(gp_blk_t *c, gp_po_t *o, const gp_dn_t *d)
+{
+    gp_pb_t *b = &PH.blk[bidx(c)];
+    const bool com = (c->act == 1u);
+    int32_t v = 0;
+    switch (o->phase) {
+    case 0x13:
+        v = pos16(b->o36);                                               /* the kiss level */
+        b->o2c = (int16_t)v;
+        b->v2e = 1u;
+        break;
+    case 0x05:                                                           /* + 0x114CBE (turbine) stood in */
+        v = b->o36 + (com ? m1s16(MP(d->on_t5), ms_since(b)) : 0);       /* 0x114BAA: blk58+0x40 vs ms since the start */
+        v = pos16(v);
+        b->o2c = (int16_t)v;
+        b->v2e = 1u;
+        dn_si();
+        break;
+    case 0x09:                                                           /* + 0x114688 + 0x1147B0 + 0x114C50 stood in */
+        v = pos16(b->o36);
+        if (v > 20000) {
+            v = 20000;
+        }
+        dn_si();
+        break;
+    case 0x0A:
+    case 0x0C:
+    case 0x0D:
+        v = pos16(b->o36 + m2s16(MP(d->on_lvl), 0, BTQ));                /* the 0x0B / 0x0C level blk60+0x28 (ctx+0xC = 0) + +0x36 */
+        if (v > 20000) {
+            v = 20000;
+        }
+        dn_si();
+        break;
+    case 0x0B:                                                           /* the linear ramp (+0x7C) 0 -> the level, + +0x36 */
+        v = b->o36 + (int32_t)d1b94((uint16_t)o->tin, GP_SI_T_SHORT, 0, (int16_t)m2s16(MP(d->on_lvl), 0, BTQ));
+        v = pos16(v);
+        dn_si();
+        break;
+    case 0x0E:
+    case 0x12:
+        v = d1b94((uint16_t)o->tin, b->d32, b->o36, 20000);
+        break;
+    default:
+        v = 0;
+        break;
+    }
+    b->o2 = (int16_t)v;
+    PH.w.on_n = sat16(PH.w.on_n);
+}
+
+/* off-going phase done (0x1106DC, down column) */
+static bool off_done_dn(gp_blk_t *c, const gp_po_t *o, const gp_dn_t *d)
+{
+    const gp_pb_t *b = &PH.blk[bidx(c)];
+    const bool com = (c->act == 1u);
+    if (!com) {
+        return (o->phase == 0x00u) || (o->phase == 0x01u);               /* block B: the pre-selected hold (the stand-in as before) */
+    }
+    switch (o->phase) {
+    case 0x00: return true;
+    case 0x01: dn_read(); return c->sync != 0u || o->tin >= b->p20;     /* committed: sync, or passes >= +0x20 = O50+0x1C */
+    case 0x02:
+    case 0x03: dn_si(); return o->tin >= GP_SI_T_SHORT;
+    case 0x04: dn_si(); return o->tin >= GP_SI_T_TORQUE;
+    case 0x09: dn_si(); return c->sync != 0u;
+    case 0x0A: dn_read(); return c->sync != 0u || o->tin >= b->p20;    /* passes >= +0x20 (+0x24 - the earlier passes) or sync */
+    case 0x0B: dn_read(); return o->tin >= (unsigned)m1u8(MP(d->of_d0b), X.cls1c);   /* O50+0xC vs 0x89C1C: passes only */
+    case 0x0C:
+    case 0x0D:
+    case 0x0E: dn_si(); return o->tin >= GP_SI_T_SHORT;
+    case 0x0F: dn_read(); return o->tin >= (unsigned)m1u8(MP(d->of_d0f), X.cls1c);   /* O50+0x28 vs 0x89C1C */
+    default:   return false;                                             /* 0x11 final */
+    }
+}
+
+static void off_entry_dn(gp_blk_t *c, gp_po_t *o, const gp_dn_t *d)
+{
+    gp_pb_t *b = &PH.blk[bidx(c)];
+    (void)c;
+    switch (o->phase) {
+    case 0x01: {
+        /* committed down: +0x20 = O50+0x1C(0x89C1C, 0x89C12); 0x89C12 not an input here (0) */
+        b->p20 = (uint16_t)m2u8(MP(d->of_d1), X.cls1c, 0u);
+        dn_read();
+        dn_si();
+        break;
+    }
+    case 0x0A: {
+        /* +0x24 = O48+0x10(temp) + ctx+0xC4 (0) + O50+0x14(0x89C0E, 0x89C1C) - 0x80; +0x20 = +0x24 - the earlier passes (0) */
+        const int32_t t24 = (int32_t)m1u8(MP(d->of_thr), BTMP) + (int32_t)m2u8(MP(d->of_p1), X.c0e, X.cls1c) - 128;
+        b->p20 = (uint16_t)(t24 < 0 ? 0 : t24);
+        dn_read();
+        dn_si();
+        break;
+    }
+    case 0x0F:
+        b->p1a = (int16_t)(int32_t)o->out;                               /* +0x1A = +0xE: the output at the entry */
+        dn_read();
+        break;
+    case 0x0D:
+        b->p1a = (int16_t)(int32_t)o->out;                               /* the linear ramp (+0x6C) starts from the output */
+        dn_si();
+        break;
+    default:
+        break;
+    }
+}
+
+static void off_out_dn(gp_blk_t *c, gp_po_t *o, const gp_dn_t *d)
+{
+    gp_pb_t *b = &PH.blk[bidx(c)];
+    int32_t v = 0;
+    (void)c;
+    switch (o->phase) {
+    case 0x01:
+        v = 20000;                                                       /* the full binary apply of the old gear's element */
+        break;
+    case 0x0A:                                                           /* 0x1115E0 = 0x1111FE (stood in) + O50+0 (0x89C1C) */
+        v = pos16((int32_t)m1s16(MP(d->of_slip), X.cls1c));
+        dn_si();
+        break;
+    case 0x0B: {                                                         /* 0xEAEFC: the blend 0x1115E0 -> 0x1111FE over the 0x0B duration */
+        const uint16_t big = (uint16_t)m1u8(MP(d->of_d0b), X.cls1c);
+        v = d1b94((uint16_t)o->tin, big, (int16_t)m1s16(MP(d->of_slip), X.cls1c), 0);
+        v = pos16(v);
+        dn_si();
+        break;
+    }
+    case 0x0C:                                                           /* ramp step (0x111860) + 0x1111FE: stood in */
+        v = 0;
+        dn_si();
+        break;
+    case 0x0D: {                                                         /* the linear ramp to 0x1116D0 = O50+0x2C(0, torque) x O48+0xC(temp) / 100 */
+        const int32_t lvl = (m2s16(MP(d->of_l0d), 0, BTQ) * (int32_t)m1u8(MP(d->of_pct), BTMP)) / 100;
+        v = pos16(d1b94((uint16_t)o->tin, GP_SI_T_SHORT, b->p1a, s16sat(lvl)));
+        dn_si();
+        break;
+    }
+    case 0x0E:
+        v = pos16((m2s16(MP(d->of_l0d), 0, BTQ) * (int32_t)m1u8(MP(d->of_pct), BTMP)) / 100);   /* 0x1116D0 + 0x111254 (stood in) */
+        dn_si();
+        break;
+    case 0x0F:                                                           /* ctx+0x20 == 0: 0xD1B94(passes, O50+0x28, +0x1A, 0) */
+        v = pos16(d1b94((uint16_t)o->tin, (uint16_t)m1u8(MP(d->of_d0f), X.cls1c), b->p1a, 0));
         break;
     default:
         v = 0;
@@ -1348,6 +1603,7 @@ static void off_out_up(gp_blk_t *c, gp_po_t *o, const gp_rows_t *r)
 static bool on_done(gp_blk_t *c, const gp_po_t *o)
 {
     gp_rows_t r;
+    const gp_dn_t *dn;
     W.si_phase_n++;
     if (c->act == 0u && o->phase >= 2u) {
         return false;                                /* block B: the pre-fill holds */
@@ -1355,21 +1611,23 @@ static bool on_done(gp_blk_t *c, const gp_po_t *o)
     if (o->type == 1u && rows_get(c, &r)) {
         return on_done_up(c, o, &r);
     }
+    if (o->type != 1u && (dn = dn_get(c)) != NULL) {
+        return on_done_dn(c, o, dn);
+    }
     PH.w.unp_row = sat16(PH.w.unp_row);
     if (o->type != 1u) {
         PH.w.dn_si = sat16(PH.w.dn_si);
     }
-    const bool c1 = cls1_down(c);                    /* the class-1 rows of the 2->1 / 3->2 downshifts */
     switch (o->phase) {
     case 0x00: return true;
-    case 0x01: return o->tin >= (c1 ? c1_on(c, 0u) : GP_SI_T_SHORT);
+    case 0x01: return o->tin >= GP_SI_T_SHORT;
     case 0x02: return o->tin >= GP_SI_T_FILL;
     case 0x13: return o->tin >= 1u;
     case 0x04:
     case 0x05: return o->tin >= GP_SI_T_TORQUE;
     case 0x09: return c->sync != 0u;                 /* the inertia phase ends synchronised */
-    case 0x0A: return o->tin >= (c1 ? c1_on(c, 1u) : GP_SI_T_SHORT);
-    case 0x0D: return o->tin >= (c1 ? c1_on(c, 2u) : GP_SI_T_SHORT);
+    case 0x0A:
+    case 0x0D:
     case 0x0B:
     case 0x0C: return o->tin >= GP_SI_T_SHORT;
     default:   return false;                         /* 0x12 final, 0x0E, 0xFF */
@@ -1378,6 +1636,7 @@ static bool on_done(gp_blk_t *c, const gp_po_t *o)
 static bool off_done(gp_blk_t *c, const gp_po_t *o)
 {
     gp_rows_t r;
+    const gp_dn_t *dn;
     W.si_phase_n++;
     if (c->act == 0u && o->phase >= 2u) {
         return false;
@@ -1385,24 +1644,26 @@ static bool off_done(gp_blk_t *c, const gp_po_t *o)
     if (o->type == 1u && rows_get(c, &r)) {
         return off_done_up(c, o, &r);
     }
+    if (o->type != 1u && (dn = dn_get(c)) != NULL) {
+        return off_done_dn(c, o, dn);
+    }
     PH.w.unp_row = sat16(PH.w.unp_row);
     if (o->type != 1u) {
         PH.w.dn_si = sat16(PH.w.dn_si);
     }
-    const bool c1 = cls1_down(c);
     switch (o->phase) {
     case 0x00: return true;
-    case 0x01: return o->tin >= (c1 ? 0u : GP_SI_T_SHORT);     /* class 1: the committed phase-1 duration map is all 0 */
+    case 0x01:
     case 0x02:
     case 0x03: return o->tin >= GP_SI_T_SHORT;
     case 0x04: return o->tin >= GP_SI_T_TORQUE;
     case 0x09: return c->sync != 0u;
-    case 0x0B: return o->tin >= (c1 ? c1_off(c, 0u) : GP_SI_T_SHORT);
-    case 0x0F: return o->tin >= (c1 ? c1_off(c, 1u) : GP_SI_T_SHORT);
     case 0x0A:
+    case 0x0B:
     case 0x0C:
     case 0x0D:
-    case 0x0E: return o->tin >= GP_SI_T_SHORT;
+    case 0x0E:
+    case 0x0F: return o->tin >= GP_SI_T_SHORT;
     default:   return false;                         /* 0x11 final */
     }
 }
@@ -1429,8 +1690,11 @@ static void on_entry(gp_blk_t *c, gp_po_t *o)
 static void on_body(gp_blk_t *c)
 {
     gp_rows_t r;
+    const gp_dn_t *dn;
     if (c->on.type == 1u && rows_get(c, &r)) {
         on_out_up(c, &c->on, &r);
+    } else if (c->on.type != 1u && (dn = dn_get(c)) != NULL) {
+        on_out_dn(c, &c->on, dn);
     } else {
         PH.blk[bidx(c)].o2 = 0;
     }
@@ -1438,8 +1702,11 @@ static void on_body(gp_blk_t *c)
 static void off_body(gp_blk_t *c)
 {
     gp_rows_t r;
+    const gp_dn_t *dn;
     if (c->off.type == 1u && rows_get(c, &r)) {
         off_out_up(c, &c->off, &r);
+    } else if (c->off.type != 1u && (dn = dn_get(c)) != NULL) {
+        off_out_dn(c, &c->off, dn);
     } else {
         PH.blk[bidx(c)].p2 = 0;
     }
@@ -1488,8 +1755,11 @@ static void on_step(gp_blk_t *c)
         on_entry(c, o);
         {
             gp_rows_t r;
+            const gp_dn_t *dn;
             if (o->type == 1u && rows_get(c, &r)) {
                 on_entry_up(c, o, &r);
+            } else if (o->type != 1u && (dn = dn_get(c)) != NULL) {
+                on_entry_dn(c, o, dn);
             }
         }
         if (c == &G.a) {
@@ -1532,8 +1802,11 @@ static void off_step(gp_blk_t *c)
         o->phases_n++;
         {
             gp_rows_t r;
+            const gp_dn_t *dn;
             if (o->type == 1u && rows_get(c, &r)) {
                 off_entry_up(c, o, &r);              /* 0x10FFBE */
+            } else if (o->type != 1u && (dn = dn_get(c)) != NULL) {
+                off_entry_dn(c, o, dn);
             } else {
                 W.unp_n++;                           /* 0x10FFBE (the entry): not ported for this row */
             }
@@ -1978,8 +2251,8 @@ static bool eda48(uint8_t e344)
     /* a ported on-coming body: applied = its request reached the 13030 mbar of the stock's applied test (phase 0x12
      * commands 20000 one pass after its entry); the sequence-only rows keep the phase-0x12 stand-in */
     gp_rows_t rr;
-    const bool applied = (G.a.on.phase == 0x12u) &&
-                         (!(G.a.on.type == 1u && rows_get(&G.a, &rr)) || G.a.on.out >= 13030u);
+    const bool ported = (G.a.on.type == 1u && rows_get(&G.a, &rr)) || (G.a.on.type != 1u && dn_get(&G.a) != NULL);
+    const bool applied = (G.a.on.phase == 0x12u) && (!ported || G.a.on.out >= 13030u);
     if (applied && G.a.sync != 0u && e344 == 0u) {
         G.bd41 = 1u;                                 /* 0xEB49C */
     }

@@ -147,7 +147,11 @@ STOCK_FORBIDDEN = ["e8bfa", "e8cf6", "d229e", "f71ec", "a2028", "a1712", "bddb0"
                    # 0xAED0E -> 0xB019C / 0xB1C3C -> 0xA1A8E / 0xA1C60 / 0xA1A42 (0x1180BE; exact
                    # pass-through, cal-disabled) and the fatal 0xB75B4 -> 0xB75A6 (0xB1C3C, 0x1176E0)
                    "a105e", "a1032", "9f718", "aedc8", "aed0e", "b019c", "b1c3c", "a1a8e", "a1c60",
-                   "a1a42", "b75b4", "b75a6"]
+                   "a1a42", "b75b4", "b75a6",
+                   # (2026-11-20, ~/tcu_sweep/gp_phases2_port.md, shift_phase_bodies_decode.md section 5): the E5BB
+                   # shift-adaptation notifications (0xAEE06 ph 2 first pass, 0xAEDFE ph 4 / 5 entry, 0xAED02, 0xAECD8) and
+                   # the phase-9 / 0x10FFBE adaptation reads (0xAED5C, 0xAED7A, 0xAED98): stood in, never defined in the image
+                   "aee06", "aedfe", "aed02", "aecd8", "aed5c", "aed7a", "aed98"]
 LIT_FORBIDDEN = [0xFFF85174, 0xFFF85175, 0xFFF85176]
 # F1: the EEPROM / NVM / DSM-record / fatal-log cells no fault-reaction shadow
 # object may hold as a literal or a movi20 operand (plan §5, f0 §7)

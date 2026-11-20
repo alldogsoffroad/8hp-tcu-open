@@ -54,6 +54,13 @@ T_ON, T_OFF, T_BD17, T_ONSEQ, T_OFFSEQ, T_RATIO = 0x5061C, 0x50680, 0x6315C, 0x5
 N_ONSEQ, N_OFFSEQ = 12 * 3, 13 * 3
 
 
+def fnv1a(b):
+    h = 0x811C9DC5
+    for x in b:
+        h = ((h ^ x) * 0x01000193) & 0xFFFFFFFF
+    return h
+
+
 def main():
     img = open(sys.argv[1], 'rb').read()
     u32 = lambda a: struct.unpack('>I', img[a:a + 4])[0]
@@ -224,18 +231,6 @@ def main():
     assert off_rows[0][1] == ([34, 51, 67, 151], [7, 20, 20, 10])
     assert off_rows[1][0] == ([17, 42, 67, 101], [10, 10, 10, 10])
     assert off_rows[1][1] == ([42, 51, 84, 151], [7, 10, 20, 20])
-    o.append('/* class-1 down-shifts 2->1 / 3->2 (index = from - 2): the on-coming phase-1 delay (blk +4), phase-0x0A')
-    o.append(' * duration (blk +0x14) and the 0x0D lock count (blk +0) in passes; blocks 0x5C84C / 0x5C894 */')
-    o.append('const uint8_t gp_cal_c1_on[2][3] = { %s };' % ', '.join('{ %d, %d, %d }' % r for r in on_rows))
-    o.append('/* the off-going phase-0x0B (blk +0xC) and phase-0x0F (blk +0x28) durations: 1-D byte maps over the')
-    o.append(' * torque class 0x89C1C; blocks 0x596E4 / 0x59718; [from - 2][0 = 0x0B, 1 = 0x0F][axis x4, y x4] */')
-    o.append('const uint8_t gp_cal_c1_off[2][2][8] = {')
-    for maps in off_rows:
-        o.append('    { %s },' % ', '.join('{ %s }' % ', '.join('%d' % v for v in (mx + my)) for mx, my in maps))
-    o.append('};')
-    o.append('')
-
-
     # ---- 2026-11-20: the PHASE-BODY tables (~/tcu_sweep/shift_phase_bodies_decode.md §1.5 / §2 / §3) ----
     # per up-shift row (variant 0 = the 0x89C06 == 0 column of every block array), the maps the on-coming
     # (UA 0x5B9B8 / UB 0x5A3DC / UC 0x5B668 class rows) and off-going (O40 0x59538 / O3C 0x58C98 /
@@ -335,32 +330,88 @@ def main():
         if t == 'col0':
             nx, ny = u32(a), u32(a + 4)
             assert (nx, ny) == (8, 10) and u16(a + 8) >= 19, (hex(a), nx, ny)
-            ys = [u16(a + 8 + 2 * nx + 2 * i) for i in range(ny)]
-            zs = [u16(a + 8 + 2 * (nx + ny) + 2 * (i * nx)) for i in range(ny)]
-            data = struct.pack('>I', ny) + b''.join(struct.pack('>H', v) for v in ys + zs)
+            n = 8 + 2 * (nx + ny + nx * ny)                   # the whole 2-D map (the reader takes column 0)
         else:
-            data = img[a:a + msize(t, a)]
-        o.append('static const uint8_t %s[%d] = {' % (lab, len(data)))
-        for i in range(0, len(data), 16):
-            o.append('    ' + ', '.join('0x%02X' % b for b in data[i:i + 16]) + ',')
-        o.append('};')
-        chk.append((a, lab, len(data), 1 if t == 'col0' else 0))
+            n = msize(t, a)
+        assert a >= 0x80000 and a + n <= len(img), (hex(a), n)   # in place (app/cal_inplace.h)
+        chk.append((a, n, 1 if t == 'col0' else 0, fnv1a(img[a:a + n])))
+    o.append('/* the maps are read IN PLACE at their stock addresses (2026-11-20): the row structs hold the addresses;')
+    o.append(' * col0 members point at a 2-D s16 map whose first x column the reader gathers */')
     o.append('')
+    # ---- 2026-11-20 (phases2): the DOWN-SHIFT rows, class 1 (variant 0), from = 2..8 (to = from - 1) ----
+    # decode shift_class_counters_decode.md section 6 numbers 2->1 / 3->2; the other pairs are the same blocks
+    # of the same arrays (same field shapes asserted below; their VALUES are not decode-verified).
+    NDN = 7
+    DN_IDX = {'d58': (0x5F014, 0x5CD5C, 0), 'd60': (0x5F8F0, 0x5C65C, 7), 'd48': (0x5E1EC, 0x5A21C, 0),
+              'd50': (0x5E984, 0x59E34, 7), 'd138': (0x61280, 0x57BCC, 0)}
+    DN_F = [  # (struct member, family, offset, type)
+        ('on_lock', 'd58', 0x00, 'c8'), ('on_delay', 'd58', 0x04, 'c8'), ('on_kiss', 'd58', 0x0C, 'm1s16'),
+        ('on_dur0a', 'd58', 0x14, 'c8'), ('on_t5', 'd58', 0x40, 'm1s16'),
+        ('on_lvl', 'd60', 0x28, '2ds16'), ('on_ex0c', 'd60', 0x2C, 'm1u8'),
+        ('fin', 'd138', 0x08, 'c8'),
+        ('of_pct', 'd48', 0x0C, 'm1u8'), ('of_thr', 'd48', 0x10, 'm1u8'), ('of_t0a', 'd48', 0x1C, '2ds16'),
+        ('of_slip', 'd50', 0x00, 'm1s16'), ('of_d0b', 'd50', 0x0C, 'm1u8'), ('of_p1', 'd50', 0x14, '2du8'),
+        ('of_d1', 'd50', 0x1C, '2du8'), ('of_d0f', 'd50', 0x28, 'm1u8'), ('of_l0d', 'd50', 0x2C, '2ds16'),
+    ]
+    dn_rows = []
+    dn_maps = {}
+    for frm in range(2, 2 + NDN):
+        blks = {}
+        for fam, (idxt, arr, base) in DN_IDX.items():
+            idx = u32(idxt + 4 * frm)
+            assert idx == base + frm - 2, (fam, frm, idx)
+            blks[fam] = u32(arr + 8 * idx)
+        row = []
+        for name, fam, off, t in DN_F:
+            p = u32(blks[fam] + off)
+            if t == 'c8':
+                row.append((name, t, p, img[p]))
+                continue
+            n = msize(t, p)
+            assert p >= 0x80000 and p + n <= len(img), (name, hex(p))
+            dn_maps[p] = (t, n)
+            row.append((name, t, p, None))
+        dn_rows.append((frm, row))
+    # the maps do not overlap (contiguous cal layout, 4-byte alignment padding between them)
+    srt = sorted(dn_maps)
+    for i, a in enumerate(srt[:-1]):
+        t, n = dn_maps[a]
+        assert srt[i + 1] >= a + n, (hex(a), n, hex(srt[i + 1]))
+    # the class-1 numbers of the decode (the in-place data against its section 6 table)
+    r2, r3 = dn_rows[0][1], dn_rows[1][1]
+    g = lambda r, nm: [x for x in r if x[0] == nm][0]
+    assert (g(r2, 'on_lock')[3], g(r3, 'on_lock')[3]) == (50, 40)
+    assert (g(r2, 'on_delay')[3], g(r3, 'on_delay')[3], g(r2, 'on_dur0a')[3], g(r3, 'on_dur0a')[3]) == (0, 0, 0, 0)
+    assert (g(r2, 'fin')[3], g(r3, 'fin')[3]) == (1, 1)
+    assert list(img[g(r2, 'of_d0b')[2] + 4:g(r2, 'of_d0b')[2] + 12]) == [17, 42, 67, 101, 20, 20, 16, 10]
+    assert list(img[g(r2, 'of_d0f')[2] + 4:g(r2, 'of_d0f')[2] + 12]) == [34, 51, 67, 151, 7, 20, 20, 10]
+    assert list(img[g(r3, 'of_d0b')[2] + 4:g(r3, 'of_d0b')[2] + 12]) == [17, 42, 67, 101, 10, 10, 10, 10]
+    assert list(img[g(r3, 'of_d0f')[2] + 4:g(r3, 'of_d0f')[2] + 12]) == [42, 51, 84, 151, 7, 10, 20, 20]
+    for a in sorted(dn_maps):
+        t, n = dn_maps[a]
+        chk.append((a, n, 0, fnv1a(img[a:a + n])))
+
+
     hh = ['/* gp_cal_ph.h - GENERATED by tools/gen_gp_cal.py (the phase-body row structs); do not edit.',
-          ' * member f<off> = the stock cal block + <off>: a cell value or a pointer to its map (app/gp_cal.c). */',
+          ' * member f<off> = the stock cal block + <off>: a cell value or the flash ADDRESS of its map (read in place, app/cal_inplace.h). */',
           '#ifndef TCU_APP_GP_CAL_PH_H', '#define TCU_APP_GP_CAL_PH_H', '#include <stdint.h>', '',
           '#define GP_PH_NUP %du' % NUP, '']
     for fam in ('ua', 'ub', 'uc', 'o40', 'o3c', 'o4c', 'c134'):
         ms = []
         for off, t in FIELDS[fam]:
-            ty = {'c8': 'uint8_t', 'c16': 'int16_t'}.get(t, 'const uint8_t *')
+            ty = {'c8': 'uint8_t', 'c16': 'int16_t'}.get(t, 'uint32_t')
             ms.append('%s f%02x;' % (ty, off))
         hh.append('typedef struct { %s } %s;' % (' '.join(ms), NAMES[fam]))
         hh.append('extern const %s gp_ph_%s%s;' % (NAMES[fam], fam, '[2][GP_PH_NUP]' if fam in ('uc', 'o4c') else '[GP_PH_NUP]'))
-    hh += ['', 'typedef struct { uint32_t addr; const uint8_t *data; uint32_t len; uint32_t col0; } gp_ph_chk_t;',
+    hh += ['', '#define GP_DN_N %du' % NDN,
+           '/* the class-1 single down-shift rows, from = 2..8 (index from - 2): the cell values and the flash ADDRESSES of the maps */',
+           'typedef struct { %s } gp_dn_t;' % ' '.join(('uint8_t %s;' if t == 'c8' else 'uint32_t %s;') % nm for nm, fam, off, t in DN_F),
+           'extern const gp_dn_t gp_ph_dn[GP_DN_N];']
+    hh += ['', 'typedef struct { uint32_t addr; uint32_t len; uint32_t col0; uint32_t fnv; } gp_ph_chk_t;',
            '#if defined(GP_CAL_CHECK)', 'extern const gp_ph_chk_t gp_ph_chk[];', 'extern const unsigned gp_ph_chk_n;', '#endif',
            'extern const unsigned gp_ph_nup;', '', '#endif']
     open(sys.argv[4], 'w').write('\n'.join(hh) + '\n')
+
 
     def init_row(mem, neg=False):
         parts = []
@@ -372,7 +423,7 @@ def main():
             elif t == 'c16':
                 parts.append('%d' % struct.unpack('>h', img[p:p + 2])[0])
             else:
-                parts.append(maps[p][1])
+                parts.append('0x%06Xu' % p)
         return '{ %s }' % ', '.join(parts)
 
     for fam in ('ua', 'ub', 'o40', 'o3c', 'c134'):
@@ -388,12 +439,17 @@ def main():
                 o.append('        %s,' % init_row(r, fam == 'uc' and ri == 0))
             o.append('    },')
         o.append('};')
+    o.append('/* the class-1 single down-shift rows (from = 2..8): cells + map addresses (read in place) */')
+    o.append('const gp_dn_t gp_ph_dn[GP_DN_N] = {')
+    for frm, row in dn_rows:
+        o.append('    { %s },  /* %d->%d */' % (', '.join(('%du' % v) if t == 'c8' else ('0x%06Xu' % p) for nm, t, p, v in row), frm, frm - 1))
+    o.append('};')
     o.append('')
     o.append('#if defined(GP_CAL_CHECK)')
-    o.append('/* the host byte check: stock address, the data, its length, col0 */')
+    o.append('/* the host check: stock address, length, col0, FNV-1a of the stock bytes */')
     o.append('const gp_ph_chk_t gp_ph_chk[] = {')
-    for a, lab, n, c0 in chk:
-        o.append('    { 0x%06Xu, %s, %du, %du },' % (a, lab, n, c0))
+    for a, n, c0, h in chk:
+        o.append('    { 0x%06Xu, %du, %du, 0x%08Xu },' % (a, n, c0, h))
     o.append('};')
     o.append('const unsigned gp_ph_chk_n = %du;' % len(chk))
     o.append('#endif')

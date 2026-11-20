@@ -45,8 +45,6 @@ extern const uint16_t gp_cal_ratio[10];               /* 0x4FAA4 gear -1..8, x10
 #define GP_CAL_OV_Y(i)       cal_s16(CAL_GP_OV_MAP + 4u + 8u + 2u * (i))   /* torque Nm */
 #define GP_CAL_OV_PED        cal_u8(CAL_GP_OV_PED)             /* 0x1FE8F6 */
 #define GP_CAL_SYNC          cal_u16(CAL_GP_SYNC)              /* 0x1FF1F6 rpm */
-extern const uint8_t  gp_cal_c1_on[2][3];             /* class 1, from 2 / 3: phase-1 delay, 0x0A duration, 0x0D lock */
-extern const uint8_t  gp_cal_c1_off[2][2][8];         /* class 1, from 2 / 3: 0x0B / 0x0F maps (x4, y4) */
 
 extern const uint16_t gp_cal_dt1x[3];                  /* 0x1B606C: the sync-rate DT1 time constant over the output speed */
 extern const uint16_t gp_cal_dt1y[3];

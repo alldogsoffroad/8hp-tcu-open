@@ -36,6 +36,10 @@ static void mutate(void)
     /* the down-shift f8 array t[1] = 1 -> 0 */
     s_img[CAL_GP_F8_DN + 4u + 1u] -= 1u;
 #endif
+#if defined(GP_NEG_DNMAP)
+    /* the 2->1 class-1 down-shift on-coming kiss map (blk58+0xC = 0x1DBD04): the y at the 105 degC point 100 -> 101 */
+    s_img[0x1DBD04u + 4u + 2u * 10u + 2u * 6u + 1u] += 1u;
+#endif
 }
 
 const uint8_t *cal_img(void)

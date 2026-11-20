@@ -1907,6 +1907,13 @@ else()
         SM_HOOK_NO_GATHER=1 GP_NEG_PHCAL=1)
     add_test(NAME gp_shadow_neg_PHCAL COMMAND test_gp_shadow_neg_PHCAL)
     set_tests_properties(gp_shadow_neg_PHCAL PROPERTIES WILL_FAIL TRUE)
+    # 2026-11-20 (phases2, ~/tcu_sweep/gp_phases2_port.md): one stock byte of the in-place 2->1 down-shift kiss map moved
+    # (GP_NEG_DNMAP) must FAIL (the decode's §6 numbers, the digest of the map, the driven lock output)
+    add_executable(test_gp_shadow_neg_DNMAP ${GP_TEST_SOURCES})
+    target_compile_definitions(test_gp_shadow_neg_DNMAP PRIVATE _POSIX_C_SOURCE=200809L GP_HOOK_NO_GATHER=1
+        SM_HOOK_NO_GATHER=1 GP_NEG_DNMAP=1)
+    add_test(NAME gp_shadow_neg_DNMAP COMMAND test_gp_shadow_neg_DNMAP)
+    set_tests_properties(gp_shadow_neg_DNMAP PROPERTIES WILL_FAIL TRUE)
     # 2026-11-20 (the stand-in retirements, ~/tcu_sweep/gp_standins_port.md): a mutated class
     # table (the down-shift f8 array t[1] 1 -> 0: no downshift window, kind 2, class 0) and a swap
     # that skips the ramp objects and the 0x117CE4 re-pin must FAIL

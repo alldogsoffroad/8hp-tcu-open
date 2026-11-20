@@ -117,6 +117,7 @@ static const uint8_t k_on_dn_c1[]  = { 2, 0x13, 5, 9, 0x0B, 0x0C, 0x0D, 0x12 };
 static const uint8_t k_off_dn_c1[] = { 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x11 };
 static int s_cur_c1;            /* the block's class at the commit (1: the class-1 rows apply) */
 static unsigned s_len_0d, s_len_off_0b, s_len_off_0f, s_len_on_0a;    /* observed passes per phase */
+static int s_dn_out_0d = -1, s_dn_out_12 = -1, s_dn_off0b_first = -1, s_dn_off0b_last = -1, s_dn_off0b_up;   /* the driven down-body values */
 
 /* the decode's class-1 off-going durations (0x0B: 2->1 axis 17/42/67/101 -> 20/20/16/10, 3->2 -> 10 everywhere;
  * 0x0F: 2->1 axis 34/51/67/151 -> 7/20/20/10, 3->2 axis 42/51/84/151 -> 7/10/20/20), linear between the
@@ -148,29 +149,53 @@ static unsigned dec_off(int from, int which, int cls)
     return from == 2 ? dec_interp(ax0f21, y0f21, cls) : dec_interp(ax0f32, y0f32, cls);
 }
 
+#define X_CLS1C() ((uint8_t)gp_shadow_x()->cls1c)
 static void seq_check(int8_t from, int8_t to)
 {
     const int up = to > from;
-    const int c1 = (!up) && s_cur_c1 && (from == 2 || from == 3);
-    const uint8_t *eon = up ? k_on_up : (c1 ? k_on_dn_c1 : k_on_dn);
-    const uint8_t *eoff = up ? k_off_up : (c1 ? k_off_dn_c1 : k_off_dn);
-    const unsigned non = up ? sizeof k_on_up : (c1 ? sizeof k_on_dn_c1 : sizeof k_on_dn);
-    const unsigned noff = up ? sizeof k_off_up : (c1 ? sizeof k_off_dn_c1 : sizeof k_off_dn);
+    /* 2026-11-20 (phases2): the class-1 single downshifts from = 2..8 run the PORTED down bodies; their phases that last 0 passes
+     * (phase 1, 0x13 at once, 0x0A for a 0-pass duration, 0x0C when BD76 already meets its exit) are never observed, so the observed
+     * phases are an ordered subsequence of the decode's */
+    const int c1 = (!up) && s_cur_c1 && from >= 2 && from <= 8 && to == from - 1;
+    const uint8_t *eon = up ? k_on_up : k_on_dn;
+    const uint8_t *eoff = up ? k_off_up : k_off_dn;
+    const unsigned non = up ? sizeof k_on_up : sizeof k_on_dn;
+    const unsigned noff = up ? sizeof k_off_up : sizeof k_off_dn;
     if (c1) {
-        /* the decoded durations: lock 50 / 40 passes, 0x0B 20 / 10, 0x0F 7 (class 1, torque class 34) */
-        CHECK(s_len_0d == (from == 2 ? 50u : 40u), "class-1 %d->%d: the 0x0D lock lasted %u passes", from, to, s_len_0d);
-        int cls = (int)s_tq / 6 + 34;
-        cls = cls < 0 ? 0 : (cls > 255 ? 255 : cls);
-        CHECK(s_len_off_0b == dec_off(from, 0, cls), "class-1 %d->%d (torque class %d): off 0x0B lasted %u passes (%u)",
-              from, to, cls, s_len_off_0b, dec_off(from, 0, cls));
-        CHECK(s_len_off_0f == dec_off(from, 1, cls), "class-1 %d->%d (torque class %d): off 0x0F lasted %u passes (%u)",
-              from, to, cls, s_len_off_0f, dec_off(from, 1, cls));
+        /* the decoded durations: lock count (BD30 >= it: the passes of 0x0B / 0x0C already count), 0x0B / 0x0F (class 1,
+         * torque class 34) */
+        const gp_dn_t *d = &gp_ph_dn[from - 2];
+        CHECK(s_len_0d <= d->on_lock && (from > 3 || s_len_0d + 12u >= d->on_lock),
+              "class-1 %d->%d: the 0x0D lock lasted %u passes (count %u)", from, to, s_len_0d, (unsigned)d->on_lock);
+        {
+            /* the driven values: the lock holds the kiss level of the shift's temperature byte, the final ramp reaches 20000 and the
+             * off-going 0x0B blends from the slip level (O50+0 vs 0x89C1C) down without rising */
+            const int kiss = (int)gp_host_m1s16(cal_p8(d->on_kiss), gp_shadow_state()->bd22);
+            CHECK(s_dn_out_0d == (kiss < 0 ? 0 : kiss), "class-1 %d->%d: the 0x0D lock output %d (the kiss level %d)", from, to,
+                  s_dn_out_0d, kiss);
+            CHECK(s_dn_out_12 == 20000, "class-1 %d->%d: the final ramp reached %d", from, to, s_dn_out_12);
+            if (s_len_off_0b != 0u) {
+                const int slip = (int)gp_host_m1s16(cal_p8(d->of_slip), X_CLS1C());
+                CHECK(s_dn_off0b_first == (slip < 0 ? 0 : slip) && s_dn_off0b_up == 0 && s_dn_off0b_last <= s_dn_off0b_first,
+                      "class-1 %d->%d: the off-going 0x0B blend %d -> %d (slip level %d, rising %d)", from, to, s_dn_off0b_first,
+                      s_dn_off0b_last, slip, s_dn_off0b_up);
+            }
+        }
+        if (from == 2 || from == 3) {
+            CHECK(d->on_lock == (from == 2 ? 50u : 40u), "class-1 %d->%d lock count %u", from, to, (unsigned)d->on_lock);
+            int cls = (int)s_tq / 6 + 34;
+            cls = cls < 0 ? 0 : (cls > 255 ? 255 : cls);
+            CHECK(s_len_off_0b == dec_off(from, 0, cls), "class-1 %d->%d (torque class %d): off 0x0B lasted %u passes (%u)",
+                  from, to, cls, s_len_off_0b, dec_off(from, 0, cls));
+            CHECK(s_len_off_0f == dec_off(from, 1, cls), "class-1 %d->%d (torque class %d): off 0x0F lasted %u passes (%u)",
+                  from, to, cls, s_len_off_0f, dec_off(from, 1, cls));
+        }
     } else if (up && !(from >= 1 && (unsigned)from <= GP_PH_NUP)) {
         CHECK(s_len_0d == GP_SI_T_SHORT && s_len_on_0a == GP_SI_T_SHORT,
               "up %d->%d: the stand-in phases 0x0D / 0x0A lasted %u / %u passes (%u)", from, to, s_len_0d, s_len_on_0a,
               (unsigned)GP_SI_T_SHORT);
     }
-    if (up && from >= 1 && (unsigned)from <= GP_PH_NUP) {
+    if ((up && from >= 1 && (unsigned)from <= GP_PH_NUP) || c1) {
         /* the PORTED phase bodies (2026-11-20): a phase whose exit is already true on its entry pass is never observed
          * (phase 1: UC+8 = 0 passes; 0x13 at once; 9 / 0x0A on the sync predictor BD76 >= -10), so the observed phases are an
          * ordered subsequence of the decode's, with the phases that cannot be skipped present */
@@ -190,8 +215,11 @@ static void seq_check(int8_t from, int8_t to)
             CHECK(j < noff, "shift %d->%d: off-going phase %02X out of the decode's order", from, to, s_off_seq[i]);
             j++;
         }
-        const uint8_t need_on[] = { 2, 4, 0x0D, 0x12 };
-        for (unsigned k = 0u; k < sizeof need_on; k++) {
+        const uint8_t need_up[] = { 2, 4, 0x0D, 0x12 };
+        const uint8_t need_dn[] = { 2, 5, 0x12 };
+        const uint8_t *need_on = up ? need_up : need_dn;
+        const unsigned nneed = up ? sizeof need_up : sizeof need_dn;
+        for (unsigned k = 0u; k < nneed; k++) {
             unsigned seen = 0u;
             for (unsigned i = 0u; i < s_on_n; i++) {
                 seen |= (s_on_seq[i] == need_on[k]);
@@ -199,8 +227,10 @@ static void seq_check(int8_t from, int8_t to)
             CHECK(seen != 0u, "shift %d->%d: the on-coming phase %02X was never entered", from, to, need_on[k]);
         }
         CHECK(s_off_n >= 1u && s_off_seq[s_off_n - 1u] == 0x11u, "shift %d->%d: the off-going object did not end in 0x11", from, to);
-        CHECK(s_len_0d <= gp_ph_ua[from - 1].f14 && s_len_0d + 3u >= gp_ph_ua[from - 1].f14, "shift %d->%d: the lock phase 0x0D lasted %u passes (UA+0x14 = %u: BD30 >= it)", from, to,
-              s_len_0d, (unsigned)gp_ph_ua[from - 1].f14);
+        if (up) {
+            CHECK(s_len_0d <= gp_ph_ua[from - 1].f14 && s_len_0d + 3u >= gp_ph_ua[from - 1].f14, "shift %d->%d: the lock phase 0x0D lasted %u passes (UA+0x14 = %u: BD30 >= it)", from, to,
+                  s_len_0d, (unsigned)gp_ph_ua[from - 1].f14);
+        }
         s_seq_checked++;
         return;
     }
@@ -311,6 +341,22 @@ static void tick(const drive_t *d)
         s_len_0d += (gp->a.on.phase == 0x0Du);
         s_len_on_0a += (gp->a.on.phase == 0x0Au);
     }
+    if (gp->a.on.elem != 0u && gp->a.on.type != 1u) {
+        if (gp->a.on.phase == 0x0Du) {
+            s_dn_out_0d = (int)gp->a.on.out;
+        }
+        if (gp->a.on.phase == 0x12u) {
+            s_dn_out_12 = (int)gp->a.on.out;
+        }
+    }
+    if (gp->a.off.elem != 0u && gp->a.off.phase == 0x0Bu) {
+        if (s_dn_off0b_first < 0) {
+            s_dn_off0b_first = (int)gp->a.off.out;
+        } else if ((int)gp->a.off.out > s_dn_off0b_last) {
+            s_dn_off0b_up = 1;
+        }
+        s_dn_off0b_last = (int)gp->a.off.out;
+    }
     if (gp->a.off.elem != 0u) {
         s_len_off_0b += (gp->a.off.phase == 0x0Bu);
         s_len_off_0f += (gp->a.off.phase == 0x0Fu);
@@ -361,9 +407,18 @@ static void judge_tick(int check_seq)
         s_cur_from = f;
         s_cur_to = t;
         s_len_0d = s_len_off_0b = s_len_off_0f = s_len_on_0a = 0u;
+        s_dn_out_0d = s_dn_out_12 = s_dn_off0b_first = s_dn_off0b_last = -1;
+        s_dn_off0b_up = 0;
         seq_reset();
         s_cur_c1 = (gp_shadow_x()->blk[0].cls[0] == 1u);
-        /* the start pass already stepped: re-seed from the current phases */
+        /* the start pass already stepped: re-seed from the current phases (and the passes spent in them) */
+        s_len_0d = (gp->a.on.elem != 0u && gp->a.on.phase == 0x0Du);
+        s_len_on_0a = (gp->a.on.elem != 0u && gp->a.on.phase == 0x0Au);
+        s_len_off_0b = (gp->a.off.elem != 0u && gp->a.off.phase == 0x0Bu);
+        s_len_off_0f = (gp->a.off.elem != 0u && gp->a.off.phase == 0x0Fu);
+        if (gp->a.off.elem != 0u && gp->a.off.phase == 0x0Bu) {
+            s_dn_off0b_first = s_dn_off0b_last = (int)gp->a.off.out;
+        }
         if (gp->a.on.elem != 0u) {
             s_on_seq[s_on_n++] = gp->a.on.phase;
             s_last_on_ph = (int8_t)gp->a.on.phase;
@@ -493,6 +548,20 @@ static void test_ramp_tq(int16_t tq, int ekind, int ecls)
     CHECK(gp->w.commit_ps_n == 0u, "a pre-selected commit without the seam");
     CHECK(gp->bd15 == 0u, "BD15 %u at the end", gp->bd15);
     CHECK(s_commits_judged >= 14u, "kind / class judged on %u commits", s_commits_judged);
+    {
+        /* 2026-11-20 (phases2): in class 1 every single downshift 8->7 .. 2->1 runs the ported down bodies (the counted
+         * down-body stand-in is never taken, the ported terms' stand-ins are counted in x_si); in class 0 the downshifts keep
+         * the counted stand-in (dn_si) and the upshifts 1..7 the ported up bodies */
+        const volatile gp_ph_t *ph = gp_shadow_ph();
+        if (ecls == 1) {
+            CHECK(ph->w.dn_si == 0u && gp_shadow_x()->w.c1_n != 0u && ph->w.x_si != 0u,
+                  "class-1 ramp: down-body stand-ins %u (0), class-1 reads %u, ported-term stand-ins %u", (unsigned)ph->w.dn_si,
+                  (unsigned)gp_shadow_x()->w.c1_n, (unsigned)ph->w.x_si);
+        } else {
+            CHECK(ph->w.dn_si != 0u && gp_shadow_x()->w.c1_n == 0u, "class-0 ramp: the down stand-in %u, class-1 reads %u",
+                  (unsigned)ph->w.dn_si, (unsigned)gp_shadow_x()->w.c1_n);
+        }
+    }
     printf("ramp (tq %d, kind %d class %d judged on %u commits, class-1 durations %u): commits %u (ends %u, "
            "completions %u, would-be NV %u), phase sequences checked %d, max gear %u, "
            "pre-selects %u (type 0 %u), interlock passes %u, chain disagreement %u\n",
@@ -905,23 +974,29 @@ static int cal_check(void)
                 (GP_CAL_OV_Y(i) != (int16_t)U16(0x1B78A0u + 12u + 2u * i));
         n2 += 2u;
     }
-    /* the class-1 rows: the pointer chains and the values */
-    for (unsigned f = 0u; f < 2u; f++) {
+    /* the class-1 single down-shift rows, from = 2..8: every member against the stock block it stands for (cells by value, maps by
+     * their flash address); the decode's 2->1 / 3->2 blocks */
+    for (unsigned f = 0u; f < GP_DN_N; f++) {
         const uint32_t from = 2u + f;
-        const uint32_t blk = U32(0x5CD5Cu + 8u * U32(0x5F014u + 4u * from));
-        CHECK(blk == (f == 0u ? 0x5C84Cu : 0x5C894u), "class-1 on block %u", f);
-        bad2 += (gp_cal_c1_on[f][0] != img[U32(blk + 4u)]) + (gp_cal_c1_on[f][1] != img[U32(blk + 0x14u)]) +
-                (gp_cal_c1_on[f][2] != img[U32(blk)]);
-        n2 += 3u;
-        const uint32_t boff = U32(0x59E34u + 8u * U32(0x5E984u + 4u * from));
-        CHECK(boff == (f == 0u ? 0x596E4u : 0x59718u), "class-1 off block %u", f);
+        CHECK(U32(0x5F014u + 4u * from) == f && U32(0x5E1ECu + 4u * from) == f && U32(0x61280u + 4u * from) == f &&
+                  U32(0x5F8F0u + 4u * from) == 7u + f && U32(0x5E984u + 4u * from) == 7u + f,
+              "class-1 down index tables, from %u", (unsigned)from);
+        const uint32_t b58 = U32(0x5CD5Cu + 8u * f), b60 = U32(0x5C65Cu + 8u * (7u + f)), b48 = U32(0x5A21Cu + 8u * f),
+                       b50 = U32(0x59E34u + 8u * (7u + f)), b138 = U32(0x57BCCu + 8u * f);
+        if (f < 2u) {
+            CHECK(b58 == (f == 0u ? 0x5C84Cu : 0x5C894u) && b50 == (f == 0u ? 0x596E4u : 0x59718u), "class-1 blocks %u", f);
+        }
+        const gp_dn_t *d = &gp_ph_dn[f];
+        bad2 += (d->on_lock != img[U32(b58)]) + (d->on_delay != img[U32(b58 + 4u)]) + (d->on_dur0a != img[U32(b58 + 0x14u)]) +
+                (d->fin != img[U32(b138 + 8u)]) + (d->on_kiss != U32(b58 + 0xCu)) + (d->on_t5 != U32(b58 + 0x40u)) +
+                (d->on_lvl != U32(b60 + 0x28u)) + (d->on_ex0c != U32(b60 + 0x2Cu)) + (d->of_pct != U32(b48 + 0xCu)) +
+                (d->of_thr != U32(b48 + 0x10u)) + (d->of_t0a != U32(b48 + 0x1Cu)) + (d->of_slip != U32(b50)) +
+                (d->of_d0b != U32(b50 + 0xCu)) + (d->of_p1 != U32(b50 + 0x14u)) + (d->of_d1 != U32(b50 + 0x1Cu)) +
+                (d->of_d0f != U32(b50 + 0x28u)) + (d->of_l0d != U32(b50 + 0x2Cu));
+        n2 += 17u;
         for (unsigned w = 0u; w < 2u; w++) {
-            const uint32_t m = U32(boff + (w == 0u ? 0xCu : 0x28u));
-            CHECK(U32(m) == 4u, "class-1 map header");
-            for (unsigned i = 0u; i < 8u; i++) {
-                bad2 += gp_cal_c1_off[f][w][i] != img[m + 4u + i];
-                n2++;
-            }
+            const uint32_t m = (w == 0u) ? d->of_d0b : d->of_d0f;
+            CHECK(U32(m) == 4u && m >= 0x80000u, "class-1 map header");
         }
     }
     CHECK(bad2 == 0u, "%u kind / class table values differ from the image", bad2);
@@ -932,24 +1007,22 @@ static int cal_check(void)
 #if defined(GP_CAL_CHECK)
         for (unsigned i = 0u; i < gp_ph_chk_n; i++) {
             const gp_ph_chk_t *e = &gp_ph_chk[i];
-            if (e->col0 == 0u) {
-                badb += memcmp(e->data, &img[e->addr], e->len) != 0;
-            } else {
-                /* the first x column of the 2-D s16 map as {n = ny; y axis; z[.][0]} */
+            /* in place at the stock address: in the calibration region, the length = the map's own size from its header,
+             * the digest = the stock bytes (the tables were byte-checked as copies before the in-place refactor) */
+            uint32_t h = 0x811C9DC5u;
+            for (uint32_t k = 0u; k < e->len; k++) {
+                h = (h ^ cal_u8(e->addr + k)) * 0x01000193u;
+            }
+            badb += (e->addr < CAL_FLASH_CAL_BASE) || (e->addr + e->len > CAL_FLASH_END) || (h != e->fnv) ||
+                    (memcmp(cal_p8(e->addr), &img[e->addr], e->len) != 0);
+            if (e->col0 != 0u) {
                 const uint32_t nx = U32(e->addr), ny = U32(e->addr + 4u);
-                badb += (U32(e->addr + 0u) != 8u) || (ny != 10u) || (e->len != 4u + 4u * ny) ||
-                        (((uint32_t)e->data[0] << 24 | (uint32_t)e->data[1] << 16 | (uint32_t)e->data[2] << 8 | e->data[3]) != ny) ||
-                        (U16(e->addr + 8u) < 19u);
-                for (unsigned k = 0u; k < ny; k++) {
-                    const uint16_t y = (uint16_t)((e->data[4u + 2u * k] << 8) | e->data[5u + 2u * k]);
-                    const uint16_t z = (uint16_t)((e->data[4u + 2u * (ny + k)] << 8) | e->data[5u + 2u * (ny + k)]);
-                    badb += (y != U16(e->addr + 8u + 2u * nx + 2u * k)) || (z != U16(e->addr + 8u + 2u * (nx + ny) + 2u * k * nx));
-                }
+                badb += (nx != 8u) || (ny != 10u) || (e->len != 8u + 2u * (nx + ny + nx * ny)) || (U16(e->addr + 8u) < 19u);
             }
             nb++;
         }
 #define FIND_(want_, member, what) do { unsigned fnd = 0u; for (unsigned q = 0u; q < gp_ph_chk_n; q++) { \
-            if (gp_ph_chk[q].addr == (want_)) { fnd = 1u; badp += gp_ph_chk[q].data != (member); } } \
+            if (gp_ph_chk[q].addr == (want_)) { fnd = 1u; badp += (member) != (want_); } } \
             if (!fnd) { badp++; printf("no map at %06X (%s)\n", (unsigned)(want_), what); } np++; } while (0)
 #define BLK_(arr, abs) U32((arr) + 8u * (abs))
 #define MAP_(fam, abs, off) U32(BLK_(fam, abs) + (off))
@@ -1085,36 +1158,68 @@ static void test_phases(void)
     const gp_o4c_t *o4c = &gp_ph_o4c[0][0];
     /* the decode's "~37": 40 -> 30 between the x axis 70 / 105 at 80 is 37.1 analytically; the stock's 2-D byte interpolator
      * (0xB6FD6) truncates the decrement (-(int)2.86 = -2), so the phase-4 timer reads 38 passes at 40 C */
-    CHECK(gp_host_m2u8(uc->f04, 80u, 0u) == 38u, "UC+4 (BD22 80, 0x89C0E 0) = %u (38 passes: the 0x112A54 phase-4 timer at 40 C)",
-          gp_host_m2u8(uc->f04, 80u, 0u));
-    CHECK(gp_host_m2s16(ua->f1c, 0, 80) == 0 && gp_host_m2s16(ua->f1c, 0, 10) == 1000, "UA+0x1C kiss: %d at 80, %d at 10 (0 / 1000)",
-          (int)gp_host_m2s16(ua->f1c, 0, 80), (int)gp_host_m2s16(ua->f1c, 0, 10));
-    CHECK(gp_host_m2s16(uc->f0c, 1500, 102) == 450, "UC+0xC (1500 rpm, 102 Nm) = %d (450)", (int)gp_host_m2s16(uc->f0c, 1500, 102));
-    CHECK(gp_host_m1s16(ua->f04, -102) == 1 && gp_host_m1s16(ua->f04, 0) == 1 && gp_host_m1s16(ua->f04, 300) == 8 &&
-              gp_host_m1s16(ua->f04, 498) == 20, "UA+4 ramp vs torque %d %d %d %d (1 1 8 20 mbar/pass)", (int)gp_host_m1s16(ua->f04, -102),
-          (int)gp_host_m1s16(ua->f04, 0), (int)gp_host_m1s16(ua->f04, 300), (int)gp_host_m1s16(ua->f04, 498));
-    CHECK(gp_host_m1u8(uc->f00, 34u) == 118u && gp_host_m1u8(uc->f00, 51u) == 121u && gp_host_m1u8(uc->f00, 84u) == 125u &&
-              gp_host_m1u8(uc->f00, 117u) == 125u, "UC+0 thresholds (118 121 125 125: BD76 >= -10 -7 -3 -3)");
-    CHECK(((unsigned)gp_host_m2u8(uc->f18, 34u, 0u) * gp_host_m1u8(ua->f0c, 80u)) / 100u == 27u, "the phase-9 duration %u (27 passes)",
-          ((unsigned)gp_host_m2u8(uc->f18, 34u, 0u) * gp_host_m1u8(ua->f0c, 80u)) / 100u);
-    CHECK(gp_host_m2s16(uc->f38, 0, 80) == -100, "UC+0x38 phase-9 base %d (-100 at 0 Nm, 40 C)", (int)gp_host_m2s16(uc->f38, 0, 80));
-    CHECK(gp_host_m1s16(ua->f28, 0) == 0 && gp_host_m1s16(ua->f28, 200) == 2000 && gp_host_m1s16(ua->f2c, 20) == 0 &&
-              gp_host_m1s16(ua->f2c, 50) == 3000 && gp_host_m1s16(ua->f2c, 70) == 12750, "UA+0x28 / UA+0x2C terms (0 2000 / 0 3000 12750)");
+    CHECK(gp_host_m2u8(cal_p8(uc->f04), 80u, 0u) == 38u, "UC+4 (BD22 80, 0x89C0E 0) = %u (38 passes: the 0x112A54 phase-4 timer at 40 C)",
+          gp_host_m2u8(cal_p8(uc->f04), 80u, 0u));
+    CHECK(gp_host_m2s16(cal_p8(ua->f1c), 0, 80) == 0 && gp_host_m2s16(cal_p8(ua->f1c), 0, 10) == 1000, "UA+0x1C kiss: %d at 80, %d at 10 (0 / 1000)",
+          (int)gp_host_m2s16(cal_p8(ua->f1c), 0, 80), (int)gp_host_m2s16(cal_p8(ua->f1c), 0, 10));
+    CHECK(gp_host_m2s16(cal_p8(uc->f0c), 1500, 102) == 450, "UC+0xC (1500 rpm, 102 Nm) = %d (450)", (int)gp_host_m2s16(cal_p8(uc->f0c), 1500, 102));
+    CHECK(gp_host_m1s16(cal_p8(ua->f04), -102) == 1 && gp_host_m1s16(cal_p8(ua->f04), 0) == 1 && gp_host_m1s16(cal_p8(ua->f04), 300) == 8 &&
+              gp_host_m1s16(cal_p8(ua->f04), 498) == 20, "UA+4 ramp vs torque %d %d %d %d (1 1 8 20 mbar/pass)", (int)gp_host_m1s16(cal_p8(ua->f04), -102),
+          (int)gp_host_m1s16(cal_p8(ua->f04), 0), (int)gp_host_m1s16(cal_p8(ua->f04), 300), (int)gp_host_m1s16(cal_p8(ua->f04), 498));
+    CHECK(gp_host_m1u8(cal_p8(uc->f00), 34u) == 118u && gp_host_m1u8(cal_p8(uc->f00), 51u) == 121u && gp_host_m1u8(cal_p8(uc->f00), 84u) == 125u &&
+              gp_host_m1u8(cal_p8(uc->f00), 117u) == 125u, "UC+0 thresholds (118 121 125 125: BD76 >= -10 -7 -3 -3)");
+    CHECK(((unsigned)gp_host_m2u8(cal_p8(uc->f18), 34u, 0u) * gp_host_m1u8(cal_p8(ua->f0c), 80u)) / 100u == 27u, "the phase-9 duration %u (27 passes)",
+          ((unsigned)gp_host_m2u8(cal_p8(uc->f18), 34u, 0u) * gp_host_m1u8(cal_p8(ua->f0c), 80u)) / 100u);
+    CHECK(gp_host_m2s16(cal_p8(uc->f38), 0, 80) == -100, "UC+0x38 phase-9 base %d (-100 at 0 Nm, 40 C)", (int)gp_host_m2s16(cal_p8(uc->f38), 0, 80));
+    CHECK(gp_host_m1s16(cal_p8(ua->f28), 0) == 0 && gp_host_m1s16(cal_p8(ua->f28), 200) == 2000 && gp_host_m1s16(cal_p8(ua->f2c), 20) == 0 &&
+              gp_host_m1s16(cal_p8(ua->f2c), 50) == 3000 && gp_host_m1s16(cal_p8(ua->f2c), 70) == 12750, "UA+0x28 / UA+0x2C terms (0 2000 / 0 3000 12750)");
     CHECK(ua->f10 == 40u && ua->f14 == 50u && uc->f08 == 0u && uc->f28 == 100u && uc->f2c == 100u,
           "UA+0x10 %u (40 passes) UA+0x14 %u (BD30 50) UC+8 %u (delay 0) UC+0x28 / 2C %u / %u (100 %%)", ua->f10, ua->f14, uc->f08, uc->f28, uc->f2c);
     {
         static const int16_t tq[8] = { -100, -50, 0, 50, 100, 300, 500, 700 };
         static const int32_t want[8] = { 1800, 1300, 500, 1300, 2000, 4700, 7500, 11400 };
         for (unsigned k = 0u; k < 8u; k++) {
-            CHECK(gp_host_m2s16(o40->f18, tq[k], 80) == want[k], "O40+0x18 phase-2 target at %d Nm = %d (%d)", (int)tq[k],
-                  (int)gp_host_m2s16(o40->f18, tq[k], 80), (int)want[k]);
+            CHECK(gp_host_m2s16(cal_p8(o40->f18), tq[k], 80) == want[k], "O40+0x18 phase-2 target at %d Nm = %d (%d)", (int)tq[k],
+                  (int)gp_host_m2s16(cal_p8(o40->f18), tq[k], 80), (int)want[k]);
         }
     }
     CHECK(o40->f10 == 18u && o40->f0c == 800 && o40->f00 == -1 && o4c->f00 == 0u, "O40 +0x10 %u (18) +0xC %d (800) +0 %d (-1) O4C+0 %u (0)", o40->f10,
           (int)o40->f0c, (int)o40->f00, o4c->f00);
-    CHECK(gp_host_m1s16(o40->f1c, 0) == -50 && gp_host_m1s16(o40->f1c, 60) == -100 && gp_host_m1s16(o40->f1c, 200) == -200 &&
-              gp_host_m1s16(o40->f1c, 400) == -400, "O40+0x1C phase-4 ramp vs torque (-50 -100 -200 -400)");
-    CHECK(gp_host_m1s16(gp_ph_o3c[0].f08, 0) == 0 && gp_host_m1s16(gp_ph_o3c[0].f08, 500) == 0, "O3C+8 level 0");
+    CHECK(gp_host_m1s16(cal_p8(o40->f1c), 0) == -50 && gp_host_m1s16(cal_p8(o40->f1c), 60) == -100 && gp_host_m1s16(cal_p8(o40->f1c), 200) == -200 &&
+              gp_host_m1s16(cal_p8(o40->f1c), 400) == -400, "O40+0x1C phase-4 ramp vs torque (-50 -100 -200 -400)");
+    CHECK(gp_host_m1s16(cal_p8(gp_ph_o3c[0].f08), 0) == 0 && gp_host_m1s16(cal_p8(gp_ph_o3c[0].f08), 500) == 0, "O3C+8 level 0");
+
+    /* 2026-11-20 (phases2): the class-1 DOWN-shift numbers of shift_class_counters_decode.md §6 (2->1 = gp_ph_dn[0], 3->2 = [1]) */
+    {
+        static const uint8_t tk[10] = { 10, 20, 30, 40, 50, 70, 105, 125, 140, 160 };
+        static const int k21[10] = { 1550, 1150, 750, 500, 300, 200, 100, 0, 0, 0 }, k32[10] = { 900, 600, 200, 50, 50, 0, 0, 0, 0, 0 };
+        unsigned bad = 0u;
+        for (unsigned i = 0u; i < 10u; i++) {
+            bad += (gp_host_m1s16(cal_p8(gp_ph_dn[0].on_kiss), tk[i]) != k21[i]) + (gp_host_m1s16(cal_p8(gp_ph_dn[1].on_kiss), tk[i]) != k32[i]);
+        }
+        CHECK(bad == 0u, "down kiss level (blk58+0xC vs temperature byte) differs from the decode in %u points", bad);
+        static const int16_t tms[6] = { -200, -100, -40, 40, 100, 200 };
+        static const int t21[6] = { 0, 0, 0, 0, 100, 250 };
+        bad = 0u;
+        for (unsigned i = 0u; i < 6u; i++) {
+            bad += (gp_host_m1s16(cal_p8(gp_ph_dn[0].on_t5), tms[i]) != t21[i]) + (gp_host_m1s16(cal_p8(gp_ph_dn[1].on_t5), tms[i]) != 0);
+        }
+        CHECK(bad == 0u, "down phase-5 term 0x114BAA (blk58+0x40) differs from the decode in %u points", bad);
+        CHECK(gp_host_m1u8(cal_p8(gp_ph_dn[0].on_ex0c), 80u) == 108u && gp_host_m1u8(cal_p8(gp_ph_dn[0].on_ex0c), 150u) == 108u &&
+                  gp_host_m1u8(cal_p8(gp_ph_dn[1].on_ex0c), 40u) == 118u && gp_host_m1u8(cal_p8(gp_ph_dn[1].on_ex0c), 105u) == 128u,
+              "0x0C exit BD76 >= -20 (2->1) / -10 below byte 50, 0 from 105 (3->2)");
+        CHECK(gp_host_m1s16(cal_p8(gp_ph_dn[0].of_slip), 34) == 300 && gp_host_m1s16(cal_p8(gp_ph_dn[0].of_slip), 51) == 500 &&
+                  gp_host_m1s16(cal_p8(gp_ph_dn[0].of_slip), 84) == 1000 && gp_host_m1s16(cal_p8(gp_ph_dn[0].of_slip), 117) == 1000 &&
+                  gp_host_m1s16(cal_p8(gp_ph_dn[1].of_slip), 34) == 400 && gp_host_m1s16(cal_p8(gp_ph_dn[1].of_slip), 51) == 400 &&
+                  gp_host_m1s16(cal_p8(gp_ph_dn[1].of_slip), 84) == 1000,
+              "off-going 0x0A slip level 300 500 1000 1000 (2->1) / 400 400 1000 1000 (3->2)");
+        CHECK(gp_host_m1u8(cal_p8(gp_ph_dn[0].of_thr), 80u) == 0u && gp_host_m1u8(cal_p8(gp_ph_dn[0].of_pct), 80u) == 100u &&
+                  gp_host_m2s16(cal_p8(gp_ph_dn[0].of_l0d), 0, 100) == 0 && gp_ph_dn[0].fin == 1u && gp_ph_dn[1].fin == 1u,
+              "off-going threshold term / 100 %% scale / 0x0D level, and the final ramp 1 pass");
+        CHECK(gp_host_m2u8(cal_p8(gp_ph_dn[0].of_p1), 0u, 34u) == 128u && gp_host_m2u8(cal_p8(gp_ph_dn[0].of_p1), 0u, 101u) == 113u &&
+                  gp_host_m2u8(cal_p8(gp_ph_dn[1].of_p1), 0u, 34u) == 120u,
+              "phase-1 threshold O50+0x14: 0 for 0x89C1C <= 45, -15 from 46 (2->1); -8 (3->2)");
+    }
 
     /* (b) a power-on 1->2 upshift, class 1 (in the window, 0 Nm) and class 0 (1500 Nm): the shapes */
     for (unsigned pass = 0u; pass < 2u; pass++) {
@@ -1167,7 +1272,7 @@ static void test_phases(void)
         /* the off-going phase-2 first value = O40+0x18(torque, BD22) + 800 */
         for (unsigned i = 0u; i < s_ph_n; i++) {
             if (s_ph[i].offph == 0x02u) {
-                const int32_t want = gp_host_m2s16(gp_ph_o40[0].f18, tq, 79) + 800;
+                const int32_t want = gp_host_m2s16(cal_p8(gp_ph_o40[0].f18), tq, 79) + 800;
                 CHECK((int32_t)s_ph[i].offout == (want < 0 ? 0 : want), "%s: the first off-going phase-2 output %u = target(%d Nm) + 800 = %d", tag,
                       (unsigned)s_ph[i].offout, (int)tq, (int)want);
                 break;
