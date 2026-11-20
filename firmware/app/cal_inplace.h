@@ -1,9 +1,13 @@
 /* cal_inplace.h — THE READ-ONLY SHADOWS READ THE STOCK CALIBRATION IN PLACE
  * (2026-11-20, ~/tcu_sweep/cal_in_place_port.md).
  *
- * Flash block 0x80000 and above is the stock calibration / data region; it
- * stays on the board byte-identical to the stock image (the install verifies
- * those blocks' signatures every flash). The shadows (fr_*, sm_*, gp_*) used
+ * Flash above our application's limit (CAL_FLASH_CAL_BASE = 0xA0000) stays
+ * on the board byte-identical to the stock image (the install verifies those
+ * blocks' signatures every flash); the stock calibration block itself is
+ * 0x180000-0x1FFFFF. (2026-11-20 correction: the application block is
+ * 0x040000-0x17FFFF; the earlier "0x80000 and above is calibration" was wrong
+ * — 0x80000-0x17FFFF is stock code our firmware never runs. Our app may now
+ * grow to 0xA0000; every in-place address must stay at or above it.) The shadows (fr_*, sm_*, gp_*) used
  * to carry const COPIES of the tables they read there. They now read the
  * stock bytes where they are: on the target through an absolute address, on
  * the host through the stock image file loaded into a buffer
@@ -13,8 +17,8 @@
  * name, stock address, length in bytes, the module's accessor). The host test
  * `cal_inplace` checks every entry — no address below CAL_FLASH_CAL_BASE, none
  * past the image — and the POST_BUILD scan tests/unit/cal_inplace_scan.py
- * refuses any SH ELF with a section at 0x80000 or above (we never write there).
- * Tables whose stock source lies BELOW 0x80000 (our app overwrites that
+ * refuses any SH ELF with a section at CAL_FLASH_CAL_BASE or above.
+ * Tables whose stock source lies BELOW it (our app overwrites that
  * region: 0x505A4, 0x63122, 0x6315C, 0x4F6A4 ...) stay const copies in the
  * generated *_cal.c.
  *
@@ -31,7 +35,7 @@
 
 #include <stdint.h>
 
-#define CAL_FLASH_CAL_BASE 0x80000u        /* stock calibration / data: never written */
+#define CAL_FLASH_CAL_BASE 0xA0000u        /* our app's flash limit: in-place reads lie at or above it, never written */
 #define CAL_FLASH_END      0x280000u       /* the stock image is 0x280000 bytes (2.5 MiB) */
 
 /* ── the address list ───────────────────────────────────────────────────── */

@@ -45,7 +45,7 @@ int main(void)
         CHECK(strcmp(lst[i].name, cal_golden[i].name) == 0, "entry %u: %s vs %s", i, lst[i].name, cal_golden[i].name);
         CHECKV(lst[i].addr, cal_golden[i].addr);
         CHECKV(lst[i].len, cal_golden[i].len);
-        CHECK(lst[i].addr >= CAL_FLASH_CAL_BASE, "%s at 0x%X is below the calibration region 0x%X (our app overwrites it)",
+        CHECK(lst[i].addr >= CAL_FLASH_CAL_BASE, "%s at 0x%X is below the app limit 0x%X (our app may overwrite it)",
               lst[i].name, lst[i].addr, CAL_FLASH_CAL_BASE);
         CHECK(lst[i].addr + lst[i].len <= CAL_FLASH_END, "%s runs past the stock image", lst[i].name);
         CHECK(lst[i].len > 0u, "%s empty", lst[i].name);

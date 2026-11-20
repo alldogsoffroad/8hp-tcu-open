@@ -7,5 +7,5 @@ Idx Name          Size      VMA       LMA       File off  Algn
                   CONTENTS, ALLOC, LOAD, READONLY, DATA
   1 .text         0003a790  00040870  00040870  00000ef0  2**3
                   CONTENTS, ALLOC, LOAD, READONLY, CODE
-  2 .rodata_oops  00000100  00080000  00080000  0003b7fc  2**2
+  2 .rodata_oops  00000100  000a0000  000a0000  0003b7fc  2**2
                   CONTENTS, ALLOC, LOAD, READONLY, DATA

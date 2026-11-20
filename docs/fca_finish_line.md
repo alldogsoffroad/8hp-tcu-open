@@ -66,9 +66,9 @@ the live path) · **MISSING** (not ported) · **UNDECODED** (inside a ported fun
 ## 5. What remains before the fork
 
 1. **UNDECODED → decoded and shadowed:** the torque-intervention amounts and dwells; WK lock-up (in progress 2026-11-20, `~/tcu_sweep/ti_amounts_wk_decode.md`); class-0 / skip downshifts.
-2. **Flash space:** 8 KB left at r05d. Read the live path's calibration in place too (one proving flash: identical behaviour).
+2. **Flash space:** solved 2026-11-20 — the app limit was wrongly held at 0x80000; it is now 0xA0000 (136 KB spare at r05d; the application block runs to 0x17FFFF). Reading the live path's calibration in place is optional now.
 3. **Fork prep:** the 11 FCA-frame host tests re-based on the `vehicle_in` injector; a neutral transmit seam.
 4. **Decisions for the fork, not the FCA build:** D-N1 the lever source; D-N4 debug IDs on bus 2; which shadows go live in which order once the Nissan inputs exist.
 5. **Hardware, not blocking the fork:** an assembled transmission (park polarity, real shifts); the Nissan ECU capture (`docs/reference/nissan-ecu-bench-capture-plan.md`).
 
-When rows 1–3 are done the FCA build meets the definition above and the fork can be cut.
+When rows 1 and 3 are done the FCA build meets the definition above and the fork can be cut.

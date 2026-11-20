@@ -32,7 +32,7 @@ HOST = os.path.join(ROOT, "build", "host")
 FLASHED = os.path.join(ROOT, "build", "flashed")
 DUMP = os.path.join(ROOT, "stockram_driving_20261104.bin")
 DUMP_BASE = 0xFFF80000
-CAL_START = 0x80000
+CAL_START = 0xA0000   # our app's flash limit (app block 0x40000-0x17FFFF; raised from the wrong 0x80000 on 2026-11-20)
 OUTPUTS = ["tcu_app.elf", "tcu_app.hex", "tcu_app_ram.bin", "tcu_loader.hex", "tcu_flasher.bin"]
 IDENTICAL = ["tcu_app_ram.bin", "tcu_loader.hex", "tcu_flasher.bin"]
 NM = shutil.which("sh-elf-nm") or "sh-elf-nm"
@@ -127,7 +127,7 @@ def check(new, base, build=True, allow=()):
     a, b = open(img_base, "rb").read(), open(img_new, "rb").read()
     blocks = [o for o in range(0, len(a), 0x10000) if a[o:o + 0x10000] != b[o:o + 0x10000]]
     if any(o >= CAL_START for o in blocks) or (app_end and app_end >= CAL_START):
-        fails.append(f"image reaches the calibration region (app end {app_end:#x}, blocks {[hex(o) for o in blocks]})")
+        fails.append(f"image reaches past the app limit 0xA0000 (app end {app_end:#x}, blocks {[hex(o) for o in blocks]})")
     notes.append(f"image build/{new}_IFla.bin CRC {crc.group(1)}, app end {app_end:#x} "
                  f"({(CAL_START - app_end) // 1024} KB spare), blocks {', '.join(hex(o) for o in blocks)}")
 
