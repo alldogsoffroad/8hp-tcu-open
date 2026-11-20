@@ -421,6 +421,97 @@ int sm_shadow_walk(uint8_t gear_in, uint16_t speed, uint8_t pedal, uint8_t *cand
     return (int)prog1(&s_sm, cand, gear_in, speed, pedal);
 }
 
+/* ── THE CONFIRM STAGE (2026-11-19, ~/tcu_sweep/gear_feedback_shadow_port.md;
+ *    decode m6_shiftmap_gaps_decode.md §1): 0x127D3E / 0x127F66 → 0x1284CC,
+ *    a condition-gated second speed check. The condition masks S+0x8C (up)
+ *    and S+0x94 (down) are HELD 0 (their producers — S+0x4C cal-disabled,
+ *    S+0x54, S+0x7C, A1F8+0x16C — are not ported): 0x12E94C then sets no
+ *    percentage and S+0x84 = 0, so 0x12E76E gives E0 = 0xFFFF (down) / 0 (up)
+ *    and 0x12E7BC accepts every candidate — an exact pass-through until a
+ *    mask bit sets. Ported as code: the full-load line lookup (S+0xE3 = 0xFF,
+ *    S+0xE4 = the line), S+0xC0, S+0xE0, S+0xDF, S+0xAD / S+0x84, the step-7
+ *    special-limit test (S+0x5A stood in inactive 10000). ───────────────── */
+#define SM_SI_MASK_UP  0u       /* S+0x8C */
+#define SM_SI_MASK_DN  0u       /* S+0x94 */
+#define SM_SI_S5A      10000u   /* S+0x54 sub-object +0x5A (inactive, dump 10000) */
+_Static_assert(SM_SI_MASK_UP == 0u && SM_SI_MASK_DN == 0u && SM_SI_S5A == 10000u,
+               "dump S+0x8C / S+0x94 = 0, S+0x5A = 0x2710");
+
+/* 0x1284CC(from, to): 1 = accepted */
+static bool c1284cc(sm_t *s, uint8_t from, uint8_t to)
+{
+    if (to == from) {
+        return true;
+    }
+    const uint8_t dir = (to < from) ? 1u : 0u;      /* 1 down */
+    const sm_prog_t p = {
+        .rp6 = remap(s->s_ba[0]), .rp9 = remap(s->s_ba[1]), .rp7 = remap(s->s_ba[2]),
+        .rp10 = remap(s->s_ba[3]),
+        .p6 = s->s_ba[0], .p9 = s->s_ba[1], .p7 = s->s_ba[2], .p10 = s->s_ba[3],
+        .wb = s->s_ba[4], .wl = s->s_ba[5],
+    };
+    /* 0x128D00 for gear (to > 1 ? to - 1 : 1), its up line, 0x128D9C at
+     * y = 0xFF into a stack word that starts at S+0xCE */
+    {
+        int8_t upl, dnl, below;
+        uint16_t w = s->s_ce;
+        if (lines((uint8_t)(to > 1u ? to - 1u : 1u), &upl, &dnl, &below) == 0u && upl != -1) {
+            (void)blend(s, &w, 0xFFu, &p, (uint8_t)upl);
+        }
+        (void)sat16((int32_t)s->s_b4 + (int32_t)w);  /* uStack_24: the step-6 cap only (E0 0 up: never below) */
+    }
+    /* step 3: the forced paths need S+0xB6 (program 0x21) — 0 here */
+    if (s->s_ad == 0u) {
+        /* 0x12E94C with both masks 0: no condition, S+0x84 = 0; the
+         * per-id percentages S+0x85..0x88 stay at their start (down 0xFF,
+         * up 0 [I: the max / min starts]) */
+        const uint8_t pc = dir ? 0xFFu : 0u;
+        const int32_t a2 = pc, c2 = pc;                 /* 0x129064: four equal values */
+        s->s_c0 = (uint8_t)((c2 - a2) * (int32_t)p.wl / 100 + a2);
+        s->s_84 = (SM_SI_MASK_UP | SM_SI_MASK_DN) != 0u ? 1u : 0u;
+        s->s_ad = 1u;
+    }
+    /* 0x12E76E */
+    s->s_e0 = (s->s_84 == 0u) ? (dir ? 0xFFFFu : 0u) : 0u;
+    /* step 7: 0x12EC5A again — up and S+0x5A < AB30 → DE = 3, E0 = S+0x5A */
+    if (dir == 0u && SM_SI_S5A < s->ab30) {
+        s->s_de = 3u;
+        s->s_e0 = (uint16_t)SM_SI_S5A;
+    }
+    /* 0x12E7BC */
+    return dir ? (s->s_e0 > s->ab30) : (s->s_e0 <= s->ab30);
+}
+
+/* 0x127D3E: a rejected downshift is shortened one gear, an upshift one gear
+ * down (0x127F66), until accepted */
+static uint8_t confirm(sm_t *s, uint8_t cand, uint8_t from)
+{
+    if (s->s_de != 3u) {
+        s->s_df = s->s_c2;
+    }
+    if (cand < from) {
+        while (from > cand) {
+            if (c1284cc(s, from, cand)) {
+                break;
+            }
+            cand++;
+        }
+    } else if (cand > from) {
+        while (cand > from) {
+            /* cand == 8: 0xF8DE2 (not ported; no effect on the result) */
+            if (c1284cc(s, from, cand)) {
+                break;
+            }
+            cand--;
+        }
+    }
+    /* cand == from: 0x12E8FC / 0x12E756 (not ported; they do not change cand) */
+    s->s_84 = 0u;
+    s->s_ad = 0u;
+    /* 0x1280F4 (S+0xC4..0xCC program ids, S+0xC3): not modelled */
+    return cand;
+}
+
 /* ── 0xFCDFE: the window [A67C+0x2D, A67C+0x2B] ────────────────────────── */
 static uint8_t window(sm_t *s, uint8_t r)
 {
@@ -510,13 +601,21 @@ void sm_shadow_pass(const sm_in_t *in)
         }
         s->m17 = g;
         s->m24 = 0u;                            /* 0xFC07E (stand-in) */
-        if (in->gear_in >= 1 && in->gear_in <= 8) {
-            s->m18 = (uint8_t)in->gear_in;
-            s->m1a = 0u;
-        } else {
+        /* A694 = A004+0x46 (← 0xA378C ← 0x89C28, the gear feedback chain's
+         * commanded gear): negative → 9 (+0x22 = 1); 0 or > 8 → +0x1A = 1,
+         * A694 = A697, then A694 = 0xFC5DE(A697) [O 0xFC112] */
+        const uint8_t a694 = (in->gear_in < 0) ? 9u : (uint8_t)in->gear_in;
+        if (a694 == 0u || a694 > 8u) {
             s->m1a = 1u;
-            s->m18 = (s->a697 >= 1u && s->a697 <= 8u) ? s->a697 : 1u;
+            s->m18 = (s->a697 >= 1u && s->a697 <= 8u) ? s->a697 : 1u;   /* ours: A697 0 only before a first pass */
+            s->m18 = limits(s, s->m18);
             s->gear_inv_n++;
+            if (a694 == 9u && s->neg9_n < 0xFFu) {
+                s->neg9_n++;
+            }
+        } else {
+            s->m18 = a694;
+            s->m1a = 0u;
         }
     }
     /* 0xF869C: A786 = min(pedal, 254) */
@@ -559,9 +658,10 @@ void sm_shadow_pass(const sm_in_t *in)
         s->blk[7] = s->a786;
     }
 
-    /* entry 15: 0xF8490 — the confirm (stood in: accept), 0x123AA2's block
-     * bytes, the A694 fallback, 0xFC5DE */
+    /* the confirm stage 0x127D3E (program 1 → 0x12D4B8), then entry 15:
+     * 0xF8490 — 0x123AA2's block bytes, the A694 fallback, 0xFC5DE */
     if (!no_cand) {
+        cand = confirm(s, cand, s->m18);
         s->conf_n++;
         s->blk[8] = (s->s_b6 != 0u) ? 0x30u : s->blk[0];
         s->blk[9] = s->blk[8];                  /* 0xF8D5E(A1F8) = 0 (stand-in) */

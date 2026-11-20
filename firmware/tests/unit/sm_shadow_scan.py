@@ -13,6 +13,8 @@
                                      no live module, names no live cell (no
                                      0xFFF8xxxx / 0xFFF9xxxx / 0xFFFFxxxx
                                      literal), no volatile pointer cast
+  (2026-11-19: + the gear feedback chain app/sm_gear.c — the shadow set, the
+   outputs may not name it, the hook may not read its modelled cells)
   sm_shadow_scan.py hook FILE...     the gather (app/sm_hook.c) reads live
                                      cells only through const volatile and
                                      never names a cell the shadow models
@@ -28,6 +30,7 @@ import sys
 OUT_PATTERNS = [
     r"\bsm_shadow", r"\bsm_hook", r"\bsm_cal", r"\bSM_SI_", r"\bSM_CAL_", r"\bs_sm\b",
     r"\.sm_shadow\b", r"\bsm_in_t\b", r"\bsm_t\b",
+    r"\bsm_gear", r"\bgf_t\b", r"\bgf_in_t\b", r"\bgf_tr_t\b", r"\.sm_gear\b", r"\bGF_SI_", r"\bs_gf\b",
     r"0[xX][fF]{3}86[89][0-9a-fA-F]{2}",
 ]
 SHADOW_PATTERNS = [
@@ -43,6 +46,13 @@ HOOK_PATTERNS = [
     r"0[xX][fF]{3}8[aA][0-7][0-9a-fA-F]{2}",
     r"0[xX][fF]{3}8[aA][bB][3-5][0-9a-fA-F]",
     r"0[xX][fF]{3}89[cC][eE]8", r"0[xX][fF]{3}89[cC]28",
+    # (2026-11-19) the gear feedback chain's own cells (app/sm_gear.c): CCE4..7,
+    # E4A4..E4A6, E69C..E69E, E6A0 / E6A1, 0x89C25..2E, E33C..E34F, 0x8519F /
+    # 0x851A0, AE2A..AE2F — the live E4A7 / E69F are read for the witness only
+    r"0[xX][fF]{3}8[cC][cC][eE][4-7]", r"0[xX][fF]{3}8[eE]4[aA][4-6]",
+    r"0[xX][fF]{3}8[eE]69[c-eC-E]", r"0[xX][fF]{3}8[eE]6[aA][01]",
+    r"0[xX][fF]{3}89[cC]2[5-9a-eA-E]", r"0[xX][fF]{3}8[eE]3[34][0-9a-fA-F]",
+    r"0[xX][fF]{3}8519[fF]", r"0[xX][fF]{3}851[aA]0", r"0[xX][fF]{3}8[aA][eE]2[a-fA-F]",
 ]
 
 

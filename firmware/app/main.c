@@ -416,6 +416,12 @@ static void task_10ms(void)
         /* the wire self-checks and CPU witnesses (app/g6a.c): the law's
          * 0x94ED4 against the replicated seam + guard, the guard replica */
         g6a_compare_10ms(sup_mode());
+        /* THE SHIFT-MAP SHADOW's gear feedback chain (app/sm_gear.c, read-
+         * only, its own RAM .sm_gear; 2026-11-19): the stock slots 30..33
+         * (0x10485E / 0xD15A6 / 0x104A28 / 0x103B36 / 0xD140C / 0xDD954) on
+         * its own cells, the engine's power-flow cells BY VALUE after its
+         * pass; the shadow's 0x89C28 is the 30 ms pass's gear_in */
+        sm_hook_10ms();
     }
 #endif
     bench_tick_10ms();

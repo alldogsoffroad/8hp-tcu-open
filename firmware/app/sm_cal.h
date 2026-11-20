@@ -32,4 +32,19 @@ extern const uint8_t  sm_cal_step[63 * 2];     /* 0x1E5E4C */
 extern const uint16_t sm_cal_mingear[8];       /* 0x1E5E34 */
 extern const uint8_t  sm_cal_ab30w[2];         /* 0x1FEC8C / 0x1FEC8D */
 
+/* THE GEAR FEEDBACK CHAIN (app/sm_gear.c): four 10 x 10 gear-pair tables,
+ * t[(to + 1) + (from + 1) * 10] for from, to = -1..8, signed bytes */
+extern const int8_t   sm_cal_gnext[100];       /* 0x4F6A4: 0xD1990 / 0x1048C8 the next commanded gear */
+extern const int8_t   sm_cal_gtype[100];       /* 0x4F9DC: 0xB7C02 (0xD4F86) 1 up / 2 down, 0 no direct shift */
+extern const int8_t   sm_cal_gkind[100];       /* 0x4FA40: 0xB7C14 (0xD4FA0) 1 up, 3 down 1, 4 down 2+ */
+extern const int8_t   sm_cal_gskip[100];       /* 0x4F708: 0xD16BA / 0xD1854 the replacement gear */
+/* the speed-limit tables of *0xFFF84C80 = 0x53610 (ROM init DTBL 0x65110 +
+ * 0xC80): {u32 nx = 10, u32 ny = 10, s16 / u8 data[y*nx + x]} (0xB6D14 /
+ * 0xB6CE8 / 0xB6CBC); [0] 0xD1854 speed, [1] 0xD1854 0x89CA0, [2] [3] [4]
+ * 0xD16BA turbine / engine / output (and [4] 0xD1922), [5] 0xD16BA u8 temp */
+#define SM_CAL_GN 10u
+extern const uint32_t sm_cal_gspd_addr[6];
+extern const int16_t  sm_cal_gspd[5][100];
+extern const uint8_t  sm_cal_gtemp[100];
+
 #endif /* TCU_APP_SM_CAL_H */

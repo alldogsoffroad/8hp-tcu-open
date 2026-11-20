@@ -84,6 +84,19 @@ static void test_dump(void)
     CHECKV(S->arb_skip_n, 4);           /* 0x1B, 0x0B, 0x12, 0x08 before program 1 */
     CHECKV(S->err_n, 0);
     CHECKV(S->corr_n, 0);
+    /* the confirm stage (2026-11-19): 3 -> 1 down, masks 0 → E0 0xFFFF > AB30 0
+     * accepted; its full-load lookup leaves S+0xE3 0xFF / S+0xE4 1 (gear 1's up
+     * line), S+0xC0 0xFF, S+0xDF = S+0xC2 3, S+0xAD / S+0x84 0 */
+    const unsigned dump_e3 = S->s_e3, dump_e4 = S->s_e4, dump_e0 = S->s_e0, dump_c0 = S->s_c0,
+                   dump_df = S->s_df, dump_ad = S->s_ad, dump_84 = S->s_84;
+    CHECKV(dump_e3, 0xFF);
+    CHECKV(dump_e4, 1);
+    CHECKV(dump_e0, 0xFFFF);
+    CHECKV(dump_c0, 0xFF);
+    CHECKV(dump_df, 3);
+    CHECKV(dump_ad, 0);
+    CHECKV(dump_84, 0);
+    (void)dump_e3; (void)dump_e4; (void)dump_e0; (void)dump_c0; (void)dump_df; (void)dump_ad; (void)dump_84;
     const uint16_t da = S->s_da, d2 = S->s_d2, d6 = S->s_d6;
     /* the up cells: program 1's walk at gear_in 1 */
     uint8_t cand = 0u;
@@ -121,6 +134,16 @@ static void test_dump(void)
             CHECKV(DB(SB + 0xB6u), 0u);
             CHECKV(DB(SB + 0xC3u), SM_SI_C3);
             CHECKV(DB(SB + 0xDEu), 0u);
+            /* the confirm stage's cells (0x1284CC with the masks 0) */
+            CHECKV(DB(SB + 0xE3u), dump_e3);
+            CHECKV(DB(SB + 0xE4u), dump_e4);
+            CHECKV(DW(SB + 0xE0u), dump_e0);
+            CHECKV(DW(SB + 0xC0u), dump_c0);
+            CHECKV(DB(SB + 0xDFu), dump_df);
+            CHECKV(DB(SB + 0xADu), dump_ad);
+            CHECKV(DB(SB + 0x84u), dump_84);
+            CHECKV(DW(SB + 0x8Cu), 0u);                 /* the masks held 0 */
+            CHECKV(DW(SB + 0x94u), 0u);
             for (unsigned i = 0u; i < 6u; i++) {
                 CHECKV(DB(SB + 0xBAu + i), S->s_ba[i]);
             }
@@ -142,7 +165,7 @@ static void test_dump(void)
             CHECKV(DB(0xFFF8A786u), SM_SI_PEDAL);
             CHECKV(DB(0xFFF8AB34u), SM_SI_AB34);
             CHECKV(DB(0xFFF85157u), (unsigned)SM_SI_S3F);
-            CHECKV(DB(0xFFF89C28u), (unsigned)SM_SI_GEAR);
+            CHECKV(DB(0xFFF89C28u), 3u);                 /* the dump's gear_in (the chain: test_gear (6))*/
             CHECKV(DB(0xFFF8A706u), SM_SI_A706);
             CHECKV(DB(0xFFF8A1F4u), SM_SI_BASE_B);
             CHECKV(DB(0xFFF8A1F5u), SM_SI_BASE_A);
@@ -339,6 +362,296 @@ static void test_invariants(void)
            (unsigned)S->pass_n, (unsigned)S->corr_n, (unsigned)S->mingear_n, (unsigned)S->clamp_n);
 }
 
+
+/* ── (6) THE GEAR FEEDBACK CHAIN (app/sm_gear.c) ───────────────────────── */
+#define G (sm_gear_state())
+static unsigned g_tick;     /* 10 ms ticks; the shift-target pass on every 3rd */
+typedef struct {
+    uint8_t e69b, e6ee, e6ef, e28e, c3d, mode;
+    uint16_t out;           /* output rpm */
+    uint8_t pedal;
+} gx_t;
+static const uint16_t k_ratio[9] = { 0, 4714, 3143, 2106, 1667, 1285, 1000, 839, 667 };
+
+/* one 10 ms tick: the gear pass (slots 30..33), then on every 3rd tick the
+ * shift-target pass with gear_in = the shadow's 0x89C28 (main.c's order) */
+static void gtick(const gx_t *x)
+{
+    const int8_t g = G->e69f;
+    const uint16_t tur = (g >= 1 && g <= 8) ? (uint16_t)((uint32_t)x->out * k_ratio[g] / 1000u) : 0u;
+    const gf_in_t in = { x->e69b, x->e6ee, x->e6ef, x->e28e, x->c3d, x->mode, 80u, 0, 0, 0u,
+                         x->out, tur, tur };
+    sm_gear_pass(&in);
+    if (g_tick % 3u == 0u) {
+        const sm_in_t si = { 0u, x->out, x->pedal, G->c28[0], x->mode, 1u, 1u, 0u };
+        sm_shadow_pass(&si);
+    }
+    g_tick++;
+}
+
+static void ginit(void)
+{
+    sm_shadow_init();
+    sm_gear_init();
+    sm_gear_host_si(0u, 0);
+    g_tick = 0u;
+}
+
+static void test_gear(void)
+{
+    /* (6a) boot in P (power flow 0, mode 1 → c3d 1): the stock init E4A7 =
+     * E69F = CCE4[0] = 6; the first target pass from gear_in 6 at 0 rpm →
+     * A697 1; the chain follows: E4A4 1 → 0xD1B10 → E6A1 1 → E4A7 1 → the
+     * strobe → E69F 1 → 0x89C25 1 (same pass) */
+    ginit();
+    gx_t x = { 0u, 0u, 0u, 0u, 1u, 1u, 0u, 23u };
+    CHECKV(G->e4a7, 6);
+    CHECKV(G->c28[0], 6);
+    gtick(&x);                              /* tick 0: the gear pass sees 0x89CE8 0 → stays 6; the target pass → 1 */
+    CHECKV(G->e4a7, 6);
+    CHECKV(S->m18, 6);
+    CHECKV(S->a697, 1);
+    gtick(&x);
+    CHECKV(G->e4a4, 1);
+    CHECKV(G->e6a1, 1);
+    CHECKV(G->e4a7, 1);
+    CHECKV(G->c28[0], 1);
+    CHECKV(G->c28[1], 2);
+    CHECKV(G->e69f, 1);
+    CHECKV(G->c2b[0], 1);
+    CHECKV(G->c2b[3], (int8_t)~1);
+    CHECKV(G->cce4[0], 1);
+    CHECKV(G->c25[0], 1);
+    CHECKV(G->e69c[0], 0);
+    CHECKV(G->strobe_n, 1);
+    CHECKV(G->done_n, 1);
+    for (unsigned i = 0u; i < 60u; i++) {
+        gtick(&x);
+    }
+    CHECKV(G->e4a7, 1);
+    CHECKV(S->m18, 1);
+    CHECKV(S->a697, 1);
+    CHECKV(G->e343, 1);                     /* the coordinator followed 0x89C2B */
+    CHECKV(G->x519f, 1);
+    /* (6b) lever D, mode 2 (c3d 0): the commit (E69B 1) pending ~95 passes
+     * (E6EE 0), then complete — standstill D: current gear 1, target 1 */
+    x.c3d = 0u; x.mode = 2u; x.e6ef = 1u; x.e69b = 1u; x.e6ee = 0u;
+    for (unsigned i = 0u; i < 95u; i++) {
+        gtick(&x);
+        CHECKV(G->e4a7, 1);
+    }
+    x.e6ee = 1u;
+    for (unsigned i = 0u; i < 60u; i++) {
+        gtick(&x);
+    }
+    CHECKV(G->e4a7, 1);
+    CHECKV(G->e69f, 1);
+    CHECKV(G->c28[0], 1);
+    CHECKV(S->a697, 1);
+    CHECKV(G->d1990_n > 0u, 1);
+    CHECKV(G->strobe_n, 1);
+    /* (6c) the mode-1 return of 0xD15A6: c3d 1 with E69B 1 → E6A1 = E69F */
+    x.c3d = 1u;
+    gtick(&x);
+    CHECKV(G->e6a1, 1);
+    CHECKV(G->ret1_n, 1);
+    x.c3d = 0u;
+    /* (6d) R: E6EF 2, commit E69B 2, pending: E6A1 −1 at once, E4A7 held at
+     * E69F (0x104A28's pending path) until the completion, then −1 → the
+     * strobe (a reversal: the checks skipped) → E69F −1, 0x89C28 0xFF →
+     * the target pass's A694 "negative → 9" → 0xFC5DE(A697) = 1 */
+    x.e6ef = 2u; x.e69b = 2u; x.e6ee = 1u;
+    for (unsigned i = 0u; i < 95u; i++) {
+        gtick(&x);
+        CHECKV(G->e6a1, -1);
+        CHECKV(G->e4a7, 1);
+    }
+    x.e6ee = 2u;
+    gtick(&x);
+    CHECKV(G->e4a7, -1);
+    CHECKV(G->e69f, -1);
+    CHECKV((uint8_t)G->c28[0], 0xFF);
+    CHECKV(G->c28[1], 0);
+    CHECKV(G->c28[2], 0);
+    CHECKV(G->strobe_n, 2);
+    const unsigned n9 = S->neg9_n;
+    for (unsigned i = 0u; i < 30u; i++) {
+        gtick(&x);
+    }
+    CHECKV(S->m1a, 1);
+    CHECKV(S->neg9_n, n9 + 10u);
+    CHECKV(S->m18, 1);
+    CHECKV(S->a697, 1);
+    CHECKV(S->err_n, 0);
+    /* (6e) back to P: the release pending (E69B 0, E6EE 2): E4A7 held −1,
+     * then the completion → 0xD1B10(1) → 1 → the strobe → E69F 1 */
+    x.e6ef = 0u; x.e69b = 0u; x.e6ee = 2u;
+    for (unsigned i = 0u; i < 120u; i++) {
+        gtick(&x);
+        CHECKV(G->e4a7, -1);
+    }
+    x.e6ee = 0u;
+    gtick(&x);
+    CHECKV(G->e4a7, 1);
+    CHECKV(G->e69f, 1);
+    CHECKV(G->c28[0], 1);
+    CHECKV(G->strobe_n, 3);
+    CHECKV(G->err_n, 0);
+    CHECKV(G->unp_n, 0);
+    printf("(6) gear chain: boot P 6 -> 1, D 1, R -1 (neg9 %u), P 1; strobes %u done %u passes %u\n",
+           (unsigned)S->neg9_n, (unsigned)G->strobe_n, (unsigned)G->done_n, (unsigned)G->pass_n);
+}
+
+/* (6f) the drive ramp: D committed, the output speed up 0 → 3000 rpm and back
+ * (10 rpm per 10 ms tick), pedal 23. The target walks up through the up lines
+ * one gear per 30 ms pass at most; the commanded gear 0x89C28 = E4A7 follows
+ * it in the next 10 ms gear pass, and E69F the same pass */
+static void test_ramp(void)
+{
+    ginit();
+    gx_t x = { 1u, 1u, 1u, 0u, 0u, 2u, 0u, 23u };
+    for (unsigned i = 0u; i < 30u; i++) {
+        gtick(&x);                          /* settle to 1 */
+    }
+    CHECKV(G->e4a7, 1);
+    char up[256] = "", dn[256] = "";
+    int8_t last = G->e4a7;
+    uint8_t lasta = S->a697;
+    unsigned lag_max = 0u, chg_at = 0u, a_chg = 0u;
+    int mono_up = 1, mono_dn = 1;
+    for (int dir = 0; dir < 2; dir++) {
+        for (unsigned k = 0u; k <= 300u; k++) {
+            x.out = (uint16_t)(dir == 0 ? k * 10u : 3000u - k * 10u);
+            gtick(&x);
+            if (S->a697 != lasta) {
+                if (dir == 0 && S->a697 != lasta + 1u) {
+                    mono_up = 0;
+                }
+                lasta = S->a697;
+                a_chg = g_tick;
+            }
+            if (G->e4a7 != last) {
+                if (dir == 0 && G->e4a7 != last + 1) {
+                    mono_up = 0;
+                }
+                if (dir == 1 && G->e4a7 >= last) {
+                    mono_dn = 0;
+                }
+                app(dir == 0 ? up : dn, sizeof up, (unsigned)last, (unsigned)G->e4a7, x.out);
+                last = G->e4a7;
+                chg_at = g_tick;
+                if (chg_at - a_chg > lag_max) {
+                    lag_max = chg_at - a_chg;
+                }
+            }
+            if (g_tick % 3u == 2u) {
+                /* the gear pass of the tick after a target pass: commanded = target */
+                CHECKV(G->e4a7, (int8_t)S->a697);
+                CHECKV(G->e69f, G->e4a7);
+                CHECKV(G->c25[0], G->e4a7);
+            }
+        }
+    }
+    printf("(6f) ramp up:   %s\n     ramp down: %s\n     commanded-after-target lag max %u tick(s)\n",
+           up, dn, lag_max);
+    /* each change within [line, line + 70] rising / [line - 50, line] falling
+     * (the decode's §7 pedal-23 lines; the AB30 filter (v + prev) / 2 lags the
+     * 10 rpm-per-tick ramp, sampled every 30 ms) */
+    {
+        static const unsigned lu[7] = { 250, 550, 700, 950, 1200, 1500, 1850 };
+        static const unsigned ld[7] = { 1600, 1300, 1050, 800, 400, 300, 150 };
+        unsigned n = 0u, a0, a1, v;
+        const char *q = up;
+        int adv;
+        while (sscanf(q, "%u->%u@%u%n", &a0, &a1, &v, &adv) == 3 && n < 7u) {
+            CHECKV(a0, n + 1u);
+            CHECKV(a1, n + 2u);
+            CHECK(v >= lu[n] && v <= lu[n] + 70u);
+            q += adv;
+            n++;
+        }
+        CHECKV(n, 7);
+        n = 0u;
+        q = dn;
+        while (sscanf(q, "%u->%u@%u%n", &a0, &a1, &v, &adv) == 3 && n < 7u) {
+            CHECKV(a0, 8u - n);
+            CHECKV(a1, 7u - n);
+            CHECK(v + 50u >= ld[n] && v <= ld[n]);
+            q += adv;
+            n++;
+        }
+        CHECKV(n, 7);
+    }
+    CHECK(mono_up == 1);
+    CHECK(mono_dn == 1);
+    CHECKV(lag_max <= 1u, 1);
+    CHECKV(G->e4a7, 1);
+    CHECKV(G->err_n, 0);
+    CHECKV(S->err_n, 0);
+    CHECKV(G->strobe_n >= 14u, 1);
+    CHECKV(G->strobe_n, G->done_n);
+}
+
+/* (6g) the dump: the fault-reaction inputs of THIS bench (AE2D 1, 0x89C43 3:
+ * code 0x20) in P, mode 1 → E4A4 / E6A1 / E4A7 / E69F / CCE4 / 0x89C25..2E /
+ * E33C+7 / 0x8519F as the driving dump */
+static void test_gear_dump(void)
+{
+    ginit();
+    sm_gear_host_si(1u, 3);
+    gx_t x = { 0u, 0u, 0u, 0u, 1u, 1u, 0u, 23u };
+    for (unsigned i = 0u; i < 30u; i++) {
+        gtick(&x);
+    }
+    CHECKV(G->e4a4, 3);
+    CHECKV(G->e6a1, 3);
+    CHECKV(G->e4a7, 3);
+    CHECKV(G->e69f, 3);
+    CHECKV(G->cce4[0], 3);
+    CHECKV(G->e343, 3);
+#if defined(TCU_STOCK_DUMP)
+    {
+        static unsigned char d[0x20000];
+        FILE *f = fopen(TCU_STOCK_DUMP, "rb");
+        if (f == NULL || fread(d, 1u, sizeof d, f) != sizeof d) {
+            printf("(6g) dump file absent — chain cells skipped\n");
+        } else {
+            const volatile gf_t *g = G;
+            const struct { unsigned a; int v; const char *n; } k[] = {
+                { 0xFFF8E4A4u, g->e4a4, "E4A4" }, { 0xFFF8E4A5u, g->e4a5, "E4A5" },
+                { 0xFFF8E4A6u, g->e4a6, "E4A6" }, { 0xFFF8E4A7u, g->e4a7, "E4A7" },
+                { 0xFFF8E6A1u, g->e6a1, "E6A1" },
+                { 0xFFF8E69Cu, g->e69c[0], "E69C" }, { 0xFFF8E69Du, g->e69c[1], "E69D" },
+                { 0xFFF8E69Eu, g->e69c[2], "E69E" }, { 0xFFF8E69Fu, g->e69f, "E69F" },
+                { 0xFFF8E6A0u, (int8_t)g->e6a0, "E6A0" },
+                { 0xFFF8CCE4u, g->cce4[0], "CCE4" }, { 0xFFF8CCE5u, g->cce4[1], "CCE5" },
+                { 0xFFF8CCE6u, g->cce4[2], "CCE6" }, { 0xFFF8CCE7u, g->cce4[3], "CCE7" },
+                { 0xFFF89C25u, g->c25[0], "89C25" }, { 0xFFF89C26u, g->c25[1], "89C26" },
+                { 0xFFF89C27u, g->c25[2], "89C27" }, { 0xFFF89C28u, g->c28[0], "89C28" },
+                { 0xFFF89C29u, g->c28[1], "89C29" }, { 0xFFF89C2Au, g->c28[2], "89C2A" },
+                { 0xFFF89C2Bu, g->c2b[0], "89C2B" }, { 0xFFF89C2Cu, g->c2b[1], "89C2C" },
+                { 0xFFF89C2Du, g->c2b[2], "89C2D" }, { 0xFFF89C2Eu, g->c2b[3], "89C2E" },
+                { 0xFFF8E343u, g->e343, "E33C+7" }, { 0xFFF8E344u, g->e344, "E33C+8" },
+                { 0xFFF8519Fu, g->x519f, "8519F" }, { 0xFFF851A0u, g->x51a0, "851A0" },
+                { 0xFFF8AE2Eu, g->ae2e, "AE2E" }, { 0xFFF8AE2Fu, g->ae2f, "AE2F" },
+            };
+            for (unsigned i = 0u; i < sizeof k / sizeof k[0]; i++) {
+                const int dv = (int8_t)d[k[i].a - 0xFFF80000u];
+                if (dv != (int8_t)k[i].v) {
+                    printf("FAIL (6g) %s dump %d shadow %d\n", k[i].n, dv, (int)(int8_t)k[i].v);
+                    g_fail++;
+                }
+            }
+            printf("(6g) the chain's %u dump cells compared\n", (unsigned)(sizeof k / sizeof k[0]));
+        }
+        if (f) {
+            fclose(f);
+        }
+    }
+#endif
+    sm_gear_host_si(0u, 0);
+}
+
 /* ── --cal ───────────────────────────────────────────────────────────── */
 static unsigned char g_img[0x200000];
 static unsigned U32(unsigned a) { return ((unsigned)g_img[a] << 24) | ((unsigned)g_img[a + 1] << 16) | ((unsigned)g_img[a + 2] << 8) | g_img[a + 3]; }
@@ -464,6 +777,9 @@ int main(int argc, char **argv)
     test_sweeps();
     test_steps();
     test_invariants();
+    test_gear();
+    test_ramp();
+    test_gear_dump();
     printf("%s: %d failures\n", g_fail ? "FAIL" : "PASS", g_fail);
     return g_fail ? 1 : 0;
 }

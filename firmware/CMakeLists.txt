@@ -49,7 +49,7 @@ set(CORE_SOURCES
     app/fb_shadow.c app/fb_cal.c app/fb_hook.c
     app/pa7_shadow.c app/pa7_hook.c bsw/drv/drv_pa7.c
     app/tsel_shadow.c app/tsel_hook.c app/tsel_live.c bsw/drv/drv_tsel.c
-    app/sm_shadow.c app/sm_cal.c app/sm_hook.c
+    app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c
     safety/park_mon.c
     safety/park_pair.c
     safety/kl15.c
@@ -1585,7 +1585,7 @@ else()
     # every tick) with the shadow at main.c's 30 ms slot must pass unchanged
     # and show the shadow ran; the leak negative (the shadow's target written
     # into the live 0x89CE8) must FAIL. The scans and the SH compile checks.
-    set(SM_TEST_SOURCES tests/unit/test_sm_shadow.c app/sm_shadow.c app/sm_cal.c)
+    set(SM_TEST_SOURCES tests/unit/test_sm_shadow.c app/sm_shadow.c app/sm_cal.c app/sm_gear.c)
     add_executable(test_sm_shadow ${SM_TEST_SOURCES})
     target_compile_definitions(test_sm_shadow PRIVATE _POSIX_C_SOURCE=200809L
         "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"" "TCU_STOCK_DUMP=\"${TCU_STOCK_DUMP}\"")
@@ -1597,23 +1597,46 @@ else()
         "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"" "TCU_STOCK_DUMP=\"${TCU_STOCK_DUMP}\"")
     add_test(NAME sm_shadow_neg_MAP COMMAND test_sm_shadow_neg_MAP)
     set_tests_properties(sm_shadow_neg_MAP PROPERTIES WILL_FAIL TRUE)
-    add_executable(test_g6b_norep_sm ${G6B_NOREP_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_hook.c)
+    # the gear feedback chain (2026-11-19, ~/tcu_sweep/gear_feedback_shadow_port.md):
+    # its tests are part of test_sm_shadow ((6) boot / D / R / P, (6f) the
+    # drive ramp, (6g) the dump); the cal mutation (the next gear 1 → 2 made
+    # 1) must FAIL; the hook-side negatives: the gear gather reading a cell the
+    # chain models, and an output path naming the chain
+    add_executable(test_sm_shadow_neg_GNEXT ${SM_TEST_SOURCES})
+    target_compile_definitions(test_sm_shadow_neg_GNEXT PRIVATE _POSIX_C_SOURCE=200809L SM_NEG_GNEXT=1
+        "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"" "TCU_STOCK_DUMP=\"${TCU_STOCK_DUMP}\"")
+    add_test(NAME sm_gear_neg_GNEXT COMMAND test_sm_shadow_neg_GNEXT)
+    set_tests_properties(sm_gear_neg_GNEXT PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME sm_gear_scan_hook_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/sm_shadow_scan.py hook
+            ${CMAKE_SOURCE_DIR}/tests/unit/sm_gear_fixture_hook.c)
+    add_test(NAME sm_gear_scan_outputs_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/sm_shadow_scan.py outputs
+            ${CMAKE_SOURCE_DIR}/tests/unit/sm_gear_fixture_output.c)
+    set_tests_properties(sm_gear_scan_hook_negative sm_gear_scan_outputs_negative PROPERTIES WILL_FAIL TRUE)
+    add_executable(test_g6b_norep_gfleak ${G6B_NOREP_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c)
+    target_compile_definitions(test_g6b_norep_gfleak PRIVATE ${G6B_DEFS} G6R_HOLDER_REPLICA=0 G6R_NOREP=1
+        SM_TEST=1 SM_HOOK_NO_GATHER=1 SM_NEG_GLEAK=1)
+    add_test(NAME sm_gear_identity_negative_leak COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/sm_identity.py
+        $<TARGET_FILE:test_g6b_norep_gfleak>)
+    set_tests_properties(sm_gear_identity_negative_leak PROPERTIES WILL_FAIL TRUE ENVIRONMENT "${G6C_GOLD_ENV}")
+    add_executable(test_g6b_norep_sm ${G6B_NOREP_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c)
     target_compile_definitions(test_g6b_norep_sm PRIVATE ${G6B_DEFS} G6R_HOLDER_REPLICA=0 G6R_NOREP=1
         SM_TEST=1 SM_HOOK_NO_GATHER=1)
     add_test(NAME sm_identity COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/sm_identity.py
         $<TARGET_FILE:test_g6b_norep_sm>)
-    add_executable(test_g6b_norep_smleak ${G6B_NOREP_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_hook.c)
+    add_executable(test_g6b_norep_smleak ${G6B_NOREP_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c)
     target_compile_definitions(test_g6b_norep_smleak PRIVATE ${G6B_DEFS} G6R_HOLDER_REPLICA=0 G6R_NOREP=1
         SM_TEST=1 SM_HOOK_NO_GATHER=1 SM_NEG_LEAK=1)
     add_test(NAME sm_identity_negative_leak COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/sm_identity.py
         $<TARGET_FILE:test_g6b_norep_smleak>)
     # the replica form (test_g6b: the retired holder replayed so the per-frame
     # cell-window hash is compared too, not only the wire and the end window)
-    add_executable(test_g6b_sm ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_hook.c)
+    add_executable(test_g6b_sm ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c)
     target_compile_definitions(test_g6b_sm PRIVATE ${G6B_DEFS} SM_TEST=1 SM_HOOK_NO_GATHER=1)
     add_test(NAME sm_identity_cells COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/sm_identity.py
         $<TARGET_FILE:test_g6b_sm>)
-    add_executable(test_g6b_smleak ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_hook.c)
+    add_executable(test_g6b_smleak ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c)
     target_compile_definitions(test_g6b_smleak PRIVATE ${G6B_DEFS} SM_TEST=1 SM_HOOK_NO_GATHER=1
         SM_NEG_LEAK=1)
     add_test(NAME sm_identity_cells_negative_leak COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/sm_identity.py
@@ -1634,7 +1657,8 @@ else()
     add_test(NAME sm_shadow_scan_shadow
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/sm_shadow_scan.py shadow
             ${CMAKE_SOURCE_DIR}/app/sm_shadow.c ${CMAKE_SOURCE_DIR}/app/sm_shadow.h
-            ${CMAKE_SOURCE_DIR}/app/sm_cal.c ${CMAKE_SOURCE_DIR}/app/sm_cal.h)
+            ${CMAKE_SOURCE_DIR}/app/sm_cal.c ${CMAKE_SOURCE_DIR}/app/sm_cal.h
+            ${CMAKE_SOURCE_DIR}/app/sm_gear.c)
     add_test(NAME sm_shadow_scan_shadow_negative
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/sm_shadow_scan.py shadow
             ${CMAKE_SOURCE_DIR}/tests/unit/sm_scan_fixture_shadow.c)
@@ -1651,6 +1675,8 @@ else()
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/sm_shadow.c)
     add_test(NAME sm_sh_guard_cal
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/sm_cal.c)
+    add_test(NAME sm_sh_guard_gear
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion -Werror ${CMAKE_SOURCE_DIR}/app/sm_gear.c)
     add_test(NAME sm_sh_guard_hook
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform -Wall -Wextra -Wconversion
             ${CMAKE_SOURCE_DIR}/app/sm_hook.c)

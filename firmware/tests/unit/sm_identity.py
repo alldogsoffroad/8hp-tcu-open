@@ -38,6 +38,25 @@ def main():
             print("FAIL: shadow run '%s': passes %s walks %s lookups %s err %s target %s/%s/%s arb %s conf %s"
                   % (name, passes, walks, lookups, err, a697, a0aa, ce8, arb, conf))
             ok = False
+    # (2026-11-19) the gear feedback chain (app/sm_gear.c) ran in every run:
+    # passes > 0, no error, no unported branch reached, every strobe completed,
+    # the commanded gear = the gear code = the shadow's 0x89C28 at the end, 1 or
+    # (a run ending in R or its release) -1, and the shadow agreeing with the
+    # live engine's E4A7 / E69F on most passes (they differ only while a
+    # power-flow change is pending: the live 0x104A28 stand-in writes E6A1,
+    # the stock bytes hold E69F)
+    gfr = re.findall(r"GF run '([^']*)': passes (\d+) e4a7 (-?\d+) e69f (-?\d+) c28 (-?\d+) e6a1 (-?\d+) "
+                     r"strobes (\d+) done (\d+) agree (\d+) dis (\d+) unp (\d+) err (\d+) neg9 (\d+) "
+                     r"gear_in (-?\d+)", r.stderr)
+    if len(gfr) != len(runs):
+        print("FAIL: the gear chain reported %d runs, the shadow %d" % (len(gfr), len(runs)))
+        ok = False
+    for (name, passes, e4a7, e69f, c28, e6a1, st, dn, ag, dis, unp, err, neg9, gin) in gfr:
+        if int(passes) == 0 or int(err) != 0 or int(unp) != 0 or st != dn or not (e4a7 == e69f == c28) \
+                or e4a7 not in ("1", "-1") or int(ag) <= int(dis):
+            print("FAIL: gear chain run '%s': passes %s e4a7 %s e69f %s c28 %s strobes %s done %s agree %s "
+                  "dis %s unp %s err %s" % (name, passes, e4a7, e69f, c28, st, dn, ag, dis, unp, err))
+            ok = False
     if ok:
         print("sm identity: the live path matches the r04r goldens in every run; the shadow ran %d runs "
               "(%s passes in the first)" % (len(runs), runs[0][1]))

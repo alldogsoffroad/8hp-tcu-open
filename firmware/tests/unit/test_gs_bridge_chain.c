@@ -562,6 +562,32 @@ static void task10(gr_t *g, unsigned p)
     }
     drv_rq_request_set(7u, park_slot7_release());   /* ch 7: the park release (SH: DRV_RQ_PSET) */
 #if defined(SM_TEST)
+    {
+        /* the gear feedback chain (app/main.c's sm_hook_10ms, after the
+         * engine and the monitor): the engine's cells BY VALUE (on SH its
+         * pinned stock addresses; here the candidate's accessors) */
+        uint32_t n = 0u;
+        const vehicle_in_t *gv = vehicle_in();
+        gf_in_t gin;
+        gin.e69b = *(const volatile uint8_t *)gs_cand_host_state(16u, &n);
+        gin.e6ee = *(const volatile uint8_t *)gs_cand_host_state(21u, &n);
+        gin.e6ef = *(const volatile uint8_t *)gs_cand_host_state(22u, &n);
+        gin.e28e = *(const volatile uint8_t *)gs_cand_host_state(11u, &n);
+        gin.c3d = *(const volatile uint8_t *)(uintptr_t)0xFFF89C3Du;
+        gin.os_mode = mode;
+        gin.cd2 = *(const volatile uint8_t *)(uintptr_t)0xFFF89CD2u;
+        gin.live_e4a7 = *(const volatile int8_t *)gs_cand_host_state(15u, &n);
+        gin.live_e69f = *(const volatile int8_t *)gs_cand_host_state(17u, &n);
+        gin.pad9 = 0u;
+        gin.cb8 = 0u;
+        gin.cba = 0u;
+        gin.cd0 = (gv->q_engine_speed == Q_OK) ? (uint16_t)gv->engine_speed : 0u;
+        sm_hook_gear_feed(&gin);
+#if defined(SM_NEG_GLEAK)
+        /* the negative: a leak of the chain's commanded gear into the cell window */
+        *(volatile uint8_t *)(uintptr_t)0xFFF89C28u = (uint8_t)(0x50 + sm_gear_state()->e4a7);
+#endif
+    }
     if (mode < 1u || mode > 3u) {
         s_sm_on = 0u;
     } else {

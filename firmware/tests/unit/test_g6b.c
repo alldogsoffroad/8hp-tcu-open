@@ -218,6 +218,12 @@ static void run_child(const scen_t *sc, bool g6b, gr_t *g, res_t *res, uint8_t *
                     (unsigned)sm->walk_n, (unsigned)sm->lookup_n, (unsigned)sm->err_n, (unsigned)sm->a697,
                     (unsigned)sm->a0aa, (unsigned)sm->ce8, (unsigned)sm->skip_mode_n,
                     (unsigned)sm->arb_skip_n, (unsigned)sm->corr_n, (unsigned)sm->conf_n);
+            const volatile gf_t *gf = sm_gear_state();
+            fprintf(stderr, "GF run '%s': passes %u e4a7 %d e69f %d c28 %d e6a1 %d strobes %u done %u "
+                    "agree %u dis %u unp %u err %u neg9 %u gear_in %d\n", sc->name, (unsigned)gf->pass_n,
+                    (int)gf->e4a7, (int)gf->e69f, (int)gf->c28[0], (int)gf->e6a1, (unsigned)gf->strobe_n,
+                    (unsigned)gf->done_n, (unsigned)gf->agree_n, (unsigned)gf->dis_n, (unsigned)gf->unp_n,
+                    (unsigned)gf->err_n, (unsigned)sm->neg9_n, (int)sm->in.gear_in);
         }
 #endif
         if (getenv("G6C_DUMP_PINNED") != NULL &&

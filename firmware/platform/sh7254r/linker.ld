@@ -367,6 +367,17 @@ SECTIONS
     ASSERT(__sm_shadow_start >= __m5_rec_end, ".sm_shadow overlaps .m5_rec")
     ASSERT(__sm_shadow_end <= 0xFFF86A00, ".sm_shadow runs into .fb_shadow")
     ASSERT(__sm_shadow_start == 0xFFF86800 && SIZEOF(.sm_shadow) == 0x120, ".sm_shadow: sm_t is off 0xFFF86800 (witness_sm.py)")
+    /* THE GEAR FEEDBACK CHAIN of the shift-map shadow (app/sm_gear.c, ours;
+     * 2026-11-19, ~/tcu_sweep/gear_feedback_shadow_port.md): struct gf_t
+     * (0x9C) right after .sm_shadow, still below .fb_shadow 0xFFF86A00, in
+     * the same dump-zero window. Cleared by sm_gear_init. */
+    .sm_gear 0xFFF86920 (NOLOAD) : {
+        __sm_gear_start = .; *(.sm_gear) *sm_gear.c.obj(.bss .bss.* COMMON)
+        . = ALIGN(4); __sm_gear_end = .;
+    } > RAM
+    ASSERT(__sm_gear_start >= __sm_shadow_end, ".sm_gear overlaps .sm_shadow")
+    ASSERT(__sm_gear_end <= 0xFFF86A00, ".sm_gear runs into .fb_shadow")
+    ASSERT(__sm_gear_start == 0xFFF86920 && SIZEOF(.sm_gear) == 0x9C, ".sm_gear: gf_t is off 0xFFF86920 (witness_sm.py)")
     .m5_wit 0xFFF84D40 (NOLOAD) : {
         __m5_wit_start = .; *(.m5_wit) . = ALIGN(4); __m5_wit_end = .;
     } > RAM
@@ -569,7 +580,7 @@ SECTIONS
         __fb_shadow_start = .; *(.fb_shadow) *fb_shadow.c.obj(.bss .bss.* COMMON)
         . = ALIGN(4); __fb_shadow_end = .;
     } > RAM
-    ASSERT(__fb_shadow_start >= __m5_rec_end && __fb_shadow_start >= __sm_shadow_end, ".fb_shadow overlaps .m5_rec / .sm_shadow")
+    ASSERT(__fb_shadow_start >= __m5_rec_end && __fb_shadow_start >= __sm_shadow_end && __fb_shadow_start >= __sm_gear_end, ".fb_shadow overlaps .m5_rec / .sm_shadow / .sm_gear")
     ASSERT(__fb_shadow_end <= ADDR(.rng_wit), ".fb_shadow runs into .rng_wit")
     ASSERT(__fb_shadow_start == 0xFFF86A00 && SIZEOF(.fb_shadow) == 0x34C, ".fb_shadow: fbs_t is off 0xFFF86A00 (witness_fbshadow.py)")
 
