@@ -4,13 +4,14 @@
 #include "flasher/fl_hal.h"
 #include "flasher/fl_regs.h"
 #include "platform/sh7254r/regs.h"
+#include "io/vehicle/diag_ids.h"
 
 #define CANB       RCAN_A_BASE      /* bus 1 */
 #define TX_FIRST   1u
 #define TX_LAST    3u
 #define RX_MB      8u
-#define REQ_ID     0x7E1u
-#define RSP_ID     0x7E9u
+#define REQ_ID     DIAG_ID_UDS_PHYS     /* 0x7E1 (io/vehicle/diag_ids.h) */
+#define RSP_ID     DIAG_ID_UDS_RSP      /* 0x7E9 */
 #define TX_MASK    (((1u << (TX_LAST + 1u)) - 1u) & ~((1u << TX_FIRST) - 1u))
 
 #define SUP_CONTROL 0x8E80u         /* programming mode of the user boot MAT (spec 16 section 10):

@@ -12,7 +12,9 @@
 #define A16_BASE    0xFFF80000u
 #define A24_BASE    0xFF000000u
 
-static const uint16_t s_periodic_id[4] = { 0x368u, 0x378u, 0x388u, 0x398u };
+static const uint16_t s_periodic_id[4] = {   /* 0x368 / 0x378 / 0x388 / 0x398 (io/vehicle/diag_ids.h) */
+    DIAG_ID_MEAS_PERIODIC0, DIAG_ID_MEAS_PERIODIC1, DIAG_ID_MEAS_PERIODIC2, DIAG_ID_MEAS_PERIODIC3
+};
 
 static const meas_cfg_t *s_cfg;
 static bool s_latched;

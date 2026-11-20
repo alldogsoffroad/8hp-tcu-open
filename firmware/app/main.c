@@ -27,6 +27,7 @@
 #include "io/sensors/sensors.h"
 #include "io/vehicle/vehicle.h"
 #include "io/vehicle/fca_tx.h"
+#include "io/vehicle/diag_ids.h"
 #include "io/actuators/sol_ctl.h"
 #include "app/bench_out.h"
 #include "app/bench_dump.h"
@@ -482,7 +483,7 @@ void tmp_chain_hook_30ms(void)
 static can_frame_t s_hb;
 static void task_100ms(void)
 {
-    s_hb.id = 0x7F0u;
+    s_hb.id = DIAG_ID_HEARTBEAT;
     s_hb.dlc = 8u;
     s_hb.data[0] = 0xE1u;
     s_hb.data[1] = (uint8_t)((CELL_GRANT ? 0x08u : 0u) |
@@ -493,7 +494,7 @@ static void task_100ms(void)
     s_hb.data[5] = CELL_VALUE;
     s_hb.data[6] = CELL_LVL_REPORTED;
     s_hb.data[7] = CELL_JOB_MODE;
-    (void)plat_can_send(CAN_BUS1, &s_hb);
+    (void)plat_can_send(DIAG_BUS_HEARTBEAT, &s_hb);
 }
 
 /* L0-sense: the AN0 multiplexer 5 ms finisher (stock 0x8F62C via 0x8EDEA)

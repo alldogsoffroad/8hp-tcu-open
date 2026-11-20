@@ -17,6 +17,11 @@
 
 #include <string.h>
 
+/* TCU_VEHICLE switch (CMakeLists.txt, ~/tcu_sweep/fork_seams_port.md) */
+#if !defined(TCU_VEHICLE_FCA) || TCU_VEHICLE_FCA != 1
+#error "profile_fca.c: the FCA vehicle profile - built only with TCU_VEHICLE=FCA (defines TCU_VEHICLE_FCA=1)"
+#endif
+
 #define FCA_E2E              COM_E2E_V1
 #define FCA_COUNTER_MAX_STEP 3u
 

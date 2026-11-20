@@ -8,6 +8,26 @@ add_compile_options(-Wall -Wextra -Wconversion -Wshadow -O2 -g)
 
 include_directories(${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/include ${CMAKE_SOURCE_DIR}/platform)
 
+# THE VEHICLE SWITCH (2026-11-20, ~/tcu_sweep/fork_seams_port.md; the fork-readiness
+# audit ~/tcu_sweep/fork_readiness_audit.md §4.5): selects the vehicle profile (receive,
+# io/vehicle/profile_*.c) and its transmit set (io/vehicle/*_tx.c), and defines
+# TCU_VEHICLE_<name>=1 on every target that builds them (the loop at the end of this
+# file). Only FCA exists today; a Nissan profile is the planned fork (audit §4/§5, the
+# lever decision D-N1 first). The default produces images byte-identical to the build
+# before the switch existed (same sources, same link order).
+set(TCU_VEHICLE FCA CACHE STRING "vehicle profile of every image and test (FCA only, today)")
+set_property(CACHE TCU_VEHICLE PROPERTY STRINGS FCA)
+if(TCU_VEHICLE STREQUAL "FCA")
+    set(TCU_VEHICLE_RX_SOURCES io/vehicle/profile_fca.c)
+    set(TCU_VEHICLE_TX_SOURCES io/vehicle/fca_tx.c)
+    set(TCU_VEHICLE_DEFINE TCU_VEHICLE_FCA=1)
+    set(TCU_VEHICLE_SRC_REGEX "io/vehicle/(profile_fca|fca_tx)\\.c$")
+else()
+    message(FATAL_ERROR "TCU_VEHICLE='${TCU_VEHICLE}' is not supported: only FCA exists. "
+        "A Nissan profile (profile_nissan.c / nissan_tx.c) is the planned fork - see "
+        "~/tcu_sweep/fork_readiness_audit.md §4-§5 and ~/tcu_sweep/fork_seams_port.md.")
+endif()
+
 set(CORE_SOURCES
     bsw/sched/sched.c
     bsw/sup/sup_jobs.c
@@ -27,7 +47,7 @@ set(CORE_SOURCES
     bsw/com/com_tx.c
     bsw/com/sigpack.c
     io/vehicle/vehicle.c
-    io/vehicle/fca_tx.c
+    ${TCU_VEHICLE_TX_SOURCES}     # TCU_VEHICLE: the transmit set (FCA: io/vehicle/fca_tx.c)
     io/sensors/adc.c
     io/sensors/speed.c
     io/sensors/tft.c
@@ -60,7 +80,7 @@ set(CORE_SOURCES
     safety/tmp_safe.c
     app/bench_dump.c
     app/flash_entry.c
-    io/vehicle/profile_fca.c
+    ${TCU_VEHICLE_RX_SOURCES}     # TCU_VEHICLE: the receive profile (FCA: io/vehicle/profile_fca.c)
     bsw/meas/meas.c
     app/meas_table.c
     bsw/diag/isotp.c
@@ -233,6 +253,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
             --bin tcu_app_ram.bin -o tcu_app_df.bin
         COMMAND ${CMAKE_SIZE} tcu_app_ram.elf
         COMMENT "RAM application and its data-flash image tcu_app_df.bin")
+    # the TEST-ONLY vehicle injector (io/vehicle/vehicle_inject.c) must never reach an SH
+    # image (2026-11-20, ~/tcu_sweep/fork_seams_port.md): every SH ELF is refused if a
+    # vehicle_inject symbol is linked (proof of the scan: ctest
+    # vehicle_inject_elf_scan_negative in the host build)
+    foreach(_e tcu_app.elf tcu_app_ram.elf tcu_loader.elf tcu_flasher.elf)
+        add_custom_command(TARGET ${_e} POST_BUILD
+            COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/vehicle_seam_scan.py elf ${SH_NM} ${_e}
+            COMMENT "vehicle seam: no test-only injector in ${_e}")
+    endforeach()
 else()
     # ---- Host build: simulator and unit tests ------------------------------
     add_executable(tcu_sim platform/host/plat_host.c ${CORE_SOURCES}
@@ -532,7 +561,9 @@ else()
     add_executable(test_pksens tests/unit/test_pksens.c bsw/drv/drv_pksens.c
         safety/park_pair.c app/range.c app/park_law.c app/park.c safety/park_mon.c
         app/rng_chain.c safety/kl15.c bsw/sched/sched.c
-        io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
+        # 2026-11-20 (fork seams): the vehicle inputs through the TEST-ONLY injector,
+        # not FCA frames (io/vehicle/vehicle_inject.h)
+        io/vehicle/vehicle_inject.c io/vehicle/vehicle.c
         bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
         tests/unit/stub_plat.c)
     add_test(NAME pksens COMMAND test_pksens)
@@ -2122,4 +2153,57 @@ else()
         COMMAND ${CMAKE_COMMAND} -E compare_files ${CMAKE_BINARY_DIR}/fca_tx_fields.h
             ${CMAKE_SOURCE_DIR}/io/vehicle/fca_tx_fields.h)
     set_tests_properties(fca_tx_fields_diff PROPERTIES DEPENDS fca_tx_fields_current)
+    # ---- the vehicle seams (2026-11-20, ~/tcu_sweep/fork_seams_port.md; the fork-
+    # readiness audit ~/tcu_sweep/fork_readiness_audit.md §4.5-§4.6) ----
+    # (1) TCU_VEHICLE accepts only FCA: any other value stops the configure, naming the plan
+    add_test(NAME tcu_vehicle_refuses_other
+        COMMAND ${CMAKE_COMMAND} -S ${CMAKE_SOURCE_DIR} -B ${CMAKE_BINARY_DIR}/tcu_vehicle_neg
+            -G ${CMAKE_GENERATOR} -DTCU_VEHICLE=NISSAN)
+    set_tests_properties(tcu_vehicle_refuses_other PROPERTIES
+        PASS_REGULAR_EXPRESSION "is not supported: only FCA exists.*planned fork")
+    # (2) the TEST-ONLY injector: refuses to compile for the SH target, and the SH-ELF
+    # scan (POST_BUILD of every SH image) catches it if it were linked
+    add_test(NAME vehicle_inject_sh_guard
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${CMAKE_SOURCE_DIR}/io/vehicle/vehicle_inject.c)
+    set_tests_properties(vehicle_inject_sh_guard PROPERTIES
+        PASS_REGULAR_EXPRESSION "vehicle_inject: test-only")
+    add_library(vehicle_inject_fixture OBJECT io/vehicle/vehicle_inject.c)
+    add_test(NAME vehicle_inject_elf_scan_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/vehicle_seam_scan.py elf ${CMAKE_NM}
+            $<TARGET_OBJECTS:vehicle_inject_fixture>)
+    set_tests_properties(vehicle_inject_elf_scan_negative PROPERTIES WILL_FAIL TRUE)
+    # (3) no vehicle CAN ID named in code outside io/vehicle/ (allowlist in the script);
+    # the negative fixture and the FCA profile itself must both trip it
+    add_test(NAME vehicle_seam_scan
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/vehicle_seam_scan.py ids ${CMAKE_SOURCE_DIR})
+    add_test(NAME vehicle_seam_scan_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/vehicle_seam_scan.py ids ${CMAKE_SOURCE_DIR}
+            --only ${CMAKE_SOURCE_DIR}/tests/unit/vehicle_seam_fixture.c)
+    set_tests_properties(vehicle_seam_scan_negative PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME vehicle_seam_scan_profile_control
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/vehicle_seam_scan.py ids ${CMAKE_SOURCE_DIR}
+            --only ${CMAKE_SOURCE_DIR}/io/vehicle/profile_fca.c ${CMAKE_SOURCE_DIR}/io/vehicle/fca_tx_fields.h)
+    set_tests_properties(vehicle_seam_scan_profile_control PROPERTIES WILL_FAIL TRUE)
 endif()
+
+# TCU_VEHICLE (2026-11-20, ~/tcu_sweep/fork_seams_port.md): every target that builds the
+# selected vehicle profile or transmit set gets TCU_VEHICLE_<name>=1 (profile_fca.c and
+# fca_tx.c refuse to compile without it). A preprocessor definition only: the FCA images
+# stay byte-identical.
+get_property(_tcu_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach(_t IN LISTS _tcu_targets)
+    get_target_property(_tt ${_t} TYPE)
+    if(NOT _tt MATCHES "EXECUTABLE|LIBRARY")
+        continue()
+    endif()
+    get_target_property(_srcs ${_t} SOURCES)
+    if(NOT _srcs)
+        continue()
+    endif()
+    foreach(_s IN LISTS _srcs)
+        if(_s MATCHES "${TCU_VEHICLE_SRC_REGEX}")
+            target_compile_definitions(${_t} PRIVATE ${TCU_VEHICLE_DEFINE})
+            break()
+        endif()
+    endforeach()
+endforeach()

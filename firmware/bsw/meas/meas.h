@@ -11,9 +11,10 @@
 #define TCU_MEAS_H
 
 #include "platform/platform.h"
+#include "io/vehicle/diag_ids.h"
 
-#define MEAS_REQ_ID   0x361u
-#define MEAS_RSP_ID   0x398u
+#define MEAS_REQ_ID   DIAG_ID_MEAS_REQ     /* 0x361 (io/vehicle/diag_ids.h) */
+#define MEAS_RSP_ID   DIAG_ID_MEAS_RSP     /* 0x398 */
 #define MEAS_CHANNELS 32u
 
 typedef struct {

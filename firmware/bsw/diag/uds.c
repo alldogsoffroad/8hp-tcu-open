@@ -1,6 +1,7 @@
 #include "bsw/diag/uds.h"
 #include "bsw/diag/boot_record.h"
 #include "bsw/diag/isotp.h"
+#include "io/vehicle/diag_ids.h"
 
 #include <string.h>
 
@@ -24,8 +25,8 @@ enum {
 enum { LEAVE_NONE = 0, LEAVE_RESET, LEAVE_BOOT };
 
 static const isotp_cfg_t s_tp_cfg[CAN_BUS_COUNT] = {
-    { CAN_BUS1, 0x7E1u, 0x7DFu, 0x7E9u },
-    { CAN_BUS2, 0x7E1u, 0x000u, 0x7E9u },
+    { CAN_BUS1, DIAG_ID_UDS_PHYS, DIAG_ID_UDS_FUNC, DIAG_ID_UDS_RSP },        /* 0x7E1 / 0x7DF / 0x7E9 */
+    { CAN_BUS2, DIAG_ID_UDS_PHYS, DIAG_ID_UDS_FUNC_NONE, DIAG_ID_UDS_RSP },   /* 0x7E1 / -     / 0x7E9 */
 };
 static isotp_t s_tp[CAN_BUS_COUNT];
 

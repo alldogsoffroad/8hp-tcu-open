@@ -20,9 +20,9 @@
 #include "app/range.h"
 #include "app/rng_chain.h"
 #include "safety/kl15.h"
-#include "bsw/com/crc8.h"
 #include "bsw/drv/drv_park.h"
 #include "io/vehicle/vehicle.h"
+#include "io/vehicle/vehicle_inject.h"
 #include "io/sensors/sensors.h"
 #include "tests/unit/stub_plat.h"
 
@@ -348,18 +348,34 @@ static void test_torn(void)
 static sensors_in_t s_z;
 const sensors_in_t *sensors_in(void) { return &s_z; }
 
-static uint8_t s_ctr[0x800];
-
-static void send(can_bus_t bus, uint16_t id, uint8_t dlc, bool prot, const uint8_t *data)
+/* 2026-11-20 (~/tcu_sweep/fork_seams_port.md): the vehicle inputs are set through the
+ * TEST-ONLY injector (io/vehicle/vehicle_inject.h) instead of FCA frames — this test
+ * checks the park sensor's read-only property, not a vehicle profile. The values are
+ * what profile_fca.c decoded from the frames this test used to send: lever code 1..4 →
+ * P/R/N/D from the primary source; code 7 (invalid) → no source, the lever kept; code 0
+ * (no frame) → no source, the lever kept (profile_fca reported that after its 50 ms
+ * timeout); brake 0x140 0x04 → BRAKE_ON; engine 0x108 0x02BC → 700 rpm (T1 0x1FFF →
+ * invalid); 0x112 / 0x14B absent → invalid. */
+static void inject(uint8_t code)
 {
-    can_frame_t f = { .id = id, .dlc = dlc };
-    memcpy(f.data, data, dlc);
-    if (prot) {
-        s_ctr[id] = (uint8_t)((s_ctr[id] + 1u) & 0x0Fu);
-        f.data[dlc - 2u] = (uint8_t)((f.data[dlc - 2u] & 0x0Fu) | (uint8_t)(s_ctr[id] << 4));
-        f.data[dlc - 1u] = crc8_j1850(f.data, (uint8_t)(dlc - 1u));
+    static const range_req_t map[5] = { RANGE_NONE, RANGE_P, RANGE_R, RANGE_N, RANGE_D };
+    vehicle_in_t v = *vehicle_in();
+
+    if (code >= 1u && code <= 4u) {
+        v.lever = map[code];
+        v.lever_flag = false;
+        v.lever_src = LEVER_SRC_PRIMARY;
+        v.q_lever = Q_OK;
+    } else {
+        v.lever_src = LEVER_SRC_NONE;
+        v.q_lever = Q_INVALID;
     }
-    vehicle_rx(bus, &f);
+    v.brake = BRAKE_ON;
+    v.q_brake = Q_OK;
+    v.engine_speed = 700;
+    v.q_engine_speed = Q_OK;
+    v.q_torque_actual = Q_INVALID;
+    vehicle_inject(&v);
 }
 
 typedef struct {
@@ -401,7 +417,6 @@ static void park_run(int mode, park_snap_t *out)
     static const sens_in_t *const sc[7] = { &S_IDLE, &S_A, &S_B, &S_BOTH, &S_AFLT, &S_BFLT, &S_AMISM };
 
     memset(&s_z, 0, sizeof s_z);
-    memset(s_ctr, 0, sizeof s_ctr);
     CELL_TMP_BYTE = 67u;
     vehicle_init();
     park_init();
@@ -417,29 +432,17 @@ static void park_run(int mode, park_snap_t *out)
          * 0xA9144 needs a P after any loss of the lever source) */
         static const uint8_t lever[10] = { 1, 0, 1, 4, 2, 3, 1, 7, 1, 4 };
         const uint8_t code = lever[seg];
-        uint8_t l[5] = { code, 0, 0, 0, 0 };
 
         s_z.output_speed = (seg == 7u) ? 1200 : 0;
         s_z.q_output_speed = Q_OK;
-        if (code != 0u) {
-            send(CAN_BUS1, 0x2EAu, 5u, true, l);
-            send(CAN_BUS2, 0x210u, 5u, true, l);
-        }
         if (mode >= 0) {
             sens_set(sc[mode == 6 ? (int)(t % 7u) : mode]);
             sens_pass();
             sens_pass();
         }
-        {   /* the bench sims: 0x140 brake pressed, 0x108 700 rpm (the chain
-             * releases P only with them) */
-            uint8_t d[8] = { 0x04u, 0, 0, 0, 0, 0, 0, 0 };
-            send(CAN_BUS1, 0x140u, 8u, true, d);
-            d[0] = 0x02u;
-            d[1] = 0xBCu;
-            d[2] = 0x1Fu;
-            d[3] = 0xFFu;
-            send(CAN_BUS1, 0x108u, 8u, true, d);
-        }
+        /* the lever, plus the bench sims (brake pressed, engine 700 rpm — the chain
+         * releases P only with them), through the injector */
+        inject(code);
         vehicle_update_10ms();
         kl15_tick_10ms();
         {   /* the live range chain, with park_pair's group-98 verdict as

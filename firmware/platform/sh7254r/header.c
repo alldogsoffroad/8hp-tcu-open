@@ -6,6 +6,7 @@
  * 4-byte aligned, and the word at the end pointer == 0x12345678. */
 #include <stdint.h>
 #include "platform/platform.h"   /* E60b: default_handler's CAN announce */
+#include "io/vehicle/diag_ids.h"   /* DIAG_ID_EXCEPTION (0x7F5), bus 1 */
 
 extern void start(void);            /* _start in start.S */
 extern const uint32_t app_end_marker;
@@ -82,7 +83,7 @@ static void default_handler(void)
 __attribute__((used))              /* referenced only from the naked asm; keep under --gc-sections */
 void default_body(uint32_t pc, uint32_t sr)
 {
-    can_frame_t f = { .id = 0x7F5u, .dlc = 8u, .data = { 0xDEu, 0xADu, 0, 0, 0, 0, 0, 0 } };
+    can_frame_t f = { .id = DIAG_ID_EXCEPTION, .dlc = 8u, .data = { 0xDEu, 0xADu, 0, 0, 0, 0, 0, 0 } };
 #if !defined(TCU_LOADER)
     plat_alive(0xDE000000u | (pc & 0x00FFFFFFu));   /* r02m: survives the reset */
 #endif
@@ -92,7 +93,7 @@ void default_body(uint32_t pc, uint32_t sr)
     f.data[5] = (uint8_t)pc;
     f.data[6] = (uint8_t)(sr >> 16);
     f.data[7] = (uint8_t)(sr >> 8);
-    (void)plat_can_send(CAN_BUS1, &f);
+    (void)plat_can_send(DIAG_BUS_EXCEPTION, &f);
     for (;;) {
     }
 }
@@ -111,9 +112,9 @@ void default_body(uint32_t pc, uint32_t sr)
  * shifted). One flash names the culprit exactly. */
 static void announce_vec(uint8_t which)
 {
-    can_frame_t f = { .id = 0x7F5u, .dlc = 8u, .data = { 0xE6u, 0, 0, 0, 0, 0, 0, 0 } };
+    can_frame_t f = { .id = DIAG_ID_EXCEPTION, .dlc = 8u, .data = { 0xE6u, 0, 0, 0, 0, 0, 0, 0 } };
     f.data[1] = which;
-    (void)plat_can_send(CAN_BUS1, &f);
+    (void)plat_can_send(DIAG_BUS_EXCEPTION, &f);
 }
 
 #define ANN_HANDLER(n)                                              \

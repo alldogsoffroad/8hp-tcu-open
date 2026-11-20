@@ -2,6 +2,11 @@
 #include "bsw/com/com_tx.h"
 #include "bsw/com/sigpack.h"
 
+/* TCU_VEHICLE switch (CMakeLists.txt, ~/tcu_sweep/fork_seams_port.md) */
+#if !defined(TCU_VEHICLE_FCA) || TCU_VEHICLE_FCA != 1
+#error "fca_tx.c: the FCA vehicle transmit set - built only with TCU_VEHICLE=FCA (defines TCU_VEHICLE_FCA=1)"
+#endif
+
 #define CFG_M(name, id, dlc, period, crc, ctr) { id, CAN_BUS1, dlc, period, crc, ctr },
 #define CFG_F(name, msg, byte, msb, len) { FCA_##msg, { byte, msb, len } },
 
