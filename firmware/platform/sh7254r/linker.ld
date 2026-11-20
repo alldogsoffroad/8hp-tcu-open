@@ -426,6 +426,18 @@ SECTIONS
     } > RAM
     ASSERT(__fr_fm_start == 0xFFF88740 && __fr_fm_start >= ADDR(.adc_ring) + SIZEOF(.adc_ring) + 0x10 &&
            __fr_fm_end <= 0xFFF893C8 && __fr_fm_end <= ADDR(.rng_893e0), ".fr_fm leaves the dump-zero gap 0xFFF8872A..0xFFF893C9 (witness_fr.py)")
+    /* the fault-reaction shadow's TOE32 TEST (groups 27 / 28; 2026-11-20,
+     * ~/tcu_sweep/group28_port.md): struct fr_t3_t (0x40) right after .fr_fm
+     * in the same dump-zero gap — our copies of 0x94828 / 0x9482D / 0x94148 /
+     * 0x93A7A / 0x93900 / 0x938F6 / 0x94988 / 0x940D4 / 0x94147 [3], never
+     * the stock cells. Written only by app/fr_shadow.c; cleared by
+     * fr_shadow_init. */
+    .fr_toe 0xFFF8915C (NOLOAD) : {
+        __fr_toe_start = .; *(.fr_toe) . = ALIGN(4); __fr_toe_end = .;
+    } > RAM
+    ASSERT(__fr_toe_start == __fr_fm_end && __fr_toe_start == 0xFFF8915C && SIZEOF(.fr_toe) == 0x40 &&
+           __fr_toe_end <= 0xFFF893C8 && __fr_toe_end <= ADDR(.rng_893e0),
+           ".fr_toe: fr_t3_t is off 0xFFF8915C or leaves the dump-zero gap (witness_fr.py)")
     .m5_wit 0xFFF84D40 (NOLOAD) : {
         __m5_wit_start = .; *(.m5_wit) . = ALIGN(4); __m5_wit_end = .;
     } > RAM

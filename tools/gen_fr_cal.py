@@ -236,6 +236,79 @@ def main():
     o.append('/* 0x6344E: 0xDBCA8\'s code table */')
     o.append('const uint8_t fr_cal_6344e[54] = { %s };' % ', '.join('%du' % b for b in T6344E))
     o.append('')
+    # ── group 27 / 28: the TOE32 (k = 3, PL7) off/on-state test (2026-11-20,
+    # ~/tcu_sweep/group28_decode.md, group28_port.md): 0x849D4's gate on
+    # 0x8B284(k), 0x8B5DE's gate, 0x8B284's thresholds, 0x7B358's pair table,
+    # 0x82D4C's code table, 0x9140A's conversion — every pool / table pointer
+    # asserted ([0xFFF90AB8 = 0]: the first slot of each cal-bank table)
+    K = 3
+
+    def bank(pool):                 # pool -> pointer table -> [dataset 0] -> the cal
+        return u32(u32(pool))
+    assert u32(0x84BAC) == 0x91350 and u32(0x84BBC) == 0x8B284 and u32(0x914E0) == 0x1918E6
+    g_fs = 0x1918E6                 # 0x91350's mask
+    g_en = bank(0x84BB0)            # 0x849D4's enable byte
+    assert g_en == 0x1919B4, hex(g_en)
+    g_src = bank(0x8B6D8) + K       # the 0x8B5DE source byte (FE = battery)
+    assert bank(0x8B6D8) == 0x1919BE and bank(0x84BB4) == 0x1919BE
+    g_2d = bank(0x8B6F8) + K        # 0x9482D's reload
+    g_28 = bank(0x8B798) + K        # 0x94828's reload
+    g_win = bank(0x8B79C)           # the pre-'L' window mask (0x95005)
+    g_slo = bank(0x8B7A0) + 2 * K   # the supply window
+    g_shi = bank(0x8B7A4) + 2 * K
+    g_fe = bank(0x8B700)            # source FE's threshold (0xFFF94F86)
+    g_lo = bank(0x8B4A8) + 2 * K    # 0x8B284's thresholds
+    g_hi = bank(0x8B4AC) + 2 * K
+    g_on = bank(0x8B4B0) + 2 * K
+    g_dmin = u32(0x8B4A0) + 2 * K   # (direct pointers, no bank table)
+    g_dmax = u32(0x8B4A4) + 2 * K
+    g_cut = bank(0x8B4B4)           # the d >= 1000 cut-test mask
+    g_cvt = bank(0x8B6D4)           # the 0x08 / 0x10 -> 0x20 mask
+    g_and = bank(0x8B6E4) + 2 * K   # the mask AND
+    assert (g_2d, g_28, g_win, g_slo, g_shi, g_fe, g_lo, g_hi, g_on, g_dmin, g_dmax, g_cut, g_cvt, g_and) == (
+        0x191A14, 0x191A0F, 0x1919B5, 0x19185A, 0x191850, 0x191566, 0x191878, 0x191864, 0x19186E,
+        0x1914BE, 0x1914B4, 0x191A09, 0x191A0A, 0x191846), 'g28 cal addresses'
+    assert u32(0x8B6E8) == 0x7BABA and u32(0x8B6F4) == 0x87120 and u32(0x8B6E0) == 0x86414
+    assert u32(0x7B4D8) == 0x45C84 and u32(0x7B4E8) == 0x45CD4
+    PT = 0x45C84 + 16 * K           # 0x7B358's pair table entry for k = 3
+    assert u32(PT) == 0xFFF940BF and u32(PT + 4) == 0xFFF940BE and u32(PT + 8) == 0xFFF938CC
+    g27, g28 = img[PT + 12], img[PT + 13]
+    assert (g27, g28) == (27, 28), (g27, g28)
+    ctab = [(u16(0x45CD4 + 4 * i), u16(0x45CD4 + 4 * i + 2)) for i in range(7)]
+    assert ctab[-1] == (0, 1) and (0x10, 0x84) in ctab and (0x04, 0x82) in ctab, ctab
+    CT = 0x40A34 + 16 * K           # 0x9140A's conversion entry for k = 3
+    assert (u32(CT), u32(CT + 4), u32(CT + 8), u32(CT + 12)) == (0xFFF90578, 0x3EC35000, 0xFFF908A2, 0xFFF908AC)
+    seq = img[0x40ECC:0x40ECC + 80]
+    assert seq[35] == seq[40] == 0x40, (seq[35], seq[40])    # both slots: mux input 4
+    g28v = dict(fs=img[g_fs], en=img[g_en], src=img[g_src], r2d=img[g_2d], r28=img[g_28], win=img[g_win],
+             slo=u16(g_slo), shi=u16(g_shi), fe=u16(g_fe), lo=u16(g_lo), hi=u16(g_hi), on=u16(g_on),
+             dmin=u16(g_dmin), dmax=u16(g_dmax), cut=img[g_cut], cvt=img[g_cvt], andm=u16(g_and))
+    assert g28v == dict(fs=0x1F, en=0x0B, src=0xFE, r2d=10, r28=4, win=0x0F, slo=6500, shi=23500, fe=6700,
+                     lo=2400, hi=4000, on=3500, dmin=50, dmax=950, cut=0x17, cvt=0x00, andm=0xF7FF), g28v
+    o.append('/* group 27 / 28 (P1D8D / P1DCA / P1D8E): the TOE32 (k = 3, pin PL7) off / on-state test:')
+    o.append(' * 0x849D4 -> 0x8B284(3) / 0x8B5DE(3), the reporter 0x7B358(3) (pair table 0x45C84 + 48), the')
+    o.append(' * code table 0x45CD4 (0x82D4C), the conversion 0x9140A (0x40A34 + 48: scale 0x3EC35000).')
+    o.append(' * The mutation negative (ctest fr_shadow_neg_G28): hi 4000 -> 3400 (below the')
+    o.append(' * bench\'s 3436 mV: the open band empties, group 28 never fails). */')
+    o.append('#if defined(FR_NEG_G28)')
+    o.append('#define FR_NEG_HI(v) (3400u)')
+    o.append('#else')
+    o.append('#define FR_NEG_HI(v) (v)')
+    o.append('#endif')
+    o.append('const fr_cal_g28_t fr_cal_g28 = {')
+    o.append('    0x%02Xu, 0x%02Xu, 0x%02Xu, %du, %du, 0x%02Xu,  /* fs 0x1918E6, en 0x1919B4, src 0x%06X, '
+             'r2d 0x%06X, r28 0x%06X, win 0x1919B5 */' % (g28v['fs'], g28v['en'], g28v['src'], g28v['r2d'], g28v['r28'],
+                                                           g28v['win'], g_src, g_2d, g_28))
+    o.append('    %du, %du, %du,  /* the supply window 0x%06X / 0x%06X, source FE\'s threshold 0x191566 */'
+             % (g28v['slo'], g28v['shi'], g28v['fe'], g_slo, g_shi))
+    o.append('    %du, FR_NEG_HI(%du), %du, %du, %du,  /* lo 0x%06X hi 0x%06X on 0x%06X dmin 0x%06X dmax 0x%06X */'
+             % (g28v['lo'], g28v['hi'], g28v['on'], g28v['dmin'], g28v['dmax'], g_lo, g_hi, g_on, g_dmin, g_dmax))
+    o.append('    0x%02Xu, 0x%02Xu, 0x%04Xu,  /* cut 0x191A09, cvt 0x191A0A, and 0x%06X */'
+             % (g28v['cut'], g28v['cvt'], g28v['andm'], g_and))
+    o.append('    %du, %du,  /* the groups (0x45C84 + 48 + 12 / 13) */' % (g27, g28))
+    o.append('    { %s },  /* 0x45CD4: mask, code */' % ', '.join('{ 0x%04Xu, 0x%02Xu }' % e for e in ctab))
+    o.append('};')
+    o.append('')
     # the scalar byte-check list (address, width, value) for the derived values
     sc = []
     for r in rx:
@@ -254,6 +327,16 @@ def main():
     sc.append((step_a, 1, img[step_a]))
     for i in IDS:
         sc.append((0x632A6 + i, 1, i))
+    for (a, w, val) in ((g_fs, 1, g28v['fs']), (g_en, 1, g28v['en']), (g_src, 1, g28v['src']), (g_2d, 1, g28v['r2d']),
+                        (g_28, 1, g28v['r28']), (g_win, 1, g28v['win']), (g_slo, 2, g28v['slo']), (g_shi, 2, g28v['shi']),
+                        (g_fe, 2, g28v['fe']), (g_lo, 2, g28v['lo']), (g_hi, 2, g28v['hi']), (g_on, 2, g28v['on']),
+                        (g_dmin, 2, g28v['dmin']), (g_dmax, 2, g28v['dmax']), (g_cut, 1, g28v['cut']),
+                        (g_cvt, 1, g28v['cvt']), (g_and, 2, g28v['andm']), (PT + 12, 1, g27), (PT + 13, 1, g28),
+                        (0x40ECC + 35, 1, 0x40), (0x40ECC + 40, 1, 0x40)):
+        sc.append((a, w, val))
+    for i, (m, c) in enumerate(ctab):
+        sc.append((0x45CD4 + 4 * i, 2, m))
+        sc.append((0x45CD4 + 4 * i + 2, 2, c))
     o.append('/* the scalar byte checks (tests/unit/test_fr_shadow.c --cal) */')
     o.append('const fr_cal_chk_t fr_cal_chk[FR_CAL_NCHK] = {')
     for (a, w, v) in sc:

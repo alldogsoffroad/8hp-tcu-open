@@ -13,7 +13,7 @@
 
 #define FR_NG 195u              /* DSM groups 1..195 */
 #define FR_NE 53u               /* comm-monitor entries 0..52 */
-#define FR_CAL_NCHK 292u        /* the scalar byte checks (gen_fr_cal.py prints the count) */
+#define FR_CAL_NCHK 327u        /* the scalar byte checks (gen_fr_cal.py prints the count) */
 
 /* 0x642BC → the comm monitor's scalars */
 typedef struct {
@@ -60,6 +60,28 @@ typedef struct {
     uint16_t val;
 } fr_cal_chk_t;
 
+/* group 27 / 28: the TOE32 (k = 3, pin PL7) off / on-state test (0x849D4 →
+ * 0x8B284(3) / 0x8B5DE(3) → the reporter 0x7B358(3); ~/tcu_sweep/
+ * group28_decode.md, group28_port.md). Every value from the image (the
+ * cal-bank tables at [0xFFF90AB8 = 0], each address in fr_cal.c's comment). */
+typedef struct {
+    uint8_t  fs;                /* 0x1918E6: 0x91350's mask (bit 3) */
+    uint8_t  en;                /* 0x1919B4: 0x849D4's enable (bit 3) */
+    uint8_t  src;               /* 0x1919C1: the 0x8B5DE source (0xFE = the battery 0x94F86) */
+    uint8_t  r2d;               /* 0x191A14: 0x9482D's reload (x 5 ms) */
+    uint8_t  r28;               /* 0x191A0F: 0x94828's reload (x 5 ms) */
+    uint8_t  win;               /* 0x1919B5: the pre-'L' window mask (0x95005) */
+    uint16_t slo, shi;          /* 0x19185A / 0x191850: the supply window, mV */
+    uint16_t fe;                /* 0x191566: source FE's threshold (the 0x9482D reload below) */
+    uint16_t lo, hi, on;        /* 0x191878 / 0x191864 / 0x19186E: mV */
+    uint16_t dmin, dmax;        /* 0x1914BE / 0x1914B4: ‰ */
+    uint8_t  cut;               /* 0x191A09: the d >= 1000 cut-test mask */
+    uint8_t  cvt;               /* 0x191A0A: the 0x08 / 0x10 → 0x20 mask */
+    uint16_t andm;              /* 0x191846: the tested-mask AND */
+    uint8_t  g27, g28;          /* 0x45CB4 + 12 / 13: the pair's DSM groups */
+    uint16_t ctab[7][2];        /* 0x45CD4: 0x82D4C's (mask, code) first-match table */
+} fr_cal_g28_t;
+
 extern const uint8_t       fr_cal_grp[FR_NG][36];     /* 0x1923EC */
 extern const uint16_t      fr_cal_dep[FR_NG][3];      /* 0x1955A8 */
 extern const fr_cal_comm_t fr_cal_comm;
@@ -74,6 +96,7 @@ extern const fr_cal_13a_t  fr_cal_13a;
 extern const uint32_t      fr_cal_13a_ptr[33];
 extern const uint16_t      fr_cal_14e_reload;         /* 0x195FCA */
 extern const uint8_t       fr_cal_6344e[54];          /* 0x6344E */
+extern const fr_cal_g28_t  fr_cal_g28;                /* group 27 / 28 (TOE32) */
 extern const fr_cal_chk_t  fr_cal_chk[FR_CAL_NCHK];
 
 /* the group config fields (C = fr_cal_grp[g - 1], big-endian) */

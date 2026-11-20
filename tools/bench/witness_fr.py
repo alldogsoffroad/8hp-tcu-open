@@ -15,6 +15,13 @@ blocks):
           recorder (the first 64 transitions: debounce start, pending on /
           off, confirm, direct confirm, heal, recycle, code / target / CF5 /
           mask changes, with the shadow's ms)
+  fr_t3_t (0x40 B at 0xFFF8915C, section .fr_toe — nm `_s_frt`; 2026-11-20,
+          ~/tcu_sweep/group28_port.md): the TOE32 (k = 3, pin PL7) off / on-
+          state test behind DSM groups 27 (P1D8D) / 28 (P1DCA / P1D8E) — the
+          ring slots 35 / 40 it read, the pin voltages v1 / v2 (mV), TOE32's
+          applied duty, 0x95005 / 0x94110, its countdowns, the gate, the
+          tested / fault bits (our 0x93900 / 0x938F6 [3]), the code (0x84 =
+          P1DCA), the last reports, the counters
 and, for comparison, the LIVE OS mode, range D6D6 and rng_chain's own U1267 /
 P0850 verdicts (`_s_rc_m` +2 / +3) — the D-FR-3 comparator.
 
@@ -26,10 +33,11 @@ against the constants below), else the constants. `meas 0x02` hygiene first
 
 Expected (see the report §8): plain boot — U11E4 confirm ≈ +1.6 s (pending
 reactions ≈ 400 ms before), U1267 ≈ +1.65 s, P0850 ≈ +3.15 s, U11E3 ≈ +2.1 s,
-masks 00813240 / E8260014, code 0x20, 0x89C43 3, AE2D 1, CF5 1, fault-fed
+masks 00813240 / E8260114 (= the dump's: P1DCA confirmed ≈ 100 ms after 'L',
+≈ +0.7 s; the TOE32 pin ≈ 3436 mV, en 18 fl 10 code 84), code 0x20, 0x89C43 3, AE2D 1, CF5 1, fault-fed
 target 3; with the sims from power-on — U11E4 never fails, U0121 ≈ +1.45 s,
 U0100 / U0140 / U0212 / U0102 ≈ +1.8 s, U0155 ≈ +6.2 s, P0850 ≈ +3.15 s,
-masks 00812420 / C0260014, code 0x20 in P (3 from U0100's failing start),
+masks 00812620 / C0260114 (+ group 28), code 0x20 in P (3 from U0100's failing start),
 4 → 0x1C → 0x20 at D, the fault-fed target 3 in P, −1 in R; c109dis =
 c98dis = 0.
 """
@@ -46,12 +54,13 @@ import tcu_bench  # noqa: E402
 ELF = "/home/chadk/Documents/REA Projects/build/sh2a/tcu_app.elf"
 FR, FR_SIZE = 0xFFF86000, 0x568
 FM, FM_SIZE = 0xFFF88740, 0xA1C
+T3, T3_SIZE = 0xFFF8915C, 0x40
 RC_M = 0xFFF87000
 # fr_t offsets (fr_shadow.h _Static_asserts)
 O_CM, O_CD, O_IN, O_W = 0x3BA, 0x484, 0x4CC, 0x504
 # fr_fm_t offsets
 O_S, O_T, O_TMAX, O_R, O_M0, O_NOW, O_REC = 0x000, 0x186, 0x492, 0x618, 0x7A0, 0x7F0, 0x81C
-GROUPS = [(28, "P1D8E"), (98, "P0850"), (109, "U1267"), (111, "U0001"), (112, "U0074"), (136, "U11E4"),
+GROUPS = [(27, "P1D8D"), (28, "P1DCA"), (98, "P0850"), (109, "U1267"), (111, "U0001"), (112, "U0074"), (136, "U11E4"),
           (139, "U0100"), (140, "U0121"), (141, "U0102"), (142, "U0103"), (143, "U11E3"), (145, "U0212"),
           (146, "U0140"), (147, "U0155")]
 EV = {1: "start", 2: "CONFIRM", 3: "heal", 4: "pend-on", 5: "pend-off", 6: "direct", 7: "recycle",
@@ -70,11 +79,11 @@ class A:
 
 
 def nm_addrs():
-    global FR, FM, RC_M
+    global FR, FM, RC_M, T3
     if not os.path.exists(ELF):
         return
     out = subprocess.run(["sh-elf-nm", ELF], capture_output=True, text=True).stdout
-    for name, var in (("_s_fr", "FR"), ("_s_fm", "FM"), ("_s_rc_m", "RC_M")):
+    for name, var in (("_s_fr", "FR"), ("_s_fm", "FM"), ("_s_rc_m", "RC_M"), ("_s_frt", "T3")):
         m = re.search(r"^([0-9a-f]{8}) [bBdD] %s$" % name, out, flags=re.M)
         if m:
             a = int(m.group(1), 16)
@@ -164,6 +173,21 @@ def show_fm(b, hdr):
     return rec_n
 
 
+def show_t3(t):
+    """fr_t3_t (fr_shadow.h): +0 r35[2] r40[2] duty x95005 x94110 | +0x0C fed gate c28 c2d first
+    code rep27 rep28 | +0x14 v1 v2 prev en fl m88 | +0x20 x94147 | +0x24 passes gate_n fail_n
+    pass_n untest_n gate_ms fail_ms"""
+    rep = lambda r: "%s%s" % ("F" if r & 1 else "-", "T" if r & 2 else "-")
+    print("  TOE32 ring35 %u/%u ring40 %u/%u -> v1 %u mV (slot 40) v2 %u mV (slot 35) | duty %u 0x95005 %u 0x94110 %u"
+          % (u16(t, 0), u16(t, 2), u16(t, 4), u16(t, 6), u16(t, 0x14), u16(t, 0x16), u16(t, 8), t[0xA], t[0xB]))
+    print("  TOE32 gate %u c28 %u c2d %u first %u | en %02X fl %02X m88 %02X code %02X%s | rep27 %s rep28 %s | "
+          "passes %u gate %u fail %u pass %u untested %u | first gate %u ms, first fail %u ms"
+          % (t[0xD], t[0xE], t[0xF], t[0x10], u16(t, 0x1A), u16(t, 0x1C), u16(t, 0x1E), t[0x11],
+             {0x84: " (P1DCA)", 0x82: " (P1D8E)", 0x03: " (P1D8D)", 0x06: " (P1D8D)", 0x10: " (passed)"}.get(t[0x11], ""),
+             rep(t[0x12]), rep(t[0x13]), u32(t, 0x24), u32(t, 0x28), u32(t, 0x2C), u32(t, 0x30), u32(t, 0x34),
+             u32(t, 0x38), u32(t, 0x3C)))
+
+
 def show_events(b, n):
     if n == 0:
         return
@@ -207,7 +231,8 @@ def main():
         cm = read(b, 1, FR + O_CM, 0xC8)
         w = read(b, 1, FR + O_W, 0x64)
         hdr = read(b, 1, FM + O_M0, 0x7C)
-        if None in (cd, cm, w, hdr):
+        t3 = read(b, 1, T3, T3_SIZE)
+        if None in (cd, cm, w, hdr, t3):
             print("  read FAIL")
             continue
         if raw:
@@ -217,6 +242,7 @@ def main():
         show_code(cd)
         show_comm(cm)
         show_wit(w)
+        show_t3(t3)
         n = show_fm(b, hdr)
         if events or r == rounds - 1:
             show_events(b, n)

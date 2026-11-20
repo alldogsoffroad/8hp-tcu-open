@@ -42,7 +42,8 @@
  *   0xFFF95592 / 90 = 0 / 1 (dump); E298 = AE70 = 0.
  *   CONTENT-PLAUSIBILITY MONITORS (groups 148 / 149 / 150 / 173 / 159 / 120 /
  *   127 / 117 / 154 / 155 / 105 / 107 / 108, rules undecoded): reported
- *   UNTESTED every pass. Group 28 (P1D8E / P1DCA): no monitor (D-FR-9).
+ *   UNTESTED every pass. Groups 27 / 28 (P1D8D / P1DCA / P1D8E): the TOE32
+ *   off / on-state test, ported 2026-11-20 (fr_t3_t below; D-FR-9 retired).
  *   Group 122 (0x13B74E): not ported. Messages our CAN layer has no mailbox
  *   for (25 of the 34 coded bus-1 IDs) are never received: honestly "timed
  *   out" on this bench, but a sender of those IDs would not be seen.
@@ -252,6 +253,54 @@ typedef struct {
     fr_ev_t  rec[FR_REC_N];     /* the first FR_REC_N events */
 } fr_fm_t;
 
+/* ── groups 27 / 28 (2026-11-20, ~/tcu_sweep/group28_decode.md, the port
+ * ~/tcu_sweep/group28_port.md): THE TOE32 (k = 3, pin PL7) OFF / ON-STATE
+ * TEST — 0x849D4's call 0x8B284(3) with its gate 0x8B5DE(3), the reporter
+ * 0x7B358(3) (the DSM report slot 0x7ABC8 → 0x7B9B8), the conversion
+ * 0x9140A / 0x93658 of the AN0 mux ring's slots 35 / 40 (mux input 4).
+ * Inputs BY VALUE (fr_shadow_t3_in, app/fr_hook.c); the supply is fr_in_t's
+ * sup_mv (0x94F86). OUR copies of the stock cells (never the cells
+ * themselves): the countdowns 0x94828[3] / 0x9482D[3] (in 5 ms units: the
+ * stock's 0x7C7E4 service runs at 5 ms, ours steps 2 per 10 ms pass), the
+ * first-call flag 0x94148[3], the duty category 0x93A7A[3], the tested mask
+ * 0x93900[3], the fault bits 0x938F6[3], the mask copy 0x94988[3], the code
+ * 0x940D4[3], the cut flag 0x94147. Section .fr_toe (0xFFF8915C, right
+ * after .fr_fm in the dump-zero gap). */
+typedef struct {
+    uint16_t r35[2];            /* +0x00 the ring slot 35: 0xFFF885E8 + 0x46 / 0xFFF88688 + 0x46 (raw) */
+    uint16_t r40[2];            /* +0x04 slot 40: + 0x50 */
+    uint16_t duty;              /* +0x08 0xFFF90874[3]: TOE32's applied duty (‰, 0x91500) */
+    uint8_t  x95005;            /* +0x0A the sequencer's pre-'L' window (1 = before 'L') */
+    uint8_t  x94110;            /* +0x0B 0x849D4's first-pass flag (0x8B284 runs only once it is set) */
+} fr_t3_in_t;
+_Static_assert(sizeof(fr_t3_in_t) == 12u, "fr_t3_in_t (witness_fr.py)");
+
+typedef struct {
+    fr_t3_in_t in;              /* +0x00 the last inputs */
+    uint8_t  fed;               /* +0x0C inputs latched since the last pass (none: the pass skips) */
+    uint8_t  gate;              /* +0x0D 0x8B5DE's last result */
+    uint8_t  c28, c2d;          /* +0x0E / 0F our 0x94828[3] / 0x9482D[3] (x 5 ms) */
+    uint8_t  first;             /* +0x10 our 0x94148[3] */
+    uint8_t  code;              /* +0x11 our 0x940D4[3] (0x84 = group 28 mon 4: P1DCA) */
+    uint8_t  rep27, rep28;      /* +0x12 / 13 the last report: b0 failed, b1 tested */
+    uint16_t v1, v2;            /* +0x14 / 16 our 0x908A6[3] (slot 40) / 0x9089C[3] (slot 35), mV */
+    uint16_t prev;              /* +0x18 our 0x93A7A[3] (the duty last seen) */
+    uint16_t en;                /* +0x1A our 0x93900[3]: the bits tested */
+    uint16_t fl;                /* +0x1C our 0x938F6[3]: the fault bits (latched per tested bit) */
+    uint16_t m88;               /* +0x1E our 0x94988[3] */
+    uint8_t  x94147;            /* +0x20 our 0x94147 (the d >= 1000 cut flag) */
+    uint8_t  pad[3];
+    uint32_t passes;            /* +0x24 passes run (inputs fed) */
+    uint32_t gate_n;            /* +0x28 passes with the gate open (the test ran) */
+    uint32_t fail_n;            /* +0x2C passes reporting a failed + tested group (27 or 28) */
+    uint32_t pass_n;            /* +0x30 passes reporting both passed */
+    uint32_t untest_n;          /* +0x34 passes reporting both untested */
+    uint32_t gate_ms;           /* +0x38 the fault manager's ms at the first open gate (0 = never) */
+    uint32_t fail_ms;           /* +0x3C ... at the first failed report */
+} fr_t3_t;
+_Static_assert(sizeof(fr_t3_t) == 0x40u && offsetof(fr_t3_t, v1) == 0x14u && offsetof(fr_t3_t, passes) == 0x24u,
+               "fr_t3_t layout (witness_fr.py)");
+
 /* the layout tools/bench/witness_fr.py reads (host and SH alike) */
 _Static_assert(sizeof(fr_t) == 0x568u && offsetof(fr_t, cm) == 0x3BAu && offsetof(fr_t, cd) == 0x484u &&
                offsetof(fr_t, in) == 0x4CCu && offsetof(fr_t, w) == 0x504u, "fr_t layout (witness_fr.py)");
@@ -269,6 +318,9 @@ void fr_shadow_rx(uint8_t bus, uint16_t id, uint8_t dlc, const uint8_t *data);  
 void fr_shadow_tick_10ms(const fr_in_t *in);
 void fr_shadow_time(uint32_t us);                   /* the tick's duration (the hook's witness) */
 const volatile fr_t *fr_shadow_state(void);
+void fr_shadow_t3_in(const fr_t3_in_t *in);         /* latch the TOE32 test's inputs (before the tick) */
+const volatile fr_t3_t *fr_shadow_t3_state(void);
+uint16_t fr_shadow_t3_conv(uint32_t sum, uint32_t n);  /* 0x93658: trunc(sum x 25000/65536 / n), 0 -> 1 */
 
 void fr_fm_init(void);
 void fr_fm_tick(uint8_t e9fe);                          /* +10 ms, the operating cycle */
@@ -287,5 +339,6 @@ void fr_hook_init(void);
 void fr_hook_rx(uint8_t bus, uint16_t id, uint8_t dlc, const uint8_t *data);
 void fr_hook_10ms(void);
 void fr_hook_feed(const fr_in_t *in);                   /* the part after the gather (host harness) */
+void fr_hook_feed_t3(const fr_t3_in_t *in);             /* the TOE32 inputs (before fr_hook_feed) */
 
 #endif /* TCU_APP_FR_SHADOW_H */

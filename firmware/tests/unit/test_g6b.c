@@ -261,13 +261,17 @@ static void run_child(const scen_t *sc, bool g6b, gr_t *g, res_t *res, uint8_t *
             }
             fprintf(stderr, "FR run '%s': passes %u mon %u frames %u other %u u11e4 %u u1267 %u p0850 %u "
                     "u0100 %u u11e3 %u m0 %08X m1 %08X code %u c43 %d cf5 %u ff %d c109dis %u c98dis %u "
-                    "d661dis %u tgtdis %u rep109 %u rep98 %u unp %u fferr %u badg %u\n", sc->name,
+                    "d661dis %u tgtdis %u rep109 %u rep98 %u unp %u fferr %u badg %u t3 %u t3gate %u t3code %02X t3in %u/%u/%u/%u\n", sc->name,
                     (unsigned)fr->w.passes, (unsigned)fr->w.mon_passes, (unsigned)fr->w.rx_frames,
                     (unsigned)fr->w.rx_other, c136, c109, c98, c139, c143, (unsigned)fm->m0, (unsigned)fm->m1,
                     (unsigned)fr->cd.c41, (int)fr->cd.c43, (unsigned)fr->cd.cf5, (int)fr->cd.ff_e6a1,
                     (unsigned)fr->w.c109_dis_n, (unsigned)fr->w.c98_dis_n, (unsigned)fr->w.d661_dis_n,
                     (unsigned)fr->w.tgt_dis_n, (unsigned)fr->w.rep109_n, (unsigned)fr->w.rep98_n,
-                    (unsigned)fr->w.unp_n, (unsigned)fr->w.ff_err_n, (unsigned)fm->bad_g_n);
+                    (unsigned)fr->w.unp_n, (unsigned)fr->w.ff_err_n, (unsigned)fm->bad_g_n,
+                    (unsigned)fr_shadow_t3_state()->passes, (unsigned)fr_shadow_t3_state()->gate_n,
+                    (unsigned)fr_shadow_t3_state()->code, (unsigned)fr_shadow_t3_state()->in.x95005,
+                    (unsigned)fr_shadow_t3_state()->in.x94110, (unsigned)fr->in.sup_mv,
+                    (unsigned)fr_shadow_t3_state()->v1);
         }
 #endif
         if (getenv("G6C_DUMP_PINNED") != NULL &&

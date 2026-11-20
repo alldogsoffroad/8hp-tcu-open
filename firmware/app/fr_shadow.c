@@ -889,6 +889,257 @@ static void compare(const fr_in_t *in)
     }
 }
 
+/* ══ groups 27 / 28: THE TOE32 (k = 3, PL7) OFF / ON-STATE TEST ═══════════
+ * (~/tcu_sweep/group28_decode.md §2..§4; the port group28_port.md). The
+ * stock's chain in one output tick (5 ms mode 0, 10 ms modes 1..3): the
+ * countdown service 0x7C7E4 (the 5 ms list's first entry) → the harvest
+ * 0x8EE12 → 0x9140A / 0x93658 (the pin voltages) → the pin-cut slot 0x7CC32
+ * → 0x849D4 → 0x8B284(3) (gate 0x8B5DE(3)) → the setter 0x7BABA → the DSM
+ * report slot 0x7ABC8 → 0x7B9B8 → 0x7B358(3) → 0xA0E70(27 / 28). Ours: one
+ * pass per 10 ms in every mode (a stated deviation in mode 0), the
+ * countdowns kept in 5 ms units and stepped twice; the pin voltages from
+ * the two ring halves' slots 35 / 40 read once per pass (the stock sums the
+ * completed half every 1 ms in 0x8F058: n ~ 5 / 10 per tick, ours n = 2).
+ * Left out (never reached for k = 3, or kept out): 0x86414 (source byte
+ * FE < 0), 0x87120 (the per-output fault record + fatal: src < 0 returns),
+ * 0x7CA24 (0x7BABA's supplier occurrence table 0xFFF948B8..), the 0x94175
+ * class (cal 0x19182C / 0x191836 = 0), the summary bytes 0x940BE / BF
+ * (0x7B1BA: nothing read here). Stood in: 0x94FEB (TOE32's coded force-off,
+ * no writer in the image: 0), 0x90935[3] (read only under the cut mask,
+ * which lacks bit 3: 0). */
+#if defined(__sh__)
+#define FRT3SEC __attribute__((section(".fr_toe")))
+#else
+#define FRT3SEC
+#endif
+static fr_t3_t s_frt FRT3SEC;
+#define T3 s_frt
+#define G28 fr_cal_g28
+#define T3_K   3u
+#define T3_BIT ((uint16_t)(1u << T3_K))
+#define SI_94FEB    0u          /* 0x6BDCA(0x94FEB, 0x94E63): never 1 (no writer; dump 00 / FF) */
+#define SI_90935_3  0u
+
+/* 0x93658: trunc(float(sum) x 0x3EC35000 / float(n)), clipu.w; 0 → 1; n <= 0 → 0 */
+uint16_t fr_shadow_t3_conv(uint32_t sum, uint32_t n)
+{
+    if ((int32_t)n <= 0) {
+        return 0u;
+    }
+    float f = (float)(int32_t)sum;
+    f = f * (25000.0f / 65536.0f);              /* 0x3EC35000, exact */
+    f = f / (float)(int32_t)n;
+    int32_t t = (int32_t)f;                     /* ftrc */
+    if (t < 0) {
+        t = 0;                                  /* clipu.w */
+    } else if (t > 0xFFFF) {
+        t = 0xFFFF;
+    }
+    return (t == 0) ? 1u : (uint16_t)t;
+}
+
+static uint8_t t3_cat(uint16_t d)
+{
+    return (d == 0u) ? 0u : (d == 1000u) ? 1u : 2u;
+}
+
+/* 0x8B5DE(3): the gate (source FE: the battery 0x94F86) */
+static uint8_t t3_gate(uint16_t sup)
+{
+    uint8_t local = T3.c28;                     /* 0x94828[k] as the service left it */
+    bool ok = false;
+    if (T3.first == 0u) {
+        T3.c2d = G28.r2d;                       /* the first call */
+    }
+    if (sup >= G28.fe) {
+        if (T3.c2d == 0u) {
+            ok = true;
+        }
+    } else {
+        T3.c2d = G28.r2d;                       /* LAB_0008b69c */
+    }
+    if (t3_cat(T3.in.duty) != t3_cat(T3.prev)) {
+        local = G28.r28;                        /* a duty-category change */
+    }
+    const uint8_t r = (uint8_t)(ok && local == 0u &&
+                                (((uint16_t)G28.win & T3_BIT) == 0u || T3.in.x95005 == 0u) &&
+                                G28.slo <= sup && sup <= G28.shi);
+    T3.c28 = local;
+    T3.prev = T3.in.duty;
+    T3.first = 1u;
+    return r;
+}
+
+/* 0x8B284(3): the test → our 0x93900 / 0x938F6 (the setter 0x7BABA) */
+static void t3_test(uint16_t sup)
+{
+    uint16_t mask = 0u, fault = 0u;
+    T3.gate = t3_gate(sup);
+    if (T3.gate != 0u) {
+        const uint16_t v1 = T3.v1, v2 = T3.v2, d = T3.in.duty;
+        T3.gate_n++;
+        if (d == 0u) {                          /* off */
+            mask = 0x18u;
+            if (G28.lo < v1 && G28.lo < v2) {
+                if (v1 <= G28.hi || v2 <= G28.hi) {
+                    fault = 0x10u;              /* open: P1DCA */
+                }
+            } else {
+                fault = 0x08u;                  /* short to ground: P1D8D */
+            }
+        }
+        if (d != 0u && d < G28.dmin) {
+            mask = 0x18u;
+            if (G28.lo < v2) {
+                if (v2 <= G28.hi) {
+                    fault = 0x10u;
+                }
+            } else {
+                fault = 0x08u;
+            }
+        }
+        if (G28.dmin <= d && d <= G28.dmax) {   /* PWM (the decompile; TOE32 is 0 / 1000 only) */
+            mask = 0x1Cu;
+            if (G28.lo < v2) {
+                if (G28.lo < v1 || G28.hi <= v2) {
+                    if (G28.on <= v1) {
+                        fault = 0x04u;
+                    }
+                } else {
+                    fault = 0x10u;
+                }
+            } else {
+                fault = 0x08u;
+            }
+        }
+        if (G28.dmax < d && d < 1000u) {
+            mask = 0x04u;
+            if (G28.on <= v1) {
+                fault = 0x04u;
+            }
+        }
+        if (d >= 1000u) {                       /* on */
+            mask = 0x04u;
+            if (((uint16_t)G28.cut & T3_BIT) != 0u && SI_90935_3 != 2u) {
+                mask = 0x24u;
+            }
+            if (v1 < G28.on || v2 < G28.on) {
+                if (((uint16_t)G28.cut & T3_BIT) == 0u || SI_90935_3 != 0u) {
+                    T3.x94147 = (uint8_t)(T3.x94147 & (uint8_t)~T3_BIT);
+                } else {
+                    if ((T3.x94147 & T3_BIT) != 0u) {
+                        fault = 0x20u;
+                    }
+                    T3.x94147 = (uint8_t)(T3.x94147 | T3_BIT);
+                }
+            } else {
+                fault = 0x04u;                  /* driver on, pin not pulled low: P1D8E */
+            }
+        }
+        if (((uint16_t)G28.cvt & T3_BIT) != 0u) {
+            if ((mask & 0x18u) != 0u) {
+                mask = (uint16_t)((mask & 0xFFE7u) | 0x20u);
+            }
+            if ((fault & 0x18u) != 0u) {
+                fault = (uint16_t)((fault & 0xFFE7u) | 0x20u);
+            }
+        }
+    }
+    /* (0x86414: source FE < 0, never) */
+    mask = (uint16_t)(mask & G28.andm);
+    T3.m88 = mask;                              /* 0x94988 */
+    T3.en = mask;                               /* 0x7BABA → 0x93900 */
+    T3.fl = (uint16_t)((T3.fl & (uint16_t)~mask) | (fault & mask));   /* → 0x938F6 */
+    /* (0x94175 = 0: cal 0x19182C / 0x191836 are 0; 0x87120: src < 0, returns) */
+}
+
+/* 0x82D4C(bits, 0x45CD4, 7): the first (mask, code) with mask ⊆ bits */
+static uint8_t t3_code(uint16_t bits)
+{
+    for (unsigned i = 0u; i < 7u; i++) {
+        const uint16_t m = G28.ctab[i][0];
+        if ((uint16_t)(bits & m) == m) {
+            return (uint8_t)G28.ctab[i][1];
+        }
+    }
+    return 0u;
+}
+
+static void t3_rep(uint8_t f27, uint8_t t27, uint8_t f28, uint8_t t28)
+{
+    fr_fm_report(G28.g27, f27, t27);            /* 0xA0E70(27, mon, failed, tested) → 0x9BE50 */
+    fr_fm_report(G28.g28, f28, t28);
+    T3.rep27 = (uint8_t)(f27 | (uint8_t)(t27 << 1));
+    T3.rep28 = (uint8_t)(f28 | (uint8_t)(t28 << 1));
+}
+
+/* 0x7B358(3): the pair reporter */
+static void t3_report(void)
+{
+    uint16_t en = T3.en;
+    const uint16_t fl = T3.fl;
+    if (SI_94FEB == 1u) {
+        en = 0u;
+    }
+    if ((uint16_t)(en & fl) == 0u) {
+        if (en == 0u || fl != 0u) {
+            t3_rep(0u, 0u, 0u, 0u);             /* untested */
+            T3.code = 0u;
+            T3.untest_n++;
+        } else {
+            t3_rep(0u, 1u, 0u, 1u);             /* passed */
+            T3.code = 0x10u;
+            T3.pass_n++;
+        }
+    } else {
+        const uint8_t c = t3_code((uint16_t)(en & fl));
+        T3.code = c;
+        if ((c & 0x80u) != 0u) {
+            t3_rep(1u, 0u, 1u, 1u);             /* group 28 (P1DCA / P1D8E) */
+        } else {
+            t3_rep(1u, 1u, 1u, 0u);             /* group 27 (P1D8D) */
+        }
+        T3.fail_n++;
+        if (T3.fail_ms == 0u) {
+            T3.fail_ms = fr_fm_state()->now;
+        }
+    }
+}
+
+static void t3_pass(const fr_in_t *in)
+{
+    if (T3.fed == 0u) {
+        return;                                 /* no inputs this pass (a harness without them) */
+    }
+    T3.fed = 0u;
+    T3.passes++;
+    /* 0x7C7E4: two 5 ms services */
+    T3.c28 = (uint8_t)((T3.c28 > 2u) ? (T3.c28 - 2u) : 0u);
+    T3.c2d = (uint8_t)((T3.c2d > 2u) ? (T3.c2d - 2u) : 0u);
+    /* 0x9140A → 0x93658: dst 0x9089C ← slot 35 (v2), 0x908A6 ← slot 40 (v1) */
+    T3.v2 = fr_shadow_t3_conv((uint32_t)T3.in.r35[0] + T3.in.r35[1], 2u);
+    T3.v1 = fr_shadow_t3_conv((uint32_t)T3.in.r40[0] + T3.in.r40[1], 2u);
+    /* 0x849D4: 0x91350(3) && the enable byte && 0x94110 != 0 */
+    if (((uint16_t)G28.fs & T3_BIT) != 0u && ((uint16_t)G28.en & T3_BIT) != 0u && T3.in.x94110 != 0u) {
+        t3_test(in->sup_mv);
+        if (T3.gate != 0u && T3.gate_ms == 0u) {
+            T3.gate_ms = fr_fm_state()->now;
+        }
+    }
+    t3_report();                                /* 0x7ABC8: every pass */
+}
+
+void fr_shadow_t3_in(const fr_t3_in_t *in)
+{
+    T3.in = *in;
+    T3.fed = 1u;
+}
+
+const volatile fr_t3_t *fr_shadow_t3_state(void)
+{
+    return &s_frt;
+}
+
 void fr_shadow_tick_10ms(const fr_in_t *in)
 {
     X.in = *in;
@@ -914,6 +1165,9 @@ void fr_shadow_tick_10ms(const fr_in_t *in)
         W.rep98_n++;
         fr_fm_report(98u, in->g98_failed, in->g98_tested);
     }
+    /* groups 27 / 28: the TOE32 test (the output tick's pin-cut + DSM report
+     * slots, modes 0..3) */
+    t3_pass(in);
     if (in->os_mode < 1u || in->os_mode > 3u) {
         return;
     }
@@ -952,6 +1206,10 @@ void fr_shadow_init(void)
 {
     uint8_t *p = (uint8_t *)&s_fr;
     for (size_t i = 0u; i < sizeof s_fr; i++) {
+        p[i] = 0u;
+    }
+    p = (uint8_t *)&s_frt;
+    for (size_t i = 0u; i < sizeof s_frt; i++) {
         p[i] = 0u;
     }
     fr_fm_init();

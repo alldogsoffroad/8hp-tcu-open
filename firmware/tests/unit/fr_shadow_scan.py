@@ -26,7 +26,11 @@
                                      cells only through const volatile and
                                      never names a cell the shadow models
                                      (0x89C41..44, 0x89CED, 0x89CF5, AE2A..2F,
-                                     the comm / 0x13A9D4 / 0x14E0B6 objects
+                                     the comm / 0x13A9D4 / 0x14E0B6 objects,
+                                     the TOE32 test's 0x94828 / 0x9482D /
+                                     0x94148 / 0x94147 / 0x93A7A / 0x938F6 /
+                                     0x93900 / 0x94988 / 0x9497E / 0x940D4 /
+                                     0x940BE..BF / 0x94175 (2026-11-20),
                                      0xFFF95750..0xFFF958FF, the DSM arrays
                                      0xFFF8D700..0xFFF8DEFF, the masks
                                      0xFFF897D0..EF / refcounts 0xFFF89810..
@@ -41,6 +45,8 @@ OUT_PATTERNS = [
     r"\bfr_shadow", r"\bfr_hook", r"\bfr_cal", r"\bfr_fm", r"\bFR_EV_", r"\bFRC_", r"\bFR_CAL_",
     r"\bfr_t\b", r"\bfr_in_t\b", r"\bfr_fm_t\b", r"\bfr_rx_t\b", r"\bfr_code_t\b", r"\bfr_comm_t\b",
     r"\.fr_shadow\b", r"\.fr_fm\b", r"\bs_fr\b", r"\bs_fm\b",
+    # groups 27 / 28 (the TOE32 test, 2026-11-20): its types, its RAM (.fr_toe 0xFFF8915C..9B)
+    r"\bfr_t3_", r"\bs_frt\b", r"\.fr_toe\b",
     r"0[xX][fF]{3}86[0-5][0-9a-fA-F]{2}", r"0[xX][fF]{3}88[7-9a-fA-F][0-9a-fA-F]{2}",
     r"0[xX][fF]{3}891[0-9a-fA-F]{2}",
 ]
@@ -67,6 +73,15 @@ HOOK_PATTERNS = [
     r"0[xX][fF]{3}8[dD][7-9a-eA-E][0-9a-fA-F]{2}",
     r"0[xX][fF]{3}897[dDeE][0-9a-fA-F]", r"0[xX][fF]{3}898[1-9][0-9a-fA-F]",
     r"0[xX][fF]{3}84[0-4][0-9a-fA-F]{2}",
+    # groups 27 / 28 (2026-11-20): the stock cells the TOE32 test models (the
+    # shadow keeps its own copies): 0x94828..2C / 0x9482D..31 (the countdowns),
+    # 0x94148..4C (first call), 0x93A7A..83 (the duty category), 0x938F6..FF /
+    # 0x93900..09 (fault / tested), 0x94988..91 / 0x9497E..87 (the copies),
+    # 0x940D4..D8 (the code), 0x940BE / BF (the summaries), 0x94147, 0x94175..79
+    r"0[xX][fF]{3}948(2[89a-fA-F]|3[01])", r"0[xX][fF]{3}9414[7-9a-cA-C]", r"0[xX][fF]{3}93[aA](7[a-fA-F]|8[0-3])",
+    r"0[xX][fF]{3}938[fF][6-9a-fA-F]", r"0[xX][fF]{3}939(0[0-9])", r"0[xX][fF]{3}949(8[89a-fA-F]|9[01])",
+    r"0[xX][fF]{3}949(7[e-fE-F]|8[0-7])", r"0[xX][fF]{3}940[dD][4-8]", r"0[xX][fF]{3}940[bB][eEfF]",
+    r"0[xX][fF]{3}9417[5-9]",
 ]
 
 

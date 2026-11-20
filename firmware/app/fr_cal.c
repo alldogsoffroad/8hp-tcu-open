@@ -504,6 +504,25 @@ const uint16_t fr_cal_14e_reload = 100u;
 /* 0x6344E: 0xDBCA8's code table */
 const uint8_t fr_cal_6344e[54] = { 1u, 1u, 0u, 1u, 1u, 1u, 0u, 1u, 0u, 0u, 1u, 1u, 1u, 1u, 1u, 1u, 0u, 0u, 1u, 1u, 1u, 1u, 1u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 1u, 0u, 0u, 0u, 0u, 1u, 0u, 0u, 0u, 1u, 0u };
 
+/* group 27 / 28 (P1D8D / P1DCA / P1D8E): the TOE32 (k = 3, pin PL7) off / on-state test:
+ * 0x849D4 -> 0x8B284(3) / 0x8B5DE(3), the reporter 0x7B358(3) (pair table 0x45C84 + 48), the
+ * code table 0x45CD4 (0x82D4C), the conversion 0x9140A (0x40A34 + 48: scale 0x3EC35000).
+ * The mutation negative (ctest fr_shadow_neg_G28): hi 4000 -> 3400 (below the
+ * bench's 3436 mV: the open band empties, group 28 never fails). */
+#if defined(FR_NEG_G28)
+#define FR_NEG_HI(v) (3400u)
+#else
+#define FR_NEG_HI(v) (v)
+#endif
+const fr_cal_g28_t fr_cal_g28 = {
+    0x1Fu, 0x0Bu, 0xFEu, 10u, 4u, 0x0Fu,  /* fs 0x1918E6, en 0x1919B4, src 0x1919C1, r2d 0x191A14, r28 0x191A0F, win 0x1919B5 */
+    6500u, 23500u, 6700u,  /* the supply window 0x19185A / 0x191850, source FE's threshold 0x191566 */
+    2400u, FR_NEG_HI(4000u), 3500u, 50u, 950u,  /* lo 0x191878 hi 0x191864 on 0x19186E dmin 0x1914BE dmax 0x1914B4 */
+    0x17u, 0x00u, 0xF7FFu,  /* cut 0x191A09, cvt 0x191A0A, and 0x191846 */
+    27u, 28u,  /* the groups (0x45C84 + 48 + 12 / 13) */
+    { { 0x0018u, 0x06u }, { 0x0020u, 0x06u }, { 0x0008u, 0x03u }, { 0x0800u, 0x03u }, { 0x0010u, 0x84u }, { 0x0004u, 0x82u }, { 0x0000u, 0x01u } },  /* 0x45CD4: mask, code */
+};
+
 /* the scalar byte checks (tests/unit/test_fr_shadow.c --cal) */
 const fr_cal_chk_t fr_cal_chk[FR_CAL_NCHK] = {
     { 0x04184Cu, 2u, 20u },
@@ -798,5 +817,40 @@ const fr_cal_chk_t fr_cal_chk[FR_CAL_NCHK] = {
     { 0x0632D8u, 1u, 50u },
     { 0x0632DEu, 1u, 56u },
     { 0x0632DFu, 1u, 57u },
+    { 0x1918E6u, 1u, 31u },
+    { 0x1919B4u, 1u, 11u },
+    { 0x1919C1u, 1u, 254u },
+    { 0x191A14u, 1u, 10u },
+    { 0x191A0Fu, 1u, 4u },
+    { 0x1919B5u, 1u, 15u },
+    { 0x19185Au, 2u, 6500u },
+    { 0x191850u, 2u, 23500u },
+    { 0x191566u, 2u, 6700u },
+    { 0x191878u, 2u, 2400u },
+    { 0x191864u, 2u, 4000u },
+    { 0x19186Eu, 2u, 3500u },
+    { 0x1914BEu, 2u, 50u },
+    { 0x1914B4u, 2u, 950u },
+    { 0x191A09u, 1u, 23u },
+    { 0x191A0Au, 1u, 0u },
+    { 0x191846u, 2u, 63487u },
+    { 0x045CC0u, 1u, 27u },
+    { 0x045CC1u, 1u, 28u },
+    { 0x040EEFu, 1u, 64u },
+    { 0x040EF4u, 1u, 64u },
+    { 0x045CD4u, 2u, 24u },
+    { 0x045CD6u, 2u, 6u },
+    { 0x045CD8u, 2u, 32u },
+    { 0x045CDAu, 2u, 6u },
+    { 0x045CDCu, 2u, 8u },
+    { 0x045CDEu, 2u, 3u },
+    { 0x045CE0u, 2u, 2048u },
+    { 0x045CE2u, 2u, 3u },
+    { 0x045CE4u, 2u, 16u },
+    { 0x045CE6u, 2u, 132u },
+    { 0x045CE8u, 2u, 4u },
+    { 0x045CEAu, 2u, 130u },
+    { 0x045CECu, 2u, 0u },
+    { 0x045CEEu, 2u, 1u },
 };
 

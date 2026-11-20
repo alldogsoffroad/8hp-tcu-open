@@ -632,6 +632,20 @@ static void task10(gr_t *g, unsigned p)
         fi.sup_mv = *(const volatile uint16_t *)(uintptr_t)0xFFF94F86u;
         fi.eng = (fv->q_engine_speed == Q_OK) ? (uint16_t)fv->engine_speed : 0u;
         fi.cd0 = fi.eng;
+        {
+            /* groups 27 / 28 (the TOE32 test): app/fr_hook.c's reads of the
+             * AN0 ring (slots 35 / 40, both halves), TOE32's applied duty,
+             * 0x95005 and 0x94110 — the harness's live cells, by value */
+            fr_t3_in_t t3;
+            t3.r35[0] = *(const volatile uint16_t *)(uintptr_t)(0xFFF885E8u + 0x46u);
+            t3.r35[1] = *(const volatile uint16_t *)(uintptr_t)(0xFFF88688u + 0x46u);
+            t3.r40[0] = *(const volatile uint16_t *)(uintptr_t)(0xFFF885E8u + 0x50u);
+            t3.r40[1] = *(const volatile uint16_t *)(uintptr_t)(0xFFF88688u + 0x50u);
+            t3.duty = *(const volatile uint16_t *)(uintptr_t)(0xFFF90874u + 6u);
+            t3.x95005 = *(const volatile uint8_t *)(uintptr_t)0xFFF95005u;
+            t3.x94110 = *(const volatile uint8_t *)(uintptr_t)0xFFF94110u;
+            fr_hook_feed_t3(&t3);
+        }
         fr_hook_feed(&fi);
 #if defined(FR_NEG_LEAK)
         /* the negative: a leak of the shadow's code into the live cell window */

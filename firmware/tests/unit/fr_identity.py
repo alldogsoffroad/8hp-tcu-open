@@ -33,13 +33,14 @@ def main():
     runs = re.findall(r"FR run '([^']*)': passes (\d+) mon (\d+) frames (\d+) other (\d+) u11e4 (\d+) "
                       r"u1267 (\d+) p0850 (\d+) u0100 (\d+) u11e3 (\d+) m0 ([0-9A-F]+) m1 ([0-9A-F]+) "
                       r"code (\d+) c43 (-?\d+) cf5 (\d+) ff (-?\d+) c109dis (\d+) c98dis (\d+) "
-                      r"d661dis (\d+) tgtdis (\d+) rep109 (\d+) rep98 (\d+) unp (\d+) fferr (\d+) badg (\d+)",
+                      r"d661dis (\d+) tgtdis (\d+) rep109 (\d+) rep98 (\d+) unp (\d+) fferr (\d+) badg (\d+) "
+                      r"t3 (\d+) t3gate (\d+) t3code ([0-9A-F]+)",
                       r.stderr)
     if len(runs) < 9:
         print("FAIL: the fault-reaction shadow reported %d runs (expected >= 9 scenarios)" % len(runs))
         ok = False
     for (name, passes, mon, frames, other, u11e4, u1267, p0850, u0100, u11e3, m0, m1, code, c43, cf5, ff,
-         c109, c98, d661, tgt, rep109, rep98, unp, fferr, badg) in runs:
+         c109, c98, d661, tgt, rep109, rep98, unp, fferr, badg, t3, t3gate, t3code) in runs:
         bad = []
         if int(passes) == 0 or int(mon) == 0:
             bad.append("did not run")
@@ -47,6 +48,8 @@ def main():
             bad.append("unp %s fferr %s badg %s" % (unp, fferr, badg))
         if int(c109) != 0 or int(c98) != 0:
             bad.append("the U1267 / P0850 comparator disagrees with rng_chain (%s / %s passes)" % (c109, c98))
+        if int(t3) == 0:
+            bad.append("the TOE32 test (groups 27 / 28) did not run")
         if int(rep109) == 0 or int(rep98) == 0:
             bad.append("no group-109 / -98 report forwarded")
         if bad:

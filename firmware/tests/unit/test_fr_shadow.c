@@ -15,8 +15,9 @@
  *     (1) the RX status 0x6EC80: timeout, the 4th consecutive bad frame,
  *         counter steps 1..3 / 4 / a repeat, the first frame, DLC
  *     (2) the plain boot (no frames): U11E4 pending 400 ms before its confirm
- *         (1600 ms), U1267 1650, P0850 3150, U11E3 2140; nothing else; the
- *         masks = the dump's minus id 40 (group 28 has no monitor, D-FR-9);
+ *         (1600 ms), U1267 1650, P0850 3150, U11E3 2140, P1DCA (group 28,
+ *         the TOE32 test) 710 = 'L' (610) + 100; nothing else; the masks =
+ *         the dump's 0x00813240 / 0xE8260114 (D-FR-9 retired 2026-11-20);
  *         code 0x20 → 0x89C43 3, AE2D 1, 0x89CF5 1; the fault-fed target 3
  *     (3) the sims from power-on: U11E4 never fails, U0121 1450, U0100 /
  *         U0140 / U0212 / U0102 1790, U0155 6240 (reaction 16), pending 22
@@ -30,13 +31,20 @@
  *         zeroed)
  *     (6) the dump: the OR of 28 | 98 | 109 | 136's configs = the dump's
  *         masks 0x00813240 / 0xE8260114 (and the dump file's when present)
+ *     (8) groups 27 / 28, the TOE32 test (~/tcu_sweep/group28_port.md): the
+ *         0x93658 conversion (the dump's ring 9008 → 3436 mV), the dump's
+ *         state (en 18 fl 10 code 84), <= 2400 mV → group 27, >= 4000 mV →
+ *         both pass, the heal (100 ms, out of the masks), the gate shut (no
+ *         'L', supply 6400 / 6600 / 23600), the 20 ms duty-category window
  *     (7) the cell window 0xFFF80000..0xFFF96000 is untouched by every run
  *         (filled with a pattern first: the shadow writes no live cell,
  *         the DSM image / NVM / record windows included)
  *   --cal  every calibration copy against the stock image (exit 77 absent)
  *   --time host ns per tick (the CPU estimate)
  * test_fr_shadow_neg_CFG (FR_NEG_CFG: group 136's fail time 450 → 452 in
- * app/fr_cal.c) must FAIL (the U11E4 confirm moves one pass). */
+ * app/fr_cal.c) must FAIL (the U11E4 confirm moves one pass);
+ * test_fr_shadow_neg_G28 (FR_NEG_G28: the open band's upper threshold 4000 →
+ * 3400 mV) must FAIL (group 28 never confirms, the masks lose id 40). */
 #include "app/fr_shadow.h"
 #include "app/fr_cal.h"
 #include "bsw/com/crc8.h"
@@ -95,7 +103,17 @@ typedef struct {
     uint8_t  d6d6;          /* the range (8 P, 5 D, 7 R) */
     unsigned lever_at;      /* ms the range changes to `d6d6_late` (0 = none) */
     uint8_t  d6d6_late;
+    /* groups 27 / 28 (the TOE32 test) */
+    uint16_t pl7_raw;       /* the ring slots 35 / 40 raw (0 = 9008: 3436 mV, the bench / dump) */
+    unsigned pl7_at;        /* ms the raw changes to `pl7_raw2` (0 = none) */
+    uint16_t pl7_raw2;
+    unsigned l_at;          /* ms of 'L' (0x95005 1 → 0; 0 = T3_L_MS) */
+    int      no_l;          /* never 'L' */
+    uint16_t sup_mv;        /* the supply 0x94F86 (0 = 12950) */
+    unsigned duty_at;       /* ms TOE32's applied duty becomes `duty` (0 = off throughout) */
+    uint16_t duty;
 } scen_t;
+#define T3_L_MS 610u
 
 static uint8_t g_ctr[0x800];
 static void send(uint8_t bus, uint16_t id, uint8_t dlc, uint8_t step)
@@ -172,8 +190,26 @@ static void tick(const scen_t *s)
     in.gf_e6a1 = (rng == 7u) ? -1 : 1;
     in.ce8 = 1u;
     in.cd2 = 0x4Fu;
-    in.sup_mv = 12950u;
+    in.sup_mv = (s->sup_mv != 0u) ? s->sup_mv : 12950u;
     in.cd0 = in.eng;
+    {
+        /* groups 27 / 28 (the TOE32 test): PL7 on the AN0 ring slots 35 / 40
+         * (the bench's / the dump's 9008 raw = 3436 mV, TOE32 off), 0x94110
+         * from the second pass, the sequencer's 'L' (0x95005 1 → 0) at
+         * +610 ms (our boot: 'E' ≈ +598, 'U' ≈ +0.62 s) */
+        fr_t3_in_t t3;
+        const uint16_t raw = (s->pl7_at != 0u && ms >= s->pl7_at) ? s->pl7_raw2
+                             : (s->pl7_raw != 0u ? s->pl7_raw : 9008u);
+        const unsigned l_at = (s->l_at != 0u) ? s->l_at : T3_L_MS;
+        t3.r35[0] = raw;
+        t3.r35[1] = raw;
+        t3.r40[0] = raw;
+        t3.r40[1] = raw;
+        t3.duty = (s->duty_at != 0u && ms >= s->duty_at) ? s->duty : 0u;
+        t3.x95005 = (uint8_t)(s->no_l != 0 || ms < l_at);
+        t3.x94110 = (uint8_t)(ms >= 20u);
+        fr_hook_feed_t3(&t3);
+    }
     fr_hook_feed(&in);
 }
 
@@ -294,12 +330,15 @@ static void test_plain(void)
     CHECKV(ev_ms(FR_EV_CONFIRM, 98u), 3150u);            /* P0850 (r03v +3150) */
     CHECKV(ev_ms(FR_EV_PEND_ON, 98u), 1050u);            /* id 50 pending from 400 ms */
     CHECKV(ev_ms(FR_EV_DIRECT, 143u), 2140u);            /* U11E3 (bus 2, 0x210 lost) */
+    CHECKV(ev_ms(FR_EV_START, 28u), T3_L_MS);             /* P1DCA: the TOE32 gate opens at 'L' */
+    CHECKV(ev_ms(FR_EV_CONFIRM, 28u), T3_L_MS + 100u);    /* its 100 ms fail time */
+    CHECKV(ev_ms(FR_EV_CONFIRM, 27u), 0u);
     uint8_t c[16];
     const unsigned n = confirmed_set(c, 16u);
-    CHECKV(n, 4u);
-    CHECK(n == 4u && c[0] == 98u && c[1] == 109u && c[2] == 136u && c[3] == 143u);
+    CHECKV(n, 5u);
+    CHECK(n == 5u && c[0] == 28u && c[1] == 98u && c[2] == 109u && c[3] == 136u && c[4] == 143u);
     CHECKV(FM->m0, 0x00813240u);
-    CHECKV(FM->m1, 0xE8260014u);                         /* the dump minus id 40 (group 28) */
+    CHECKV(FM->m1, 0xE8260114u);                         /* THE DUMP'S (group 28 adds id 40) */
     CHECKV(FR->cd.c41, 0x20u);
     CHECKV(FR->cd.c42, 0x20u);
     CHECKV(FR->cd.c43, 3);
@@ -314,8 +353,8 @@ static void test_plain(void)
     CHECKV(FM->bad_g_n, 0u);
     /* the bus-1 node groups never tested (U11E4 failing from 1150) */
     CHECKV(FM->s[139u - 1u] & 1u, 0u);
-    printf("plain boot: U11E4 %u (pending %u) U1267 %u P0850 %u U11E3 %u; masks %08X / %08X; code %02X → %d, "
-           "0x89CF5 %u, fault-fed target %d\n",
+    printf("plain boot: P1DCA %u U11E4 %u (pending %u) U1267 %u P0850 %u U11E3 %u; masks %08X / %08X; code %02X → %d, "
+           "0x89CF5 %u, fault-fed target %d\n", (unsigned)ev_ms(FR_EV_CONFIRM, 28u),
            (unsigned)ev_ms(FR_EV_CONFIRM, 136u), (unsigned)ev_ms(FR_EV_PEND_ON, 136u),
            (unsigned)ev_ms(FR_EV_CONFIRM, 109u), (unsigned)ev_ms(FR_EV_CONFIRM, 98u),
            (unsigned)ev_ms(FR_EV_DIRECT, 143u), (unsigned)FM->m0, (unsigned)FM->m1, FR->cd.c41,
@@ -354,8 +393,8 @@ static void test_sims(void)
     CHECKV(fr_fm_react(53u), 1u);                        /* U0121 / P0850 → D660 */
     CHECKV(fr_fm_react(59u), 0u);                        /* D664 / D666: none of these groups */
     CHECKV(fr_fm_react(61u), 0u);
-    CHECKV(FM->m0, 0x00812420u);
-    CHECKV(FM->m1, 0xC0260014u);
+    CHECKV(FM->m0, 0x00812620u);                         /* + group 28 (P1DCA): ids 9 and 40 */
+    CHECKV(FM->m1, 0xC0260114u);
     CHECKV(FR->cd.c41, 0x20u);
     CHECKV(FR->cd.c43, 3);
     CHECKV(FR->cd.ff_e6a1, 3);
@@ -444,6 +483,161 @@ static void test_keycycle(void)
     CHECKV(fr_fm_in_masks(147u), 0u);                    /* 0x111 */
     printf("key cycle: masks before %08X, after the re-cycle %08X / %08X\n", (unsigned)m0,
            (unsigned)FM->m0, (unsigned)FM->m1);
+}
+
+/* ── (8) groups 27 / 28: the TOE32 (k = 3, PL7) off / on-state test ─────── */
+#define T3S (fr_shadow_t3_state())
+static unsigned t3_untested_passes(const scen_t *s, unsigned from, unsigned to)
+{
+    unsigned n = 0u;
+    run(s, from);
+    while (g_ms < to) {
+        tick(s);
+        if (T3S->rep28 == 0u) {
+            n++;
+        }
+    }
+    return n;
+}
+
+static void test_g28(void)
+{
+    /* the conversion 0x93658: the bench's / the dump's ring 9008 → 3436 mV
+     * (the dump's 0x9089C[3] = 0x908A6[3] = 0x0D6C), the dump's live
+     * accumulator 0xF670 / 7 → 3438; 0 → 1; n = 0 → 0 */
+    CHECKV(fr_shadow_t3_conv(2u * 9008u, 2u), 3436u);
+    CHECKV(fr_shadow_t3_conv(0xF670u, 7u), 3438u);
+    CHECKV(fr_shadow_t3_conv(0u, 2u), 1u);
+    CHECKV(fr_shadow_t3_conv(5u, 0u), 0u);
+    /* (a) the plain boot: the dump's state (0x938F6[3] 0x10, 0x93900[3] 0x18,
+     * 0x940D4[3] 0x84), group 28 failed + tested every pass from 'L', 27
+     * untested (code bit 7) */
+    {
+        const scen_t s = { .sims = 0, .d6d6 = 8u };
+        reset();
+        run(&s, 600u);
+        CHECKV(T3S->gate_n, 0u);                        /* before 'L' (0x95005 = 1) */
+        CHECKV(T3S->en, 0u);
+        CHECKV(FM->s[28u - 1u] & 1u, 0u);              /* untested */
+        run(&s, 1500u);
+        CHECKV(T3S->v1, 3436u);
+        CHECKV(T3S->v2, 3436u);
+        CHECKV(T3S->en, 0x18u);
+        CHECKV(T3S->fl, 0x10u);
+        CHECKV(T3S->m88, 0x18u);
+        CHECKV(T3S->code, 0x84u);
+        CHECKV(T3S->rep28, 3u);                         /* failed + tested */
+        CHECKV(T3S->rep27, 1u);                         /* failed, untested */
+        CHECKV(T3S->gate_ms, T3_L_MS);
+        CHECKV(T3S->fail_ms, T3_L_MS);
+        CHECKV(T3S->first, 1u);
+        CHECKV(fr_fm_confirmed(28u), 1u);
+        CHECKV(fr_fm_confirmed(27u), 0u);
+        CHECKV(FM->s[27u - 1u] & 1u, 0u);               /* 27 never tested */
+        CHECKV(fr_fm_react(40u), 1u);                   /* reaction 40: group 28 alone */
+        printf("g28 (a) plain: gate %u ms, P1DCA confirm %u ms, v %u / %u mV, en %02X fl %02X code %02X\n",
+               (unsigned)T3S->gate_ms, (unsigned)ev_ms(FR_EV_CONFIRM, 28u), T3S->v1, T3S->v2, T3S->en, T3S->fl,
+               T3S->code);
+    }
+    /* (b) PL7 <= 2400 mV (raw 6000 = 2288 mV): short to ground → 0x08 →
+     * code 03 → group 27 (P1D8D), not 28 */
+    {
+        const scen_t s = { .sims = 0, .d6d6 = 8u, .pl7_raw = 6000u };
+        reset();
+        run(&s, 1500u);
+        CHECKV(T3S->v1, 2288u);
+        CHECKV(T3S->fl, 0x08u);
+        CHECKV(T3S->code, 0x03u);
+        CHECKV(T3S->rep27, 3u);
+        CHECKV(T3S->rep28, 1u);
+        CHECKV(ev_ms(FR_EV_START, 27u), T3_L_MS);
+        CHECK(fr_fm_confirmed(27u) == 1u);
+        CHECKV(fr_fm_confirmed(28u), 0u);
+        /* group 27 carries the same reactions as 28 (ids 9, 40) */
+        CHECKV(FRC_R0(fr_cal_grp[27u - 1u]), FRC_R0(fr_cal_grp[28u - 1u]));
+        CHECKV(FRC_R1(fr_cal_grp[27u - 1u]), FRC_R1(fr_cal_grp[28u - 1u]));
+        CHECKV(fr_fm_react(40u), 1u);
+        printf("g28 (b) 2288 mV: P1D8D confirm %u ms, code %02X; masks %08X / %08X\n",
+               (unsigned)ev_ms(FR_EV_CONFIRM, 27u), T3S->code, (unsigned)FM->m0, (unsigned)FM->m1);
+    }
+    /* (c) PL7 >= 4000 mV (raw 12000 = 4577 mV, a load to battery): both pass */
+    {
+        const scen_t s = { .sims = 0, .d6d6 = 8u, .pl7_raw = 12000u };
+        reset();
+        run(&s, 3300u);
+        CHECKV(T3S->v1, 4577u);
+        CHECKV(T3S->en, 0x18u);
+        CHECKV(T3S->fl, 0u);
+        CHECKV(T3S->code, 0x10u);
+        CHECKV(T3S->rep27, 2u);
+        CHECKV(T3S->rep28, 2u);
+        CHECKV(FM->s[28u - 1u] & 1u, 1u);               /* tested */
+        CHECKV(fr_fm_confirmed(28u), 0u);
+        CHECKV(fr_fm_confirmed(27u), 0u);
+        CHECKV(T3S->fail_n, 0u);
+        CHECKV(FM->m1, 0xE8260014u);                    /* the r04x plain-boot masks: no id 40 */
+    }
+    /* (d) heal: open from 'L', a load from 1500 ms → group 28 heals 100 ms
+     * later and leaves the masks (rule 0x0111, bit 8) */
+    {
+        const scen_t s = { .sims = 0, .d6d6 = 8u, .pl7_at = 1500u, .pl7_raw2 = 12000u };
+        reset();
+        run(&s, 2000u);
+        const uint32_t h = ev_ms(FR_EV_HEAL, 28u);
+        CHECK(h >= 1590u && h <= 1610u);
+        CHECKV(fr_fm_in_masks(28u), 0u);
+        CHECKV(fr_fm_react(40u), 0u);
+        CHECKV(fr_fm_react(9u), 1u);                    /* id 9 stays (U1267) */
+        printf("g28 (d) heal: confirmed %u, healed %u ms; masks %08X / %08X\n",
+               (unsigned)ev_ms(FR_EV_CONFIRM, 28u), (unsigned)h, (unsigned)FM->m0, (unsigned)FM->m1);
+    }
+    /* (e) the gate closed: never 'L' / the supply below 6500 / above 23500
+     * → nothing tested, both untested every pass */
+    {
+        const scen_t s1 = { .sims = 0, .d6d6 = 8u, .no_l = 1 };
+        const scen_t s2 = { .sims = 0, .d6d6 = 8u, .sup_mv = 6400u };
+        const scen_t s3 = { .sims = 0, .d6d6 = 8u, .sup_mv = 23600u };
+        const scen_t *ss[3] = { &s1, &s2, &s3 };
+        for (unsigned i = 0u; i < 3u; i++) {
+            reset();
+            run(ss[i], 2000u);
+            CHECKV(T3S->gate_n, 0u);
+            CHECKV(T3S->en, 0u);
+            CHECKV(T3S->untest_n, T3S->passes);
+            CHECKV(FM->s[28u - 1u] & 1u, 0u);
+            CHECKV(FM->s[27u - 1u] & 1u, 0u);
+            CHECKV(fr_fm_confirmed(28u), 0u);
+            CHECKV(T3S->gate_ms, 0u);
+        }
+        /* 6700 mV (source FE's threshold) .. 6500: the window opens at 6500 but
+         * 0x9482D reloads below 6700 → still closed at 6600 */
+        const scen_t s4 = { .sims = 0, .d6d6 = 8u, .sup_mv = 6600u };
+        reset();
+        run(&s4, 2000u);
+        CHECKV(T3S->gate_n, 0u);
+        const scen_t s5 = { .sims = 0, .d6d6 = 8u, .sup_mv = 6700u };
+        reset();
+        run(&s5, 2000u);
+        CHECK(T3S->gate_n > 0u);
+    }
+    /* (f) a duty-category change (0 → 1000 at 1000 ms): 0x94828 = 4 (20 ms)
+     * closes the gate for exactly 2 passes; on with the pin at 3436 mV (< 3500:
+     * pulled low) → no fault in mask 0x04, the old 0x10 latched outside it →
+     * the reporter's "untested" */
+    {
+        const scen_t s = { .sims = 0, .d6d6 = 8u, .duty_at = 1000u, .duty = 1000u };
+        reset();
+        run(&s, 990u);
+        const uint32_t g0 = T3S->gate_n;
+        run(&s, 1010u);
+        CHECKV(T3S->gate_n, g0);                        /* 1000, 1010: closed */
+        run(&s, 1020u);
+        CHECKV(T3S->gate_n, g0 + 1u);
+        CHECKV(T3S->en, 0x04u);
+        CHECKV(T3S->fl, 0x10u);
+        CHECKV(T3S->rep28, 0u);
+        CHECKV(t3_untested_passes(&s, 1020u, 1500u), 48u);
+    }
 }
 
 /* ── (6) the dump ──────────────────────────────────────────────────────── */
@@ -554,6 +748,38 @@ static int test_cal(void)
     CHECKV(fr_cal_14e_reload, U16(U32(0x64CC8u + 0x28u)));
     CHECKV(fr_cal_ctr_step, g_img[U32(0x664D8u)]);
     CHECK(memcmp(fr_cal_6344e, &g_img[0x6344Eu], 54u) == 0);
+    /* group 27 / 28 (the TOE32 test): every field against the image, the
+     * cal-bank pointers resolved here again ([0xFFF90AB8 = 0]) */
+    {
+#define BANK(pool) U32(U32(pool))
+        CHECKV(U32(0x914E0u), 0x1918E6u);
+        CHECKV(fr_cal_g28.fs, g_img[0x1918E6u]);
+        CHECKV(fr_cal_g28.en, g_img[BANK(0x84BB0u)]);
+        CHECKV(fr_cal_g28.src, g_img[BANK(0x8B6D8u) + 3u]);
+        CHECKV(fr_cal_g28.r2d, g_img[BANK(0x8B6F8u) + 3u]);
+        CHECKV(fr_cal_g28.r28, g_img[BANK(0x8B798u) + 3u]);
+        CHECKV(fr_cal_g28.win, g_img[BANK(0x8B79Cu)]);
+        CHECKV(fr_cal_g28.slo, U16(BANK(0x8B7A0u) + 6u));
+        CHECKV(fr_cal_g28.shi, U16(BANK(0x8B7A4u) + 6u));
+        CHECKV(fr_cal_g28.fe, U16(BANK(0x8B700u)));
+        CHECKV(fr_cal_g28.lo, U16(BANK(0x8B4A8u) + 6u));
+        CHECKV(fr_cal_g28.hi, U16(BANK(0x8B4ACu) + 6u));
+        CHECKV(fr_cal_g28.on, U16(BANK(0x8B4B0u) + 6u));
+        CHECKV(fr_cal_g28.dmin, U16(U32(0x8B4A0u) + 6u));
+        CHECKV(fr_cal_g28.dmax, U16(U32(0x8B4A4u) + 6u));
+        CHECKV(fr_cal_g28.cut, g_img[BANK(0x8B4B4u)]);
+        CHECKV(fr_cal_g28.cvt, g_img[BANK(0x8B6D4u)]);
+        CHECKV(fr_cal_g28.andm, U16(BANK(0x8B6E4u) + 6u));
+        CHECKV(U32(0x7B4D8u), 0x45C84u);
+        CHECKV(fr_cal_g28.g27, g_img[0x45C84u + 48u + 12u]);
+        CHECKV(fr_cal_g28.g28, g_img[0x45C84u + 48u + 13u]);
+        CHECKV(U32(0x7B4E8u), 0x45CD4u);
+        for (unsigned i = 0u; i < 7u; i++) {
+            CHECKV(fr_cal_g28.ctab[i][0], U16(0x45CD4u + 4u * i));
+            CHECKV(fr_cal_g28.ctab[i][1], U16(0x45CD4u + 4u * i + 2u));
+        }
+#undef BANK
+    }
     for (unsigned i = 0u; i < FR_CAL_NCHK; i++) {
         const fr_cal_chk_t *c = &fr_cal_chk[i];
         const unsigned v = (c->width == 2u) ? U16(c->addr) : g_img[c->addr];
@@ -594,6 +820,7 @@ int main(int argc, char **argv)
     test_sims();
     test_heal();
     test_keycycle();
+    test_g28();
     test_dump_masks();
     CHECKV(win_changed(), 0u);                           /* (7) no live cell written */
     printf(g_fail ? "test_fr_shadow: %d FAILURES\n" : "test_fr_shadow: ok\n", g_fail);

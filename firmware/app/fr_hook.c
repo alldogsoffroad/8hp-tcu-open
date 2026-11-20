@@ -18,10 +18,14 @@
  * group-109 / -98 report counters and arguments and its U1267 / P0850
  * verdicts (rng_chain_model, the comparator); park_pair's last group-98
  * report; the healthy gear chain's state (sm_gear_state) and the shift-map
- * shadow's 0x89CE8 (sm_shadow_state) for the fault-fed hinge. It never reads
+ * shadow's 0x89CE8 (sm_shadow_state) for the fault-fed hinge; for groups
+ * 27 / 28 (the TOE32 test, 2026-11-20) the AN0 mux ring's slots 35 / 40 in
+ * both halves (0xFFF885E8 / 0xFFF88688), TOE32's applied duty 0xFFF90874[3],
+ * the sequencer's 0xFFF95005 and 0x849D4's 0xFFF94110. It never reads
  * a cell the shadow models (the 0x89C41..44 / 0x89CED / 0x89CF5 / AE2D cells,
  * the comm object 0xFFF95750.., the DSM arrays 0xFFF8D714 / D89A / DBA6 /
- * DD2C, the masks 0xFFF897D0..E7, the RX states 0xFFF84020..447F).
+ * DD2C, the masks 0xFFF897D0..E7, the RX states 0xFFF84020..447F, the TOE32
+ * test's 0x94828 / 0x9482D / 0x94148 / 0x93A7A / 0x938F6 / 0x93900 / 0x940D4).
  */
 #include "app/fr_shadow.h"
 
@@ -101,6 +105,22 @@ void fr_hook_10ms(void)
     in.cb8 = in.d646;
     in.cba = (sn->q_turbine_speed == Q_OK && sn->turbine_speed > 0) ? (uint16_t)sn->turbine_speed : 0u;
     in.cd0 = in.eng;
+    {
+        /* groups 27 / 28 (the TOE32 test): the AN0 mux ring's slots 35 / 40
+         * (mux input 4 = PL7) in both halves (.adc_ring 0xFFF885E8, 2 x 80
+         * words; the A-DMAC writes them, we only read), TOE32's applied duty
+         * 0xFFF90874[3] (drv_groupa's 0x91500), the sequencer's pre-'L'
+         * window 0xFFF95005, 0x849D4's first-pass flag 0xFFF94110 */
+        fr_t3_in_t t3;
+        t3.r35[0] = LIVE_U16(0xFFF885E8u + 0x46u);
+        t3.r35[1] = LIVE_U16(0xFFF88688u + 0x46u);
+        t3.r40[0] = LIVE_U16(0xFFF885E8u + 0x50u);
+        t3.r40[1] = LIVE_U16(0xFFF88688u + 0x50u);
+        t3.duty = LIVE_U16(0xFFF90874u + 6u);
+        t3.x95005 = LIVE_U8(0xFFF95005u);
+        t3.x94110 = LIVE_U8(0xFFF94110u);
+        fr_hook_feed_t3(&t3);
+    }
     fr_hook_feed(&in);
     fr_shadow_time(plat_frt_us() - in.t_us);
 }
@@ -109,6 +129,11 @@ void fr_hook_10ms(void)
 void fr_hook_feed(const fr_in_t *in)
 {
     fr_shadow_tick_10ms(in);
+}
+
+void fr_hook_feed_t3(const fr_t3_in_t *in)
+{
+    fr_shadow_t3_in(in);
 }
 
 #endif /* !TCU_RAM_APP */

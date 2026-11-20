@@ -1732,6 +1732,14 @@ else()
         FR_NEG_CFG=1)
     add_test(NAME fr_shadow_neg_CFG COMMAND test_fr_shadow_neg_CFG)
     set_tests_properties(fr_shadow_neg_CFG PROPERTIES WILL_FAIL TRUE)
+    # groups 27 / 28 (the TOE32 test, 2026-11-20, ~/tcu_sweep/group28_port.md):
+    # the open band's upper threshold 4000 → 3400 mV (below the bench's 3436)
+    # in app/fr_cal.c must FAIL (group 28 never confirms; the masks lose id 40)
+    add_executable(test_fr_shadow_neg_G28 ${FR_TEST_SOURCES})
+    target_compile_definitions(test_fr_shadow_neg_G28 PRIVATE _POSIX_C_SOURCE=200809L FR_HOOK_NO_GATHER=1
+        FR_NEG_G28=1)
+    add_test(NAME fr_shadow_neg_G28 COMMAND test_fr_shadow_neg_G28)
+    set_tests_properties(fr_shadow_neg_G28 PROPERTIES WILL_FAIL TRUE)
     set(FR_APP_SOURCES app/fr_shadow.c app/fr_fm.c app/fr_cal.c app/fr_hook.c)
     add_executable(test_g6b_norep_fr ${G6B_NOREP_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c
         ${FR_APP_SOURCES})
@@ -1780,6 +1788,16 @@ else()
             ${CMAKE_SOURCE_DIR}/tests/unit/fr_scan_fixture_hook.c)
     set_tests_properties(fr_shadow_scan_outputs_negative fr_shadow_scan_shadow_negative
         fr_shadow_scan_cal_negative fr_shadow_scan_hook_negative PROPERTIES WILL_FAIL TRUE)
+    # groups 27 / 28 (the TOE32 test): the new patterns alone — an output path
+    # naming its state, the gather naming a stock cell it models
+    add_test(NAME fr_shadow_scan_outputs_negative_g28
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fr_shadow_scan.py outputs
+            ${CMAKE_SOURCE_DIR}/tests/unit/fr_scan_fixture_output_g28.c)
+    add_test(NAME fr_shadow_scan_hook_negative_g28
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fr_shadow_scan.py hook
+            ${CMAKE_SOURCE_DIR}/tests/unit/fr_scan_fixture_hook_g28.c)
+    set_tests_properties(fr_shadow_scan_outputs_negative_g28 fr_shadow_scan_hook_negative_g28
+        PROPERTIES WILL_FAIL TRUE)
     # the NVM / EEPROM / DSM-record / fatal scan (g6a_scan.py nvm) on the host
     # objects (the SH objects: tcu_app.elf's POST_BUILD) and its negative
     add_library(fr_nvm_objs OBJECT ${FR_APP_SOURCES})
@@ -1791,6 +1809,11 @@ else()
     add_test(NAME fr_scan_nvm_negative
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py nvm nm $<TARGET_OBJECTS:fr_nvm_fixture>)
     set_tests_properties(fr_scan_nvm_negative PROPERTIES WILL_FAIL TRUE)
+    # groups 27 / 28: the record store 0x87120 by name, the stock fault cell 0x938F6 as data
+    add_library(fr_nvm_fixture_g28 OBJECT tests/unit/fr_nvm_fixture_g28.c)
+    add_test(NAME fr_scan_nvm_negative_g28
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py nvm nm $<TARGET_OBJECTS:fr_nvm_fixture_g28>)
+    set_tests_properties(fr_scan_nvm_negative_g28 PROPERTIES WILL_FAIL TRUE)
     set(FR_SH_SRC ${CMAKE_SOURCE_DIR}/tests/unit/sh_guard_fr.c)
     add_test(NAME fr_sh_guard_control COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} ${FR_SH_SRC})
     add_test(NAME fr_sh_guard_shadow

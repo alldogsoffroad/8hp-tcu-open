@@ -135,7 +135,12 @@ STOCK_FORBIDDEN = ["e8bfa", "e8cf6", "d229e", "f71ec", "a2028", "a1712", "bddb0"
                    # 0x125364) — none may be defined in the image
                    "ba538", "ba52c", "e8774", "e874a", "e82ac", "e82a4", "e8512", "ba54c", "e8842",
                    "aee7a", "ca3a6", "b45e0", "cc9ee", "cdf42", "cdbb4", "a17cc", "dd400", "aeb9a",
-                   "b59f8", "b68d0", "cb7ec", "cbd0e", "10338c", "125308", "1036e0", "125364"]
+                   "b59f8", "b68d0", "cb7ec", "cbd0e", "10338c", "125308", "1036e0", "125364",
+                   # (2026-11-20, ~/tcu_sweep/group28_port.md): the TOE32 test's keep-outs —
+                   # the per-output fault-record store 0x87120 (complement + fatal 0x224 /
+                   # 0x226), the counter 0x86414 (0xFFF939BA), the setter's supplier
+                   # occurrence table 0x7CA24 (0xFFF948B8..)
+                   "87120", "86414", "7ca24"]
 LIT_FORBIDDEN = [0xFFF85174, 0xFFF85175, 0xFFF85176]
 # F1: the EEPROM / NVM / DSM-record / fatal-log cells no fault-reaction shadow
 # object may hold as a literal or a movi20 operand (plan §5, f0 §7)
@@ -145,7 +150,18 @@ LIT_FORBIDDEN_FR = LIT_FORBIDDEN + [0xFFF8E613, 0xFFF8BA30, 0xFFF8E621, 0xFFF8E6
                                     0xFFF8E575, 0xFFF8E577]
 # the DSM image (memory 1 / the ring / the pointer / the UDS status bytes) and
 # the record counts: no literal or movi20 operand inside
-RANGE_FORBIDDEN_FR = [(0xFFF81D58, 0xFFF82E13), (0xFFF85114, 0xFFF85117)]
+RANGE_FORBIDDEN_FR = [(0xFFF81D58, 0xFFF82E13), (0xFFF85114, 0xFFF85117),
+                      # groups 27 / 28 (2026-11-20): the stock cells the TOE32 test models
+                      # — the shadow keeps its own copies in .fr_toe, never names these:
+                      # the countdowns 0x94828..31, 0x94147..4C (cut flag, first call),
+                      # 0x93A7A..83 (duty category), the fault / tested bits 0x938F6..
+                      # 0x93909, the copies 0x9497E..91, the code 0x940D4..D8, the
+                      # summaries 0x940BE..BF, 0x94175..79, the fault occurrence table
+                      # 0x94890..0x94957 (0x7CA24), the counter 0xFFF939BA
+                      (0xFFF94828, 0xFFF94831), (0xFFF94147, 0xFFF9414C), (0xFFF93A7A, 0xFFF93A83),
+                      (0xFFF938F6, 0xFFF93909), (0xFFF9497E, 0xFFF94991), (0xFFF940D4, 0xFFF940D8),
+                      (0xFFF940BE, 0xFFF940BF), (0xFFF94175, 0xFFF94179), (0xFFF94890, 0xFFF94957),
+                      (0xFFF939BA, 0xFFF939BB)]
 # G5b (2026-11-19, ~/tcu_sweep/g5b_port.md, D-G5-7): the stock's mode-2-only
 # functions stay out of the image (with STOCK_FORBIDDEN's 0xE8CF6 / 0xD229E /
 # 0xE8BFA / 0xF71EC): the bulk-save hook 0xE9340, the record write-back
@@ -274,7 +290,7 @@ def scan_nvm(nm, objs, bad):
                 bad.append("%s: holds the EEPROM / NVM / DSM cell 0x%08X (a literal or movi20)" % (o, w))
             for (lo, hi) in RANGE_FORBIDDEN_FR:
                 if lo <= w <= hi:
-                    bad.append("%s: holds 0x%08X inside the DSM image / record counts 0x%08X..0x%08X"
+                    bad.append("%s: holds 0x%08X inside a forbidden range (the DSM image / record counts / the TOE32 test's stock cells) 0x%08X..0x%08X"
                                % (o, w, lo, hi))
 
 
