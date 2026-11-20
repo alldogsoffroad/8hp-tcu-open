@@ -2060,6 +2060,11 @@ static void ddc38(void)
      * (gs_shadow_releasing: BD16 == 4) and the release recorder need it */
     KB.bd16 = 0u;                                         /* ours (see above) */
     gsf_set_bd16(0u);
+    /* r04y: the stock end 0xEBB6C clears BD15 (0xEBBEA mov #0,r11 →
+     * 0xEBBEE mov.b r0,@(1,r13), r13 = 0xFFF8BD14; 0xDDC38 passes 0 at
+     * 0xDDC78). Nothing in our engine reads BD15 (wire-neutral); the dump
+     * holds 00 (shift_engine_gearpair_decode.md) */
+    KB.bd15 = 0u;                                         /* 0xEBBEE */
 }
 
 /* 0x10CDFA */
