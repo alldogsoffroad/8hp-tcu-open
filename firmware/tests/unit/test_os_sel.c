@@ -27,8 +27,8 @@
 #include "safety/kl15.h"
 #include "bsw/sup/sup_mode.h"
 #include "bsw/sup/sup_cells.h"
-#include "bsw/com/crc8.h"
 #include "io/vehicle/vehicle.h"
+#include "io/vehicle/vehicle_inject.h"
 #include "tests/unit/stub_plat.h"
 
 #include <stdbool.h>
@@ -43,20 +43,6 @@ static int fails;
 #define U8(a)   (*(volatile uint8_t *)(uintptr_t)(a))
 #define SUPPLY_KL15 (*(volatile uint16_t *)(uintptr_t)KL15_SRC_CELL)
 
-static uint8_t s_ctr[0x800];
-
-static void send(can_bus_t bus, uint16_t id, uint8_t dlc, bool prot, const uint8_t *data)
-{
-    can_frame_t f = { .id = id, .dlc = dlc };
-
-    memcpy(f.data, data, dlc);
-    if (prot) {
-        s_ctr[id] = (uint8_t)((s_ctr[id] + 1u) & 0x0Fu);
-        f.data[dlc - 2u] = (uint8_t)((f.data[dlc - 2u] & 0x0Fu) | (uint8_t)(s_ctr[id] << 4));
-        f.data[dlc - 1u] = crc8_j1850(f.data, (uint8_t)(dlc - 1u));
-    }
-    vehicle_rx(bus, &f);
-}
 
 /* the bench: 0x108 engine (0xFFFF = no frame), 0x112 code (0xFF = none),
  * the turbine by value, the supply 0x94F86 */
@@ -74,7 +60,6 @@ static bench_t b;
 
 static void reset(void)
 {
-    memset(s_ctr, 0, sizeof s_ctr);
     memset((void *)(uintptr_t)0xFFF80000u, 0, 0x16000u);
     vehicle_init();
     kl15_init();
@@ -116,17 +101,10 @@ static void frame(void)
     }
     os_sel_echo_10ms(os0);
     if (b.engine != 0xFFFFu) {
-        memset(d, 0, sizeof d);
-        d[0] = (uint8_t)(b.engine >> 8);
-        d[1] = (uint8_t)b.engine;
-        d[2] = 0x1Fu;
-        d[3] = 0xFFu;
-        send(CAN_BUS1, 0x108u, 8u, true, d);
+        vehicle_inject_msg_engine(b.engine, 0x1FFFu);
     }
     if (b.ign != 0xFFu) {
-        memset(d, 0, sizeof d);
-        d[0] = b.ign;
-        send(CAN_BUS1, 0x112u, 2u, false, d);
+        vehicle_inject_msg_ign(b.ign);
     }
     vehicle_update_10ms();
     {

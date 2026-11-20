@@ -356,10 +356,18 @@ const sensors_in_t *sensors_in(void) { return &s_z; }
  * (no frame) → no source, the lever kept (profile_fca reported that after its 50 ms
  * timeout); brake 0x140 0x04 → BRAKE_ON; engine 0x108 0x02BC → 700 rpm (T1 0x1FFF →
  * invalid); 0x112 / 0x14B absent → invalid. */
+static bool s_inj_fresh;    /* set by park_run after vehicle_init(): the first inject starts from the
+                             * injector's "no frame received" state (vehicle_inject_reset) */
 static void inject(uint8_t code)
 {
     static const range_req_t map[5] = { RANGE_NONE, RANGE_P, RANGE_R, RANGE_N, RANGE_D };
-    vehicle_in_t v = *vehicle_in();
+    vehicle_in_t v;
+
+    if (s_inj_fresh) {
+        vehicle_inject_reset();
+        s_inj_fresh = false;
+    }
+    v = *vehicle_in();
 
     if (code >= 1u && code <= 4u) {
         v.lever = map[code];
@@ -419,6 +427,7 @@ static void park_run(int mode, park_snap_t *out)
     memset(&s_z, 0, sizeof s_z);
     CELL_TMP_BYTE = 67u;
     vehicle_init();
+    s_inj_fresh = true;
     park_init();
     rng_chain_init();
     kl15_init();

@@ -25,6 +25,9 @@ Two checks:
       The TEST-ONLY injector (io/vehicle/vehicle_inject.c) must never be linked into an
       SH image: fails if any symbol named vehicle_inject* is in an ELF / object.
 
+      Also: no file outside io/vehicle/ and bsw/com/ may #include "io/vehicle/fca_tx.h" or
+      "bsw/com/com.h" (the transmit seam io/vehicle/vehicle_tx.h is the way in).
+
 Exit 1 (and "vehicle seam guard violation") on any hit.
 """
 import os
@@ -78,6 +81,18 @@ def strip(t):
     return re.sub(r'"(\\.|[^"\\\n])*"', '""', t)
 
 
+# the transmit seam (io/vehicle/vehicle_tx.h) and the profile interface are the ONLY way into the
+# vehicle layer: nothing outside io/vehicle/ (the com layer bsw/com/ itself excepted) may include
+# the FCA transmit set or the com layer's header
+INCLUDE_RULE = re.compile(r'^\s*#\s*include\s*"([^"]*/)?(fca_tx|com)\.h"', re.M)
+INCLUDE_EXEMPT = ("io/vehicle/", "bsw/com/")
+
+
+def strip_comments(t):
+    t = re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n"), t, flags=re.S)
+    return re.sub(r"//[^\n]*", " ", t)
+
+
 def vehicle_ids(root):
     ids = set(FR_CAL_SNAPSHOT)
     src = open(os.path.join(root, "io/vehicle/profile_fca.c")).read()
@@ -118,7 +133,13 @@ def scan_ids(argv):
         rel = os.path.relpath(f, root).replace(os.sep, "/")
         if "--only" not in argv and (rel.startswith(SEAM_DIR) or rel in allow):
             continue
-        text = strip(open(f, errors="replace").read())
+        raw = open(f, errors="replace").read()
+        if "--only" in argv or not rel.startswith(INCLUDE_EXEMPT):
+            for m in INCLUDE_RULE.finditer(strip_comments(raw)):
+                n = strip_comments(raw)[:m.end()].count("\n") + 1
+                hits.append(f"{rel}:{n}: includes the vehicle layer's own header "
+                            f"({m.group(2)}.h): use io/vehicle/vehicle.h / vehicle_tx.h")
+        text = strip(raw)
         for n, line in enumerate(text.split("\n"), 1):
             if not CAN_CTX.search(line):
                 continue

@@ -1,6 +1,8 @@
 /* NEGATIVE FIXTURE of tests/unit/vehicle_seam_scan.py (never compiled): vehicle CAN IDs
  * named in code outside io/vehicle/ — every line below must be a hit (ctest
  * vehicle_seam_scan_negative, WILL_FAIL). */
+#include "io/vehicle/fca_tx.h"      /* outside io/vehicle/: refused */
+#include "bsw/com/com.h"
 static void fixture(can_frame_t *f)
 {
     can_frame_t g = { .id = 0x2EAu, .dlc = 5u };    /* the lever frame */

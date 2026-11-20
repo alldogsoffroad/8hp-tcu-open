@@ -26,10 +26,10 @@
 #include "app/park.h"
 #include "app/park_cells.h"
 #include "app/park_law.h"
-#include "bsw/com/crc8.h"
 #include "bsw/drv/drv_park.h"
 #include "bsw/drv/drv_cells.h"
 #include "io/vehicle/vehicle.h"
+#include "io/vehicle/vehicle_inject.h"
 #include "safety/kl15.h"
 #include "safety/park_mon.h"
 #include "tests/unit/stub_plat.h"
@@ -45,20 +45,6 @@ static int fails;
 #define C8(a)   (*(volatile uint8_t *)(uintptr_t)(0xFFF80000u | (uint32_t)(a)))
 #define SUPPLY  (*(volatile uint16_t *)(uintptr_t)KL15_SRC_CELL)
 
-static uint8_t s_ctr[0x800];
-
-static void send(can_bus_t bus, uint16_t id, uint8_t dlc, bool prot, const uint8_t *data)
-{
-    can_frame_t f = { .id = id, .dlc = dlc };
-
-    memcpy(f.data, data, dlc);
-    if (prot) {
-        s_ctr[id] = (uint8_t)((s_ctr[id] + 1u) & 0x0Fu);
-        f.data[dlc - 2u] = (uint8_t)((f.data[dlc - 2u] & 0x0Fu) | (uint8_t)(s_ctr[id] << 4));
-        f.data[dlc - 1u] = crc8_j1850(f.data, (uint8_t)(dlc - 1u));
-    }
-    vehicle_rx(bus, &f);
-}
 
 /* the simulated vehicle: lever (1 P 2 R 3 N 4 D, 0 none), brake, engine,
  * 0x112 code (0xFF = no frame), the OS mode passed to the chain / park */
@@ -73,7 +59,6 @@ static sim_t s;
 
 static void reset(void)
 {
-    memset(s_ctr, 0, sizeof s_ctr);
     memset((void *)(uintptr_t)0xFFF80000u, 0, 0x16000u);
     CELL_TMP_BYTE = 67u;
     vehicle_init();
@@ -92,26 +77,17 @@ static void tick(void)
 
     if (s.lever != 0u) {
         const uint8_t l[5] = { s.lever, 0, 0, 0, 0 };
-        send(CAN_BUS1, 0x2EAu, 5u, true, l);
-        send(CAN_BUS2, 0x210u, 5u, true, l);
+        vehicle_inject_msg_lever(LEVER_SRC_PRIMARY, l[0]);
+        vehicle_inject_msg_lever(LEVER_SRC_FALLBACK, l[0]);
     }
     if (s.brake) {
-        memset(d, 0, sizeof d);
-        d[0] = 0x04u;
-        send(CAN_BUS1, 0x140u, 8u, true, d);
+        vehicle_inject_msg_brake(BRAKE_ON);
     }
     if (s.engine != 0u) {
-        memset(d, 0, sizeof d);
-        d[0] = (uint8_t)(s.engine >> 8);
-        d[1] = (uint8_t)s.engine;
-        d[2] = 0x1Fu;
-        d[3] = 0xFFu;
-        send(CAN_BUS1, 0x108u, 8u, true, d);
+        vehicle_inject_msg_engine(s.engine, 0x1FFFu);
     }
     if (s.ign != 0xFFu) {
-        memset(d, 0, sizeof d);
-        d[0] = s.ign;
-        send(CAN_BUS1, 0x112u, 2u, false, d);
+        vehicle_inject_msg_ign(s.ign);
     }
     vehicle_update_10ms();
     kl15_tick_10ms();

@@ -34,10 +34,10 @@
 #include "app/park.h"
 #include "app/park_cells.h"
 #include "app/range.h"
-#include "bsw/com/crc8.h"
 #include "bsw/drv/drv_park.h"
 #include "bsw/drv/drv_cells.h"
 #include "io/vehicle/vehicle.h"
+#include "io/vehicle/vehicle_inject.h"
 #include "tests/unit/stub_plat.h"
 
 #include <stdio.h>
@@ -50,19 +50,6 @@ static int fails;
     printf("FAIL %s:%d %s = %ld, expected %ld\n", __FILE__, __LINE__, #a, _a, _b); fails++; } } while (0)
 
 
-static uint8_t s_ctr[0x800];
-
-static void send(can_bus_t bus, uint16_t id, uint8_t dlc, bool prot, const uint8_t *data)
-{
-    can_frame_t f = { .id = id, .dlc = dlc };
-    memcpy(f.data, data, dlc);
-    if (prot) {
-        s_ctr[id] = (uint8_t)((s_ctr[id] + 1u) & 0x0Fu);
-        f.data[dlc - 2u] = (uint8_t)((f.data[dlc - 2u] & 0x0Fu) | (uint8_t)(s_ctr[id] << 4));
-        f.data[dlc - 1u] = crc8_j1850(f.data, (uint8_t)(dlc - 1u));
-    }
-    vehicle_rx(bus, &f);
-}
 
 /* 0x2EA lever codes: 1 P, 2 R, 3 N, 4 D (0 = no frame) */
 static void lever_frame(uint8_t code)
@@ -70,8 +57,8 @@ static void lever_frame(uint8_t code)
     uint8_t l[5] = { code, 0, 0, 0, 0 };
 
     if (code != 0u) {
-        send(CAN_BUS1, 0x2EAu, 5u, true, l);
-        send(CAN_BUS2, 0x210u, 5u, true, l);
+        vehicle_inject_msg_lever(LEVER_SRC_PRIMARY, l[0]);
+        vehicle_inject_msg_lever(LEVER_SRC_FALLBACK, l[0]);
     }
 }
 
@@ -167,17 +154,10 @@ static void sim_frames(void)
     uint8_t d[8];
 
     if (s_sim.brake || s_sim.brake_off) {
-        memset(d, 0, sizeof d);
-        d[0] = s_sim.brake ? 0x04u : 0x00u;
-        send(CAN_BUS1, 0x140u, 8u, true, d);
+        vehicle_inject_msg_brake(s_sim.brake ? BRAKE_ON : BRAKE_OFF);
     }
     if (s_sim.engine != 0u) {
-        memset(d, 0, sizeof d);
-        d[0] = (uint8_t)(s_sim.engine >> 8);
-        d[1] = (uint8_t)s_sim.engine;
-        d[2] = 0x1Fu;                       /* torque T1 invalid (0x1FFF) */
-        d[3] = 0xFFu;
-        send(CAN_BUS1, 0x108u, 8u, true, d);
+        vehicle_inject_msg_engine(s_sim.engine, 0x1FFFu);
     }
 }
 
@@ -188,7 +168,6 @@ static void (*s_mut)(uint32_t t);
 /* the firmware's 10 ms order over a schedule */
 static void run(const uint8_t *sched, uint32_t nseg, shad_t *sh)
 {
-    memset(s_ctr, 0, sizeof s_ctr);
     /* every run from a zeroed stock cell window */
     memset((void *)(uintptr_t)0xFFF80000u, 0, 0x16000u);
     CELL_TMP_BYTE = 67u;
@@ -881,7 +860,6 @@ static void park_check_print(bool sims, bool before_power)
     };
     uint8_t d[8];
 
-    memset(s_ctr, 0, sizeof s_ctr);
     memset((void *)(uintptr_t)0xFFF80000u, 0, 0x16000u);
     CELL_TMP_BYTE = 67u;
     vehicle_init();
@@ -897,32 +875,17 @@ static void park_check_print(bool sims, bool before_power)
 
         for (uint32_t t = 0u; t < n; t++) {
             if (k >= 0 && (st[k].a || st[k].c)) {
-                uint8_t l[5] = { st[k].code, 0, 0, 0, 0 };
-                if (st[k].a) {
-                    s_ctr[0x2EA] = (uint8_t)((s_ctr[0x2EA] + 1u) & 0x0Fu);
-                    l[3] = (uint8_t)(s_ctr[0x2EA] << 4);
-                    l[4] = (uint8_t)(crc8_j1850(l, 4u) ^ (st[k].bad ? 0x55u : 0u));
-                    {
-                        can_frame_t f = { .id = 0x2EAu, .dlc = 5u };
-                        memcpy(f.data, l, 5u);
-                        vehicle_rx(CAN_BUS1, &f);
-                    }
+                if (st[k].a && !st[k].bad) {   /* a bad-CRC frame is simply not delivered */
+                    vehicle_inject_msg_lever(LEVER_SRC_PRIMARY, st[k].code);
                 }
                 if (st[k].c) {
                     const uint8_t m[5] = { st[k].code, 0, 0, 0, 0 };
-                    send(CAN_BUS2, 0x210u, 5u, true, m);
+                    vehicle_inject_msg_lever(LEVER_SRC_FALLBACK, m[0]);
                 }
             }
             if (sims && (k >= 0 || before_power)) {
-                memset(d, 0, sizeof d);
-                d[0] = 0x04u;
-                send(CAN_BUS1, 0x140u, 8u, true, d);
-                memset(d, 0, sizeof d);
-                d[0] = 0x02u;
-                d[1] = 0xBCu;
-                d[2] = 0x1Fu;
-                d[3] = 0xFFu;
-                send(CAN_BUS1, 0x108u, 8u, true, d);
+                vehicle_inject_msg_brake(BRAKE_ON);
+                vehicle_inject_msg_engine(0x02BCu, 0x1FFFu);   /* 700 rpm */
             }
             vehicle_update_10ms();
             kl15_tick_10ms();

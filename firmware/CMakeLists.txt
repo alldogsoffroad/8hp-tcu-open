@@ -322,6 +322,21 @@ else()
     bsw/drv/drv_handlers.c
     bsw/com/crc8.c io/vehicle/fca_tx.c tests/unit/stub_plat.c)
     add_test(NAME com_tx COMMAND test_com_tx)
+    # the message-level injector against the FCA profile, in lockstep (both interfaces compiled under
+    # renamed symbols): vehicle_in() must be identical after every update
+    add_library(vinj_fca OBJECT io/vehicle/profile_fca.c bsw/com/com.c)
+    target_compile_definitions(vinj_fca PRIVATE TCU_VEHICLE_FCA=1 vehicle_init=fca_vehicle_init
+        vehicle_rx=fca_vehicle_rx vehicle_update_10ms=fca_vehicle_update_10ms vehicle_in=fca_vehicle_in)
+    add_library(vinj_inj OBJECT io/vehicle/vehicle_inject.c)
+    target_compile_definitions(vinj_inj PRIVATE vehicle_init=inj_vehicle_init vehicle_rx=inj_vehicle_rx
+        vehicle_update_10ms=inj_vehicle_update_10ms vehicle_in=inj_vehicle_in)
+    add_executable(test_vehicle_inject_equiv tests/unit/test_vehicle_inject_equiv.c
+        $<TARGET_OBJECTS:vinj_fca> $<TARGET_OBJECTS:vinj_inj> bsw/com/crc8.c tests/unit/stub_plat.c)
+    add_test(NAME vehicle_inject_equiv COMMAND test_vehicle_inject_equiv)
+    add_executable(test_vehicle_tx tests/unit/test_vehicle_tx.c
+        io/vehicle/fca_tx.c bsw/com/com.c bsw/com/com_tx.c bsw/com/sigpack.c bsw/com/crc8.c
+        tests/unit/stub_plat.c)
+    add_test(NAME vehicle_tx COMMAND test_vehicle_tx)
     add_executable(test_sensors tests/unit/test_sensors.c io/sensors/adc.c io/sensors/speed.c
         io/sensors/tft.c io/sensors/sensors.c tests/unit/stub_plat.c)
     add_test(NAME sensors COMMAND test_sensors)
@@ -333,7 +348,7 @@ else()
         bsw/sup/sup_jobs.c bsw/sup/sup_handlers.c bsw/sup/sup_ctrl.c bsw/sup/sup_batch.c
         bsw/sup/sup_letters.c bsw/sup/sup_ladder.c bsw/sup/sup_mode.c bsw/sup/sup_walk.c bsw/sup/sup_token.c bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
         bsw/diag/uds.c bsw/diag/isotp.c bsw/diag/boot_record.c
-        io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
+        io/vehicle/vehicle_inject.c io/vehicle/vehicle.c bsw/com/crc8.c
         tests/unit/stub_plat.c)
     target_compile_definitions(test_bench PRIVATE TCU_M4B_OUTPUTS)
     add_test(NAME bench COMMAND test_bench)
@@ -342,7 +357,7 @@ else()
     # 0xE8888, the cross-check, driven from CAN lever frames; the slot
     # getters into the request law's on-time limit
     add_executable(test_park tests/unit/test_park.c app/range.c app/park_law.c app/park.c
-        safety/park_mon.c io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c
+        safety/park_mon.c io/vehicle/vehicle_inject.c io/vehicle/vehicle.c
         bsw/com/crc8.c bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
         tests/unit/stub_plat.c)
     add_test(NAME park COMMAND test_park)
@@ -641,7 +656,7 @@ else()
     # independent checks with mutations of the chain's output
     set(RNG_TEST_SOURCES app/rng_chain.c safety/kl15.c
         app/range.c app/park_law.c app/park.c safety/park_mon.c bsw/sched/sched.c
-        io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
+        io/vehicle/vehicle_inject.c io/vehicle/vehicle.c bsw/com/crc8.c
         bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
         tests/unit/stub_plat.c)
     add_executable(test_rng_chain tests/unit/test_rng_chain.c ${RNG_TEST_SOURCES})
@@ -670,7 +685,7 @@ else()
     # produced by this same program built against that tree)
     add_executable(test_rng_wire tests/unit/test_rng_wire.c app/rng_chain.c safety/kl15.c
         app/range.c app/park_law.c app/park.c safety/park_mon.c bsw/sched/sched.c
-        io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
+        io/vehicle/vehicle_inject.c io/vehicle/vehicle.c bsw/com/crc8.c
         app/rq_prod.c app/rq_fill.c app/rq_fill_cal.c
         bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
         tests/unit/stub_plat.c)
@@ -740,7 +755,7 @@ else()
     set(GS_TEST_SOURCES tests/unit/test_gs_shadow.c tests/unit/gs_ref_shadow.c app/gs_fill.c app/gs_cal.c app/gs_bridge.c
         app/rng_chain.c safety/kl15.c
         app/range.c app/park_law.c app/park.c safety/park_mon.c bsw/sched/sched.c
-        io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
+        io/vehicle/vehicle_inject.c io/vehicle/vehicle.c bsw/com/crc8.c
         app/rq_prod.c app/rq_fill.c app/rq_fill_cal.c
         bsw/drv/drv_jobs.c bsw/drv/drv_reqlaw.c bsw/drv/drv_odiag.c bsw/drv/drv_handlers.c
         tests/unit/stub_plat.c)
@@ -1409,7 +1424,7 @@ else()
         app/rq_prod.c app/rq_fill.c app/rq_fill_cal.c
         app/gs_cal.c app/gs_bridge.c
         app/rng_chain.c safety/kl15.c app/range.c app/park_law.c app/park.c safety/park_mon.c
-        bsw/sched/sched.c io/vehicle/profile_fca.c io/vehicle/vehicle.c bsw/com/com.c bsw/com/crc8.c
+        bsw/sched/sched.c io/vehicle/vehicle_inject.c io/vehicle/vehicle.c bsw/com/crc8.c
         tests/unit/stub_plat.c)
     set(GSB_CHAIN_DEFS SUP_L1_HOLD_PHASE8_REQUEST=0 SUP_L1_HOLD_PHASE40=0 SUP_L1_HOLD_FAIL_FSM=0
         SUP_L3_HOLD_SEQ_L=0 DRV_RQ_USE_PRODUCER=1 GS_FORCED=1)

@@ -51,6 +51,7 @@
 #include "bsw/drv/drv_rqprod.h"
 #include "io/sensors/sensors.h"
 #include "io/vehicle/vehicle.h"
+#include "io/vehicle/vehicle_inject.h"
 #include "safety/kl15.h"
 #include "safety/park_mon.h"
 #if defined(G5B_SEL)
@@ -67,7 +68,7 @@ static uint8_t s_sm_ph, s_sm_on;
 
 #if defined(FR_TEST)
 /* F1 (2026-11-19, ~/tcu_sweep/f1_fr_shadow_port.md): THE FAULT-REACTION
- * SHADOW's live identity — the raw frames (g_send, before vehicle_rx) and the
+ * SHADOW's live identity — the raw frames (g_tap, the fr tap only) and the
  * 10 ms tick at app/main.c's slot (after the monitor, before the gear chain);
  * needs SM_TEST (the hinge's healthy-chain inputs) */
 #include "app/fr_shadow.h"
@@ -283,8 +284,12 @@ static sensors_in_t g_z;
 const sensors_in_t *sensors_in(void) { return &g_z; }
 
 /* ── the vehicle sims (the gs-check: lever + brake + engine 700) ───────── */
+#if defined(FR_TEST)
+/* The fault-reaction shadow takes the RAW FCA frame (its comm monitor genuinely needs
+ * frames: app/fr_hook.c, D-FR-8); the vehicle inputs go through the neutral injector
+ * (io/vehicle/vehicle_inject.h) — vehicle_in() no longer depends on the FCA profile. */
 static uint8_t g_ctr[0x800];
-static void g_send(can_bus_t bus, uint16_t id, uint8_t dlc, bool prot, const uint8_t *data)
+static void g_tap(can_bus_t bus, uint16_t id, uint8_t dlc, bool prot, const uint8_t *data)
 {
     can_frame_t f = { .id = id, .dlc = dlc };
     memcpy(f.data, data, dlc);
@@ -293,11 +298,11 @@ static void g_send(can_bus_t bus, uint16_t id, uint8_t dlc, bool prot, const uin
         f.data[dlc - 2u] = (uint8_t)((f.data[dlc - 2u] & 0x0Fu) | (uint8_t)(g_ctr[id] << 4));
         f.data[dlc - 1u] = crc8_j1850(f.data, (uint8_t)(dlc - 1u));
     }
-#if defined(FR_TEST)
     fr_hook_rx((uint8_t)bus, f.id, f.dlc, f.data);    /* app/main.c: the raw frame first */
-#endif
-    vehicle_rx(bus, &f);
 }
+#else
+#  define g_tap(bus, id, dlc, prot, data) ((void)0)
+#endif
 
 #define GFRAMES 1420u
 #define K_D     60u             /* frames after the mode-1 switch: lever D */
@@ -499,12 +504,15 @@ static void task10(gr_t *g, unsigned p)
     {
     {
         const uint8_t l[5] = { lev, 0, 0, 0, 0 };
-        g_send(CAN_BUS1, 0x2EAu, 5u, true, l);
-        g_send(CAN_BUS2, 0x210u, 5u, true, l);
+        vehicle_inject_msg_lever(LEVER_SRC_PRIMARY, l[0]);
+        vehicle_inject_msg_lever(LEVER_SRC_FALLBACK, l[0]);
+        g_tap(CAN_BUS1, 0x2EAu, 5u, true, l);
+        g_tap(CAN_BUS2, 0x210u, 5u, true, l);
     }
+    vehicle_inject_msg_brake(BRAKE_ON);                 /* brake on */
     memset(d, 0, sizeof d);
-    d[0] = 0x04u;                                   /* brake on */
-    g_send(CAN_BUS1, 0x140u, 8u, true, d);
+    d[0] = 0x04u;
+    g_tap(CAN_BUS1, 0x140u, 8u, true, d);
     memset(d, 0, sizeof d);
     d[0] = (uint8_t)(rpm >> 8);
     d[1] = (uint8_t)rpm;
@@ -516,7 +524,8 @@ static void task10(gr_t *g, unsigned p)
                          !(g5b_keyon_from != 0u && p >= g->m1 + g5b_keyon_from);
         memset(d, 0, sizeof d);
         d[0] = off ? 0u : 4u;
-        g_send(CAN_BUS1, 0x112u, 2u, false, d);     /* the ignition status */
+        vehicle_inject_msg_ign(d[0]);                /* the ignition status */
+        g_tap(CAN_BUS1, 0x112u, 2u, false, d);
     }
 #endif
     {
@@ -538,7 +547,8 @@ static void task10(gr_t *g, unsigned p)
         }
 #endif
         if (send108) {
-            g_send(CAN_BUS1, 0x108u, 8u, true, d);  /* engine 700 */
+            vehicle_inject_msg_engine((uint16_t)((unsigned)d[0] << 8 | d[1]), (uint16_t)(((unsigned)d[2] << 8 | d[3]) & 0x1FFFu));  /* engine 700 */
+            g_tap(CAN_BUS1, 0x108u, 8u, true, d);
 #if defined(G5B_SEL)
             if (mode >= 1u && g->g5b_e1 == 0u) {
                 g->g5b_e1 = p;                      /* G5b: the first 0x108 a mode-1..3 task sent */
@@ -931,7 +941,9 @@ static void run_g(gr_t *g)
         }
     }
 #endif
+#if defined(FR_TEST)
     memset(g_ctr, 0, sizeof g_ctr);
+#endif
     memset(&g_z, 0, sizeof g_z);
     g_z.q_output_speed = Q_OK;
     g_z.q_turbine_speed = Q_OK;

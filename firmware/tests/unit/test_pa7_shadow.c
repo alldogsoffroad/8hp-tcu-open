@@ -41,9 +41,9 @@
 #include "app/rng_chain.h"
 #include "safety/kl15.h"
 #include "app/park.h"
-#include "bsw/com/crc8.h"
 #include "bsw/drv/drv_cells.h"
 #include "io/vehicle/vehicle.h"
+#include "io/vehicle/vehicle_inject.h"
 #include "tests/unit/stub_plat.h"
 
 #include <stdio.h>
@@ -59,20 +59,7 @@ static int fails;
 #define W16(a)  (*(volatile int16_t  *)(uintptr_t)(0xFFF80000u | (uint32_t)(a)))
 
 static const volatile pa7s_t *P;
-static uint8_t s_ctr[0x800];
 static uint32_t s_ms;           /* host ms since boot */
-
-static void send(can_bus_t bus, uint16_t id, uint8_t dlc, bool prot, const uint8_t *data)
-{
-    can_frame_t f = { .id = id, .dlc = dlc };
-    memcpy(f.data, data, dlc);
-    if (prot) {
-        s_ctr[id] = (uint8_t)((s_ctr[id] + 1u) & 0x0Fu);
-        f.data[dlc - 2u] = (uint8_t)((f.data[dlc - 2u] & 0x0Fu) | (uint8_t)(s_ctr[id] << 4));
-        f.data[dlc - 1u] = crc8_j1850(f.data, (uint8_t)(dlc - 1u));
-    }
-    vehicle_rx(bus, &f);
-}
 
 /* the bench around the TCU: the supervisor nibble, AN7, the supply */
 static uint8_t s_nib;
@@ -95,7 +82,6 @@ static void live_env(void)
 
 static void boot(void)
 {
-    memset(s_ctr, 0, sizeof s_ctr);
     memset((void *)(uintptr_t)0xFFF80000u, 0, 0x16000u);
     s_ms = 0u;
     s_nib = 0u;
@@ -226,34 +212,18 @@ static const struct { const char *d; uint8_t code; bool a, c, bad; uint8_t pa7_n
 
 static void pc_frames(void)
 {
-    uint8_t d[8];
     if (s_step >= 0 && (ST[s_step].a || ST[s_step].c)) {
-        if (ST[s_step].a) {
-            uint8_t l[5] = { ST[s_step].code, 0, 0, 0, 0 };
-            s_ctr[0x2EA] = (uint8_t)((s_ctr[0x2EA] + 1u) & 0x0Fu);
-            l[3] = (uint8_t)(s_ctr[0x2EA] << 4);
-            l[4] = (uint8_t)(crc8_j1850(l, 4u) ^ (ST[s_step].bad ? 0x55u : 0u));
-            {
-                can_frame_t f = { .id = 0x2EAu, .dlc = 5u };
-                memcpy(f.data, l, 5u);
-                vehicle_rx(CAN_BUS1, &f);
-            }
-        }
+        if (ST[s_step].a && !ST[s_step].bad) {   /* a bad-CRC frame is not delivered */
+                    vehicle_inject_msg_lever(LEVER_SRC_PRIMARY, ST[s_step].code);
+                }
         if (ST[s_step].c) {
             const uint8_t m[5] = { ST[s_step].code, 0, 0, 0, 0 };
-            send(CAN_BUS2, 0x210u, 5u, true, m);
+            vehicle_inject_msg_lever(LEVER_SRC_FALLBACK, m[0]);
         }
     }
     if (s_sims) {
-        memset(d, 0, sizeof d);
-        d[0] = 0x04u;
-        send(CAN_BUS1, 0x140u, 8u, true, d);
-        memset(d, 0, sizeof d);
-        d[0] = 0x02u;                       /* 700 rpm */
-        d[1] = 0xBCu;
-        d[2] = 0x1Fu;
-        d[3] = 0xFFu;
-        send(CAN_BUS1, 0x108u, 8u, true, d);
+        vehicle_inject_msg_brake(BRAKE_ON);
+        vehicle_inject_msg_engine(0x02BCu, 0x1FFFu);   /* 700 rpm */
     }
 }
 

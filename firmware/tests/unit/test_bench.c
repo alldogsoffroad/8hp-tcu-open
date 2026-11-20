@@ -8,11 +8,11 @@
 #include "bsw/sup/sup_letters.h"
 #include "bsw/sup/sup_ladder.h"
 #include "bsw/sup/sup_cells.h"
-#include "bsw/com/crc8.h"
 #include "io/actuators/sol_ctl.h"
 #include "bsw/drv/drv_jobs.h"
 #include "bsw/drv/drv_cells.h"
 #include "io/vehicle/vehicle.h"
+#include "io/vehicle/vehicle_inject.h"
 #include "tests/unit/stub_plat.h"
 
 #include <stdio.h>
@@ -91,15 +91,8 @@ static void run_10ms(unsigned n)
 
 static void engine_rpm(uint16_t rpm)
 {
-    static uint8_t ctr;
-    can_frame_t f = { .id = 0x108u, .dlc = 8u };
-    memset(f.data, 0, 8u);
-    f.data[0] = (uint8_t)(rpm >> 8);
-    f.data[1] = (uint8_t)rpm;
-    ctr = (uint8_t)((ctr + 1u) & 0x0Fu);
-    f.data[6] = (uint8_t)(ctr << 4);
-    f.data[7] = crc8_j1850(f.data, 7u);
-    vehicle_rx(CAN_BUS1, &f);
+    /* one fresh, valid engine message (T1 raw 0: valid); vehicle-neutral injector */
+    vehicle_inject_msg_engine(rpm, 0u);
 }
 
 static bool start(uint8_t ch, uint16_t ma, uint8_t s)

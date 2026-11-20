@@ -35,7 +35,6 @@
 #include "app/park_law.h"
 #include "app/rq_prod.h"
 #include "app/rng_chain.h"
-#include "bsw/com/crc8.h"
 #include "bsw/drv/drv_cells.h"
 #include "bsw/drv/drv_jobs.h"
 #include "bsw/drv/drv_park.h"
@@ -44,6 +43,7 @@
 #include "bsw/sup/sup_cells.h"
 #include "io/sensors/sensors.h"
 #include "io/vehicle/vehicle.h"
+#include "io/vehicle/vehicle_inject.h"
 #include "safety/kl15.h"
 #include "tests/unit/stub_plat.h"
 
@@ -89,19 +89,6 @@ static int s_fail;
 #endif
 #define CHECK(c, ...) do { if (!(c)) { printf("FAIL %s:%d: ", __FILE__, __LINE__); \
     printf(__VA_ARGS__); printf("\n"); s_fail++; } } while (0)
-
-static uint8_t s_ctr[0x800];
-static void send(can_bus_t bus, uint16_t id, uint8_t dlc, bool prot, const uint8_t *data)
-{
-    can_frame_t f = { .id = id, .dlc = dlc };
-    memcpy(f.data, data, dlc);
-    if (prot) {
-        s_ctr[id] = (uint8_t)((s_ctr[id] + 1u) & 0x0Fu);
-        f.data[dlc - 2u] = (uint8_t)((f.data[dlc - 2u] & 0x0Fu) | (uint8_t)(s_ctr[id] << 4));
-        f.data[dlc - 1u] = crc8_j1850(f.data, (uint8_t)(dlc - 1u));
-    }
-    vehicle_rx(bus, &f);
-}
 
 typedef struct {
     const char *name;
@@ -186,7 +173,6 @@ typedef void (*tick_cb_t)(uint32_t t, uint8_t lever);
 /* run one scenario; returns per-tick hashes into hs (n ticks) */
 static void run(const scen_t *sc, bool shadow, uint64_t *hs, tick_cb_t cb)
 {
-    memset(s_ctr, 0, sizeof s_ctr);
     memset((void *)(uintptr_t)0xFFF80000u, 0, 0x16000u);
     memset(&s_z, 0, sizeof s_z);
     s_z.q_output_speed = Q_OK;
@@ -227,21 +213,14 @@ static void run(const scen_t *sc, bool shadow, uint64_t *hs, tick_cb_t cb)
         if (code != 0u && t >= sc->lever_from &&
             !(t >= sc->gap_from && t < sc->gap_from + sc->gap_len)) {
             const uint8_t l[5] = { code, 0, 0, 0, 0 };
-            send(CAN_BUS1, 0x2EAu, 5u, true, l);
-            send(CAN_BUS2, 0x210u, 5u, true, l);
+            vehicle_inject_msg_lever(LEVER_SRC_PRIMARY, l[0]);
+            vehicle_inject_msg_lever(LEVER_SRC_FALLBACK, l[0]);
         }
         if (sc->brake) {
-            memset(d, 0, sizeof d);
-            d[0] = 0x04u;
-            send(CAN_BUS1, 0x140u, 8u, true, d);
+            vehicle_inject_msg_brake(BRAKE_ON);
         }
         if (sc->engine != 0u) {
-            memset(d, 0, sizeof d);
-            d[0] = (uint8_t)(sc->engine >> 8);
-            d[1] = (uint8_t)sc->engine;
-            d[2] = 0x1Fu;
-            d[3] = 0xFFu;
-            send(CAN_BUS1, 0x108u, 8u, true, d);
+            vehicle_inject_msg_engine(sc->engine, 0x1FFFu);
         }
         /* main.c's task_10ms order */
         rq_prod_task_10ms(1u);

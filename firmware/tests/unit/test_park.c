@@ -11,11 +11,11 @@
  */
 #include "app/park.h"
 #include "app/park_cells.h"
-#include "bsw/com/crc8.h"
 #include "bsw/drv/drv_cells.h"
 #include "bsw/drv/drv_park.h"
 #include "bsw/drv/drv_reqlaw.h"
 #include "io/vehicle/vehicle.h"
+#include "io/vehicle/vehicle_inject.h"
 #include "tests/unit/stub_plat.h"
 
 #include <stdio.h>
@@ -46,26 +46,11 @@ static struct {
     uint16_t spd14b;            /* 0x14B raw (0 = no frame) */
 } sc;
 
-static uint8_t s_ctr[0x800];
 static unsigned s_bound_violations;
-
-static void send(can_bus_t bus, uint16_t id, uint8_t dlc, bool prot, const uint8_t *data)
-{
-    can_frame_t f = { .id = id, .dlc = dlc };
-
-    memcpy(f.data, data, dlc);
-    if (prot) {
-        s_ctr[id] = (uint8_t)((s_ctr[id] + 1u) & 0x0Fu);
-        f.data[dlc - 2u] = (uint8_t)((f.data[dlc - 2u] & 0x0Fu) | (uint8_t)(s_ctr[id] << 4));
-        f.data[dlc - 1u] = crc8_j1850(f.data, (uint8_t)(dlc - 1u));
-    }
-    vehicle_rx(bus, &f);
-}
 
 static void reset_all(void)
 {
     memset(&sc, 0, sizeof sc);
-    memset(s_ctr, 0, sizeof s_ctr);
     s_bound_violations = 0u;
     CELL_TMP_BYTE = 67u;            /* 27 °C: the dump's 0x89C13 = 0x43 */
     vehicle_init();
@@ -79,27 +64,17 @@ static void step(void)
 
     if (sc.lever_code != 0u) {
         const uint8_t l[5] = { sc.lever_code, 0, 0, 0, 0 };
-        send(CAN_BUS1, 0x2EAu, 5u, true, l);
-        send(CAN_BUS2, 0x210u, 5u, true, l);
+        vehicle_inject_msg_lever(LEVER_SRC_PRIMARY, l[0]);
+        vehicle_inject_msg_lever(LEVER_SRC_FALLBACK, l[0]);
     }
     if (sc.brake) {
-        memset(d, 0, sizeof d);
-        d[0] = 0x04u;
-        send(CAN_BUS1, 0x140u, 8u, true, d);
+        vehicle_inject_msg_brake(BRAKE_ON);
     }
     if (sc.engine != 0u) {
-        memset(d, 0, sizeof d);
-        d[0] = (uint8_t)(sc.engine >> 8);
-        d[1] = (uint8_t)sc.engine;
-        d[2] = 0x1Fu;
-        d[3] = 0xFFu;
-        send(CAN_BUS1, 0x108u, 8u, true, d);
+        vehicle_inject_msg_engine(sc.engine, 0x1FFFu);
     }
     if (sc.spd14b != 0u) {
-        memset(d, 0, sizeof d);
-        d[0] = (uint8_t)(sc.spd14b >> 8);
-        d[1] = (uint8_t)sc.spd14b;
-        send(CAN_BUS1, 0x14Bu, 8u, true, d);
+        vehicle_inject_msg_park_speed(sc.spd14b);
     }
     vehicle_update_10ms();
     park_tick_10ms();

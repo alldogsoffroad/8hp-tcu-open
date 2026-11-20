@@ -21,12 +21,11 @@
 #include "bsw/drv/drv_groupa.h"
 #include "bsw/drv/drv_temp.h"
 #include "bsw/drv/drv_pksens.h"
-#include "bsw/com/com.h"
 #include "bsw/meas/meas.h"
 #include "bsw/diag/uds.h"
 #include "io/sensors/sensors.h"
 #include "io/vehicle/vehicle.h"
-#include "io/vehicle/fca_tx.h"
+#include "io/vehicle/vehicle_tx.h"
 #include "io/vehicle/diag_ids.h"
 #include "io/vehicle/shadow_sim.h"   /* TCU_SHADOW_SIM: bench-only, feeds the shadows' hooks only */
 #include "io/actuators/sol_ctl.h"
@@ -221,7 +220,7 @@ static void task_1ms(void)
         }
     }
     uds_tick_1ms();
-    fca_tx_tick_1ms();
+    vehicle_tx_tick_1ms();
     flash_entry_tick_1ms();             /* FE30 handover countdown (spec 16) */
     /* the bus-A diag job 3.8 ms after each cyclic (stock: the DCNTD02
      * one-shot 0x92060 → ISR 0x92078 → 0x9225C; ours polled: drv_odiag.c),
@@ -624,10 +623,10 @@ int main(void)
 #endif
     park_pair_init();                   /* park sensor: 0x141B1C (safety layer) */
     sensors_init(&s_sensors_cfg);
-    fca_tx_init();
+    vehicle_tx_init();
     meas_table_init();                  /* meas_init with the project index list */
     uds_init(&s_uds_app);
-    (void)com_register_hw();
+    (void)vehicle_hw_register();
     plat_can_rx_commit();               /* ascending-id mailboxes: the RCAN ID-reorder
                                          * hardware drops ids whose search crosses an
                                          * unsorted inversion (bench 2026-11-03) */
