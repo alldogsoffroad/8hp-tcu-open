@@ -31,7 +31,7 @@ session for the dynamic signals and the TCM's transmit set.
 2. CAN-H / CAN-L from the ECM connector to the Teensy logger, with 120 Ω termination at the
    logger end (the ECM may terminate the other end — measure H-L resistance with power off:
    ≈ 60 Ω = both ends terminated, ≈ 120 Ω = one end).
-3. Record listen-only first: `python3 tools/bench/tcu_bench.py log --file <capture>.log`
+3. Record listen-only first: `python3 tools/bench/tcu_bench.py log <capture>.log`
    (listen-only, automatic bit rate; records the bit rate it locks to). Expected 500 kbit/s [I —
    unverified for this ECU].
 4. Never transmit to the bench ECU in the first session. Never connect it to the TCU bench bus.
