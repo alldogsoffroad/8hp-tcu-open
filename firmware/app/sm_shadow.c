@@ -37,7 +37,7 @@ _Static_assert(SM_SI_PEDAL == 23u && SM_SI_GEAR == 3, "dump A786 = 0x17, 0x89C28
 /* 0x121432: {u32 n, u8 t[n]}; out of range → (error 77) index 0 */
 static uint8_t remap(uint8_t k)
 {
-    return sm_cal_remap[k < 100u ? k : 0u];
+    return cal_u8(CAL_SM_REMAP + (k < 100u ? k : 0u));
 }
 
 /* 0x1214B4: {u32 n1, u32 n2, u8 t[c + r*n1]}; out of range → (error 77) 0, 0 */
@@ -57,46 +57,49 @@ static uint16_t sat16(int32_t v)
 }
 
 /* ── 0x121A56: the bilinear map lookup (integer, clamped) ───────────────── */
-static uint16_t lut(const sm_map_t *m, uint16_t x, uint16_t y)
+static uint16_t lut(uint32_t map, uint16_t x, uint16_t y)
 {
-    const unsigned nx = m->nx, ny = m->ny;
+    /* the stock map object in place: {u32 nx, u32 ny, u16 xa[nx], u16 ya[ny], u16 z[ny][nx]} */
+    const unsigned nx = cal_u32(map), ny = cal_u32(map + 4u);
+#define M_XA(i) cal_u16(map + 8u + 2u * (i))
+#define M_YA(i) cal_u16(map + 8u + 2u * nx + 2u * (i))
+#define M_Z(i)  cal_u16(map + 8u + 2u * (nx + ny) + 2u * (i))
     unsigned ix, iy;
     uint32_t dx, wx, dy, wy;
-    if (!(x > m->xa[0])) {
+    if (!(x > M_XA(0))) {
         dx = 0u; wx = 0u; ix = 0u;
-    } else if (x >= m->xa[nx - 1u]) {
+    } else if (x >= M_XA(nx - 1u)) {
         dx = 1u; wx = 1u; ix = nx - 2u;
     } else {
         unsigned k = 0u;
-        while (x > m->xa[k]) {
+        while (x > M_XA(k)) {
             k++;
         }
         ix = k - 1u;
-        dx = (uint32_t)(x - m->xa[k - 1u]);
-        wx = (uint32_t)(m->xa[k] - m->xa[k - 1u]);
+        dx = (uint32_t)(x - M_XA(k - 1u));
+        wx = (uint32_t)(M_XA(k) - M_XA(k - 1u));
     }
-    if (!(y > m->ya[0])) {
+    if (!(y > M_YA(0))) {
         dy = 0u; iy = 0u;
-        wy = (uint32_t)(m->ya[1] - m->ya[0]);
-    } else if (y >= m->ya[ny - 1u]) {
+        wy = (uint32_t)(M_YA(1) - M_YA(0));
+    } else if (y >= M_YA(ny - 1u)) {
         dy = 1u; wy = 1u; iy = ny - 2u;
     } else {
         unsigned k = 0u;
-        while (y > m->ya[k]) {
+        while (y > M_YA(k)) {
             k++;
         }
         iy = k - 1u;
-        dy = (uint32_t)(y - m->ya[k - 1u]);
-        wy = (uint32_t)(m->ya[k] - m->ya[k - 1u]);
+        dy = (uint32_t)(y - M_YA(k - 1u));
+        wy = (uint32_t)(M_YA(k) - M_YA(k - 1u));
     }
-    const uint16_t *r0 = &m->z[iy * nx + ix];
-    const uint16_t *r1 = r0 + nx;
+    const unsigned o0 = iy * nx + ix, o1 = o0 + nx;
     uint32_t a, b;
     if (dx == 0u) {
-        a = r0[0];
-        b = r1[0];
+        a = M_Z(o0);
+        b = M_Z(o1);
     } else {
-        const uint32_t a1 = r0[0], a2 = r0[1], b1 = r1[0], b2 = r1[1];
+        const uint32_t a1 = M_Z(o0), a2 = M_Z(o0 + 1u), b1 = M_Z(o1), b2 = M_Z(o1 + 1u);
         a = (a2 >= a1) ? a1 + (a2 - a1) * dx / wx : a1 - (a1 - a2) * dx / wx;
         b = (b2 >= b1) ? b1 + (b2 - b1) * dx / wx : b1 - (b1 - b2) * dx / wx;
         a &= 0xFFFFu;
@@ -110,10 +113,13 @@ static uint16_t lut(const sm_map_t *m, uint16_t x, uint16_t y)
     }
     return (uint16_t)(a - (uint16_t)((a - b) * dy / wy));
 }
+#undef M_XA
+#undef M_YA
+#undef M_Z
 
 uint16_t sm_shadow_lut(uint8_t map_idx, uint16_t x, uint16_t y)
 {
-    return lut(&sm_cal_map[map_idx < SM_CAL_NMAP ? map_idx : 0u], x, y);
+    return lut(SM_CAL_MAP_ADDR(map_idx < SM_CAL_NMAP ? map_idx : 0u), x, y);
 }
 
 /* ── 0x1290A8: id → map (cases 0/5/10/15/20 = @0/@4/@8/@12/@16 of 0x62278),
@@ -129,7 +135,7 @@ static unsigned lookup(sm_t *s, uint16_t *out, uint8_t id, uint8_t line, uint8_t
         return SM_ERR_UNPORTED;                 /* a case this shadow does not carry */
     }
     s->lookup_n++;
-    *out = lut(&sm_cal_map[id / 5u], line, y);
+    *out = lut(SM_CAL_MAP_ADDR(id / 5u), line, y);
     return 0u;
 }
 
@@ -255,9 +261,9 @@ static unsigned thr(sm_t *s, uint16_t *out, uint8_t pedal, const sm_prog_t *p, u
 /* ── 0xFC358: the step limit of a program, dir 0 down / 1 up ───────────── */
 uint8_t sm_shadow_step_limit(uint8_t program, uint8_t dir, uint8_t a67c7)
 {
-    uint8_t lim = tab2(sm_cal_step, 63u, 2u, (uint8_t)(program - 1u), dir);
+    uint8_t lim = tab2(cal_p8(CAL_SM_STEP), 63u, 2u, (uint8_t)(program - 1u), dir);
     if (a67c7 != 0u) {
-        const uint8_t c47 = tab2(sm_cal_step, 63u, 2u, 47u, dir);
+        const uint8_t c47 = tab2(cal_p8(CAL_SM_STEP), 63u, 2u, 47u, dir);
         if (lim >= c47) {
             lim = c47;
         }
@@ -585,7 +591,7 @@ void sm_shadow_pass(const sm_in_t *in)
 
     /* entry 5: 0xF9570 the AB30 filter (0x121BCC) */
     {
-        uint32_t wa = sm_cal_ab30w[0], wb = sm_cal_ab30w[1];
+        uint32_t wa = cal_u8(CAL_SM_AB30W), wb = cal_u8(CAL_SM_AB30W + 1u);
         if (wa == 0u) {
             wa = 1u;
         }
@@ -594,7 +600,7 @@ void sm_shadow_pass(const sm_in_t *in)
     /* 0xFC112: the minimum gear by speed (A004+0x0A, the raw speed), A694 */
     {
         uint8_t g = 1u;
-        while (in->d646 > sm_cal_mingear[g]) {
+        while (in->d646 > cal_u16(CAL_SM_MINGEAR + 2u * g)) {
             if (++g >= 8u) {
                 break;
             }
@@ -627,7 +633,7 @@ void sm_shadow_pass(const sm_in_t *in)
     {
         uint8_t id = 0u;
         for (unsigned p = 0u; p < 18u; p++) {
-            id = tab2(sm_cal_prio, 18u, 14u, p, SM_SI_A706);
+            id = tab2(cal_p8(CAL_SM_PRIO), 18u, 14u, p, SM_SI_A706);
             if (id == 0x63u || id == 1u) {
                 break;
             }

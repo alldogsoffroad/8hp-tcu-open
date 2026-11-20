@@ -51,7 +51,7 @@ OUT_PATTERNS = [
     r"0[xX][fF]{3}891[0-9a-fA-F]{2}",
 ]
 SHADOW_PATTERNS = [
-    r'#\s*include\s*"(?!app/fr_shadow\.h"|app/fr_cal\.h"|app/sm_cal\.h")[^"]*"',
+    r'#\s*include\s*"(?!app/fr_shadow\.h"|app/fr_cal\.h"|app/sm_cal\.h"|app/cal_inplace\.h")[^"]*"',
     r"\b(rq_prod|drv|sup|park|plat|vehicle|sensors|rng_chain|kl15|tmp_chain|tmp_safe|sol|com|meas|gs|g6a|"
     r"od|fb|pa7|tsel|sched|sm_shadow|sm_gear|sm_hook|crc8|os_sel)_[a-z0-9_]+\s*\(",
     r"\bP?CELL_[A-Z0-9_]+",
@@ -61,7 +61,7 @@ SHADOW_PATTERNS = [
 ]
 FM_ONLY = [r"\bs_fm\b", r"\(\s*fr_fm_t\s*\*\s*\)", r"(?<!const )(?<!volatile )\bfr_fm_t\s*\*"]
 CAL_PATTERNS = [
-    r'#\s*include\s*"(?!app/fr_cal\.h")[^"]*"',
+    r'#\s*include\s*"(?!app/fr_cal\.h"|app/cal_inplace\.h")[^"]*"',
     r"\b[a-z_][a-z0-9_]*\s*\(",
     r"\bvolatile\b",
 ]

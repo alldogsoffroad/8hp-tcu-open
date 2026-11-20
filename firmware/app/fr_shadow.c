@@ -229,7 +229,7 @@ static uint8_t comm_1362b0(unsigned lo, unsigned hi) /* every key message timed 
 {
     uint8_t r = 0u;
     for (unsigned n = lo; n <= hi; n++) {
-        const uint8_t m = fr_cal_mask[n];
+        const uint8_t m = FR_MASK(n);
         if ((m & 1u) != 0u && (m & 0x80u) != 0u) {
             if ((CM.st[n] & 1u) == 0u) {
                 return 0u;
@@ -281,9 +281,9 @@ static void comm_13661c(void)                       /* the node groups */
     }
     for (unsigned n = 0u; n < FR_NENT; n++) {
         const uint8_t bus = fr_cal_ent[n][1], s = fr_cal_ent[n][2];
-        const uint8_t m = fr_cal_mask[n], st = CM.st[n];
+        const uint8_t m = FR_MASK(n), st = CM.st[n];
         uint8_t testable = (uint8_t)(((bus == 1u) ? en1 : en2) != 0u &&
-                                     fr_cal_thr[n] < ((bus == 1u) ? t1 : t2));
+                                     FR_THR(n) < ((bus == 1u) ? t1 : t2));
         uint8_t fail = 0u, id = 0u;
         if (CM.b2 != 0u && (m & 0x40u) == 0u) {
             testable = 0u;
@@ -306,7 +306,7 @@ static void comm_13661c(void)                       /* the node groups */
                 mon[s] = id;
             }
         } else {
-            CM.cnt[n] = fr_cal_reload[n];
+            CM.cnt[n] = FR_RELOAD(n);
         }
         const uint8_t v = testable ? (fail ? 1u : 5u) : 4u;
         if (v < lvl[s]) {
@@ -697,12 +697,12 @@ static int8_t gtab(const int8_t *t, int8_t from, int8_t to)
 
 static int16_t tspd(unsigned k, uint8_t x, uint8_t y)
 {
-    return (x < SM_CAL_GN && y < SM_CAL_GN) ? sm_cal_gspd[k][y * SM_CAL_GN + x] : 0;
+    return (x < SM_CAL_GN && y < SM_CAL_GN) ? SM_CAL_GSPD(k, y * SM_CAL_GN + x) : 0;
 }
 
 static uint8_t ttemp(uint8_t x, uint8_t y)
 {
-    return (x < SM_CAL_GN && y < SM_CAL_GN) ? sm_cal_gtemp[y * SM_CAL_GN + x] : 0u;
+    return (x < SM_CAL_GN && y < SM_CAL_GN) ? SM_CAL_GTEMP(y * SM_CAL_GN + x) : 0u;
 }
 
 static bool dbca8(void)     /* 0xBB0C2 → 0xDBCA8 */

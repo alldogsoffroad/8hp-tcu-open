@@ -76,7 +76,7 @@ _Static_assert(SI_E57D == 0xA5u && SI_E579 == 0x10u && SI_DEE6 == 0u && SI_898D6
 #define S_DEP    0x0100u
 #define S_CONF13 0x2000u
 
-#define CFG(g) (fr_cal_grp[(g) - 1u])
+#define CFG(g) FR_CFG(g)
 
 static void rec(uint8_t kind, uint8_t g, uint16_t v)
 {
@@ -272,7 +272,7 @@ static uint8_t dep(uint8_t g)
 {
     uint8_t hit = 0u;
     for (unsigned k = 0u; k < 3u; k++) {
-        const uint16_t m = fr_cal_dep[g - 1u][k];
+        const uint16_t m = FR_DEP(g, k);
         if (m == 0u || m > FR_NGRP) {
             break;                                  /* 0xA09FC: no (further) master */
         }

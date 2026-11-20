@@ -252,9 +252,9 @@ static uint8_t ec362(uint8_t type)
     }
     uint8_t r = 0u;
     if (type == 3u || type == 4u) {
-        r = gp_cal_f8_dn[i];
+        r = GP_CAL_F8_DN(i);
     } else if (type == 1u || type == 2u) {
-        r = gp_cal_f8_up[i];
+        r = GP_CAL_F8_UP(i);
     }
     return (r > 4u) ? 4u : r;
 }
@@ -267,9 +267,9 @@ static bool win_core(unsigned f, int8_t from, int8_t to)
 {
     const unsigned x = (unsigned)((uint8_t)(from + 1)), y = (unsigned)((uint8_t)(to + 1));
     const bool in = (x <= 9u && y <= 9u);
-    const uint16_t ov = in ? gp_cal_win_out[f][y * 10u + x] : 0u;
-    const int32_t lo = in ? (int32_t)gp_cal_win_lo[f][y * 10u + x] : 0;
-    const int32_t hi = in ? (int32_t)gp_cal_win_hi[f][y * 10u + x] : 0;
+    const uint16_t ov = in ? GP_CAL_WIN_OUT(f, y * 10u + x) : 0u;
+    const int32_t lo = in ? (int32_t)GP_CAL_WIN_LO(f, y * 10u + x) : 0;
+    const int32_t hi = in ? (int32_t)GP_CAL_WIN_HI(f, y * 10u + x) : 0;
     const int32_t tq = (int32_t)X.in2.tq;
     if ((int32_t)G.in.gf.cb8 < (int32_t)ov) {
         return false;
@@ -281,31 +281,31 @@ static bool win_core(unsigned f, int8_t from, int8_t to)
 }
 static bool ec40e(uint8_t t, int8_t from, int8_t to, uint8_t bd16)
 {
-    if (!win_core(0u, from, to) || !(t < gp_cal_tmp[0])) {
+    if (!win_core(0u, from, to) || !(t < GP_CAL_TMP(0))) {
         return false;
     }
     if (bd16 == 2u) {
-        return t > gp_cal_tmp[2];
+        return t > GP_CAL_TMP(2);
     }
-    return bd16 == 1u && t > gp_cal_tmp[1];
+    return bd16 == 1u && t > GP_CAL_TMP(1);
 }
 static bool ec4d8(uint8_t t, int8_t from, int8_t to, uint8_t bd16)
 {
-    if (!win_core(1u, from, to) || !(t < gp_cal_tmp[3])) {
+    if (!win_core(1u, from, to) || !(t < GP_CAL_TMP(3))) {
         return false;
     }
     if (bd16 == 2u) {
-        return t > gp_cal_tmp[5];
+        return t > GP_CAL_TMP(5);
     }
-    return bd16 == 1u && t > gp_cal_tmp[4];
+    return bd16 == 1u && t > GP_CAL_TMP(4);
 }
 static bool ec578(uint8_t t, int8_t from, int8_t to, uint8_t bd16)
 {
-    return win_core(2u, from, to) && t > gp_cal_tmp[7] && t < gp_cal_tmp[6] && bd16 == 1u;
+    return win_core(2u, from, to) && t > GP_CAL_TMP(7) && t < GP_CAL_TMP(6) && bd16 == 1u;
 }
 static bool ec614(uint8_t t, int8_t from, int8_t to)
 {
-    return win_core(3u, from, to) && t > gp_cal_tmp[9] && t < gp_cal_tmp[8];
+    return win_core(3u, from, to) && t > GP_CAL_TMP(9) && t < GP_CAL_TMP(8);
 }
 
 /* 0xEC20A(BD14, f8, BD16, kind, T, from, to): the window decision (bytes
@@ -346,7 +346,7 @@ static bool ec20a(uint8_t f8, uint8_t bd16, uint8_t kind, uint8_t t, int8_t from
          * counted; the term (0xA1032 ∧ cal +0x7C == 0) could only fire with cal +0x7C == 0 */
         const bool a1032 = false;
         XW.k_a1032 = sat16(XW.k_a1032);
-        if (a1032 && gp_cal_k7c == 0u) {
+        if (a1032 && GP_CAL_K7C == 0u) {
             r = false;
         }
     }
@@ -384,7 +384,7 @@ static void k_1180be(gp_blk_t *c, gp_xblk_t *x, uint8_t p)
     }
     const bool cc = ec20a(f8, G.bd16, kprev, G.bd22, from, to);
     const bool act_or_e344 = (c->act != 0u) || (gp_gear_state()->e344 != 0u);
-    const bool a8 = (gp_cal_ka8 == 0u) || (G.bd16 != 2u);
+    const bool a8 = (GP_CAL_KA8 == 0u) || (G.bd16 != 2u);
     uint8_t k = kprev;
     if (kprev > 9u) {
         W.report_n++;                                /* 0xB79E4(0x369, …) */
@@ -415,7 +415,7 @@ static void k_1180be(gp_blk_t *c, gp_xblk_t *x, uint8_t p)
 /* the override's f8 array 0xD02EC (via 0xB6B28) */
 static uint8_t ov_f8(void)
 {
-    return gp_cal_f8_ov[GP_SI_CF4 > 4u ? 4u : GP_SI_CF4];
+    return GP_CAL_F8_OV(GP_SI_CF4 > 4u ? 4u : GP_SI_CF4);
 }
 
 /* 0x117B4A(ctx, p): 0x1180BE, then (committed context, AE31 == 3) the
@@ -431,9 +431,14 @@ static void b4a(gp_blk_t *c, gp_xblk_t *x, uint8_t p)
             bool ovr = false;
             if (p != 0u && bd16 == 1u) {
                 const int16_t tur = (int16_t)G.in.gf.cba;      /* 0x89C0C = the turbine speed 0x89CBA */
-                ovr = (int32_t)X.in2.tq > (int32_t)map1(gp_cal_ov_x, gp_cal_ov_y, 4u, tur);
+                int16_t ov_x[4], ov_y[4];                       /* 0x1B78A0 {u32 4, s16 x[4], s16 y[4]}, read in place */
+                for (unsigned i = 0u; i < 4u; i++) {
+                    ov_x[i] = GP_CAL_OV_X(i);
+                    ov_y[i] = GP_CAL_OV_Y(i);
+                }
+                ovr = (int32_t)X.in2.tq > (int32_t)map1(ov_x, ov_y, 4u, tur);
             }
-            if (!ovr && p != 0u && bd16 == 2u && X.in2.pedal > gp_cal_ov_ped) {
+            if (!ovr && p != 0u && bd16 == 2u && X.in2.pedal > GP_CAL_OV_PED) {
                 ovr = true;
             }
             if (ovr) {
@@ -472,7 +477,7 @@ static uint16_t ec7cc(void)
 {
     const bool one = (G.a.to == 1 || G.a.from == 1);
     const unsigned idx = one ? (G.bd16 == 1u ? 2u : 3u) : (G.bd16 == 1u ? 0u : 1u);
-    return (uint16_t)gp_cal_thr[idx];
+    return (uint16_t)GP_CAL_THR(idx);
 }
 static void ec6a6(void)
 {
@@ -487,7 +492,7 @@ static void ec6a6(void)
     bool set = false;
     if ((uint32_t)G.in.gf.cb8 < (uint32_t)ec7cc()) {
         set = true;
-    } else if ((uint32_t)(int32_t)(int16_t)G.in.gf.cba < (uint32_t)(int32_t)gp_cal_thr[4]) {
+    } else if ((uint32_t)(int32_t)(int16_t)G.in.gf.cba < (uint32_t)(int32_t)GP_CAL_THR(4)) {
         set = true;
     } else if (pf == 0u || pf == 3u || pf == 4u) {
         set = true;
@@ -587,7 +592,7 @@ static int16_t a74(const gp_blk_t *c)
  * clears of the active block are part of the unported slot-34 cyclic) */
 static void f48(gp_blk_t *c, uint8_t hold, uint8_t p3)
 {
-    const int32_t thr = (int32_t)gp_cal_sync_thr;
+    const int32_t thr = (int32_t)GP_CAL_SYNC;
     c->slip = a74(c);
     if (hold != 0u) {
         c->sync = 0u;

@@ -262,6 +262,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
             COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/vehicle_seam_scan.py elf ${SH_NM} ${_e}
             COMMENT "vehicle seam: no test-only injector in ${_e}")
     endforeach()
+    # THE SHADOWS READ THE STOCK CALIBRATION IN PLACE (2026-11-20, ~/tcu_sweep/cal_in_place_port.md,
+    # app/cal_inplace.h): flash 0x80000 and above is the stock calibration / data, left byte-identical
+    # on the board — the flashed application must carry no loaded section there (proof of the scan:
+    # ctest cal_inplace_scan_negative in the host build)
+    add_custom_command(TARGET tcu_app.elf POST_BUILD
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/cal_inplace_scan.py elf ${SH_OBJDUMP} tcu_app.elf
+        COMMENT "cal in-place: no section of tcu_app.elf at 0x80000 or above")
 else()
     # ---- Host build: simulator and unit tests ------------------------------
     add_executable(tcu_sim platform/host/plat_host.c ${CORE_SOURCES}
@@ -2203,6 +2210,20 @@ else()
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/vehicle_seam_scan.py ids ${CMAKE_SOURCE_DIR}
             --only ${CMAKE_SOURCE_DIR}/io/vehicle/profile_fca.c ${CMAKE_SOURCE_DIR}/io/vehicle/fca_tx_fields.h)
     set_tests_properties(vehicle_seam_scan_profile_control PROPERTIES WILL_FAIL TRUE)
+    # THE SHADOWS READ THE STOCK CALIBRATION IN PLACE (2026-11-20, ~/tcu_sweep/cal_in_place_port.md):
+    # cal_inplace: the address list (>= 0x80000, inside the image, aligned), the FNV digests of every
+    # in-place object against the goldens (= the retired generated copies' digests), the accessors
+    # against decoded values; the header scan; the ELF-scan negative (a section at 0x80000 must trip it).
+    # Every host target that builds a shadow gets app/cal_inplace.c (the stock image file loaded on first
+    # use; exit 77 = a loud SKIP when the file is missing) — see the end of this file.
+    add_executable(test_cal_inplace tests/unit/test_cal_inplace.c app/cal_inplace.c)
+    add_test(NAME cal_inplace COMMAND test_cal_inplace)
+    add_test(NAME cal_inplace_header_scan
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/cal_inplace_scan.py header ${CMAKE_SOURCE_DIR}/app/cal_inplace.h)
+    add_test(NAME cal_inplace_scan_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/cal_inplace_scan.py text
+            ${CMAKE_SOURCE_DIR}/tests/unit/cal_inplace_fixture_objdump.txt)
+    set_tests_properties(cal_inplace_scan_negative PROPERTIES WILL_FAIL TRUE)
 endif()
 
 # TCU_VEHICLE (2026-11-20, ~/tcu_sweep/fork_seams_port.md): every target that builds the
@@ -2226,3 +2247,40 @@ foreach(_t IN LISTS _tcu_targets)
         endif()
     endforeach()
 endforeach()
+
+# THE SHADOWS READ THE STOCK CALIBRATION IN PLACE (2026-11-20, ~/tcu_sweep/cal_in_place_port.md):
+# every HOST target that builds a shadow (sm_*, fr_*, gp_*) reads its calibration from the stock image
+# file (app/cal_inplace.c): TCU_STOCK_IMAGE (environment) or the cache default. A missing file is a loud
+# SKIP (exit 77), never a silent pass — so every test maps exit 77 to "skipped".
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Generic")
+    set_source_files_properties(${CMAKE_SOURCE_DIR}/app/cal_inplace.c PROPERTIES
+        COMPILE_DEFINITIONS "TCU_STOCK_IMAGE_DEFAULT=\"${TCU_STOCK_IMAGE}\"")
+    get_property(_cal_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(_t IN LISTS _cal_targets)
+        get_target_property(_tt ${_t} TYPE)
+        if(NOT _tt STREQUAL "EXECUTABLE")
+            continue()
+        endif()
+        get_target_property(_srcs ${_t} SOURCES)
+        if(NOT _srcs)
+            continue()
+        endif()
+        set(_has_ip OFF)
+        set(_needs_ip OFF)
+        foreach(_s IN LISTS _srcs)
+            if(_s MATCHES "(^|/)app/cal_inplace\\.c$")
+                set(_has_ip ON)
+            endif()
+            if(_s MATCHES "(^|/)app/(sm_shadow|sm_gear|sm_cal|fr_shadow|fr_fm|fr_cal|gp_shadow|gp_gear|gp_cal)\\.c$")
+                set(_needs_ip ON)
+            endif()
+        endforeach()
+        if(_needs_ip AND NOT _has_ip)
+            target_sources(${_t} PRIVATE ${CMAKE_SOURCE_DIR}/app/cal_inplace.c)
+        endif()
+    endforeach()
+    get_property(_all_tests DIRECTORY PROPERTY TESTS)
+    foreach(_tn IN LISTS _all_tests)
+        set_property(TEST ${_tn} PROPERTY SKIP_RETURN_CODE 77)
+    endforeach()
+endif()

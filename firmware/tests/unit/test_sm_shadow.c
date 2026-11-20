@@ -325,12 +325,12 @@ static void test_steps(void)
     CHECKV(sm_shadow_step_limit(15u, 1u, 0u), 6);
     for (unsigned d = 0u; d < 2u; d++) {
         for (unsigned p = 1u; p <= 63u; p++) {
-            const uint8_t a = sm_cal_step[(p - 1u) + d * 63u], c = sm_cal_step[47u + d * 63u];
+            const uint8_t a = cal_p8(CAL_SM_STEP)[(p - 1u) + d * 63u], c = cal_p8(CAL_SM_STEP)[47u + d * 63u];
             CHECKV(sm_shadow_step_limit((uint8_t)p, (uint8_t)d, 1u), a < c ? a : c);
         }
     }
     /* program 0 → column 255: 0x1214B4's range error → t[0] */
-    CHECKV(sm_shadow_step_limit(0u, 1u, 0u), sm_cal_step[0]);
+    CHECKV(sm_shadow_step_limit(0u, 1u, 0u), cal_p8(CAL_SM_STEP)[0]);
 }
 
 /* ── (5) invariants ───────────────────────────────────────────────────── */
@@ -689,50 +689,68 @@ static int test_cal(void)
             }
         }
         CHECK(seen);
-        CHECKV(sm_cal_map[k].addr, U32(0x62278u + 4u * k));
+        CHECKV(SM_CAL_MAP_ADDR(k), U32(0x62278u + 4u * k));
     }
     /* the remap yields only 0/5/10/15/20 for ids < 25 */
     for (unsigned k = 0u; k < 25u; k++) {
-        CHECK(sm_cal_remap[k] % 5u == 0u && sm_cal_remap[k] <= 20u);
+        CHECK(cal_u8(CAL_SM_REMAP + k) % 5u == 0u && cal_u8(CAL_SM_REMAP + k) <= 20u);
     }
     for (unsigned k = 0u; k < SM_CAL_NMAP; k++) {
-        const sm_map_t *m = &sm_cal_map[k];
-        const unsigned p = m->addr;
-        CHECKV(m->nx, U32(p));
-        CHECKV(m->ny, U32(p + 4u));
+        const unsigned p = SM_CAL_MAP_ADDR(k);
+        CHECKV(cal_u32(p), U32(p));
+        CHECKV(cal_u32(p + 4u), U32(p + 4u));
+        CHECKV(cal_u32(p), SM_CAL_NX);
+        CHECKV(cal_u32(p + 4u), SM_CAL_NY);
         for (unsigned i = 0u; i < SM_CAL_NX; i++) {
-            CHECKV(m->xa[i], U16(p + 8u + 2u * i));
+            CHECKV(cal_u16(p + 8u + 2u * i), U16(p + 8u + 2u * i));
         }
         for (unsigned i = 0u; i < SM_CAL_NY; i++) {
-            CHECKV(m->ya[i], U16(p + 8u + 2u * SM_CAL_NX + 2u * i));
+            CHECKV(cal_u16(p + 8u + 2u * SM_CAL_NX + 2u * i), U16(p + 8u + 2u * SM_CAL_NX + 2u * i));
         }
         for (unsigned i = 0u; i < SM_CAL_NX * SM_CAL_NY; i++) {
-            CHECKV(m->z[i], U16(p + 8u + 2u * (SM_CAL_NX + SM_CAL_NY) + 2u * i));
+            CHECKV(cal_u16(p + 8u + 2u * (SM_CAL_NX + SM_CAL_NY) + 2u * i), U16(p + 8u + 2u * (SM_CAL_NX + SM_CAL_NY) + 2u * i));
         }
     }
     CHECKV(U32(0x1F3B7Cu), 100u);
     for (unsigned i = 0u; i < 100u; i++) {
-        CHECKV(sm_cal_remap[i], g_img[0x1F3B80u + i]);
+        CHECKV(cal_u8(CAL_SM_REMAP + i), g_img[0x1F3B80u + i]);
     }
     CHECKV(U32(0x1F3BE4u), 18u);
     CHECKV(U32(0x1F3BE8u), 14u);
     for (unsigned i = 0u; i < 18u * 14u; i++) {
-        CHECKV(sm_cal_prio[i], g_img[0x1F3BECu + i]);
+        CHECKV(cal_u8(CAL_SM_PRIO + i), g_img[0x1F3BECu + i]);
     }
     CHECKV(U32(0x1E5E44u), 63u);
     CHECKV(U32(0x1E5E48u), 2u);
     for (unsigned i = 0u; i < 126u; i++) {
-        CHECKV(sm_cal_step[i], g_img[0x1E5E4Cu + i]);
+        CHECKV(cal_u8(CAL_SM_STEP + i), g_img[0x1E5E4Cu + i]);
     }
     CHECKV(U32(0x1E5E30u), 8u);
     for (unsigned i = 0u; i < 8u; i++) {
-        CHECKV(sm_cal_mingear[i], U16(0x1E5E34u + 2u * i));
+        CHECKV(cal_u16(CAL_SM_MINGEAR + 2u * i), U16(0x1E5E34u + 2u * i));
     }
-    CHECKV(sm_cal_ab30w[0], g_img[0x1FEC8Cu]);
-    CHECKV(sm_cal_ab30w[1], g_img[0x1FEC8Du]);
+    CHECKV(cal_u8(CAL_SM_AB30W), g_img[0x1FEC8Cu]);
+    CHECKV(cal_u8(CAL_SM_AB30W + 1u), g_img[0x1FEC8Du]);
     /* column 1 of the priority table: 0x1B, 0x0B, 0x12, 0x08, 0x01 */
-    CHECKV(sm_cal_prio[18], 0x1B);
-    CHECKV(sm_cal_prio[22], 0x01);
+    CHECKV(cal_u8(CAL_SM_PRIO + 18u), 0x1B);
+    CHECKV(cal_u8(CAL_SM_PRIO + 22u), 0x01);
+    /* the speed-limit tables of *0xFFF84C80 = 0x53610: six {u32 10, u32 10, data} at 0x19AB78 + 0xD0 k */
+    {
+        const unsigned dtbl = 0x65110u + 0xC80u, root = U32(dtbl);
+        CHECKV(root, 0x53610u);
+        for (unsigned k = 0u; k < 6u; k++) {
+            const unsigned t = U32(root + 4u * k);
+            CHECKV(t, CAL_SM_GSPD + CAL_SM_GSPD_STEP * k);
+            CHECKV(cal_u32(t), 10u);
+            CHECKV(cal_u32(t + 4u), 10u);
+        }
+        for (unsigned i = 0u; i < 100u; i++) {
+            for (unsigned k = 0u; k < 5u; k++) {
+                CHECKV((uint16_t)SM_CAL_GSPD(k, i), U16(CAL_SM_GSPD + CAL_SM_GSPD_STEP * k + 8u + 2u * i));
+            }
+            CHECKV(SM_CAL_GTEMP(i), g_img[CAL_SM_GTEMP + 8u + i]);
+        }
+    }
     printf("(cal) %d mismatches\n", g_fail);
     return g_fail ? 1 : 0;
 #endif

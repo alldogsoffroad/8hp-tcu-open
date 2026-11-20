@@ -863,7 +863,7 @@ static int cal_check(void)
     for (unsigned i = 0u; i < 10u; i++) {
         bad += gp_cal_ratio[i] != U16(GP_CAL_A_RATIO + 2u * i);
     }
-    bad += gp_cal_sync_thr != U16(GP_CAL_A_THR);
+    bad += GP_CAL_SYNC != U16(GP_CAL_A_THR);
     CHECK(bad == 0u, "%u table values differ from the image", bad);
     unsigned n2 = 0u, bad2 = 0u;
     /* 2026-11-20: the kind / class machine's tables, through the stock's own pointers */
@@ -871,8 +871,8 @@ static int cal_check(void)
     CHECK(B_(0x2C) == 0x1B607Cu && B_(0x34) == 0x1B6094u && U32(B_(0x2C)) == 5u && U32(B_(0x34)) == 5u &&
               U32(0x19B03Cu) == 5u, "the f8 array headers");
     for (unsigned i = 0u; i < 5u; i++) {
-        bad2 += (gp_cal_f8_dn[i] != img[B_(0x2C) + 4u + i]) + (gp_cal_f8_up[i] != img[B_(0x34) + 4u + i]) +
-                (gp_cal_f8_ov[i] != img[0x19B03Cu + 4u + i]);
+        bad2 += (GP_CAL_F8_DN(i) != img[B_(0x2C) + 4u + i]) + (GP_CAL_F8_UP(i) != img[B_(0x34) + 4u + i]) +
+                (GP_CAL_F8_OV(i) != img[0x19B03Cu + 4u + i]);
         n2 += 3u;
     }
     static const uint8_t wo[4] = { 0xF0, 0xF4, 0xF8, 0xFC }, wl[4] = { 0xE0, 0xE4, 0xE8, 0xEC },
@@ -881,28 +881,28 @@ static int cal_check(void)
         CHECK(U32(B_(wo[f])) == 10u && U32(B_(wo[f]) + 4u) == 10u && U32(B_(wl[f])) == 10u &&
                   U32(B_(wh[f])) == 10u, "window %u table headers (10 x 10)", f);
         for (unsigned i = 0u; i < 100u; i++) {
-            bad2 += (gp_cal_win_out[f][i] != U16(B_(wo[f]) + 8u + 2u * i)) +
-                    (gp_cal_win_lo[f][i] != (int16_t)U16(B_(wl[f]) + 8u + 2u * i)) +
-                    (gp_cal_win_hi[f][i] != (int16_t)U16(B_(wh[f]) + 8u + 2u * i));
+            bad2 += (GP_CAL_WIN_OUT(f, i) != U16(B_(wo[f]) + 8u + 2u * i)) +
+                    (GP_CAL_WIN_LO(f, i) != (int16_t)U16(B_(wl[f]) + 8u + 2u * i)) +
+                    (GP_CAL_WIN_HI(f, i) != (int16_t)U16(B_(wh[f]) + 8u + 2u * i));
             n2 += 3u;
         }
     }
     static const uint8_t to_[10] = { 0x80, 0x84, 0x88, 0x8C, 0x90, 0x94, 0x98, 0x9C, 0xA0, 0xA4 };
     for (unsigned i = 0u; i < 10u; i++) {
-        bad2 += gp_cal_tmp[i] != img[B_(to_[i])];
+        bad2 += GP_CAL_TMP(i) != img[B_(to_[i])];
         n2++;
     }
-    bad2 += (gp_cal_k7c != img[B_(0x7C)]) + (gp_cal_ka8 != img[B_(0xA8)]) + (gp_cal_ov_ped != img[B_(0x154)]);
+    bad2 += (GP_CAL_K7C != img[B_(0x7C)]) + (GP_CAL_KA8 != img[B_(0xA8)]) + (GP_CAL_OV_PED != img[B_(0x154)]);
     n2 += 3u;
     static const uint8_t tho[5] = { 0xB8, 0xBC, 0xC0, 0xC4, 0xC8 };
     for (unsigned i = 0u; i < 5u; i++) {
-        bad2 += gp_cal_thr[i] != (int16_t)U16(B_(tho[i]));
+        bad2 += GP_CAL_THR(i) != (int16_t)U16(B_(tho[i]));
         n2++;
     }
     CHECK(B_(0x158) == 0x1B78A0u && U32(0x1B78A0u) == 4u, "the override map header");
     for (unsigned i = 0u; i < 4u; i++) {
-        bad2 += (gp_cal_ov_x[i] != (int16_t)U16(0x1B78A0u + 4u + 2u * i)) +
-                (gp_cal_ov_y[i] != (int16_t)U16(0x1B78A0u + 12u + 2u * i));
+        bad2 += (GP_CAL_OV_X(i) != (int16_t)U16(0x1B78A0u + 4u + 2u * i)) +
+                (GP_CAL_OV_Y(i) != (int16_t)U16(0x1B78A0u + 12u + 2u * i));
         n2 += 2u;
     }
     /* the class-1 rows: the pointer chains and the values */

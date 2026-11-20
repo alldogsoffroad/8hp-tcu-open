@@ -141,14 +141,14 @@ static int8_t gtab(const int8_t *t, int8_t from, int8_t to)
 static int16_t tspd(unsigned k, uint8_t x, uint8_t y)
 {
     if (x < SM_CAL_GN && y < SM_CAL_GN) {
-        return sm_cal_gspd[k][y * SM_CAL_GN + x];
+        return SM_CAL_GSPD(k, y * SM_CAL_GN + x);
     }
     return 0;
 }
 static uint8_t ttemp(uint8_t x, uint8_t y)
 {
     if (x < SM_CAL_GN && y < SM_CAL_GN) {
-        return sm_cal_gtemp[y * SM_CAL_GN + x];
+        return SM_CAL_GTEMP(y * SM_CAL_GN + x);
     }
     return 0u;
 }

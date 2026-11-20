@@ -11,6 +11,8 @@
 
 #include <stdint.h>
 
+#include "app/cal_inplace.h"
+
 #define FR_NG 195u              /* DSM groups 1..195 */
 #define FR_NE 53u               /* comm-monitor entries 0..52 */
 #define FR_CAL_NCHK 327u        /* the scalar byte checks (gen_fr_cal.py prints the count) */
@@ -82,12 +84,15 @@ typedef struct {
     uint16_t ctab[7][2];        /* 0x45CD4: 0x82D4C's (mask, code) first-match table */
 } fr_cal_g28_t;
 
-extern const uint8_t       fr_cal_grp[FR_NG][36];     /* 0x1923EC */
-extern const uint16_t      fr_cal_dep[FR_NG][3];      /* 0x1955A8 */
+/* IN PLACE (2026-11-20, app/cal_inplace.h): the 195 group configs (0x1923EC, 36 B each,
+ * big-endian), the dependency masters (0x1955A8, 3 x u16 per group) and the comm entries'
+ * reload / threshold / mask tables (0x191B30 / 0x191BB4 / 0x191C38) are read where they are */
+#define FR_CFG(g)       cal_p8(CAL_FR_GRP + CAL_FR_GRP_ROW * ((g) - 1u))   /* the row of group g, 1..195 */
+#define FR_DEP(g, k)    cal_u16(CAL_FR_DEP + 6u * ((g) - 1u) + 2u * (k))
+#define FR_RELOAD(n)    cal_u16(CAL_FR_RELOAD + 2u * (n))
+#define FR_THR(n)       cal_u16(CAL_FR_THR + 2u * (n))
+#define FR_MASK(n)      cal_u8(CAL_FR_MASK + (n))
 extern const fr_cal_comm_t fr_cal_comm;
-extern const uint16_t      fr_cal_reload[FR_NE];      /* 0x191B30 */
-extern const uint16_t      fr_cal_thr[FR_NE];         /* 0x191BB4 */
-extern const uint8_t       fr_cal_mask[FR_NE];        /* 0x191C38 */
 extern const uint8_t       fr_cal_ent[FR_NE][3];      /* RAM 0xFFF85289 (dump) */
 extern const uint8_t       fr_cal_slot_grp[13];       /* its slot -> group map */
 extern const fr_cal_rx_t   fr_cal_rx[FR_NE];
@@ -99,7 +104,7 @@ extern const uint8_t       fr_cal_6344e[54];          /* 0x6344E */
 extern const fr_cal_g28_t  fr_cal_g28;                /* group 27 / 28 (TOE32) */
 extern const fr_cal_chk_t  fr_cal_chk[FR_CAL_NCHK];
 
-/* the group config fields (C = fr_cal_grp[g - 1], big-endian) */
+/* the group config fields (C = FR_CFG(g), big-endian) */
 #define FRC_U16(c, o) ((uint16_t)(((uint16_t)(c)[o] << 8) | (c)[(o) + 1]))
 #define FRC_U32(c, o) (((uint32_t)(c)[o] << 24) | ((uint32_t)(c)[(o) + 1] << 16) | \
                        ((uint32_t)(c)[(o) + 2] << 8) | (uint32_t)(c)[(o) + 3])

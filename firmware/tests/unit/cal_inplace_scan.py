@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""cal_inplace_scan.py — the shadows read the stock calibration IN PLACE (app/cal_inplace.h), so the
+flashed application must never place a section at or above 0x80000 (flash block 0x80000 and up is
+the stock calibration / data, left byte-identical on the board; the install verifies its signatures).
+
+  cal_inplace_scan.py elf OBJDUMP ELF...   `objdump -h` of each ELF: no loaded (CONTENTS) section whose VMA or LMA
+                                           range touches [0x80000, 0x280000); the application's own
+                                           flash sections (0x40000 .. 0x7FFFF) are listed with the
+                                           highest end address
+  cal_inplace_scan.py text FILE...         the same check on saved `objdump -h` text (the negative fixture)
+  cal_inplace_scan.py header FILE          every CAL_* address #define of app/cal_inplace.h that names a
+                                           stock address is at or above 0x80000 and inside the image
+Exit 1 ("cal in-place violation") on any hit.
+"""
+import re
+import subprocess
+import sys
+
+CAL_BASE = 0x80000
+IMG_END = 0x280000
+APP_BASE = 0x40000
+
+# the stock's application tail / end markers (platform/sh7254r/header.c), byte-identical to the stock image
+# at those addresses ("0JIHC224" and 0x12345678) and never installed (the install writes blocks 0x40000..0x70000
+# only): the one pair of sections allowed at 0x80000 or above
+ALLOW = {('.app_tail', 0x17FB70, 0x10), ('.app_end', 0x17FBFC, 0x4)}
+
+SEC = re.compile(r'^\s*\d+\s+(\S+)\s+([0-9a-fA-F]{8})\s+([0-9a-fA-F]{8})\s+([0-9a-fA-F]{8})\s+[0-9a-fA-F]{8}\s+2\*\*\d+\s*$')
+
+
+def sections(text):
+    lines = text.splitlines()
+    out = []
+    for i, ln in enumerate(lines):
+        m = SEC.match(ln)
+        if not m:
+            continue
+        flags = lines[i + 1] if i + 1 < len(lines) else ''
+        out.append((m.group(1), int(m.group(2), 16), int(m.group(3), 16), int(m.group(4), 16), 'CONTENTS' in flags))
+    return out
+
+
+def check(text, label):
+    bad = 0
+    app_end = 0
+    secs = sections(text)
+    if not secs:
+        print('cal in-place violation: no sections parsed from %s' % label)
+        return 1
+    for name, size, vma, lma, loaded in secs:
+        if not loaded or size == 0:       # NOLOAD / .bss: nothing is written
+            continue
+        if (name, lma, size) in ALLOW and vma == lma:
+            continue
+        for kind, a in (('VMA', vma), ('LMA', lma)):
+            if a < IMG_END and a + size > CAL_BASE:
+                print('cal in-place violation: %s section %s %s 0x%06X..0x%06X touches the stock calibration '
+                      'region 0x%06X..0x%06X' % (label, name, kind, a, a + size, CAL_BASE, IMG_END))
+                bad += 1
+        if APP_BASE <= lma < CAL_BASE:
+            app_end = max(app_end, lma + size)
+    if not bad:
+        print('cal in-place: %s: %d sections, none at 0x%X or above (flash app ends 0x%X)' % (label, len(secs), CAL_BASE, app_end))
+    return bad
+
+
+def main():
+    mode = sys.argv[1]
+    bad = 0
+    if mode == 'elf':
+        objdump = sys.argv[2]
+        for elf in sys.argv[3:]:
+            txt = subprocess.run([objdump, '-h', elf], check=True, capture_output=True, text=True).stdout
+            bad += check(txt, elf)
+    elif mode == 'text':
+        for f in sys.argv[2:]:
+            bad += check(open(f).read(), f)
+    elif mode == 'header':
+        txt = open(sys.argv[2]).read()
+        n = 0
+        for m in re.finditer(r'^#define\s+(CAL_(?:FR|SM|GP)_[A-Z0-9_]+)\s+(0x[0-9A-Fa-f]+)u\b', txt, re.M):
+            name, v = m.group(1), int(m.group(2), 16)
+            if name.endswith('_LEN') or name.endswith('_STEP') or name.endswith('_ROW') or name.endswith('_NG') \
+                    or name.endswith('_NE') or name.endswith('_NMAP'):
+                continue
+            n += 1
+            if not (CAL_BASE <= v < IMG_END):
+                print('cal in-place violation: %s = 0x%X is outside 0x%X..0x%X' % (name, v, CAL_BASE, IMG_END))
+                bad += 1
+        print('cal in-place: %d address defines checked' % n)
+    else:
+        print(__doc__)
+        return 2
+    if bad:
+        print('cal in-place violation (%d)' % bad)
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

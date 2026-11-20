@@ -12,6 +12,8 @@
 #include <stdint.h>
 #include "app/gp_cal_ph.h"
 
+#include "app/cal_inplace.h"
+
 #define GP_CAL_ONSEQ_N   36u        /* 12 steps x 3 types */
 #define GP_CAL_OFFSEQ_N  39u        /* 13 steps x 3 types */
 
@@ -21,23 +23,28 @@ extern const uint8_t  gp_cal_bd17[9];                 /* 0x6315C t[BD1E*3 + BD16
 extern const uint8_t  gp_cal_onseq[GP_CAL_ONSEQ_N];   /* 0x5EC24 t[step*3 + type] */
 extern const uint8_t  gp_cal_offseq[GP_CAL_OFFSEQ_N]; /* 0x63555 */
 extern const uint16_t gp_cal_ratio[10];               /* 0x4FAA4 gear -1..8, x1000 */
-extern const uint16_t gp_cal_sync_thr;                /* 0x1FF1F6 rpm */
 
 /* 2026-11-20: the kind / class machine's tables (tools/gen_gp_cal.py; the
  * pointer chains asserted against the image there) */
-extern const uint8_t  gp_cal_f8_dn[5];                /* *(0x5713C + 0x2C) = 0x1B607C f8 = t[0x89CF4], types 3 / 4 */
-extern const uint8_t  gp_cal_f8_up[5];                /* *(0x5713C + 0x34) = 0x1B6094 types 1 / 2 */
-extern const uint8_t  gp_cal_f8_ov[5];                /* 0x19B03C the 0x117B4A override's f8 */
-extern const uint16_t gp_cal_win_out[4][100];         /* 0xEC40E / 4D8 / 578 / 614: output speed >= (+0xF0/F4/F8/FC) */
-extern const int16_t  gp_cal_win_lo[4][100];          /* torque lower < (+0xE0/E4/E8/EC) */
-extern const int16_t  gp_cal_win_hi[4][100];          /* < torque upper (+0xD0/D4/D8/DC) */
-extern const uint8_t  gp_cal_tmp[10];                 /* the temperature-byte windows */
-extern const uint8_t  gp_cal_k7c;                     /* +0x7C: the 0xA1032 gate byte */
-extern const uint8_t  gp_cal_ka8;                     /* +0xA8 */
-extern const int16_t  gp_cal_thr[5];                  /* +0xB8 / BC / C0 / C4 BD1B, +0xC8 turbine */
-extern const int16_t  gp_cal_ov_x[4];                 /* 0x1B78A0 turbine rpm axis */
-extern const int16_t  gp_cal_ov_y[4];                 /* torque Nm */
-extern const uint8_t  gp_cal_ov_ped;                  /* 0x1FE8F6 */
+/* IN PLACE (2026-11-20, app/cal_inplace.h): the tables whose stock source is at 0x80000 or
+ * above are read where they are (addresses in cal_inplace.h; the pointer chains from
+ * *(0x5713C + off) are asserted by tools/gen_gp_cal.py and the host test cal_inplace) */
+#define GP_CAL_F8_DN(i)      cal_u8(CAL_GP_F8_DN + 4u + (i))   /* *(0x5713C + 0x2C) = 0x1B607C f8 = t[0x89CF4], types 3 / 4 */
+#define GP_CAL_F8_UP(i)      cal_u8(CAL_GP_F8_UP + 4u + (i))   /* *(0x5713C + 0x34) = 0x1B6094 types 1 / 2 */
+#define GP_CAL_F8_OV(i)      cal_u8(CAL_GP_F8_OV + 4u + (i))   /* 0x19B03C the 0x117B4A override's f8 */
+/* 0xEC40E / 4D8 / 578 / 614 (f = 0..3): 10 x 10 at +8, stride 0xD0 — output speed >= (+0xF0/F4/F8/FC),
+ * torque lower < (+0xE0/E4/E8/EC), < torque upper (+0xD0/D4/D8/DC) */
+#define GP_CAL_WIN_OUT(f, i) cal_u16(CAL_GP_WIN_OUT + CAL_GP_WIN_STEP * (f) + 8u + 2u * (i))
+#define GP_CAL_WIN_LO(f, i)  cal_s16(CAL_GP_WIN_LO + CAL_GP_WIN_STEP * (f) + 8u + 2u * (i))
+#define GP_CAL_WIN_HI(f, i)  cal_s16(CAL_GP_WIN_HI + CAL_GP_WIN_STEP * (f) + 8u + 2u * (i))
+#define GP_CAL_TMP(i)        cal_u8(CAL_GP_TMP + (i))          /* the temperature-byte windows */
+#define GP_CAL_K7C           cal_u8(CAL_GP_K7C)                /* +0x7C: the 0xA1032 gate byte */
+#define GP_CAL_KA8           cal_u8(CAL_GP_KA8)                /* +0xA8 */
+#define GP_CAL_THR(i)        cal_s16(CAL_GP_THR + 2u * (i))    /* +0xB8 / BC / C0 / C4 BD1B, +0xC8 turbine */
+#define GP_CAL_OV_X(i)       cal_s16(CAL_GP_OV_MAP + 4u + 2u * (i))        /* 0x1B78A0 turbine rpm axis */
+#define GP_CAL_OV_Y(i)       cal_s16(CAL_GP_OV_MAP + 4u + 8u + 2u * (i))   /* torque Nm */
+#define GP_CAL_OV_PED        cal_u8(CAL_GP_OV_PED)             /* 0x1FE8F6 */
+#define GP_CAL_SYNC          cal_u16(CAL_GP_SYNC)              /* 0x1FF1F6 rpm */
 extern const uint8_t  gp_cal_c1_on[2][3];             /* class 1, from 2 / 3: phase-1 delay, 0x0A duration, 0x0D lock */
 extern const uint8_t  gp_cal_c1_off[2][2][8];         /* class 1, from 2 / 3: 0x0B / 0x0F maps (x4, y4) */
 
@@ -50,6 +57,6 @@ extern const uint16_t gp_cal_dt1y[3];
 #define GP_CAL_A_ONSEQ   0x5EC24u
 #define GP_CAL_A_OFFSEQ  0x63555u
 #define GP_CAL_A_RATIO   0x4FAA4u
-#define GP_CAL_A_THR     0x1FF1F6u
+#define GP_CAL_A_THR     CAL_GP_SYNC
 
 #endif /* TCU_APP_GP_CAL_H */

@@ -554,8 +554,8 @@ static void test_g28(void)
         CHECK(fr_fm_confirmed(27u) == 1u);
         CHECKV(fr_fm_confirmed(28u), 0u);
         /* group 27 carries the same reactions as 28 (ids 9, 40) */
-        CHECKV(FRC_R0(fr_cal_grp[27u - 1u]), FRC_R0(fr_cal_grp[28u - 1u]));
-        CHECKV(FRC_R1(fr_cal_grp[27u - 1u]), FRC_R1(fr_cal_grp[28u - 1u]));
+        CHECKV(FRC_R0(FR_CFG(27u)), FRC_R0(FR_CFG(28u)));
+        CHECKV(FRC_R1(FR_CFG(27u)), FRC_R1(FR_CFG(28u)));
         CHECKV(fr_fm_react(40u), 1u);
         printf("g28 (b) 2288 mV: P1D8D confirm %u ms, code %02X; masks %08X / %08X\n",
                (unsigned)ev_ms(FR_EV_CONFIRM, 27u), T3S->code, (unsigned)FM->m0, (unsigned)FM->m1);
@@ -646,8 +646,8 @@ static void test_dump_masks(void)
     static const uint8_t gs[4] = { 28u, 98u, 109u, 136u };
     uint32_t m0 = 0u, m1 = 0u;
     for (unsigned i = 0u; i < 4u; i++) {
-        m0 |= FRC_R0(fr_cal_grp[gs[i] - 1u]);
-        m1 |= FRC_R1(fr_cal_grp[gs[i] - 1u]);
+        m0 |= FRC_R0(FR_CFG(gs[i]));
+        m1 |= FRC_R1(FR_CFG(gs[i]));
     }
     CHECKV(m0, 0x00813240u);
     CHECKV(m1, 0xE8260114u);
@@ -697,9 +697,9 @@ static int test_cal(void)
     fclose(f);
     for (unsigned i = 0u; i < FR_NG; i++) {
         CHECKV(U32(0x4F1D0u + 4u * i), 0x1923ECu + 36u * i);
-        CHECK(memcmp(fr_cal_grp[i], &g_img[0x1923ECu + 36u * i], 36u) == 0);
+        CHECK(memcmp(FR_CFG(i + 1u), &g_img[0x1923ECu + 36u * i], 36u) == 0);
         for (unsigned k = 0u; k < 3u; k++) {
-            CHECKV(fr_cal_dep[i][k], U16(0x1955A8u + 6u * i + 2u * k));
+            CHECKV(FR_DEP(i + 1u, k), U16(0x1955A8u + 6u * i + 2u * k));
         }
     }
     for (unsigned k = 0u; k < 12u; k++) {
@@ -717,9 +717,9 @@ static int test_cal(void)
     CHECKV(fr_cal_comm.mask_u0074, g_img[0x195D77u]);
     CHECKV(fr_cal_comm.b2en, g_img[0x195D78u]);
     for (unsigned n = 0u; n < FR_NE; n++) {
-        CHECKV(fr_cal_reload[n], U16(0x191B30u + 2u * n));
-        CHECKV(fr_cal_thr[n], U16(0x191BB4u + 2u * n));
-        CHECKV(fr_cal_mask[n], g_img[0x191C38u + n]);
+        CHECKV(FR_RELOAD(n), U16(0x191B30u + 2u * n));
+        CHECKV(FR_THR(n), U16(0x191BB4u + 2u * n));
+        CHECKV(FR_MASK(n), g_img[0x191C38u + n]);
         /* the entry's status getter → the ROM object */
         const unsigned g = U32(0x4BCE0u + 4u * n);
         const unsigned w0 = U16(g), w1 = U16(g + 2u);

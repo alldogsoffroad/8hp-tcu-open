@@ -11,26 +11,17 @@
 
 #include <stdint.h>
 
+#include "app/cal_inplace.h"
+
 #define SM_CAL_NMAP   5u        /* map index 0..4 = remapped ids 0, 5, 10, 15, 20 */
 #define SM_CAL_NX     14u       /* lines: 1..7 up, 8..14 down */
 #define SM_CAL_NY     12u       /* pedal */
 
-/* one shift map: {u32 nx, u32 ny, u16 xa[nx], u16 ya[ny], u16 z[ny][nx]} at
- * `addr` (0x121A56 reads it) */
-typedef struct {
-    uint32_t addr;                      /* its stock flash address (the byte check) */
-    uint16_t nx, ny;
-    uint16_t xa[SM_CAL_NX];
-    uint16_t ya[SM_CAL_NY];
-    uint16_t z[SM_CAL_NY * SM_CAL_NX];
-} sm_map_t;
-
-extern const sm_map_t sm_cal_map[SM_CAL_NMAP];
-extern const uint8_t  sm_cal_remap[100];       /* 0x1F3B80 */
-extern const uint8_t  sm_cal_prio[18 * 14];    /* 0x1F3BEC */
-extern const uint8_t  sm_cal_step[63 * 2];     /* 0x1E5E4C */
-extern const uint16_t sm_cal_mingear[8];       /* 0x1E5E34 */
-extern const uint8_t  sm_cal_ab30w[2];         /* 0x1FEC8C / 0x1FEC8D */
+/* IN PLACE (2026-11-20, app/cal_inplace.h): the shift maps, the program remap / priority
+ * / step-limit tables, the minimum-gear curve, the AB30 weights and the speed-limit
+ * tables are read where they are in the stock calibration (>= 0x80000) — no copies.
+ * A map is {u32 nx, u32 ny, u16 xa[nx], u16 ya[ny], u16 z[ny][nx]} at one of: */
+#define SM_CAL_MAP_ADDR(k) (CAL_SM_MAP0 + CAL_SM_MAP_LEN * (k))   /* 0x1E9910 / 0x1E9A9C / ... (the pointer table 0x62278, checked by the host test) */
 
 /* THE GEAR FEEDBACK CHAIN (app/sm_gear.c): four 10 x 10 gear-pair tables,
  * t[(to + 1) + (from + 1) * 10] for from, to = -1..8, signed bytes */
@@ -43,8 +34,8 @@ extern const int8_t   sm_cal_gskip[100];       /* 0x4F708: 0xD16BA / 0xD1854 the
  * 0xB6CE8 / 0xB6CBC); [0] 0xD1854 speed, [1] 0xD1854 0x89CA0, [2] [3] [4]
  * 0xD16BA turbine / engine / output (and [4] 0xD1922), [5] 0xD16BA u8 temp */
 #define SM_CAL_GN 10u
-extern const uint32_t sm_cal_gspd_addr[6];
-extern const int16_t  sm_cal_gspd[5][100];
-extern const uint8_t  sm_cal_gtemp[100];
+/* the six speed-limit tables at 0x19AB78 + 0xD0 k, data at +8: k = 0..4 s16, k = 5 u8 */
+#define SM_CAL_GSPD(k, i)  cal_s16(CAL_SM_GSPD + CAL_SM_GSPD_STEP * (k) + 8u + 2u * (i))
+#define SM_CAL_GTEMP(i)    cal_u8(CAL_SM_GTEMP + 8u + (i))
 
 #endif /* TCU_APP_SM_CAL_H */
