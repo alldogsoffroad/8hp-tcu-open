@@ -41,7 +41,7 @@ sections 1..6; every pool / pointer chain asserted against the bytes below):
            0x59E34): index = the shift's FROM gear (verified here: 0x5F014[2]
            = 0, [3] = 1; 0x5E984[2] = 7, [3] = 8)
 
-usage: gen_gp_cal.py <stock image> <out .c>
+usage: gen_gp_cal.py <stock image> <out .c> <NUP> <out gp_cal_ph.h>
 """
 import struct
 import sys
@@ -66,6 +66,7 @@ def main():
     o.append(' * The gear-pair shadow\'s tables (app/gp_cal.h); byte-checked by')
     o.append(' * tests/unit/test_gp_shadow.c --cal (ctest gp_cal_bytes). */')
     o.append('#include "app/gp_cal.h"')
+    o.append('#include "app/gp_cal_ph.h"')
     o.append('')
     o.append('/* the mutation negative (ctest gp_shadow_neg_TABLE): the 1->2 on-coming element,')
     o.append(' * t[(1+1) + (2+1)*10] = 5 (E) -> 4 (D) — the pre-select / commit check must fail */')
@@ -212,6 +213,179 @@ def main():
     for maps in off_rows:
         o.append('    { %s },' % ', '.join('{ %s }' % ', '.join('%d' % v for v in (mx + my)) for mx, my in maps))
     o.append('};')
+    o.append('')
+
+
+    # ---- 2026-11-20: the PHASE-BODY tables (~/tcu_sweep/shift_phase_bodies_decode.md §1.5 / §2 / §3) ----
+    # per up-shift row (variant 0 = the 0x89C06 == 0 column of every block array), the maps the on-coming
+    # (UA 0x5B9B8 / UB 0x5A3DC / UC 0x5B668 class rows) and off-going (O40 0x59538 / O3C 0x58C98 /
+    # O4C 0x59370 class rows) phase bodies read. Each map is copied over its exact size (the next map /
+    # field pointer in the cal region confirms it, see the host test gp_cal_bytes), referenced from a
+    # per-row struct. Rows beyond NUP are NOT in the image (app size budget): their bodies are counted
+    # stand-ins in app/gp_shadow.c.
+    NUP = int(sys.argv[3])       # up-shift rows 0..NUP-1 (1->2 .. NUP->NUP+1)
+    assert 1 <= NUP <= 7
+    NCLS = 2                                                  # shift classes 0 and 1 (the kind machine's two)
+
+    def msize(t, a):
+        if t == 'c8':
+            return 1
+        if t == 'c16':
+            return 2
+        if t == 'm1u8':
+            return 4 + 2 * u32(a)
+        if t == 'm1s16':
+            return 4 + 4 * u32(a)
+        if t == '2du8':
+            return 8 + u32(a) + u32(a + 4) + u32(a) * u32(a + 4)
+        if t == '2ds16':
+            return 8 + 2 * (u32(a) + u32(a + 4) + u32(a) * u32(a + 4))
+        raise AssertionError(t)
+
+    # idx tables: 9 x 9 u32 [to*9 + from]
+    IDX_T = {'ua': 0x5EC48, 'ub': 0x5ED8C, 'uc0': 0x5F158, 'uc1': 0x5F158 + 0x144, 'o40': 0x5DF64,
+             'o3c': 0x5DE20, 'o4c0': 0x5E330, 'o4c1': 0x5E330 + 0x144, 'c134': 0x6113C}
+    assert u32(0x5F29C) == 7 and u32(0x5E474) == 7
+    BLK_T = {'ua': 0x5B9B8, 'ub': 0x5A3DC, 'uc': 0x5B668, 'o40': 0x59538, 'o3c': 0x58C98, 'o4c': 0x59370,
+             'c134': 0x57434}
+    FIELDS = {
+        'ua': [(0x04, 'm1s16'), (0x08, 'm1s16'), (0x0C, 'm1u8'), (0x10, 'c8'), (0x14, 'c8'), (0x1C, '2ds16'),
+               (0x28, 'm1s16'), (0x2C, 'm1s16'), (0x30, 'm1s16'), (0x34, 'm1s16'), (0x3C, 'm1s16'),
+               (0x40, 'c16'), (0x44, 'm1s16'), (0x48, '2ds16')],
+        'ub': [(0x00, 'm1s16'), (0x04, 'm1u8')],
+        'uc': [(0x00, 'm1u8'), (0x04, '2du8'), (0x08, 'c8'), (0x0C, '2ds16'), (0x18, '2du8'), (0x20, 'col0'),
+               (0x28, 'c8'), (0x2C, 'c8'), (0x30, '2ds16'), (0x38, '2ds16')],
+        'o40': [(0x00, 'c16'), (0x04, 'col0'), (0x0C, 'c16'), (0x10, 'c8'), (0x18, '2ds16'), (0x1C, 'm1s16')],
+        'o3c': [(0x08, 'm1s16')],
+        'o4c': [(0x00, 'c8'), (0x04, '2du8'), (0x08, 'm1s16'), (0x0C, '2du8'), (0x10, 'm1s16')],
+        'c134': [(0x04, 'c8')],
+    }
+    NAMES = {'ua': 'gp_ua_t', 'ub': 'gp_ub_t', 'uc': 'gp_uc_t', 'o40': 'gp_o40_t', 'o3c': 'gp_o3c_t',
+             'o4c': 'gp_o4c_t', 'c134': 'gp_c134_t'}
+
+    def msz2(t, a):
+        if t == 'col0':                                       # the first x column of a 2ds16 map as a 1-D s16 map
+            return 4 + 4 * u32(a + 4)
+        return msize(t, a)
+
+    for n in range(1, NUP + 1):
+        for k in ('ua', 'ub', 'uc0', 'o40', 'o3c', 'o4c0', 'c134'):
+            assert u32(IDX_T[k] + 4 * ((n + 1) * 9 + n)) == n - 1, (k, n)
+        for k in ('uc1', 'o4c1'):
+            assert u32(IDX_T[k] + 4 * ((n + 1) * 9 + n)) == 7 + n - 1, (k, n)
+    maps = {}                                                 # addr -> (type, label)
+
+    def add_row(fam, absidx):
+        b = u32(BLK_T[fam] + 8 * absidx)                      # variant 0 = the first word of the pair
+        mem = []
+        for off, t in FIELDS[fam]:
+            p = u32(b + off)
+            if t not in ('c8', 'c16'):
+                if p in maps:
+                    assert maps[p][0] == t, (hex(p), maps[p], t)
+                maps[p] = (t, 'm_%05X' % p)
+            mem.append((off, t, p))
+        return mem
+
+    # UA+0x4C (the 0x1144F0 term over torque x speed) is all zero in every ported row: asserted, not copied
+    for i in range(NUP):
+        b = u32(BLK_T['ua'] + 8 * i)
+        q = u32(b + 0x4C)
+        nx, ny = u32(q), u32(q + 4)
+        assert not any(img[q + 8 + 2 * (nx + ny):q + 8 + 2 * (nx + ny + nx * ny)]), ('UA+0x4C', i)
+    famrows = {}
+    for fam in ('ua', 'ub', 'o40', 'o3c', 'c134'):
+        famrows[fam] = [add_row(fam, i) for i in range(NUP)]
+    famrows['uc'] = [[add_row('uc', 7 * c + i) for i in range(NUP)] for c in range(NCLS)]
+    famrows['o4c'] = [[add_row('o4c', 7 * c + i) for i in range(NUP)] for c in range(NCLS)]
+
+    o.append('/* the mutation negative (ctest gp_shadow_neg_PHCAL): the 1->2 on-coming phase-1 delay UC+8 = 0 -> 4 passes */')
+    o.append('#if defined(GP_NEG_PHCAL)')
+    o.append('#define GP_NEG_PH(v) ((v) + 4u)')
+    o.append('#else')
+    o.append('#define GP_NEG_PH(v) (v)')
+    o.append('#endif')
+    o.append('')
+    o.append('/* ---- the phase-body maps (2026-11-20): the cal maps of the up-shift rows 1->2 .. %d->%d, classes 0 / 1,' % (NUP, NUP + 1))
+    o.append(' * variant 0; each named m_<stock flash address>; col0 = the first x column of a 2-D map as a 1-D s16')
+    o.append(" * map {n = ny; y axis; z[.][0]} (the x input, the stock's ctx+0xC, is a stand-in 0 below the axis) */")
+    chk = []
+    for a in sorted(maps):
+        t, lab = maps[a]
+        if t == 'col0':
+            nx, ny = u32(a), u32(a + 4)
+            assert (nx, ny) == (8, 10) and u16(a + 8) >= 19, (hex(a), nx, ny)
+            ys = [u16(a + 8 + 2 * nx + 2 * i) for i in range(ny)]
+            zs = [u16(a + 8 + 2 * (nx + ny) + 2 * (i * nx)) for i in range(ny)]
+            data = struct.pack('>I', ny) + b''.join(struct.pack('>H', v) for v in ys + zs)
+        else:
+            data = img[a:a + msize(t, a)]
+        o.append('static const uint8_t %s[%d] = {' % (lab, len(data)))
+        for i in range(0, len(data), 16):
+            o.append('    ' + ', '.join('0x%02X' % b for b in data[i:i + 16]) + ',')
+        o.append('};')
+        chk.append((a, lab, len(data), 1 if t == 'col0' else 0))
+    o.append('')
+    hh = ['/* gp_cal_ph.h - GENERATED by tools/gen_gp_cal.py (the phase-body row structs); do not edit.',
+          ' * member f<off> = the stock cal block + <off>: a cell value or a pointer to its map (app/gp_cal.c). */',
+          '#ifndef TCU_APP_GP_CAL_PH_H', '#define TCU_APP_GP_CAL_PH_H', '#include <stdint.h>', '',
+          '#define GP_PH_NUP %du' % NUP, '']
+    for fam in ('ua', 'ub', 'uc', 'o40', 'o3c', 'o4c', 'c134'):
+        ms = []
+        for off, t in FIELDS[fam]:
+            ty = {'c8': 'uint8_t', 'c16': 'int16_t'}.get(t, 'const uint8_t *')
+            ms.append('%s f%02x;' % (ty, off))
+        hh.append('typedef struct { %s } %s;' % (' '.join(ms), NAMES[fam]))
+        hh.append('extern const %s gp_ph_%s%s;' % (NAMES[fam], fam, '[2][GP_PH_NUP]' if fam in ('uc', 'o4c') else '[GP_PH_NUP]'))
+    hh += ['', 'typedef struct { uint32_t addr; const uint8_t *data; uint32_t len; uint32_t col0; } gp_ph_chk_t;',
+           '#if defined(GP_CAL_CHECK)', 'extern const gp_ph_chk_t gp_ph_chk[];', 'extern const unsigned gp_ph_chk_n;', '#endif',
+           'extern const unsigned gp_ph_nup;', '', '#endif']
+    open(sys.argv[4], 'w').write('\n'.join(hh) + '\n')
+
+    def init_row(mem, neg=False):
+        parts = []
+        for off, t, p in mem:
+            if t == 'c8' and neg and off == 0x08:
+                parts.append('GP_NEG_PH(%du)' % img[p])      # the mutation negative: the phase-1 delay
+            elif t == 'c8':
+                parts.append('%du' % img[p])
+            elif t == 'c16':
+                parts.append('%d' % struct.unpack('>h', img[p:p + 2])[0])
+            else:
+                parts.append(maps[p][1])
+        return '{ %s }' % ', '.join(parts)
+
+    for fam in ('ua', 'ub', 'o40', 'o3c', 'c134'):
+        o.append('const %s gp_ph_%s[GP_PH_NUP] = {' % (NAMES[fam], fam))
+        for r in famrows[fam]:
+            o.append('    %s,' % init_row(r))
+        o.append('};')
+    for fam in ('uc', 'o4c'):
+        o.append('const %s gp_ph_%s[2][GP_PH_NUP] = {' % (NAMES[fam], fam))
+        for c in range(NCLS):
+            o.append('    {')
+            for ri, r in enumerate(famrows[fam][c]):
+                o.append('        %s,' % init_row(r, fam == 'uc' and ri == 0))
+            o.append('    },')
+        o.append('};')
+    o.append('')
+    o.append('#if defined(GP_CAL_CHECK)')
+    o.append('/* the host byte check: stock address, the data, its length, col0 */')
+    o.append('const gp_ph_chk_t gp_ph_chk[] = {')
+    for a, lab, n, c0 in chk:
+        o.append('    { 0x%06Xu, %s, %du, %du },' % (a, lab, n, c0))
+    o.append('};')
+    o.append('const unsigned gp_ph_chk_n = %du;' % len(chk))
+    o.append('#endif')
+    o.append('')
+    o.append('const unsigned gp_ph_nup = GP_PH_NUP;')
+    o.append('')
+    # the sync-rate DT1 time constant map *(0x5713C + 0x28) = 0x1B606C {u32 n; u16 x[n]; u16 y[n]} (0x1179D8 -> 0xD2058)
+    dp = ptr(0x28)
+    assert dp == 0x1B606C and u32(dp) == 3
+    o.append('/* the DT1 time constant of the sync rate: *(0x5713C + 0x28) = 0x1B606C over the output speed 0x89C08 (0xB6EAE) */')
+    o.append('const uint16_t gp_cal_dt1x[3] = { %s };' % ', '.join('%du' % u16(dp + 4 + 2 * i) for i in range(3)))
+    o.append('const uint16_t gp_cal_dt1y[3] = { %s };' % ', '.join('%du' % u16(dp + 10 + 2 * i) for i in range(3)))
     o.append('')
 
     open(sys.argv[2], 'w').write('\n'.join(o))

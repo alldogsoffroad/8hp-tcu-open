@@ -61,13 +61,33 @@
  *     the +3 flags; the ramp class 0x49FC0 (init 0xD1D8E / step 0xD1D96);
  *   0x89C0C = the turbine speed 0x89CBA (by value), 0x89C1C / 0x89C0E.
  *
- * NOT PORTED / STOOD IN (each counted in gp_w_t / gp_xw_t):
- *   the phase BODIES (done 0x1138FC / 0x1106DC, entry 0x1132F4 except its
- *     progress-hold and +4 stores, outputs 0x113F16 / 0x1144B0 / 0x110CDC /
- *     0x110C8E / 0x110600, 0x112142, 0x114E26 / 0x113788): a SEQUENCE-ONLY
- *     black box — each phase ends on the documented stand-in GP_SI_* below
- *     (pass counts, the block sync for the inertia phase 9); a non-active
- *     block (B) holds at phase >= 2 (pre-fill) [I]; the outputs read 0;
+ * 2026-11-20 THE PHASE BODIES (~/tcu_sweep/shift_phase_bodies_decode.md §2 / §3,
+ * port ~/tcu_sweep/gp_phases_port.md; state gp_ph_t in .gp_phase 0xFFF87EB0): the
+ * up-shift laws of the on-coming (done 0x1138FC, entry 0x1132F4, output 0x113F16 /
+ * 0x1144B0) and off-going (0x1106DC / 0x10FFBE / 0x110CDC / 0x110C8E / 0x110600)
+ * objects for the rows 1->2 .. GP_PH_NUP->+1 in the shift classes 0 / 1 (the
+ * cal maps UA / UB / UC / O40 / O3C / O4C / ctx+0x134, variant 0, gp_cal.c): the
+ * exits on the sync predictor BD76 (0x117AEC over the DT1 rate 0x1179D8), BD30 and
+ * the cal durations, the pressures (kiss, turbine / torque terms, the 0xD1D96 ramps,
+ * the phase-9 blend, the 0x0D lock ramp, the final 20000), and the producer ids 1..4
+ * now carry them (recorded, NEVER applied). The GP_SI_T_* durations below remain
+ * ONLY for the down-shifts, the rows / classes outside the image and block B.
+ *
+ * NOT PORTED / STOOD IN (each counted in gp_w_t / gp_xw_t / gp_pw_t):
+ *   the phase bodies of the down-shifts (class-1 durations only), of the up rows
+ *     beyond GP_PH_NUP / class >= 2 / skip shifts, and of the pre-selected block B:
+ *     a SEQUENCE-ONLY black box — each phase ends on the documented stand-in
+ *     GP_SI_* below; a non-active block (B) holds at phase >= 2 (pre-fill) [I];
+ *     the outputs read 0 (gp_pw_t.unp_row / dn_si);
+ *   inside the ported bodies, counted in gp_pw_t.x_si: ctx+0x1C (0x1132BC), the
+ *     adaptation 0xAED5C (0), the phase-9 f44 scaling (0x84D6C map), the element
+ *     limit 0x1147C8 (20000), 0xEAEFC's blend shape (linear over UC+0x28 %), the
+ *     ramp limits of phases 4 / 0x0D, ctx+0xC (0 -> the first column of UC+0x20 /
+ *     O40+4), the off-going phase-3 level / duration (0x1114CC / 0x111AE2) and the
+ *     phase-4 ramp temperature gate (0x84D64+0x44), E9464 / E945E (0), 0x89CC2 (0),
+ *     the torque-intervention exit 0x10FA28, the phase-2 fill-complete 0xB822C
+ *     (GP_SI_T_FILL passes) and the "applied" test of the completion (phase 0x12 and
+ *     the commanded output >= 13030 mbar);
  *   0xB8246 "on-coming applied" (the request object +0x54): stand-in =
  *     block A's on-coming phase object in its final phase 0x12 [I];
  *   0xEC788 BD1E (0x11632E / 0x116356 / 0xB7C26 → 0xD4FBA): GP_SI_BD1E = 1;
@@ -357,6 +377,52 @@ _Static_assert(offsetof(gp_x_t, w) == 70u, "gp_x_t layout (witness_gp.py)");
 _Static_assert(sizeof(gp_x_t) == 94u, "gp_x_t is 94 bytes (.gp_ext, witness_gp.py)");
 _Static_assert(sizeof(gp_x_t) <= 0x6Cu, "gp_x_t must fit the dump-zero gap after .gp_gear (108 B)");
 
+/* ── 2026-11-20: the PHASE-BODY state (own RAM .gp_phase; decode shift_phase_bodies_decode.md, port
+ * gp_phases_port.md). One per context, swapped with it by 0xECB14. The stock object offsets in the
+ * comments ([I] where the offset is the decode's reading). ─────────────────────────────────────────── */
+typedef struct {
+    int16_t  o2;        /* +0  on +2   the on-coming step output (mbar) */
+    int16_t  o36;       /* +2  on +0x36 the phase base level */
+    int16_t  o2c;       /* +4  on +0x2C the phase 0x13 / 4 output (the blend source of phase 9) */
+    uint16_t d32;       /* +6  on +0x32 the phase duration / threshold (passes) */
+    uint16_t ms16;      /* +8  ctx+0x16 the shift-start stamp (ms clock) */
+    uint8_t  v2e;       /* +10 on +0x2E the phase 4 / 5 output is valid */
+    uint8_t  f44;       /* +11 on +0x44 the 1->2 standstill flag (0x1138C6) */
+    int16_t  p2;        /* +12 off +2  the off-going step output */
+    int16_t  p1a;       /* +14 off +0x1A the phase-3 slip-hold level */
+    int16_t  p3s;       /* +16 the phase-3 start level (the last phase-2 output) */
+    uint16_t p20;       /* +18 off +0x20 the phase-1 duration */
+    int16_t  bd76;      /* +20 ctx+0xA the sync progress (0x117AEC) */
+    int16_t  rate;      /* +22 the DT1 rate of -slip (0xD2058) */
+    int32_t  acc;       /* +24 the DT1 accumulator */
+    uint16_t ts;        /* +28 the DT1 stamp */
+    uint8_t  pfill;     /* +30 passes since the on-coming left its fill (0x112D16's negative side) [I] */
+    uint8_t  pad;       /* +31 */
+} gp_pb_t;
+_Static_assert(sizeof(gp_pb_t) == 32u, "gp_pb_t is 32 bytes (witness_gp.py)");
+
+/* the counted stand-ins / witnesses of the phase bodies (u16, saturating) */
+typedef struct {
+    uint16_t unp_row;   /* +0  a phase body asked for a row / class / direction not in the image (output 0) */
+    uint16_t fill_si;   /* +2  the on-coming phase-2 fill-complete stand-in (0xB822C) taken */
+    uint16_t x_si;      /* +4  undecoded terms stood in (ctx+0x1C, 0xAED5C, 0x1147C8, 0x1114CC, the 0xEAEFC shape, ...) */
+    uint16_t c82_n;     /* +6  0x113C82 sync-predictor exits taken */
+    uint16_t dn_si;     /* +8  down-shift phase bodies not ported (the class-1 durations only) */
+    uint16_t on_n;      /* +10 on-coming body outputs computed */
+    uint16_t off_n;     /* +12 off-going body outputs computed */
+    uint16_t ph3_t;     /* +14 the last off-going phase-3 exit time t */
+} gp_pw_t;
+_Static_assert(sizeof(gp_pw_t) == 16u, "gp_pw_t is 16 bytes (witness_gp.py)");
+
+typedef struct {
+    gp_pb_t  blk[2];    /* +0   block A / B */
+    gp_pw_t  w;         /* +64 */
+    uint8_t  cnt[4];    /* +80 0xFFF8E6F4..F7: the on-coming upshift counts A / C / D / E (RAM only: zeroed at boot) */
+    uint8_t  pad[12];   /* +84 */
+} gp_ph_t;
+_Static_assert(sizeof(gp_ph_t) == 96u, "gp_ph_t is 96 bytes (.gp_phase, witness_gp.py)");
+const volatile gp_ph_t *gp_shadow_ph(void);
+
 /* the 16-byte float ramp object of the vtable 0x49FC0 (on +0x68 / off +0x58;
  * the vtable word at object+0x10 is the constant 0x49FC0 and not stored) */
 typedef struct {
@@ -412,6 +478,11 @@ void gp_shadow_host_si(uint8_t early_ok, uint8_t bd26);
 void gp_shadow_host_ae31(uint8_t ae31);                      /* the 0x117B4A override gate */
 /* the swap probe (host): 0xECB14 on the shadow's own blocks, and the mutable views the test fills */
 void gp_shadow_host_ecb14(void);
+/* the cal map readers (0xB6E10 / 0xB6D6C / 0xB7164 / 0xB6FD6) for the host test of the decode's numbers */
+int32_t gp_host_m1s16(const uint8_t *m, int16_t x);
+uint8_t gp_host_m1u8(const uint8_t *m, uint8_t x);
+int32_t gp_host_m2s16(const uint8_t *m, int16_t x, int16_t y);
+uint8_t gp_host_m2u8(const uint8_t *m, uint8_t x, uint8_t y);
 gp_t *gp_shadow_host_mut(void);
 gp_x_t *gp_shadow_host_xmut(void);
 gp_ramp_t (*gp_shadow_host_rmut(void))[2];

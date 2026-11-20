@@ -10,6 +10,7 @@
 #endif
 
 #include <stdint.h>
+#include "app/gp_cal_ph.h"
 
 #define GP_CAL_ONSEQ_N   36u        /* 12 steps x 3 types */
 #define GP_CAL_OFFSEQ_N  39u        /* 13 steps x 3 types */
@@ -39,6 +40,9 @@ extern const int16_t  gp_cal_ov_y[4];                 /* torque Nm */
 extern const uint8_t  gp_cal_ov_ped;                  /* 0x1FE8F6 */
 extern const uint8_t  gp_cal_c1_on[2][3];             /* class 1, from 2 / 3: phase-1 delay, 0x0A duration, 0x0D lock */
 extern const uint8_t  gp_cal_c1_off[2][2][8];         /* class 1, from 2 / 3: 0x0B / 0x0F maps (x4, y4) */
+
+extern const uint16_t gp_cal_dt1x[3];                  /* 0x1B606C: the sync-rate DT1 time constant over the output speed */
+extern const uint16_t gp_cal_dt1y[3];
 
 #define GP_CAL_A_ON      0x5061Cu
 #define GP_CAL_A_OFF     0x50680u

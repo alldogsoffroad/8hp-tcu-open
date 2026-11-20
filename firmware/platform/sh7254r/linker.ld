@@ -434,6 +434,16 @@ SECTIONS
            __gp_ext_end <= __sm_shadow_start, ".gp_ext: gp_x_t is off 0xFFF86794 or runs into .sm_shadow (witness_gp.py)")
     ASSERT(__gp_ramp_start == 0xFFF869BC && __gp_ramp_start >= __sm_gear_end && SIZEOF(.gp_ramp) == 0x40 &&
            __gp_ramp_end <= 0xFFF86A00, ".gp_ramp: the ramp objects are off 0xFFF869BC or run into .fb_shadow (witness_gp.py)")
+    /* THE GEAR-PAIR SHADOW'S PHASE BODIES (2026-11-20, ~/tcu_sweep/gp_phases_port.md): gp_ph_t (0x60: two
+     * contexts' on-coming / off-going / sync-progress state, the shift counters, the witnesses) at 0xFFF87EB0
+     * in the dump-zero run 0xFFF87E00..0xFFF88120 right after .out_wit (ends 0xFFF87EA4), below .adc_dma_a
+     * 0xFFF88130 and its guard bytes. gp_t / gp_x_t / gf_t did not move. Cleared by gp_shadow_init. */
+    .gp_phase 0xFFF87EB0 (NOLOAD) : {
+        __gp_phase_start = .; *(.gp_phase)
+        . = ALIGN(4); __gp_phase_end = .;
+    } > RAM
+    ASSERT(__gp_phase_start == 0xFFF87EB0 && __gp_phase_start >= __out_wit_end && SIZEOF(.gp_phase) == 0x60 &&
+           __gp_phase_end <= 0xFFF88000, ".gp_phase: gp_ph_t is off 0xFFF87EB0 or leaves the dump-zero run (witness_gp.py)")
     /* the fault-reaction shadow's FAULT MANAGER (app/fr_fm.c, ours; RAM
      * only, written by that TU alone): struct fr_fm_t in the dump-zero gap
      * between the A-DMAC ring (+ its guard 0x88728) and the range chain's

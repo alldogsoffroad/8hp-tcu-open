@@ -33,14 +33,16 @@ import sys
 OUT_PATTERNS = [
     r"\bgp_shadow", r"\bgp_hook", r"\bgp_cal", r"\bgp_gear", r"\bgp_cpl_", r"\bGP_EV_", r"\bGP_SI_",
     r"\bGP_CAL_", r"\bgp_t\b", r"\bgp_in_t\b", r"\bgp_blk_t\b", r"\bgp_po_t\b", r"\bgp_w_t\b",
+    r"\bgp_ph", r"\bgp_pb_t\b", r"\bgp_pw_t\b", r"\.gp_phase\b", r"\bs_gph\b", r"\bGP_PH_", r"\bgp_(ua|ub|uc|o40|o3c|o4c|c134)_t\b",
     r"\.gp_shadow\b", r"\.gp_gear\b", r"\.gp_ext\b", r"\.gp_ramp\b", r"\bs_gp\b", r"\bs_gx\b", r"\bs_gr\b",
     r"\bgp_x_t\b", r"\bgp_xblk_t\b", r"\bgp_xpo_t\b", r"\bgp_xw_t\b", r"\bgp_in2_t\b", r"\bgp_ramp_",
     r"\bgp_class_", r"\bGP_NEG_",
+    r"0[xX][fF]{3}87[eE][b-fB-F][0-9a-fA-F]", r"0[xX][fF]{3}87[fF][0-9a-fA-F]{2}",
     r"0[xX][fF]{3}865[7-9a-fA-F][0-9a-fA-F]", r"0[xX][fF]{3}866[0-9a-fA-F]{2}", r"0[xX][fF]{3}867[0-9][0-9a-fA-F]",
     r"0[xX][fF]{3}867[a-fA-F][0-9a-fA-F]", r"0[xX][fF]{3}869[b-fB-F][0-9a-fA-F]",
 ]
 SHADOW_PATTERNS = [
-    r'#\s*include\s*"(?!app/gp_shadow\.h"|app/gp_cal\.h"|app/sm_cal\.h"|app/sm_shadow\.h"|app/sm_gear\.c")[^"]*"',
+    r'#\s*include\s*"(?!app/gp_shadow\.h"|app/gp_cal\.h"|app/gp_cal_ph\.h"|app/sm_cal\.h"|app/sm_shadow\.h"|app/sm_gear\.c")[^"]*"',
     r"\b(rq_prod|drv|sup|park|plat|vehicle|sensors|rng_chain|kl15|tmp_chain|tmp_safe|sol|com|meas|gs|g6a|"
     r"od|fb|pa7|tsel|sched|sm_shadow|sm_hook|fr|crc8|os_sel)_[a-z0-9_]+\s*\(",
     r"\bP?CELL_[A-Z0-9_]+",

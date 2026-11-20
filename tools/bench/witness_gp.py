@@ -50,6 +50,7 @@ import witness_sm  # noqa: E402
 GP_SIZE = 0x188
 GF_SIZE = 0x9C
 GX_SIZE = 94        # gp_x_t, section .gp_ext (__gp_ext_start): the kind / class state, the counters' extensions
+GPH_SIZE = 96       # gp_ph_t, section .gp_phase (__gp_phase_start): the phase-body state (2026-11-20, ~/tcu_sweep/gp_phases_port.md)
 GR_SIZE = 64        # 4 x gp_ramp_t (16 B), section .gp_ramp (__gp_ramp_start): [block A on, A off, B on, B off]
 XW = ["k_start", "k_cyc", "k_chg", "k_ovr", "k_reload(NOT PORTED)", "k_a1032(stand-in 0)", "k_adapt(pass-through)",
       "c_pass", "repin", "ramp", "bd1b_set", "class1_rows"]
@@ -153,6 +154,29 @@ def show(d):
                d[q + 7]))
 
 
+PW = ["unp_row(stand-in 0)", "fill_si(stand-in)", "x_si(counted undecoded terms)", "c82_n", "dn_si(down bodies NOT PORTED)",
+      "on_n", "off_n", "ph3_t"]
+
+
+def show_ph(p):
+    """gp_ph_t (96 B): two gp_pb_t (32 B) + gp_pw_t (16 B) + cnt[4]. Dry bench (output 0, no phase entered): every
+    output / state 0; bd76: block A (synchronised since the settle commit, zero slip) = BD2E (the passes since the commit, u16),
+    block B (never synchronised, rate 0) = -500; on_n = off_n = 0, unp_row = 0, the shift counters all 0."""
+    for k, nm in enumerate("AB"):
+        o = k * 32
+        o2, o36, o2c = struct.unpack(">hhh", p[o:o + 6])
+        d32, ms16 = struct.unpack(">HH", p[o + 6:o + 10])
+        v2e, f44 = p[o + 10], p[o + 11]
+        p2, p1a, p3s, p20, bd76, rate = struct.unpack(">hhhHhh", p[o + 12:o + 24])
+        acc, ts = struct.unpack(">iH", p[o + 24:o + 30])
+        print("  PHASE-BODY %s: on o2 %d o36 %d o2c %d d32 %u ms16 %u v2e %u f44 %u | off p2 %d p1a %d p3s %d p20 %u | "
+              "bd76 %d rate %d acc %d ts %u pfill %u" % (nm, o2, o36, o2c, d32, ms16, v2e, f44, p2, p1a, p3s, p20,
+                                                          bd76, rate, acc, ts, p[o + 30]))
+    w = struct.unpack(">8H", p[64:80])
+    print("  PHASE-BODY witnesses: " + ", ".join("%s %u" % (n, v) for n, v in zip(PW, w)) +
+          " | shift counters A/C/D/E %s" % list(p[80:84]))
+
+
 def main():
     rounds = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else 3
     raw = "--raw" in sys.argv
@@ -190,6 +214,11 @@ def main():
             print("  gp_x_t read FAIL")
         else:
             show_x(x, rr)
+        ph = witness_sm.read(b, 1, syms["__gp_phase_start"], GPH_SIZE)
+        if ph is None:
+            print("  gp_ph_t read FAIL")
+        else:
+            show_ph(ph)
         g = witness_sm.read(b, 1, gf_a, GF_SIZE)
         if g is None:
             print("  coupled chain read FAIL")

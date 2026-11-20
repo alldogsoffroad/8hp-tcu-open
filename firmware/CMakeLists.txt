@@ -1884,7 +1884,7 @@ else()
         app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c)
     add_executable(test_gp_shadow ${GP_TEST_SOURCES})
     target_compile_definitions(test_gp_shadow PRIVATE _POSIX_C_SOURCE=200809L GP_HOOK_NO_GATHER=1
-        SM_HOOK_NO_GATHER=1 "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"")
+        SM_HOOK_NO_GATHER=1 GP_CAL_CHECK=1 "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"")
     add_test(NAME gp_shadow COMMAND test_gp_shadow)
     add_test(NAME gp_cal_bytes COMMAND test_gp_shadow --cal)
     set_tests_properties(gp_cal_bytes PROPERTIES SKIP_RETURN_CODE 77)
@@ -1893,6 +1893,13 @@ else()
         SM_HOOK_NO_GATHER=1 GP_NEG_TABLE=1)
     add_test(NAME gp_shadow_neg_TABLE COMMAND test_gp_shadow_neg_TABLE)
     set_tests_properties(gp_shadow_neg_TABLE PROPERTIES WILL_FAIL TRUE)
+    # 2026-11-20 (the phase bodies, ~/tcu_sweep/gp_phases_port.md): the 1->2 on-coming phase-1 delay UC+8 = 0 -> 4
+    # passes in the cal copy (GP_NEG_PHCAL) must FAIL (the decode's numbers and the observed shapes)
+    add_executable(test_gp_shadow_neg_PHCAL ${GP_TEST_SOURCES})
+    target_compile_definitions(test_gp_shadow_neg_PHCAL PRIVATE _POSIX_C_SOURCE=200809L GP_HOOK_NO_GATHER=1
+        SM_HOOK_NO_GATHER=1 GP_NEG_PHCAL=1)
+    add_test(NAME gp_shadow_neg_PHCAL COMMAND test_gp_shadow_neg_PHCAL)
+    set_tests_properties(gp_shadow_neg_PHCAL PROPERTIES WILL_FAIL TRUE)
     # 2026-11-20 (the stand-in retirements, ~/tcu_sweep/gp_standins_port.md): a mutated class
     # table (the down-shift f8 array t[1] 1 -> 0: no downshift window, kind 2, class 0) and a swap
     # that skips the ramp objects and the 0x117CE4 re-pin must FAIL
