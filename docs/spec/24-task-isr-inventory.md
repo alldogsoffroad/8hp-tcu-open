@@ -315,10 +315,15 @@ is: read WTSR bit 7 once at startup before the first WDT feed, and count occurre
    The mode 1/2/3 lists are identical except slot 26 (the one-hot mode flags 0x89C3D/0x89C3E/0x89C3C) and runtime-
    monitor stubs. **OS mode selection:** the safety function **`0x1418E2`** writes the request `0xFFF95483` (field +7
    of object `0xFFF9547C`; cal table `0x649F0` = 150 / 100 / 17000 / 6000) every 10 ms in modes 1–3 → `0x68EFE` →
-   `0x93B5E` → `0x6F0B4` (pending `0x93B34`) → applied by **`0x66E06` at the end of the 10 ms task in every mode**.
+   `0x93B5E` → `0x6F0B4` (pending `0x93B34`) → applied by ~~**`0x66E06` at the end of the 10 ms task in every mode**~~
+   **`0x66E06` at the end of the 10 ms task in mode 0 (tail hook `0x67A42`: jumps only when r4 = mode == 0) and at the
+   end of the 5 ms task in modes ≠ 0 (tail hook `0x67A34`: jumps only when mode ≠ 0)**. *Corrected 2026-11-19 [O bytes
+   `0x67A34–0x67A4E`, re-checked this sweep; hook-to-task placement per `~/tcu_sweep/mode1_port.md` §1 table]
+   (`~/tcu_sweep/g5_mode2_plan.md` §7, which corrects `~/tcu_sweep/os_mode_selection_decode.md`).*
    Mode 1 → 2 when the terminal state E9FF == 2, the no-fault flag `0x9584A` == 1, the supply `0x96066` is within
    6000–17000 mV and (a valid `0x108` engine speed ≥ 150 rpm or turbine ≥ 100 rpm with status 0); **mode 2 latches**
-   until E9FF == 4; mode 3 = fault reaction 0x38 or the overvoltage-at-standstill detector (`0x9584A` == 0); mode 4
+   until E9FF == 4 (*bench r04u, our port of `0x1418E2` [O]: mode 2 at ≈ app +0.69 s with simulated 0x108 frames, held
+   after the frames stopped; key-off (E9FF 4) → mode 1, key-on → mode 2 — CLAUDE.md r04u blocks*); mode 3 = fault reaction 0x38 or the overvoltage-at-standstill detector (`0x9584A` == 0); mode 4
    is never requested (error 0x2F2); mode 5 = power-down (`0x729C8` → `0x93B8F`). Mode 0 → 1 follows the startup
    modules after the supervisor ladder (module 7 one pass after 'U', or on a ladder failure path).
 7. Boot-block vector tables (bootloader/boot-manager VBR region) not extracted — boot ISR

@@ -92,9 +92,9 @@ the other ratio-5 channels (AN19/AN20 switched supplies) share the factor — on
 | AN19 | 5 | compared against 3000 mV / 4000 mV with hysteresis → on/off flag [O] | [I] presence of a switched supply / wake signal |
 | AN20 | 5 | same, separate flag [O] | [I] presence of a second switched supply |
 | AN21 | 5 | used by two supervision routines [O] | [I] supply voltage |
-| AN7 | 4 | checked against a calibrated band around a reference; sets diagnostic flags [O] | [I] monitored supply/reference rail |
-| AN0 | 1 | timer-triggered; read by four routines [O] | [I] current or fast sensor signal |
-| **AN8** | 1 | NTC temperature evaluation, see §4.1 [O] | [I] **transmission fluid temperature** sense voltage |
+| AN7 | 4 | checked against a calibrated band around a reference; sets diagnostic flags [O]. *Refined 2026-11-19 (`~/tcu_sweep/pa7_decode.md` §1.5; `~/tcu_sweep/c9_bit7_decode.md` §0) [O law]:* `0x8CB7C` conditions AN7 (`0x9018C[7]` → `0x93A94`/`0x93B2A`) and builds the **expected level of the Park-signal line** (HIGH only when the SSLB0 park nibble is 2 or 4 and C9 bit 7 = 0); `0x8CCD4` sets fault 4 when expected LOW and AN7 > 9000 mV, fault 8 when expected HIGH and AN7 < 2000 mV (cal `0x191A1A` = 1). Dump/bench: AN7 ≈ 19 980 mV → fault 4 | ~~[I] monitored supply/reference rail~~ [I] read-back of the TRS Park-signal line (case pin 15); unverified — AN7 does not follow PA7 on the bench (r04e) |
+| AN0 | 1 | timer-triggered; read by four routines [O] | ~~[I] current or fast sensor signal~~ **the external analog multiplexer's output** (Timer G1-triggered, A-DMAC ring `0xFFF885E8`; §1 and §4.2) [O, bench r02k/r02q] — *corrected 2026-11-19 (the §1 correction of 2026-11-18 had not reached this row)* |
+| **AN8** | 1 | NTC temperature evaluation, see §4.1 [O] | [I] **transmission fluid temperature** sense voltage — *bench r03g (2026-11-14): AN8 3072 mV / AN1 160 mV → `0x94F9C` = 24.6 °C status 8, the stock dump's 25.7 °C at AN8 3031 mV reproduced by the port, rising with bench warm-up on later builds [O bench] (CLAUDE.md r03g BENCH RESULT; `~/tcu_sweep/groupA_park_port.md`)* |
 | **AN1** | 1 | second input of the same evaluation [O] | [I] sensor return / reference voltage |
 
 ### 4.1 Temperature sensor evaluation (AN8 / AN1)

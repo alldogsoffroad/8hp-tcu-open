@@ -283,6 +283,8 @@ voltage **`0x94ED0` ≥ 7400 mV** (release 7900); before 'U' every channel is of
 full-on tests (`0x94114` ladder phase 0x10, `0x94115` '3' diagnosis) [O bytes `0x83E22–0x83E36`]. The actuator
 chain therefore does consult the supervisor (spec 23).
 
+*Correction (2026-11-17, source: `~/tcu_sweep/fullon_interlock_decode.md` §1.1–1.2 [O bytes, host]; applied 2026-11-19):* **on this calibration `0x94115` is never set** — its only writer `0x863D0` (the '3' diagnosis tail) adds the channel bit only through cal `0x1915B8` bit 0 (= 0) or `0x1919C9` (= 0); the '3' diagnosis is an output-OFF class-0x22 check only. Phase 4 writes `0x94114` = group 0 = 0 (empty here). **The stock commands full-on exactly once per ladder run: the tick phase 0x10 starts** (`0x8BD6A`), with the rail open (requests 0, seq2 0x11, J2/F 0x9000, node ≈ 2.9 V), applied only in seq2 0x11/0x16 (`0x83F50–0x83F5A`); bench r03x: no current step. The earlier reading "the 8 refusals per boot are the '3' full-on" is refuted (they were the phase-0x10 tick × 8 channels).
+
 Channel mode letters used by the driver (`0xFFF9081C`): `0x21` = current-controlled, `0x43` =
 full on, `0x32` = off/fault [O].
 
@@ -421,7 +423,10 @@ Commands with bit 7 set are writes; the data is OR-ed into the low byte (or low 
 from its initial cal `0x1918BB` = 0 it cycles 0 → 4 → 1 → 4 … once per `0x901A0` pass [O `0x902A8–0x902BE`]. The
 per-channel **current correction** is `0x837E0` → `0x9337C` (called by `0x89540`): a look-up in the factory
 **plant record `0x0F11`** (200 bytes at RAM `0xFFF84640`; temperature × current map per channel, interpolator
-`0x8856C`), correction = map(`0x940FF`, I/60 + 0.5)·2 − 256 (0.1 mA). It **learns nothing**; it reproduces the
+`0x8856C`), correction = map(`0x940FF`, I/60 + 0.5)·2 − 256 (0.1 mA) — *`0x940FF` is the byte of the **selected ECU
+temperature** `0x9393A` (selection `0x88BD0`: SSLB2 board sensor > supervisor die > fluid > 120 °C default; the board
+sensor in the dump), not a separate "second sensor" (2026-11-19, `~/tcu_sweep/diag_temp_inputs_decode.md` §1.4, §6
+item 5 [O])*. It **learns nothing**; it reproduces the
 dump's `0 4 4 2 6 2 2` and is 0 at 21 °C [O]. With [I] I in 0.1 mA, one setpoint step = **0.6 mA**, full scale
 ≈ **1.23 A**. Mode letters (`0x89540`): `0x21` current control, `0x43` full on (setpoint forced to
 `0x2FFA`), `0x32` off. The software re-reads the setpoint from the transmit buffer and reports
@@ -480,6 +485,7 @@ for ch 0, `+0x16` for ch 1), scaled by `324.92 / (n + 1)`, n from the readback-r
 Status bits (record `+0x08`, `+0x0E` / `+0x10`) are combined into a per-chip fault byte
 (`0x931F8`). [I] This is the measured channel current; its unit and the receive-frame mapping
 are still open.
+*Addition (2026-11-18, source: `~/tcu_sweep/diag_real_feedback_dryrun.md` §3 [O bytes; I for "no reader"]; applied 2026-11-19):* record `+0x0E`/`+0x16` are filled by the handler `0x928BA` of the **state-1 readback job `0x92812`** (launched by the feedback sampler `0x90844`, 40 words/chip `B800×5 BE00×5 C000×10 D800×10 7800×5 7E00×5`; +0x0E ← the second C0-row reply, +0x16 ← the second D8-row reply), not by the cyclic job. **`0xFFF90258` has no reader** in the image (only its two stores `0x905F8`/`0x9073E`); the readback's OK/ERR bits reach only the chip summary (`0x931F8` mask 0x77 → `0x9096C` → `0x9030C`). The B8/BE `|0x20` flag is the dither handshake `0x90830` = 2. The diagnosis's current estimate comes from the PWM feedback chain below.
 
 **ID job** (template `0x40A84`, 10 frames): `0x06`, `0x00` per chip; reply high byte `0xA2`.
 

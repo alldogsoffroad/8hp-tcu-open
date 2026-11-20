@@ -104,10 +104,11 @@ Driver chips (bus A, ×4 + dead SSLA5):
 | Drivers (bus A) | high byte `0xA2` (ID/diag/config); cyclic replies top-5-bits `10100` (0xA0-class) | `0xA2xx` |
 | Supervisor SSLB1 | `(rx & 0xF900) == 0xA800` — 0xA8xx/0xAAxx pass, 0xABxx fails | `0xAAxx` |
 | SSLB0 | `(rx & 0xFE00) == 0xAA00` — AAxx/ABxx pass | `0xAAxx` (ID data 0xD0) |
-| SSLB2 | no header check; answers everything with a rolling counter | `0x0ECx–0x0F6x`, +4/job |
+| SSLB2 | no header check; ~~answers everything with a rolling counter~~ **a board temperature sensor** (raw 1/128 °C, low 3 bits ones, `0xFF03` = not ready; *corrected 2026-11-19 [O conversion, I strong device class], `~/tcu_sweep/diag_temp_inputs_decode.md` §1.3, §6 item 1*) | `0x0ECx–0x0F6x` (≈ 29.5–30.8 °C, rising) |
 
 All family members except SSLB2 answer with top nibble `1010` — one vendor's framing
-convention across at least five silicon parts.
+convention across at least five silicon parts. *(2026-11-19: SSLB2 is a temperature sensor, not a family member — see
+the table.)*
 
 ### 1.4 Behavioral fingerprint (supervisor) [O]
 

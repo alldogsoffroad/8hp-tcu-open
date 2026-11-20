@@ -168,7 +168,8 @@ the 0x06 era); does not affect the verdict.
   time-resolved stock — meas-protocol RAM dump from power-on, **first read at boot +15 s
   already fully engaged** ("write job at full 0x8E9F from the first capture (no level
   ramp)", `0xFFF90953=1`), stock commissioning "~15 s end to end". The first sample lands
-  after the walk would have finished (3.6+8.6 s + overhead ≈ 12–13 s; also consistent with
+  after the walk would have finished (3.6+8.6 s + overhead ≈ 12–13 s *[superseded: the era values are 3600 / 8600 µs
+  cycles — §1.2 correction; certification runs through the ≤ 200 ms ladder]*; also consistent with
   the E13 enable-tolerance band ≈ [+0.5 … +15 s], line 1026). Consistent with WALK-PER-BOOT
   but not resolved through the eras.
 - **No logic-analyzer SPI capture of the stock exists** (spec 03 line 288 names it "the

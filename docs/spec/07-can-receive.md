@@ -195,12 +195,20 @@ saturating at 16,383 rpm), and `0x515` converts the lever code 1–4 to the rang
   `~/tcu_sweep/temp_byte_live_port.md` §1.1):** the fluid byte is **`0xFFF94102`** (from `0x94F98`,
   `0x887D8` @0x88938: clamp(((s16)0x94F98 + 8) >> 4 + 40, 0..255)) → `0x7C100` publishes `0x940E6` (= 0xFF when
   the fault flag `0x940E8` is set) → gathered `0xFFF8E9C5` → `0xFFF8E9C8`. `0xFFF94101` comes from `0x9393E`
-  (`0x908CC >> 3`), a second temperature (33 °C in the dump), gathered at `0xFFF8E9C4`. `0xFFF8E9C8` has two
+  (`0x908CC >> 3`), a second temperature (33 °C in the dump), gathered at `0xFFF8E9C4`. *(Refined 2026-11-19,
+  `~/tcu_sweep/diag_temp_inputs_decode.md` §1.3, §6 items 1, 5 [O conversion, I strong device]: that second temperature
+  is the **board temperature sensor on SSLB2** (the J4 job, spec 22 §4.7), the first-priority source of the selected
+  ECU temperature `0x9393A`.)* `0xFFF8E9C8` has two
   writers [O]: boot `0x140416` (E9C8 = E9C5, or cal `0x195DB8` = 0x82 on a fault) at startup and boot state 1,
   and the cyclic `0x1405FA` in the **100 ms task, modes 1–3** (list `0x4D9E4` entry 0), through a second safety
   object `0xFFF8ED20` with a slew limiter `0x14ACF0`. The app copies `+0x1B` (`0x89C57`) and `+0x96`
   (`0x89CD2`) are **both** written by `0xB9646` (**30 ms**, modes 1–3 + boot pass); `0xB986C` (10 ms) latches
   **`0x89C13 = 0x89CD2`**. It is not a "+0x1B → +0x96" chain.
+  *Addition (2026-11-19, source: `~/tcu_sweep/temp_stage2b_port.md` §3 [O bytes `0x1405FA..0x1406D2`, `0x140416`]; bench
+  r04m, CLAUDE.md r04m blocks):* on a **fluid-sensor failure** the cyclic `0x1405FA` substitutes the **board byte**
+  (`0x940E3`) minus cal `0x195DB7` (= 0), floored at 0 (status 1) while the board sensor is valid (ED20 D5 = 1,
+  D3 = 0); only with the board also failed (D3 = 1) does it fall back to cal `0x195DB8` = 0x82 (90 °C). The die
+  temperature never stands in. The boot pass `0x140416` has no board path (0x82 on a failure present at boot).
 - **Brake (2026-11-17, source: `~/tcu_sweep/park_interlock_inputs_decode.md` §10 item 1):** with the brake
   invalid, `0x135DC6`/`0x135F54` give E8A4 = 2 and E8A5 = 0 always; the speed comparison sets only
   `0xFFF8E8A9` (+17). The "brake-equivalent above speed 10" law is D607's second branch (`0xA90A0`, cal

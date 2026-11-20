@@ -164,7 +164,19 @@ Each shift element taking part in a shift is handled by a phase object (code
 > `0x10CDFA` (B's request object +0x54 ≥ 13030 mbar applied, or the 280-pass timeout) [O]. *Refined 2026-11-18
 > (`~/tcu_sweep/garage_progress_decode.md` "Corrections" item 3): completion also needs the context sync flag BD6C,
 > and B's phases 4/9/0x0A/0x0B are gated on slip — turbine speed enters through BD76/BD30/BD6C; on a dry bench the
-> engagement completes normally in ≈ 0.95 s via the 0.5 s phase-0x0B lock hold (item 2).* Producer source ids:
+> engagement completes normally in ≈ 0.95 s via the 0.5 s phase-0x0B lock hold (item 2).* *Garage fill-time term and
+> the release (2026-11-18/19, sources: `~/tcu_sweep/garage_progress_decode.md` §3.2; `~/tcu_sweep/garage_release_decode.md`
+> §9 items 1–6; `~/tcu_sweep/g4a_release_port.md` §2 item 5; bench r04k/r04l/r04n, CLAUDE.md):* the third element's
+> fill time includes the garage term `0xE469C` (flat maps A 0, B 0, C +20, D +20, E −20 ms) — bench r04n: C fills 10
+> passes, completion pass 96 (D) / 95 (R). **A release** (power-flow-0 commit: lever P/N or an engine stop) runs
+> through the same start with BD16 = 4: all three sub-objects type 3 (sub0 type 4 only in kind 2) → phases
+> 0x12 → 0x13 → 0x14; the releasing output mode is chosen by element +0x21 == 2 (B), while +0x1C (class) == 2 gates
+> `0x10E896` [O `0x10CEEE`, `0x10CF20–0x10CF2E`]. Completion `0xEDA48` has a third exit: the pass counter **BD8E**
+> (block A +0x22, reset at every start, +1 per pass) ≥ map(blk60+8) = **120 passes** — the dry-bench and standstill
+> exit (the vent/slip exits cannot fire there) [O]. Bench r04k/r04l: 120 passes (1.20 s), cause 6, B 4127 → 3494,
+> C 6452 → 6707 (from D). B then stays applied and its own fill FSM ramps it down (≈ 0.8 s), so a re-engagement within
+> ≈ 2 s starts from a part-applied B [O host]. A release of a not-yet-applied B completes in the commit pass.
+> Producer source ids:
 > 1/2 = gear-change elements, 3/4 = E33C+5/+6, **5–10 = the garage engine** (prio 0 engaging: 6/8/10; prio 1
 > releasing: 5/7/9), 0x10/0x11 = `0xFFF8BC74`; `0xE53DA` has no priority arbitration (last call wins).
 

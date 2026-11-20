@@ -68,7 +68,7 @@ bus-0 chips. Confirmed as current setpoints; channel use and solenoid assignment
 |---|---|---|
 | SSLB1 | `0x06` (ID), `0x28`, `0x2E` (reads), `0x90`, `0x8E` (writes), plus a 7-frame and a 4-frame job | same command family as the bus-0 chips → [I] a sixth driver of the same type |
 | SSLB0 | `0x03`, `0x09`, `0xC9`, … interleaved with SSLB1 frames | different device; [I] role open |
-| SSLB2 | one 16-bit frame, SPI mode 0 | different device; [I] role open |
+| SSLB2 | one 16-bit frame, SPI mode 0 | different device; ~~[I] role open~~ **a board temperature sensor** (raw 1/128 °C, `0xFF03` = not ready) [O conversion, I strong device class] — *corrected 2026-11-19, `~/tcu_sweep/diag_temp_inputs_decode.md` §1.3, §6 item 1; spec 22 §4.7* |
 
 ### 4.3 Complete job list and bus-1 protocol [O]
 
@@ -104,7 +104,7 @@ Reply headers: SSLB1 `0xA8` (mask `0xF900`, same family as the bus-0 drivers), S
 - **SSLB0** is a different device (supervisor / system chip). Its register `0xC9` gets
   `0xFFF9097B` (`0x91C86`, bits from `0xFFF90957`, `0xFFF90962`, `0xFFF9094D`, `0xFFF9095A`); one
   status read is stored inverted as a 4-bit status `0xFFF90958`.
-- **SSLB2** returns a 16-bit value each cycle; meaning open.
+- **SSLB2** returns a 16-bit value each cycle; ~~meaning open~~ *(2026-11-19, `~/tcu_sweep/diag_temp_inputs_decode.md` §6 item 1)*: the board temperature in 1/128 °C → `0x908EE` → `0x908CC` → `0x8DD7C` → `0x9393E` (spec 22 §4.7).
 
 The steady-state values of the SSLB1 `0x8E`/`0x90` and SSLB0 `0xC9` words, which are the
 likely output-enable path, still have to be evaluated (spec 12 §4).
@@ -188,7 +188,7 @@ on the bench. The stock checks this feedback with retry/fault-latch (`0x6C742`),
 outputs on level ≥ 6 **and** the echo bit (`0x6C63E`), and the fine 32-bit duty job
 (`0x409F4`: `[0x29xx ×2, 0x88xx ×4, 0x12]`) reports the level in its replies (`0x910EE`).
 **SSLB2 is alive** (fourth reply class `0x0Cxx`, live data — the stock's cyclic `0x00FF`
-job reads a varying 16-bit value). Register `0x24` = the `0x90` register readback (reads
+job reads a varying 16-bit value; *2026-11-19: that value is the board temperature, spec 22 §4.7*). Register `0x24` = the `0x90` register readback (reads
 `0x00` — the `0x90` write still never latches); `0x29` mirrors the `0x28` status (`0x45`).
 
 **Bench 2026-10-31 afternoon — the decisive correction:** the data-flash loader (spec 18 §5)
@@ -234,7 +234,7 @@ must provide an equivalent fail-safe path.
 3. Decode the per-chip state record (28 bytes per chip in RAM) fields that feed the write frames.
 4. Job timing: rate of the cyclic job and its relation to the control loop.
 5. ~~Roles of SSLB0 and SSLB2~~ — SSLB1 is the supervisor (§4.4); SSLB0 a second supervisor /
-   system chip; SSLB2 open. Supervisor timeout and the meaning of SSLB1 registers `0x84`, `0x88`
+   system chip; SSLB2 ~~open~~ = a board temperature sensor (2026-11-19, `~/tcu_sweep/diag_temp_inputs_decode.md`). Supervisor timeout and the meaning of SSLB1 registers `0x84`, `0x88`
    (written at start-up) are open.
 
 **Bench 2026-10-31 evening (M4b gate session, engaged-stock shadows + replay ladder):**
@@ -452,8 +452,9 @@ and drives the **bump-and-resend level-job loop until the 0x0A ECHO matches**
 sync signal, not the fb nibble). That exchange is the top remaining candidate
 for what the supervisor wants to witness before granting. Also decoded this
 session: the driver register jobs are RUNTIME state-sync from the current-
-control loop (0x901A0 sends on channel-state change; senders 0x9225C/0x92344/
-0x924B0), not a boot one-shot; the installer 0x937F8 is a job QUEUE (10 cyclic
+control loop (0x901A0 ~~sends on channel-state change~~ stages the cyclic and config jobs on EVERY F-stage pass,
+unconditionally — *corrected 2026-11-19 [O `0x90454/0x90458`], `~/tcu_sweep/output_cadence_decode.md` §0, §1 item 6*;
+senders 0x9225C/0x92344/0x924B0), not a boot one-shot; the installer 0x937F8 is a job QUEUE (10 cyclic
 + 5 register slots with integrity pairs); `AA45` is likely just the normal
 reply to the 0x9020 switch word (mode-2 readouts with bits90=0x20 didn't exist
 before 2026-10-31). Next levers, ranked: (1) the 0x3F-init level exchange in
@@ -1144,13 +1145,15 @@ clear the status cell / bump a use counter at `0xFFF94178+2·desc[0]`, `0x93B8E(
 check-free, `0x937F8(desc)` queue — plus per-job **starters** that re-stage the template
 and queue: `0x92A84` (ID `0x40B80`), `0x92B82` (status `0x40BA0`), `0x92D38` (control
 `0x40BE8`), `0x92E80` (enables `0x40C0C`), `0x93198` (SSLB2 `0x40C74`). The 5 ms task
-`0x8EE82` = compose the control word (`0x91C86` → `0xFFF907D4`, the `0xC9` byte via
-`0x93126`) → queue **status → control → ID** (`0x91DAA`, `0x91E12`) → kick the RSPI/DMA
+`0x8EE82` = compose the control word (`0x91C86` → `0xFFF907D4`, the `0xC9` byte ~~via
+`0x93126`~~ also by `0x91C86` → `0xFFF9097B` — *corrected 2026-11-19, `~/tcu_sweep/c9_bit7_decode.md` §1.1*) → queue **status → control → ID** (`0x91DAA`, `0x91E12`) → kick the RSPI/DMA
 engine (`0x90ACC`→`0x921A0`, which also queues the bus-0 ID job `0x40A98` every pass).
 There are no per-job timers: **cadence = queue drain**; a busy job is simply skipped by
 the next check-free. The enables-job starter lives behind the letter machinery (called
 via pool `0x9187C`), its word = `0xFFF907D6 & ~(0xFFF907D1 & 0xE0) | template` (faulted
-outputs masked off, §4.4) — queued when that state changes, not every pass [I].
+outputs masked off, §4.4) — ~~queued when that state changes, not every pass [I]~~ queued every 5 ms pass in every
+mode by the J2 stage `0x8EDF6` (*corrected 2026-11-11, CLAUDE.md "THE STOCK'S TASK RATES"; spec 22 §2.1; noted here
+2026-11-19*).
 
 **Job `0x40BC0` pinned.** Descriptor `0x40BC0` = 1 frame → SSLB0, select cfg `0x40B76`
 (= SPCMD `0xAF01`, the odd-frame select), TX `0xFFF885E0`, RX `+2`, status cell

@@ -81,7 +81,7 @@ The full field list (106 entries) can be regenerated from `0xA7C9C`; the safety-
 | `D5F3` (`+0x0D`) | `0x9B306` | request state 0 / 1 / 2 from `D61A[0x27]`, `[0x28]` and a calibration flag (`0xFFF84B14 + 0x88`) |
 | `D5F4` / `D5F5` | `0x9B306` | rising / falling edge of `D5F2` |
 | `D5F6` (`+0x10`) | `0xA9086` | copy of `D650` (speed) |
-| `D5F8` (`+0x12`) | `0xA9126` | **= 1 when `D61A[0x2E]` = 1 and `[0x38]` = 0** (valid park request from the safety layer) |
+| `D5F8` (`+0x12`) | `0xA9126` | **= 1 when `D61A[0x2E]` = 1 and `[0x38]` = 0** (~~valid park request from the safety layer~~ valid park-position code 1 = contact A alone, which every stock consumer reads as pawl engaged; *corrected 2026-11-19, `~/tcu_sweep/park_position_speed_decode.md` CORRECTIONS 1 [O]; spec 13 §4.1*) |
 | `D5F9` (`+0x13`) | `0xA908E` | `D654` ≠ 0 |
 | `D5FA` (`+0x14`) | `0xA8F38` | last valid range request (only 5, 6, 7 or 8 are accepted) |
 | `+0x15` | `0xA9144` | latch while `D673` = 2 (= **D5FB**, init 1 at `0xA8EDC`; released when P is seen while D6D6 = 8; set again whenever no lever source is valid) |
@@ -321,7 +321,8 @@ code paths and cross-checked.
 ## 7. Monitors using this module
 
 - **P1B14-00** (group 113): spec 13 §4.1. Failure when `D61A[0x2E]` = 1 and `[0x06]` = 1.
-  With §3 and §4.2: `[0x2E]` is the safety layer's park request that also drives `D5F8`.
+  With §3 and §4.2: `[0x2E]` is ~~the safety layer's park request~~ the park position code (`0x141BA2`; model `[0x06]`
+  4 = engaged, 1 = released) that also drives `D5F8` (*corrected 2026-11-19, spec 13 §4.1*).
 - **P1B13-00** (group 114): ~~watches transitions of `D6D6` to 8~~ fails on model `[0x06]` == 4 (engaged)
   and position `[0x2E]` ≠ 1 (`0xC5E02`; corrected 2026-11-16, spec 13 §4.1). The range-transition monitor is
   `0xC5912` (group 192).

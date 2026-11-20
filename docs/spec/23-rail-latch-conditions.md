@@ -120,7 +120,7 @@ The on/off actuator slots 10–14 (0xFFF94FAA, switch-output manager 0x849D4, ca
 |---|---|---|---|
 | 0x24 data | 0x00092ED4/0x00092FD0 → 0xFFF907D7 | **none** (write-only shadow; compare uses only bits 0/2/4 of the word) | pure symptom of chip state |
 | 0x14 data | 0x00092BBE:49 → 0xFFF907D1 | 0x0009181C (bits 5/6/7 → fault bools 0xFFF90947[tbl]; bit1 → 0xFFF90959); 0x00091ACA:23 (bit0 → 0xFFF84A46); 0x00092BBE:56 (fault re-trigger); 0x00092E80/0x00092F7C (TX mask) | **0x14 bit1 is the load-bearing one** (selftest phase 2 + mode-'L' entry + ~~speed interlock~~ **supply plausibility** at 0x00085160:23,131 — `0x907FC` is the minimum of AN0 mux input 13, a supply voltage in mV [I strong], bit 1 excused below 6.0 V; corrected 2026-11-12, `~/tcu_sweep/gate_bit1_decode.md` §1); bit0 feeds boot-handover readiness 0x0007291A:12. *Bit meanings (2026-11-12, `~/tcu_sweep/gate_bit1_decode.md` §2, `~/tcu_sweep/c9_bit4_decode.md`): 1 = level ≤ 4 ∧ TIOC clock present [I strong]; 2, 3 no reader; 4 = TIOC10/20 signal absent (cleared by the stock Timer C PWM, bench r02i) [O bytes, I meaning].* |
-| 0x28/0x2E | 0x00093096 → 10-bit value 0xFFF907CC + flag 0xFFF907CE | none (0xFFF907CC unread; 0xFFF907CE → 0xFFF9095D diag) | pure telemetry (matches spec 03 6.2n) |
+| 0x28/0x2E | 0x00093096 → 10-bit value 0xFFF907CC + flag 0xFFF907CE | ~~none (0xFFF907CC unread;~~ 0xFFF907CC → `0x91ACA` 4-slot average `0xFFF908CA` → `0x8DB5A` die temperature `0x93ABA` → ECU-temperature selection `0x88BD0`; 0xFFF907CE → 0xFFF9095D diag | ~~pure telemetry~~ **the supervisor's die temperature** — not an output gate. *Corrected 2026-11-19 [O bytes; I physical meaning] (`~/tcu_sweep/diag_temp_inputs_decode.md` §1.1–1.2; spec 22 §4.6)* |
 | 0x22 echo | 0x00092D94 → 0xFFF907D5; compare vs staged 8E word masks bit5 (0xDF) | 0xFFF90954 (grant), 0x91C86 bit0/bit2 branches | bit5 (rail-up) deliberately not checked by the echo compare |
 | 0x12 commit | 0x000911D8 → 0xFFF90551; checked `(0x12&5)==phase-mask` in 0x0006C1EA:66-78 (mismatch → walk restart bits 0xFFF93BA7) | walk progress | hand-fed 0x1200 → AAC2 (bit1) on our bench; stock 0x14 mirrors it as bit1 |
 
@@ -203,7 +203,8 @@ they cannot be the missing latch because nothing downstream of them touches the 
 
 - Every 0xFFF90954 site: `grep -ri fff90954` → 3 sites (writer 0x00091ACA:24; readers
   0x0006C63E:35, 0x0007284C:9). Every 0xFFF9054E site: writer=reader=0x00091190 (staging
-  only). 0xFFF907D7/0xFFF907CC: write-only.
+  only). 0xFFF907D7/0xFFF907CC: write-only. *(2026-11-19: 0xFFF907CC is read by `0x91ACA` into the average
+  `0x908CA` — see §E; the "write-only" holds for 0xFFF907D7 only.)*
 - Pointer resolutions from the ELF pool: 0x92F68→0x00093B8E (idle-reap), 0x92F70→0x000937F8
   (submit), 0x92F74→0x40C0C, 0x93178→0x40C30, 0x9186C→0x1918E8 {00,01,02}, 0x91870→0x1918EB
   (0x00), 0x91878→0x1918EC (0x03), 0x91CF8/0x91E18→0x000920A4, 0x85C94/0x85E9C→0x0008C7A8,

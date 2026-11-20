@@ -88,7 +88,7 @@ descriptor's `selects` byte says how many SPCMD entries get loaded — jobs 0x40
 
 | # | Descr | Frames→chip | Wire words (TX) | Cadence / caller | Completion handler |
 |---|---|---|---|---|---|
-| J1 | `0x40BE8` | 4 → B1,B0,B1,B0 | `8E00\|ctrl, C900\|c9, 2200, 0900` (live staging `0xFFF88424`) | every 5 ms pass: `0x8EE82` → `0x91DAA` → `0x92D38` (ctrl byte composed by `0x91C86`, C9 byte by `0x93126`) | `0x92D94 shifter_resp_echo` |
+| J1 | `0x40BE8` | 4 → B1,B0,B1,B0 | `8E00\|ctrl, C900\|c9, 2200, 0900` (live staging `0xFFF88424`) | every 5 ms pass: `0x8EE82` → `0x91DAA` → `0x92D38` (ctrl byte and C9 byte both composed by `0x91C86`; ~~C9 byte by `0x93126`~~ — `0x93126` is the handler-completeness summarizer. *Corrected 2026-11-19 [O bytes `0x91C96–0x91CB6`] (`~/tcu_sweep/c9_bit7_decode.md` §1.1; spec22_validation item 4)*) | `0x92D94 shifter_resp_echo` |
 | J2 | `0x40C0C` | 2 → B1,B1 | `9000\|en, 2400` (template @0x40C08) | ~~on letter/output-state change~~ **every 5 ms pass, in every mode** (corrected 2026-11-11, CLAUDE.md "THE STOCK'S TASK RATES": the J2 stage `0x8EDF6` stays in the 5 ms list and `0x92E80` queues J2): `0x91804/0x91810` → `0x92E80` (word from `0x91758 switch_status_build`) | `0x92ED4` |
 | J3 | `0x40C54` | 2 → B1,B1 | `2800, 2E00` (template @0x40C50) | cyclic [V]: queuer `0x9305A` (`bank_tmpl_init_88444`, called by `0x91ACA`; template `0x40C50`→staging `0xFFF88444`) | `0x93096` |
 | J4 | `0x40C74` | 1 → SSLB2 (mode 0) | `00FF` (template @0x40D8C) | cyclic: `0x93198 bank_tmpl_init_885e4` | `0x931D4` |
@@ -152,11 +152,11 @@ driver 1 kHz PWM divider constant), NOT supervisor words — the root error of t
 Composed every 5 ms into `0xFFF907D4` (mirrors the boot programs' direct writes, spec 03
 §4.4). The SSLB0 `0xC9` byte (`0xFFF9097B`) is composed in the same pass: base
 `0xFFF90957 | 0xFFF90962&0xF0`, bit 4 set while shutdown self-test flag `0xFFF9094D==0`
-(set), bit 7 from variant cell `0xFFF9095A`. **Note (2026-11-12, source: `~/tcu_sweep/c9_bit4_decode.md`, key claims re-checked
+(set), bit 7 = (`0xFFF9095A` ≠ 0). *Corrected 2026-11-19 [O bytes `0x91CA6–0x91CB6` `tst; nott; bst.b #7`; O bench r04g] (`~/tcu_sweep/c9_bit7_decode.md` §0–§1.4; CLAUDE.md r04g BENCH RESULT) — was: "bit 7 from variant cell `0xFFF9095A`". `0x9095A` is not a variant constant: its one writer `0x8CEBC` (inside the Park-signal law `0x8CE48`, called from the pin-cut entry `0x86B0C`) sets it 1 when the range state D712 = 0, i.e. lever/range R or D (or P held with the lever at R/D), so **the stock sends C980 in every R/D drive** and C900 in P/N/no lever; in mode 0 it is frozen at the init one-shot's value. C9 is an SSLB0 register; the J1 rx[3] echo must return the written byte (`AA80` under C980). Bench r04g: C980 in R/D accepted, echo passing, 0x14 C7 / gate 1 unchanged. [I] SSLB0 uses bit 7 as the MCU's veto on the Park-signal line.* **Note (2026-11-12, source: `~/tcu_sweep/c9_bit4_decode.md`, key claims re-checked
 against the bytes):** in the stock, bit 4 is never set in normal running — the shutdown self-test phase machine
 `0x86916` that drives `0x9094D` is dead (its enable `0x7C6AE` is `mov #0; rtv`; its start `0x868F0` is gated
 by the constant-1 `0x132334`), and the only other `0x9094D = 0` writer, `0x93248`, is in the mode-5 (shutdown)
-list. C9 stays `C900`; J1's C9 word is composed by `0x91C86` (spec22_validation).
+list. C9 stays `C900` *in P/N (bit 7 gives C980 in R/D — see the 2026-11-19 correction above)*; J1's C9 word is composed by `0x91C86` (spec22_validation).
 
 | Bit | Meaning | Code (0x91C86) |
 |---|---|---|
@@ -212,7 +212,7 @@ Bench live values: SSLB1 `0x06`→`0x14`, `0x00`→`0xBC`; SSLB0 `0x06`→`0xD0`
 |---|---|---|
 | rx[0] (18→B1) | SSLB1 | low byte → `0xFFF907D2` (the rolling challenge-selector area, spec 03 §6.2p) |
 | rx[1] (0C→B0) | SSLB0 | low byte → `0xFFF90979`; **`0xFFF90958 = (rx[1] & 0xF) ^ 0xF`** — the inverted 4-bit status nibble |
-| rx[2] (1E→B1) | SSLB1 | low byte → `0xFFF907D3`; bits 4/5 consumed by `0x91ACA` as `0xFFF9095E` direction |
+| rx[2] (1E→B1) | SSLB1 | low byte → `0xFFF907D3`; bits 4/5 consumed by `0x91ACA` as `0xFFF9095E` ~~direction~~ = (bit 5 << 1) \| bit 4, a whole-byte store — **the supervisor's two over-temperature comparator flags** (read by the die-temperature producer `0x8DB5A`). *Corrected 2026-11-19 [O store; I meaning] (`~/tcu_sweep/diag_temp_inputs_decode.md` §1.1, §6 item 4; `~/tcu_sweep/temp_stage2a_port.md` §5 item 3)* |
 | rx[3] (06→B0) | SSLB0 | low byte → `0xFFF9097A` |
 | rx[4] (14→B1) | SSLB1 | low byte → **`0xFFF907D1`**; `0xFFF90959 = rx[4] & 2`, `0xFFF90956 = rx[4] & 0x10`; **`if (0xFFF907D1 & 0xE0) → 0x92F7C`** — bits 5–7 of the 0x14 register are per-switch-output FAULT bits; reading any queues the fault-path enables job F (`0x40C30`) |
 
@@ -240,7 +240,7 @@ SSLB0 answers `0xBB`-data) — error bits only, no fault [O spec 03 §6.2m].
 | rx[0] (8E write→B1) | SSLB1 | A800-class | fail → `0xFFF907C9 \|= 2` |
 | rx[1] (C9 write→B0) | SSLB0 | AA00-class (reply to the write) | class only |
 | rx[2] (22 read→B1) | SSLB1 | A800-class | **`0xFFF907D5 = rx[2].lo` — THE ECHO CELL**; echo test `(rx[2] ^ 0xFFF88424) & 0xDF == 0` vs the staged 0x8E data byte → `0xFFF907C8\|=2` OK / `0xFFF907CA\|=2` fail |
-| rx[3] (09 read→B0) | SSLB0 | AA00-class; **C9 echo test: `rx[3].lo == 0xFFF88426`** (the staged C9 data byte, compare at byte offset +7 of the rx buffer) → `0xFFF90973\|=2` OK / `0xFFF90975\|=2` fail | SSLB0's 09 register mirrors the C9 word back on the FOLLOWING read |
+| rx[3] (09 read→B0) | SSLB0 | AA00-class; **C9 echo test: `rx[3].lo == 0xFFF88427`** (the staged C9 data byte, compare at byte offset +7 of the rx buffer; *corrected 2026-11-19 [O `movu.b @(3,r13)`, r13 = 0x88424, bytes `0x92DDA/0x92DDE`] (`~/tcu_sweep/c9_bit7_decode.md` §1.4, §5) — was `0xFFF88426`, the word base*) → `0xFFF90973\|=2` OK / `0xFFF90975\|=2` fail | SSLB0's 09 register mirrors the C9 word back on the FOLLOWING read |
 
 **The 0x22 echo law [O]**: the reply's low byte mirrors the sent 0x8E control byte, PLUS
 the supervisor's own bits. The stock's own match mask is `0xDF` — **bit 5 (the rail/VS
@@ -249,6 +249,8 @@ telemetry) is excluded from the match**, bit 0 (the grant) is INCLUDED. Downstre
 — the confirmation cell the output gate checks; it also latches `0xFFF84A46` (=
 `0xFFF907D1` bit 0), the SSLB0 status bits, and the 4-sample average of the 10-bit
 telemetry `0xFFF907CC` into `0xFFF908CA`.
+
+*Addition (2026-11-19, sources: `~/tcu_sweep/temp_stage2a_port.md` §5 items 1–2 [O bytes, gate re-checked]; `~/tcu_sweep/c9_bit7_decode.md` §5 [O]; CLAUDE.md r04j block):* this condensing block of `0x91ACA` (grant `0x90954`, handover `0x84A46`/`0x84A44/45`, the J3 average, `0x9095D/E`, the SSLB2 copy) runs only while the gate **`0xFFF9095B`** ≠ 0. The batch `0x91DAA`'s tail sets it 0 → 1 (after J6/J1 are queued); a pass that reads 1 reseeds the 4-slot average and stores 0x0F. So the first condensed average is a real J3 sample, and the grant/handover first update one reply-processor pass after the first batch. A refused C9 echo sets summary `0x90971` bit 2 → `0x9094E` = 0x2E → `0x7E41A` (3-pass debounce) → `0x94FD2` bit 2 → `0x7DE7E` (an error event and a DSM report, **no reset** — the fatal path needs bits 5–15); cal `0x1919E2` holds reaction-**disable** bits (0 on this unit = all reactions on).
 
 ### 4.5 J2/J-F enables jobs `[9000|en, 2400]` — handlers `0x92ED4` / `0x92FD0`
 
@@ -271,11 +273,15 @@ Both frames to SSLB1. A800-class; on success: `0xFFF907CE = (rx[0] & 0x40) != 0`
 flag; = 2 on header fail), **10-bit value = `rx[1] & 0x3F | (rx[0] & 0xF) << 6` →
 `0xFFF907CC`** (live stock: 373–380, closed-loop-walking). OK bit 0x40.
 
+*Correction (2026-11-19, source: `~/tcu_sweep/diag_temp_inputs_decode.md` §1.2, §6 item 3) [O conversion, I physical meaning]:* the 10-bit value is **the supervisor's die temperature**: `0x91ACA` averages it into `0x908CA`, and `0x8DB5A` converts T = −738 + 3.347·N (1/16 °C, variant `0x90966` = 0) → `0x93ABA` (status `0x9415E`), one input of the ECU-temperature selection `0x88BD0`. Dump: N ≈ 381 → 33.6 °C; bench r04f: N 433–434 → 44.5 °C. The "closed-loop-walking" reading is superseded.
+
 ### 4.7 J4 SSLB2 job `[00FF]` — handler `0x931D4 serial_resp_store_908ee`
 
 No header check at all: rx[0] → `0xFFF908EE`; `0x91ACA` copies it to `0xFFF908CC` and
-re-arms the cell to `0x8001`. SSLB2 answers everything with a rolling counter
-(`0x0ECx..0x0F6x`, +4/job) — the "fourth reply class `0x0Cxx`" of spec 03 §4.4 [O bench].
+re-arms the cell to `0x8001`. ~~SSLB2 answers everything with a rolling counter
+(`0x0ECx..0x0F6x`, +4/job)~~ — the "fourth reply class `0x0Cxx`" of spec 03 §4.4 [O bench].
+
+*Correction (2026-11-19, source: `~/tcu_sweep/diag_temp_inputs_decode.md` §1.3, §6 items 1–2) [O conversion, I strong device class]:* SSLB2 is **a board temperature sensor** (16-bit SPI digital sensor class): raw in 1/128 °C, low 3 bits read as ones (checked with mask 7), **`0xFF03` = its not-ready word** (cal `0x19171E`). The producer `0x8DD7C` stores raw >> 3 → `0x9393E` (status `0x94100`, byte `0x94101`; 600 ms hold). The "rolling counter" was a slowly rising temperature (0x0ECx ≈ 29.5 °C). The `0D8B/0E37/0D57` J4 replies on warm boots (r02k–r03q) were the board temperature (26.7–28.4 °C), not a disturbed chip. It is the first-priority source of the selected ECU temperature `0x9393A`.
 
 ### 4.8 W2 level job `[8400|lvl, 0A00, 1200, 0C00]` — handler `0x911D8 serial_resp_handler4`
 
@@ -480,7 +486,7 @@ non-stock cadence (n).
    internal conditions (`0x85828/0x8C7A8/0x8C6D4`), the E60m-exposed engage-path
    dependency. One byte, undecoded (spec 03 §6.2bc).
 2. **Which sub-delta of the 0x06 era is fatal for a replica**: cadence (10 ms vs timer
-   tick), dwell (1 s floor vs 3.6 s), the down-command to a boot-warm chip, or the missing
+   tick), dwell (1 s floor vs 3.6 s *[the era value is a 3600 µs cycle — §6.3 correction]*), the down-command to a boot-warm chip, or the missing
    8th template word `0x0C01` / the 0x1E-context repetition. Only the planned stock
    observation run (restore stock, read `0xFFF9054E/0xFFF90551/0xFFF93BA1/0xFFF90944` live
    at ≤1 s cadence through the first 15 s, spec 03 §6.2be) separates them.
@@ -495,14 +501,14 @@ non-stock cadence (n).
 5. **The telemetry words**: the 10-bit value's physical meaning (`0xFFF907CC`, 373–380
    live), the 0x28 status bit that differs between us and stock (AA45 vs AA46), the 0x2E
    drifting counter, and why our 0x2E-era replies carry bit 11 (0xAB class) that the
-   stock's own grammar would reject.
+   stock's own grammar would reject. *(2026-11-19: the 10-bit value is the die temperature — §4.6 correction.)*
 6. **Self-persistence**: the bench chip powers up at level 0x1F engaged-ready and keeps
    latched state across application reboots while powered (spec 03 §6.2j); whether
    commissioning survives full power-off (and whether the stock's walk-per-boot is
    therefore mandatory or merely conservative) is chip-internal.
 7. **SSLB0 and SSLB2's roles**: SSLB0 (0xBB-ID system chip, the inverted status nibble,
-   the C9 mirror) and SSLB2 (answers everything with a rolling counter) — neither
-   datasheet is known; their part in the grant/rail story is open.
+   the C9 mirror) and SSLB2 (~~answers everything with a rolling counter~~ a board temperature sensor, §4.7
+   correction 2026-11-19) — neither datasheet is known; their part in the grant/rail story is open.
 8. **The stall/withdrawal thresholds**: exact supervisor reset threshold for 5 ms-stream
    gaps (bracketed 11–20 ms) and the withdrawal class mechanism (one observation,
    spec 03 §6.2ad) — internal timers of the chip.
@@ -518,7 +524,7 @@ non-stock cadence (n).
 5 ms word job J1      : 8E{ctrl} C9{c9} 2200 0900          -> AAxx AAxx AAxx AAxx (echo at rx[2])
 enables J2 / fault F  : 90{en} 2400                         -> AAxx AAxx (cert echo at rx[1], mask 0x15)
 telemetry J3          : 2800 2E00                           -> AAxx AAxx (10-bit: (rx0&F)<<6 | rx1&3F)
-SSLB2 J4              : 00FF                                -> rolling counter
+SSLB2 J4              : 00FF                                -> board temperature, 1/128 °C (FF03 = not ready) [corrected 2026-11-19, §4.7]
 ID J5                 : 0600 0300 0000 0000                 -> A8/A2-class IDs
 status J6             : 1800 0C00 1E00 0600 1400            -> status + 0x14 fault bits (E0)
 SSLB0 poll J7         : 0000                                -> nibble (0xF ^ (rx&F))

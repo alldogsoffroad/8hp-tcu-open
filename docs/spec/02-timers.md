@@ -212,7 +212,10 @@ frozen through init [O].
 ## 5. Timer C
 
 Capture/compare channels TIOC00–TIOC02, TIOC10, TIOC20 (spec 01 §2.3) are configured by a small
-number of routines; pins PD0 and PD8 are switched between GPIO and timer function at run time [O].
+number of routines; pins ~~PD0~~ PD4 and PD8 are switched between GPIO and timer function at run time [O]. *Corrected
+2026-11-19 [O bytes `0x91E4E–0x91E84`: the cut/restore pair writes bits 1:0 of bytes `0xFFFFC80E` and `0xFFFFC80D` = the
+PD4 and PD8 fields of the port-D control registers; O bench r02h: PD4 and PD8 toggle together] (CLAUDE.md r02h/r02i
+blocks, `~/tcu_sweep/atu_init_audit.md`) — was "PD0 and PD8". Resolves the 2026-11-18 sweep's ambiguous item 1.*
 Roles **open**.
 
 **Addition (2026-11-12, sources: `~/tcu_sweep/atu_init_audit.md`; CLAUDE.md r02h/r02i/r02j blocks and the ladder decodes; applied
@@ -223,7 +226,8 @@ TIORC = table word, TCRC = table byte (**TCRC1 = TCRC2 = 0x09: PWM mode, clock-b
 chip monitors:** 0x14 bit 4 = "TIOC10/20 signal absent" (cleared on the bench once Timer C ran in this configuration,
 r02i) and bit 1 needs the clock present [O bytes, I meaning; spec 23/26 corrections]. The self-test ladder's pin-cut
 test (`0x85788` → `0x91E6C` cut / `0x91E4E` restore) switches PD4/PD8 to GPIO for one tick and expects 0x14 bit 1 to
-drop. *(The "PD0" above is not re-checked against this; the sources name PD4/PD8.)*
+drop. *(The "PD0" above is not re-checked against this; the sources name PD4/PD8.)* *(2026-11-19: re-checked, PD4 —
+corrected in place above.)*
 
 ## 6. Open items
 

@@ -48,6 +48,12 @@ or skipped is `~/tcu_sweep/spec_correction_sweep.md`. Several status lines below
 21 ("drive is not walk-gated": solenoid current is gated on seq2 'U'), 23 ("0x14 bit1 the ranked missing condition":
 the phase-2 test was read backwards) and 24 ("38 ISRs": 37 handlers in 42 slots).
 
+**Correction sweep (2026-11-19):** a second pass applied the corrections from the decodes and bench results of
+2026-11-18 evening and 2026-11-19 (SSLB2 = a board temperature sensor, J3 = the supervisor's die temperature, the C9
+echo cell and bit 7, the 0x9095B gate, the OS-mode apply hooks, the '3'-diagnosis full-on, the garage release, the
+PD4 pin-cut field, and earlier rows the first sweep missed) to specs 02, 03, 04, 07, 11, 12, 13, 14, 20, 22, 23, 24 and
+26. List: `~/tcu_sweep/spec_sweep_2026-11-19.md`.
+
 | Spec | Topic | Status |
 |---|---|---|
 | [01](01-hardware-io.md) | Memory map, pin functions, safe start-up state; case-pin measurements; overview diagram [`../diagrams/tcu-hardware.svg`](../diagrams/tcu-hardware.svg) | draft |

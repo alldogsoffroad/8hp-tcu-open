@@ -204,10 +204,12 @@ module).
 - Field-reported causes [M]: low fluid / low line pressure; faulty MV2 (park release) or MV3
   (park hold) solenoid (spec 12 §1.1).
 - [I] From the field report (spec 12 §1.2) the monitor detects the park pawl engaged while Park
-  was not commanded; the exact meaning of the two bytes is **open**.
-- `[0x2E]` is the safety layer's park request (`0xFFF8EA40`, produced by `0x141A2C`); the same
-  byte, qualified by `[0x38]`, drives the park-target arbiter (spec 14 §3, §4.2). `[0x06]` comes
-  from `0xFFF8BC70` (origin open, spec 14 §8).
+  was not commanded; the exact meaning of the two bytes is ~~**open**~~ given in the 2026-11-16 correction below.
+- ~~`[0x2E]` is the safety layer's park request (`0xFFF8EA40`, produced by `0x141A2C`)~~ `[0x2E]` is the park
+  **position code** `0xFFF8EA40` produced by `0x141BA2` (A alone → 1, B alone → 0, both → 2, else 3); the same
+  byte, qualified by `[0x38]`, drives `D5F8` (spec 14 §3, §4.2). `[0x06]` comes
+  from `0xFFF8BC70`, ~~(origin open, spec 14 §8)~~ the park timer model `0xE89DE` (4 = engaged, 1 = released).
+  *Struck 2026-11-19, per the correction below (`~/tcu_sweep/park_position_speed_decode.md` CORRECTIONS 1 [O]).*
 
 The neighbouring monitor for **P1B13-00** (group 114) is in `0xC5C7C` / `0xC5E02`; ~~it watches
 transitions of the range code (from 5, 6 or 7 to 8 = P) over a timer~~ (wrong — see the correction below).
