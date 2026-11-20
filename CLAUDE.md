@@ -4,9 +4,28 @@ You are joining the 8hp-tcu-open project mid-flight. This file is your orientati
 
 ## What this is
 
-An open C reimplementation of the firmware for the Bosch transmission control unit of the ZF 8HP (P/N 1034420267, Renesas SH7254R, SH-2A big-endian, superloop, no RTOS). The stock firmware is fully decompiled (10,982 functions, Ghidra sweep, specs 19–26 in `docs/spec/`); our rewrite lives in `firmware/` and boots, walks, and converses with the supervisor chip on the real bench. The goal: **raise the solenoid outputs to the engaged rail (~1.77 A) under open-firmware control** — the stock does it in under half a second from power-on; our firmware has not yet been granted it. Everything else (M5 limp, M6 shifting, M7 Nissan integration) follows the rail.
+An open C reimplementation of the firmware for the Bosch transmission control unit of the ZF 8HP (P/N 1034420267, Renesas SH7254R, SH-2A big-endian, superloop, no RTOS). The stock firmware is fully decompiled (10,982 functions, Ghidra sweep, specs 19–26 in `docs/spec/`); our rewrite lives in `firmware/` and boots, walks, and converses with the supervisor chip on the real bench. The goal: **raise the solenoid outputs to the engaged rail (~1.77 A) under open-firmware control** — the stock does it in under half a second from power-on; our firmware has not yet been granted it. Everything else (M5 limp, M6 shifting, M7 Nissan integration) follows the rail. *(2026-11-19: the rail goal was met on 2026-11-13 (r02w, r03f) — see "The state now" below.)*
 
-## The one-sentence state (as of 2026-11-11 close)
+## The state now (2026-11-19, r04v on the bench) — read this first
+
+Everything below this section, from "The state on 2026-11-11" onward, is the dated lab record: append-only, never rewritten.
+
+- **Rail and P set (M3, closed 2026-11-13):** the supervisor certifies (0x14 = C7, gate 1), the stock self-test ladder runs to 0xAA, letter 'c' / J2 0x9020 hold the rail, the OS switches modes; the stock P-state request set drives **1.775 A** on the real (dry) mechatronic — the stock's own 1.773 A.
+- **Range / park (M4, partial):** the stock's cyclic range chain owns D6D6 live (brake/engine/lever interlocks, U1267/P0850 debounce), both park outputs at the stock values (30 s release limit), key-off auto-P, PA7 and C9 bit 7 live, the park sensor ported read-only. Open: the sensor's Park polarity (needs the assembled transmission), fault-reaction auto-P.
+- **Garage engagement (M5, partial):** the stock engagement engine is the **sole producer** of the A–E/WK/Sys requests (G6 complete: r04o switch, r04p re-pin, r04q stock boot pass, r04r holder retired, r04s every engine object at its stock address), the stock 1.2 s release (r04l), **OS mode 2 chosen by the stock selector** and latching until key-off (r04u), **the mode-1 commit gate live** (r04v). Our latching independent monitor sits behind it (bounds, release envelope, windows, boot allowance). Output diagnosis on the real feedback chain, the temperature chain and the current bounds live.
+- **Shifting (M6, started):** the stock shift-map runs as a read-only shadow (r04t: target 1st at standstill).
+- **Remaining stand-ins on the live path:** gear target forced 1st (the stock picks 3rd on this bench through a CAN-fault reaction — D-G5-5); Sys 500 / reaction 37 = 0 / WK unported (D-G6-10); the engine-stall fence (D-G6-14); the r03f table before the boot pass (D-G6-15); park_law's 0x89C30/E69B stand-ins.
+- **Bench limits:** dry mechatronic, no turning shafts; brake/engine/lever are simulated on CAN (`--sim-brake --sim-engine 700 --start-before-power`), the engine sim OFF for every install; supply limit 5 A.
+- **Running numbers:** P ≈ 1.8 A, D/R ≈ 3.0 A (park release + hold + the engaged set), engagements complete at pass 96 (D) / 95 (R), releases 120 passes; task_10ms ≈ 0.5 ms typical, ≈ 1.4 ms max on engagement passes; app end ≈ 0x702C4 (four install blocks 0x40000–0x70000).
+
+## The immediate work (2026-11-19)
+
+1. **The fault-reaction / gear-code chain as a read-only shadow** (D-FR-1): the F0 decodes first (the target hinge 0xD1B10/0xD1990, the comm monitor, the fault-manager core), then `fr_shadow` and one read-only flash; then the user chooses forced 1st vs the honest chain (3rd on this bench, gear-indexed monitor tables first).
+2. **The M6 gear feedback chain shadow** (in progress as r04w): the commanded-gear loop E4A7 → 0x89C28, the gear-pair coordinator 0xDD954, the confirm stage, the pedal 0xFF fix.
+3. Before any vehicle: the honest gear target, the line-pressure law in drive, the fault reactions, WK lock-up, the M7 CAN architecture (D-FR-6, open), and a test on an assembled transmission.
+
+## The state on 2026-11-11 (historical — the original handoff, kept as written)
+
 
 The bench runs r02a; the walk tick is alive at stock cadence; the supervisor chip's certification gate (`0x14` bit 1) has refused six wire-law hypotheses; the mechanical transcript tool caught that our per-pass word SEQUENCE was reversed vs the stock — fixed in commit f716fd7 — and five smaller deltas are enumerated. **The chip's gate is flash-reachable (the stock opens it every boot on this same bench) — never accept "the wire can't do it."**
 
@@ -188,7 +207,7 @@ These are the user's standing directives. They are not suggestions.
 - **The tamper wall:** forcing the letters arm past the chip's selftest gate triggers a latched anti-tamper reset loop (~1.15 s period, until power-off). The interlock in `sup_letters_bench_arm` refuses while the gate is closed — never bypass it.
 - **The stock reference measurement:** genuine stock → rail at **<0.5 s** from power-on; by the first readable moment (+13 s): `0x14=C7`, gate=1, letters='c' earned, EN90=0x20. The chip is healthy; the bench is rail-capable; the stock earns certification in its first ~150–250 ms.
 
-## The immediate work (open, in priority order)
+## The immediate work as of 2026-11-11 (historical)
 
 1. **Decode and close the five enumerated transcript deltas** (from the tool's output, f716fd7): (a) the FLT re-fire count/position (`0x14&0xE0` law on our faulted D5 chip — is a second FLT per pass stock-true, and where?); (b) the walk words' interleave position (ours queues inside the batch; the stock's rides the tick context); (c) J7's slot; (d) the ask rides ~2–3 passes late (ours P25, stock ~P22 — the one-shot latency chain); (e) the duty token bytes (ours FF/0F/F0/00 vs the stock dump's 01/F1/41/B1 — verify the token law: same selector → same token?).
 2. ~~Fix the FSM-advance wedge~~ — **closed, no wedge** (see the CORRECTION above: r02a was restarting). **Replaced by:** port the post-certification batch split (10 ms for batch/reply-proc/F, J2 staying at 5 ms) keyed on ladder completion, and decode the `0xFFF9414D` countdown that would take a gate-closed unit to mode 1 anyway — see THE STOCK'S TASK RATES above.
