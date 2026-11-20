@@ -140,7 +140,14 @@ STOCK_FORBIDDEN = ["e8bfa", "e8cf6", "d229e", "f71ec", "a2028", "a1712", "bddb0"
                    # the per-output fault-record store 0x87120 (complement + fatal 0x224 /
                    # 0x226), the counter 0x86414 (0xFFF939BA), the setter's supplier
                    # occurrence table 0x7CA24 (0xFFF948B8..)
-                   "87120", "86414", "7ca24"]
+                   "87120", "86414", "7ca24",
+                   # (2026-11-20, ~/tcu_sweep/shift_class_counters_decode.md §7, the gp stand-in
+                   # retirements): the DSM reporter 0xA105E (callback 0x4CED8 in the AE30 FSM), the
+                   # fault-bank read 0xA1032 -> 0x9F718 (0xEC20A), the adaptation reads 0xAEDC8 /
+                   # 0xAED0E -> 0xB019C / 0xB1C3C -> 0xA1A8E / 0xA1C60 / 0xA1A42 (0x1180BE; exact
+                   # pass-through, cal-disabled) and the fatal 0xB75B4 -> 0xB75A6 (0xB1C3C, 0x1176E0)
+                   "a105e", "a1032", "9f718", "aedc8", "aed0e", "b019c", "b1c3c", "a1a8e", "a1c60",
+                   "a1a42", "b75b4", "b75a6"]
 LIT_FORBIDDEN = [0xFFF85174, 0xFFF85175, 0xFFF85176]
 # F1: the EEPROM / NVM / DSM-record / fatal-log cells no fault-reaction shadow
 # object may hold as a literal or a movi20 operand (plan §5, f0 §7)

@@ -8,7 +8,9 @@
                                      temperature chain, the other shadows) may
                                      name the shadow: its headers, API, types,
                                      macros, its RAM (.gp_shadow / .gp_gear
-                                     0xFFF86570..0xFFF86793)
+                                     0xFFF86570..0xFFF86793, .gp_ext
+                                     0xFFF86794..0xFFF867FF, .gp_ramp
+                                     0xFFF869BC..0xFFF869FF)
   gp_shadow_scan.py shadow FILE...   the shadow (gp_shadow.c / .h, gp_gear.c,
                                      gp_cal.c / .h) includes only its own
                                      headers (+ app/sm_shadow.h, app/sm_cal.h,
@@ -31,8 +33,11 @@ import sys
 OUT_PATTERNS = [
     r"\bgp_shadow", r"\bgp_hook", r"\bgp_cal", r"\bgp_gear", r"\bgp_cpl_", r"\bGP_EV_", r"\bGP_SI_",
     r"\bGP_CAL_", r"\bgp_t\b", r"\bgp_in_t\b", r"\bgp_blk_t\b", r"\bgp_po_t\b", r"\bgp_w_t\b",
-    r"\.gp_shadow\b", r"\.gp_gear\b", r"\bs_gp\b",
+    r"\.gp_shadow\b", r"\.gp_gear\b", r"\.gp_ext\b", r"\.gp_ramp\b", r"\bs_gp\b", r"\bs_gx\b", r"\bs_gr\b",
+    r"\bgp_x_t\b", r"\bgp_xblk_t\b", r"\bgp_xpo_t\b", r"\bgp_xw_t\b", r"\bgp_in2_t\b", r"\bgp_ramp_",
+    r"\bgp_class_", r"\bGP_NEG_",
     r"0[xX][fF]{3}865[7-9a-fA-F][0-9a-fA-F]", r"0[xX][fF]{3}866[0-9a-fA-F]{2}", r"0[xX][fF]{3}867[0-9][0-9a-fA-F]",
+    r"0[xX][fF]{3}867[a-fA-F][0-9a-fA-F]", r"0[xX][fF]{3}869[b-fB-F][0-9a-fA-F]",
 ]
 SHADOW_PATTERNS = [
     r'#\s*include\s*"(?!app/gp_shadow\.h"|app/gp_cal\.h"|app/sm_cal\.h"|app/sm_shadow\.h"|app/sm_gear\.c")[^"]*"',

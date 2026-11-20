@@ -43,7 +43,25 @@
  *                   on / off outputs, E33C+5 / +6 with block B's) COMPUTED and
  *                   RECORDED, never applied
  *
- * NOT PORTED / STOOD IN (each counted in gp_w_t):
+ * 2026-11-20 STAND-IN RETIREMENTS (~/tcu_sweep/shift_class_counters_decode.md,
+ * every address re-read in the bytes; ~/tcu_sweep/gp_standins_port.md):
+ *   the kind / class machine 0x1180BE (via 0x117B4A: the start call 0xED906
+ *     p = 1 / 0, the slot-34 cyclic 0xEBDBC's calls) with 0xEC362 (f8 from the
+ *     0x89CF4 arrays), 0xEC20A and the four condition windows 0xEC40E /
+ *     0xEC4D8 / 0xEC578 / 0xEC614 (10 x 10 tables over output speed and the
+ *     input torque), the class 0xEC182 / 0xEC1F0 and the 0x117B4A override
+ *     (AE31 stood in 0); the 2->1 / 3->2 class-1 rows replace the stand-in
+ *     durations of the phases that have decoded numbers (on 1 / 0x0A / 0x0D,
+ *     off 1 / 0x0B / 0x0F), the other phases keep GP_SI_T_*;
+ *   BD1B 0xEC6A6 / 0xEC7CC (the stand-in GP_SI_BD1B is gone);
+ *   the slot-28 counters 0xEC0E0 / 0x117538 / 0x11295C / 0x10FCA2 and their
+ *     resets (the phase stand-ins now read the stock counters on +0x1A / +0x12);
+ *   the full block swap 0xECB14 (both blocks, both phase objects, the two
+ *     16-byte ramp objects, the pair-pointer ids) with the 0x117CE4 re-pin and
+ *     the +3 flags; the ramp class 0x49FC0 (init 0xD1D8E / step 0xD1D96);
+ *   0x89C0C = the turbine speed 0x89CBA (by value), 0x89C1C / 0x89C0E.
+ *
+ * NOT PORTED / STOOD IN (each counted in gp_w_t / gp_xw_t):
  *   the phase BODIES (done 0x1138FC / 0x1106DC, entry 0x1132F4 except its
  *     progress-hold and +4 stores, outputs 0x113F16 / 0x1144B0 / 0x110CDC /
  *     0x110C8E / 0x110600, 0x112142, 0x114E26 / 0x113788): a SEQUENCE-ONLY
@@ -53,7 +71,7 @@
  *   0xB8246 "on-coming applied" (the request object +0x54): stand-in =
  *     block A's on-coming phase object in its final phase 0x12 [I];
  *   0xEC788 BD1E (0x11632E / 0x116356 / 0xB7C26 → 0xD4FBA): GP_SI_BD1E = 1;
- *   0xEC6A6 BD1B (slot-34 cyclic): 0; BD14+0x26 (0xEB7BC / 0xEB73E): 0 (dump);
+ *   BD14+0x26 (0xEB7BC / 0xEB73E): 0 (dump);
  *     BD14+0x34 (abort pending): 0; 0xEB73E: 1 (no hold, = the r04w chain);
  *   0xEB5A6 + 0xB6BBC (the early next gear's permission): 0 on SH (no
  *     chained pre-select); a host seam sets them;
@@ -103,7 +121,10 @@
 #define GP_SI_T_FILL    8u      /* on 2 (the fill) */
 #define GP_SI_T_TORQUE  5u      /* on 4 / 5, off 4 (the torque phase) */
 #define GP_SI_BD1E      1u      /* 0xEC788 (D4FBA): 1 (traction) */
-#define GP_SI_BD1B      0u      /* 0xEC6A6 */
+#define GP_SI_CF4       1u      /* 0x89CF4 (dump 01; writer 0xFFF8A0A2 not found) */
+#define GP_SI_VAR       0u      /* 0x89C06: the f8 array variant (dump 0) */
+#define GP_SI_AE31      0u      /* 0xFFF8AE31 == 3: the 0x117B4A override gate (dump 00) */
+#define GP_SI_CFA       0u      /* 0x89CFA: BD1E while BD15 == 0 (dump 00) */
 #define GP_SI_BD26      0u      /* BD14+0x26 (dump 0xFFF8BD3A = 00) */
 #define GP_SI_EB73E     1u      /* 0xEB73E: no hold (the r04w chain's choice) */
 
@@ -260,6 +281,102 @@ _Static_assert(offsetof(gp_t, w) == 0xA0u, "gp_t layout (witness_gp.py)");
 _Static_assert(offsetof(gp_t, ev) == 0x108u, "gp_t layout (witness_gp.py)");
 _Static_assert(sizeof(gp_t) == 0x188u, "gp_t is 0x188 bytes (.gp_shadow, witness_gp.py)");
 
+/* ── 2026-11-20: the retired stand-ins' state (own RAM .gp_ext 0xFFF86794,
+ * .gp_ramp 0xFFF869BC; gp_t / gf_t untouched) ───────────────────────────── */
+/* the pointer-carrying part of a phase object (0x117CE4's re-pin targets: on
+ * +0x48 / off +0x38 = its context; the pair-cell pointers on +0x4C.. / off
+ * +0x3C.. travel with the object in the swap): ctxp = the block index the object
+ * points to, pair = the three pair-cell ids its pointers hold [I: the boot
+ * assignment is the constructor's, undecoded — one id per cell] */
+typedef struct {
+    uint8_t  ctxp;
+    uint8_t  pair[3];
+} gp_xpo_t;
+_Static_assert(sizeof(gp_xpo_t) == 4u, "gp_xpo_t is 4 bytes (witness_gp.py)");
+
+/* a shift context's extension (swapped with it by 0xECB14) */
+typedef struct {
+    uint8_t  k7;        /* +0  ctx+7  the kind (0x1180BE) */
+    uint8_t  f8;        /* +1  ctx+8  the shift-character index */
+    uint8_t  cls[2];    /* +2  the class 0xEC182 for the call-site flag 0 / 1 */
+    uint8_t  ov;        /* +4  ctx+0x30 the override's sticky flag */
+    uint8_t  on_c10;    /* +5  on +0x10 */
+    uint8_t  on_c1c;    /* +6  on +0x1C */
+    uint8_t  off_c2c;   /* +7  off +0x2C */
+    uint16_t c22;       /* +8  ctx+0x22 (BD8E for block A) */
+    uint16_t on_c34;    /* +10 on +0x34: the last phase's duration (+0x1A at its end) */
+    uint16_t on_ca;     /* +12 on +0xA */
+    uint16_t on_cc;     /* +14 on +0xC */
+    uint16_t on_c3e;    /* +16 on +0x3E */
+    uint16_t off_c22;   /* +18 off +0x22: the last phase's duration (+0x12 at its end) */
+    gp_xpo_t xon;       /* +20 */
+    gp_xpo_t xoff;      /* +24 */
+} gp_xblk_t;
+_Static_assert(sizeof(gp_xblk_t) == 28u, "gp_xblk_t is 28 bytes (witness_gp.py)");
+
+/* the inputs by value the stand-in retirements need (gp_shadow_set_in2) */
+typedef struct {
+    int16_t  tq;        /* 0x89CA0 the input torque [I: our vehicle torque / 10; 0 without frames] */
+    uint8_t  pedal;     /* 0x89CD8 */
+    uint8_t  pad;
+    uint16_t now_ms;    /* 0x89CF8 the ms clock (the ramp objects) */
+} gp_in2_t;
+_Static_assert(sizeof(gp_in2_t) == 6u, "gp_in2_t is 6 bytes (witness_gp.py)");
+
+/* the witnesses of the retirements (u16, saturating) */
+typedef struct {
+    uint16_t k_start;   /* +0  0x117B4A calls from the start (0xED906) */
+    uint16_t k_cyc;     /* +2  0x117B4A calls from the slot-34 cyclic */
+    uint16_t k_chg;     /* +4  kind changes */
+    uint16_t k_ovr;     /* +6  the override taken */
+    uint16_t k_reload;  /* +8  0xED92E (0x1176E0 + the torque modules): counted, not ported */
+    uint16_t k_a1032;   /* +10 0xA1032 evaluations (stand-in 0, exact: cal +0x7C = 1) */
+    uint16_t k_adapt;   /* +12 0xAEDC8 / 0xAED0E pass-throughs (exact: cal-disabled) */
+    uint16_t c_pass;    /* +14 slot-28 counter passes (0xEC0E0) */
+    uint16_t repin_n;   /* +16 phase-object pointers re-pinned by 0x117CE4 after a swap */
+    uint16_t ramp_n;    /* +18 ramp object init / step calls */
+    uint16_t bd1b_n;    /* +20 BD1B set by 0xEC6A6 */
+    uint16_t c1_n;      /* +22 phase durations taken from the class-1 rows */
+} gp_xw_t;
+_Static_assert(sizeof(gp_xw_t) == 24u, "gp_xw_t is 24 bytes (witness_gp.py)");
+
+typedef struct {
+    gp_xblk_t blk[2];   /* +0   block A / B */
+    gp_in2_t  in2;      /* +56 */
+    uint16_t  bd2e;     /* +62 BD14+0x1A */
+    uint8_t   bd30;     /* +64 BD14+0x1C */
+    uint8_t   bd5f;     /* +65 BD14+0x4B */
+    uint8_t   bd51;     /* +66 BD14+0x3D */
+    uint8_t   cls1c;    /* +67 0x89C1C = clamp_u8(torque / 6 + 34) */
+    uint8_t   c0e;      /* +68 0x89C0E = clamp_u8(turbine / 32) */
+    uint8_t   pad;      /* +69 */
+    gp_xw_t   w;        /* +70 */
+} gp_x_t;
+_Static_assert(offsetof(gp_x_t, in2) == 56u, "gp_x_t layout (witness_gp.py)");
+_Static_assert(offsetof(gp_x_t, w) == 70u, "gp_x_t layout (witness_gp.py)");
+_Static_assert(sizeof(gp_x_t) == 94u, "gp_x_t is 94 bytes (.gp_ext, witness_gp.py)");
+_Static_assert(sizeof(gp_x_t) <= 0x6Cu, "gp_x_t must fit the dump-zero gap after .gp_gear (108 B)");
+
+/* the 16-byte float ramp object of the vtable 0x49FC0 (on +0x68 / off +0x58;
+ * the vtable word at object+0x10 is the constant 0x49FC0 and not stored) */
+typedef struct {
+    float    v;         /* +0  value */
+    uint16_t ts;        /* +4  the ms stamp (0x89CF8) */
+    uint16_t pad;
+    float    mn;        /* +8  min */
+    float    mx;        /* +12 max */
+} gp_ramp_t;
+_Static_assert(sizeof(gp_ramp_t) == 16u, "gp_ramp_t is 16 bytes (0xD1C4C)");
+
+void gp_ramp_init(gp_ramp_t *r, int16_t value, int16_t mn, int16_t mx, uint16_t now);   /* 0xD1D8E */
+int16_t gp_ramp_step(gp_ramp_t *r, int16_t rate, uint16_t now);                        /* 0xD1D96 */
+uint8_t gp_class_ec182(uint8_t kind, uint8_t flag, uint8_t type);                      /* 0xEC182 */
+uint8_t gp_class_ec1f0(uint8_t kind, uint8_t flag, uint8_t type);                      /* 0xEC1F0 */
+
+void gp_shadow_set_in2(const gp_in2_t *in2);                 /* before gp_shadow_pass */
+const volatile gp_x_t *gp_shadow_x(void);
+const volatile gp_ramp_t (*gp_shadow_ramps(void))[2];        /* [block][0 = on, 1 = off] */
+
 void gp_shadow_init(void);
 void gp_shadow_pass(const gp_in_t *in);          /* the 10 ms pass (after sm_hook_10ms) */
 const volatile gp_t *gp_shadow_state(void);
@@ -292,6 +409,12 @@ void gp_hook_time(uint32_t us);                  /* the CPU witness of one pass 
 /* host seams: the chained pre-select (0xEB5A6 ∧ 0xB6BBC accept, BD14+0x26 = 1
  * with 0xEC90A == 0); the shift object's abort (BD14+0x34) */
 void gp_shadow_host_si(uint8_t early_ok, uint8_t bd26);
+void gp_shadow_host_ae31(uint8_t ae31);                      /* the 0x117B4A override gate */
+/* the swap probe (host): 0xECB14 on the shadow's own blocks, and the mutable views the test fills */
+void gp_shadow_host_ecb14(void);
+gp_t *gp_shadow_host_mut(void);
+gp_x_t *gp_shadow_host_xmut(void);
+gp_ramp_t (*gp_shadow_host_rmut(void))[2];
 void gp_gear_host_si(uint8_t ae2d, int8_t c43);
 #endif
 

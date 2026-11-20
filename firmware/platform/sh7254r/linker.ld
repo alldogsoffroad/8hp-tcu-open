@@ -415,6 +415,25 @@ SECTIONS
     ASSERT(__gp_shadow_start == 0xFFF86570 && SIZEOF(.gp_shadow) == 0x188, ".gp_shadow: gp_t is off 0xFFF86570 (witness_gp.py)")
     ASSERT(__gp_gear_start == 0xFFF866F8 && SIZEOF(.gp_gear) == 0x9C && __gp_gear_end <= __sm_shadow_start,
            ".gp_gear: gf_t is off 0xFFF866F8 or runs into .sm_shadow (witness_gp.py)")
+    /* THE GEAR-PAIR SHADOW'S STAND-IN RETIREMENTS (2026-11-20, ~/tcu_sweep/
+     * gp_standins_port.md): gp_x_t (0x5E, 0x60 aligned: the kind / class state, the counters'
+     * extensions, the swap-moved pair ids, the witnesses) in the dump-zero gap
+     * after .gp_gear (0xFFF86794..0xFFF86800, 108 B) and the four 16-byte ramp
+     * objects in the gap after .sm_gear (0xFFF869BC..0xFFF86A00, 68 B; the dump
+     * holds both all zero — re-checked). gp_t / gf_t did not move. Cleared by
+     * gp_shadow_init. */
+    .gp_ext 0xFFF86794 (NOLOAD) : {
+        __gp_ext_start = .; *(.gp_ext)
+        . = ALIGN(4); __gp_ext_end = .;
+    } > RAM
+    .gp_ramp 0xFFF869BC (NOLOAD) : {
+        __gp_ramp_start = .; *(.gp_ramp)
+        . = ALIGN(4); __gp_ramp_end = .;
+    } > RAM
+    ASSERT(__gp_ext_start == 0xFFF86794 && __gp_ext_start >= __gp_gear_end && SIZEOF(.gp_ext) == 0x60 &&
+           __gp_ext_end <= __sm_shadow_start, ".gp_ext: gp_x_t is off 0xFFF86794 or runs into .sm_shadow (witness_gp.py)")
+    ASSERT(__gp_ramp_start == 0xFFF869BC && __gp_ramp_start >= __sm_gear_end && SIZEOF(.gp_ramp) == 0x40 &&
+           __gp_ramp_end <= 0xFFF86A00, ".gp_ramp: the ramp objects are off 0xFFF869BC or run into .fb_shadow (witness_gp.py)")
     /* the fault-reaction shadow's FAULT MANAGER (app/fr_fm.c, ours; RAM
      * only, written by that TU alone): struct fr_fm_t in the dump-zero gap
      * between the A-DMAC ring (+ its guard 0x88728) and the range chain's

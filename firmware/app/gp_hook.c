@@ -33,6 +33,7 @@ void gp_hook_init(void)
 #include "io/sensors/sensors.h"
 #include "io/vehicle/vehicle.h"
 #include "platform/platform.h"
+#include "bsw/sched/sched.h"
 
 void gp_hook_10ms(void)
 {
@@ -61,6 +62,21 @@ void gp_hook_10ms(void)
     in.ld0e0 = LIVE_U8(0xFFF8D0E0u);
     in.r_e4a7 = r->e4a7;
     in.r_e69f = r->e69f;
+    /* the retirements' inputs (by value): 0x89CA0 the input torque [I: our actual engine torque / 10
+     * Nm — the stock's 0xD45A8 torque at the input is not ported; 0 without frames], 0x89CD8 the pedal
+     * (0x13CA22: invalid or raw 0xFF -> 23, raw >= 0xFB -> 0xFE, else raw * 127 / 125), the ms clock
+     * 0x89CF8 */
+    gp_in2_t in2;
+    in2.tq = (v->q_torque_actual == Q_OK) ? (int16_t)(v->torque_actual / 10) : (int16_t)0;
+    uint32_t ped = 23u;
+    if (v->q_pedal == Q_OK) {
+        const uint32_t raw = (uint32_t)((uint16_t)v->pedal / 4u);
+        ped = (raw == 0xFFu) ? 23u : ((raw >= 0xFBu) ? 0xFEu : (raw * 127u) / 125u);
+    }
+    in2.pedal = (uint8_t)ped;
+    in2.pad = 0u;
+    in2.now_ms = (uint16_t)sched_now_ms();
+    gp_shadow_set_in2(&in2);
     const uint32_t t0 = plat_frt_us();
     gp_hook_feed(&in);
     const uint32_t dt = plat_frt_us() - t0;

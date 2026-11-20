@@ -21,6 +21,26 @@ Roots (~/tcu_sweep/shift_engine_gearpair_decode.md §1.2 / §1.6 / §1.4 and
 The direct-shift type 0x4F9DC and the kind 0x4FA40 are sm_cal_gtype /
 sm_cal_gkind (app/sm_cal.c, already byte-checked).
 
+2026-11-20 (the stand-in retirements, ~/tcu_sweep/shift_class_counters_decode.md
+sections 1..6; every pool / pointer chain asserted against the bytes below):
+  *(0x5713C + 0x2C / 0x34)  the shift-character arrays f8 = t[0x89CF4]
+           (0xEC362; {u32 n; u8 v[]}), down 0x1B607C / up 0x1B6094
+  *(0x5713C + 0xF0..0xFC / 0xE0..0xEC / 0xD0..0xDC)  the 0xEC40E / 0xEC4D8 /
+           0xEC578 / 0xEC614 condition windows: 10 x 10 tables (output speed
+           >= , torque lower <, < torque upper), index (to+1)*10 + (from+1)
+           (0xB6D14 / 0xB6CE8: {u32 ncols; u32 nrows; s16 data[]})
+  *(0x5713C + 0x7C..0xA8)   the temperature-byte windows, the 0xA1032 gate and
+           the 0xA8 byte; *(0x5713C + 0xB8..0xC8) the BD1B thresholds (0xEC7CC /
+           0xEC6A6); *(0x5713C + 0x154 / 0x158) the 0x117B4A override's pedal
+           byte and the turbine -> torque map; 0x19B03C the override's f8
+           array (0xD02EC)
+  class-1 rows (2->1 and 3->2 down-shifts, variant 0): on-coming lock count /
+           phase-1 delay / phase-0x0A duration (blocks 0x5C84C / 0x5C894 via
+           0x5F014 -> 0x5CD5C), off-going phase-0x0B / 0x0F durations and the
+           phase-1 committed duration (blocks 0x596E4 / 0x59718 via 0x5E984 ->
+           0x59E34): index = the shift's FROM gear (verified here: 0x5F014[2]
+           = 0, [3] = 1; 0x5E984[2] = 7, [3] = 8)
+
 usage: gen_gp_cal.py <stock image> <out .c>
 """
 import struct
@@ -81,6 +101,119 @@ def main():
     o.append('/* *(0x5713C + 0xB0) = 0x1FF1F6: the synchronisation band, rpm (0x117F48) */')
     o.append('const uint16_t gp_cal_sync_thr = %du;' % u16(thr_at))
     o.append('')
+    # ---- 2026-11-20 additions -------------------------------------------------
+    o.append('/* the mutation negative (ctest gp_shadow_neg_CLASS): the down-shift f8 array t[1] = 1 -> 0:')
+    o.append(' * 0xEC20A then never accepts a downshift window, every kind stays 2 (class 0) */')
+    o.append('#if defined(GP_NEG_CLASS)')
+    o.append('#define GP_NEG_F(v) ((v) - 1u)')
+    o.append('#else')
+    o.append('#define GP_NEG_F(v) (v)')
+    o.append('#endif')
+    o.append('')
+    s16 = lambda a: struct.unpack('>h', img[a:a + 2])[0]
+    BASE = 0x5713C
+
+    def ptr(off):
+        return u32(BASE + off)
+
+    def arr_u8(name, p, comment, mutate=None):
+        n = u32(p)
+        assert n == 5, (name, n)
+        vals = ['%du' % b for b in img[p + 4:p + 4 + n]]
+        if mutate is not None:
+            i, want = mutate
+            assert img[p + 4 + i] == want
+            vals[i] = 'GP_NEG_F(%du)' % want
+        o.append('/* %s */' % comment)
+        o.append('const uint8_t %s[5] = { %s };' % (name, ', '.join(vals)))
+        o.append('')
+
+    assert ptr(0x2C) == 0x1B607C and ptr(0x34) == 0x1B6094
+    arr_u8('gp_cal_f8_dn', ptr(0x2C), '*(0x5713C + 0x2C) = 0x1B607C: f8 = t[0x89CF4] for the types 3 / 4 (0xEC362)',
+           (1, 1))
+    arr_u8('gp_cal_f8_up', ptr(0x34), '*(0x5713C + 0x34) = 0x1B6094: f8 = t[0x89CF4] for the types 1 / 2 (0xEC362)')
+    arr_u8('gp_cal_f8_ov', 0x19B03C, "0x19B03C: the 0x117B4A override's f8 = t[0x89CF4] (0xD02EC via 0xB6B28)")
+
+    FUNCS = [('ec40e', 0xF0, 0xE0, 0xD0), ('ec4d8', 0xF4, 0xE4, 0xD4), ('ec578', 0xF8, 0xE8, 0xD8),
+             ('ec614', 0xFC, 0xEC, 0xDC)]
+    outs, los, his = [], [], []
+    for nm, oo, lo, hi in FUNCS:
+        for off, lst, uns in ((oo, outs, True), (lo, los, False), (hi, his, False)):
+            p = ptr(off)
+            assert u32(p) == 10 and u32(p + 4) == 10, (nm, hex(off))
+            lst.append([(u16(p + 8 + 2 * i) if uns else s16(p + 8 + 2 * i)) for i in range(100)])
+    o.append('/* the four condition windows (0xEC40E / 0xEC4D8 / 0xEC578 / 0xEC614), tables')
+    o.append(' * *(0x5713C + {0xF0,0xF4,0xF8,0xFC}) output speed >=, {0xE0,0xE4,0xE8,0xEC} torque lower <,')
+    o.append(' * {0xD0,0xD4,0xD8,0xDC} < torque upper; 10 x 10, index (to+1)*10 + (from+1) */')
+    for nm, lst, ty in (('gp_cal_win_out', outs, 'uint16_t'), ('gp_cal_win_lo', los, 'int16_t'),
+                        ('gp_cal_win_hi', his, 'int16_t')):
+        o.append('const %s %s[4][100] = {' % (ty, nm))
+        for t in lst:
+            o.append('    { %s },' % ', '.join('%d' % v for v in t))
+        o.append('};')
+        o.append('')
+    tmp_offs = [0x80, 0x84, 0x88, 0x8C, 0x90, 0x94, 0x98, 0x9C, 0xA0, 0xA4]
+    tmp = [img[ptr(x)] for x in tmp_offs]
+    assert tmp == [170, 40, 40, 170, 40, 40, 150, 70, 185, 40], tmp
+    o.append('/* the temperature-byte windows: 0xEC40E max/up-min/down-min (+0x80/84/88), 0xEC4D8 (+0x8C/90/94),')
+    o.append(' * 0xEC578 max/min (+0x98/0x9C), 0xEC614 max/min (+0xA0/0xA4) */')
+    o.append('const uint8_t gp_cal_tmp[10] = { %s };' % ', '.join('%du' % v for v in tmp))
+    o.append('')
+    o.append('/* *(0x5713C + 0x7C) the 0xA1032 gate byte, *(+0xA8) the "BD16 != 2" byte (0x1180BE) */')
+    o.append('const uint8_t gp_cal_k7c = %du;' % img[ptr(0x7C)])
+    o.append('const uint8_t gp_cal_ka8 = %du;' % img[ptr(0xA8)])
+    o.append('')
+    thr = [s16(ptr(x)) for x in (0xB8, 0xBC, 0xC0, 0xC4, 0xC8)]
+    o.append('/* the BD1B thresholds *(0x5713C + 0xB8 / 0xBC / 0xC0 / 0xC4) (0xEC7CC) and the turbine one (+0xC8) */')
+    o.append('const int16_t gp_cal_thr[5] = { %s };' % ', '.join('%d' % v for v in thr))
+    o.append('')
+    mp = ptr(0x158)
+    assert mp == 0x1B78A0 and u32(mp) == 4
+    xs = [s16(mp + 4 + 2 * i) for i in range(4)]
+    ys = [s16(mp + 4 + 8 + 2 * i) for i in range(4)]
+    assert xs == [2000, 3000, 4000, 6000] and ys == [300, 200, 150, 100], (xs, ys)
+    o.append("/* *(0x5713C + 0x158) = 0x1B78A0: the override's turbine -> torque map (0xB6E10), and the pedal byte")
+    o.append(' * *(0x5713C + 0x154) = 0x1FE8F6 */')
+    o.append('const int16_t gp_cal_ov_x[4] = { %s };' % ', '.join('%d' % v for v in xs))
+    o.append('const int16_t gp_cal_ov_y[4] = { %s };' % ', '.join('%d' % v for v in ys))
+    o.append('const uint8_t gp_cal_ov_ped = %du;' % img[ptr(0x154)])
+    o.append('')
+    # class-1 rows
+    on_rows, off_rows = [], []
+    for frm in (2, 3):
+        idx = u32(0x5F014 + 4 * frm)
+        assert idx == frm - 2, (frm, idx)
+        blk = u32(0x5CD5C + 8 * idx)
+        assert blk == (0x5C84C, 0x5C894)[frm - 2]
+        on_rows.append((img[u32(blk + 4)], img[u32(blk + 0x14)], img[u32(blk + 0)]))
+        pidx = u32(0x5E984 + 4 * frm)
+        assert pidx == 7 + (frm - 2)
+        boff = u32(0x59E34 + 8 * pidx)
+        assert boff == (0x596E4, 0x59718)[frm - 2]
+        q = u32(boff + 0x1C)
+        assert u32(q) == 4 and u32(q + 4) == 4 and not any(img[q + 16:q + 32]), 'off phase-1 map'
+        maps = []
+        for off in (0xC, 0x28):
+            m = u32(boff + off)
+            assert u32(m) == 4
+            maps.append((list(img[m + 4:m + 8]), list(img[m + 8:m + 12])))
+        off_rows.append(maps)
+    assert on_rows == [(0, 0, 50), (0, 0, 40)], on_rows
+    assert off_rows[0][0] == ([17, 42, 67, 101], [20, 20, 16, 10])
+    assert off_rows[0][1] == ([34, 51, 67, 151], [7, 20, 20, 10])
+    assert off_rows[1][0] == ([17, 42, 67, 101], [10, 10, 10, 10])
+    assert off_rows[1][1] == ([42, 51, 84, 151], [7, 10, 20, 20])
+    o.append('/* class-1 down-shifts 2->1 / 3->2 (index = from - 2): the on-coming phase-1 delay (blk +4), phase-0x0A')
+    o.append(' * duration (blk +0x14) and the 0x0D lock count (blk +0) in passes; blocks 0x5C84C / 0x5C894 */')
+    o.append('const uint8_t gp_cal_c1_on[2][3] = { %s };' % ', '.join('{ %d, %d, %d }' % r for r in on_rows))
+    o.append('/* the off-going phase-0x0B (blk +0xC) and phase-0x0F (blk +0x28) durations: 1-D byte maps over the')
+    o.append(' * torque class 0x89C1C; blocks 0x596E4 / 0x59718; [from - 2][0 = 0x0B, 1 = 0x0F][axis x4, y x4] */')
+    o.append('const uint8_t gp_cal_c1_off[2][2][8] = {')
+    for maps in off_rows:
+        o.append('    { %s },' % ', '.join('{ %s }' % ', '.join('%d' % v for v in (mx + my)) for mx, my in maps))
+    o.append('};')
+    o.append('')
+
     open(sys.argv[2], 'w').write('\n'.join(o))
 
 

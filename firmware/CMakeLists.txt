@@ -1893,6 +1893,18 @@ else()
         SM_HOOK_NO_GATHER=1 GP_NEG_TABLE=1)
     add_test(NAME gp_shadow_neg_TABLE COMMAND test_gp_shadow_neg_TABLE)
     set_tests_properties(gp_shadow_neg_TABLE PROPERTIES WILL_FAIL TRUE)
+    # 2026-11-20 (the stand-in retirements, ~/tcu_sweep/gp_standins_port.md): a mutated class
+    # table (the down-shift f8 array t[1] 1 -> 0: no downshift window, kind 2, class 0) and a swap
+    # that skips the ramp objects and the 0x117CE4 re-pin must FAIL
+    add_executable(test_gp_shadow_neg_CLASS ${GP_TEST_SOURCES})
+    target_compile_definitions(test_gp_shadow_neg_CLASS PRIVATE _POSIX_C_SOURCE=200809L GP_HOOK_NO_GATHER=1
+        SM_HOOK_NO_GATHER=1 GP_NEG_CLASS=1)
+    add_test(NAME gp_shadow_neg_CLASS COMMAND test_gp_shadow_neg_CLASS)
+    add_executable(test_gp_shadow_neg_SWAP ${GP_TEST_SOURCES})
+    target_compile_definitions(test_gp_shadow_neg_SWAP PRIVATE _POSIX_C_SOURCE=200809L GP_HOOK_NO_GATHER=1
+        SM_HOOK_NO_GATHER=1 GP_NEG_SWAP=1)
+    add_test(NAME gp_shadow_neg_SWAP COMMAND test_gp_shadow_neg_SWAP)
+    set_tests_properties(gp_shadow_neg_CLASS gp_shadow_neg_SWAP PROPERTIES WILL_FAIL TRUE)
     set(GP_APP_SOURCES app/gp_shadow.c app/gp_cal.c app/gp_gear.c app/gp_hook.c)
     add_executable(test_g6b_gp ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c
         ${GP_APP_SOURCES})
