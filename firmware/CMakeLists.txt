@@ -2092,13 +2092,13 @@ else()
     add_test(NAME lp_shadow_neg_TABLE COMMAND test_lp_shadow_neg_TABLE)
     set_tests_properties(lp_shadow_neg_MAP lp_shadow_neg_TABLE PROPERTIES WILL_FAIL TRUE)
     set(LP_APP_SOURCES app/lp_shadow.c app/lp_cal.c app/ti_shadow.c app/lp_hook.c)
-    add_executable(test_g6b_lp ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c
+    add_executable(test_g6b_lp ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c io/vehicle/shadow_sim.c
         ${GP_APP_SOURCES} ${LP_APP_SOURCES})
     target_compile_definitions(test_g6b_lp PRIVATE ${G6B_DEFS} SM_TEST=1 SM_HOOK_NO_GATHER=1
         GP_TEST=1 GP_HOOK_NO_GATHER=1 LP_TEST=1 LP_HOOK_NO_GATHER=1)
     add_test(NAME lp_identity COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/lp_identity.py
         $<TARGET_FILE:test_g6b_lp>)
-    add_executable(test_g6b_lpleak ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c
+    add_executable(test_g6b_lpleak ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c io/vehicle/shadow_sim.c
         ${GP_APP_SOURCES} ${LP_APP_SOURCES})
     target_compile_definitions(test_g6b_lpleak PRIVATE ${G6B_DEFS} SM_TEST=1 SM_HOOK_NO_GATHER=1
         GP_TEST=1 GP_HOOK_NO_GATHER=1 LP_TEST=1 LP_HOOK_NO_GATHER=1 LP_NEG_LEAK=1)
