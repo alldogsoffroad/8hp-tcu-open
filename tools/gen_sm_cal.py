@@ -24,6 +24,11 @@ indirection is the stock's own, read in the bytes):
   (*0xFFF84E44)+0x0C / +0x10 = 0x1FEC8C / 0x1FEC8D  the AB30 filter weights
                           (0xF9570 -> 0x121BCC)
 
+  (2026-11-19) the gear feedback chain: the gear-pair tables 0x4F6A4 /
+                          0x4F9DC / 0x4FA40 / 0x4F708 and the six speed-limit
+                          tables of *0xFFF84C80 (ROM init DTBL 0x65110 + 0xC80
+                          = 0x53610 -> 0x19AB78 .. 0x19AF88)
+
 usage: gen_sm_cal.py <stock image> <out .c>
 """
 import struct
@@ -103,6 +108,54 @@ def main():
     o.append('')
     o.append('/* 0x1FEC8C / 0x1FEC8D: the AB30 output-speed filter weights (0xF9570 -> 0x121BCC) */')
     o.append('const uint8_t sm_cal_ab30w[2] = { %du, %du };' % (img[0x1FEC8C], img[0x1FEC8D]))
+    o.append('')
+    # the gear feedback chain (app/sm_gear.c; ~/tcu_sweep/gear_feedback_shadow_port.md)
+    def s8arr(name, addr, comment, neg=None):
+        vals = ['%d' % (b - 256 if b > 127 else b) for b in img[addr:addr + 100]]
+        if neg is not None:
+            i, macro, want = neg
+            assert vals[i] == '%d' % want, (name, i, vals[i])
+            vals[i] = '%s(%d)' % (macro, want)
+        o.append('/* %s */' % comment)
+        o.append('const int8_t %s[100] = {' % name)
+        for i in range(0, 100, 10):
+            o.append('    %s,' % ', '.join(vals[i:i + 10]))
+        o.append('};')
+        o.append('')
+    o.append('/* the mutation negative (ctest sm_gear_neg_GNEXT): the next gear from 1st')
+    o.append(' * toward 2nd, t[(2+1) + (1+1)*10] = 2 -> 1 — the ramp must stick in 1st */')
+    o.append('#if defined(SM_NEG_GNEXT)')
+    o.append('#define SM_NEG_GN(v) ((v) - 1)')
+    o.append('#else')
+    o.append('#define SM_NEG_GN(v) (v)')
+    o.append('#endif')
+    o.append('')
+    s8arr('sm_cal_gnext', 0x4F6A4, '0x4F6A4: the next commanded gear t[(to+1) + (from+1)*10] (0xD1990, pool 0xD1B54)',
+          (23, 'SM_NEG_GN', 2))
+    s8arr('sm_cal_gtype', 0x4F9DC, '0x4F9DC: 0xB7C02 = 0xD4F86 (pool 0xD51D0)')
+    s8arr('sm_cal_gkind', 0x4FA40, '0x4FA40: 0xB7C14 = 0xD4FA0 (pool 0xD51D4)')
+    s8arr('sm_cal_gskip', 0x4F708, '0x4F708: 0xD16BA / 0xD1854 (pools 0xD17D0 / 0xD1970)')
+    dtbl = 0x65110 + (0xFFF84C80 - 0xFFF84000)
+    root = u32(dtbl)
+    assert root == 0x53610, hex(root)
+    tabs = [u32(root + 4 * i) for i in range(6)]
+    for t in tabs:
+        assert (u32(t), u32(t + 4)) == (10, 10), hex(t)
+    o.append('/* *0xFFF84C80 = 0x%05X (DTBL 0x%05X): the six 10 x 10 tables */' % (root, dtbl))
+    o.append('const uint32_t sm_cal_gspd_addr[6] = { %s };' % ', '.join('0x%06Xu' % t for t in tabs))
+    o.append('const int16_t sm_cal_gspd[5][100] = {')
+    for t in tabs[:5]:
+        vals = [struct.unpack('>h', img[t + 8 + 2 * i:t + 10 + 2 * i])[0] for i in range(100)]
+        o.append('    {')
+        for i in range(0, 100, 10):
+            o.append('        %s,' % ', '.join('%d' % v for v in vals[i:i + 10]))
+        o.append('    },')
+    o.append('};')
+    o.append('const uint8_t sm_cal_gtemp[100] = {')
+    t = tabs[5]
+    for i in range(0, 100, 10):
+        o.append('    %s,' % ', '.join('%du' % b for b in img[t + 8 + i:t + 18 + i]))
+    o.append('};')
     o.append('')
     open(sys.argv[2], 'w').write('\n'.join(o))
 
