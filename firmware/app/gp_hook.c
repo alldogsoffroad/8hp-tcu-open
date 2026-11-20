@@ -20,6 +20,7 @@
 #include <stdint.h>
 
 #if !defined(TCU_RAM_APP)
+#include "io/vehicle/shadow_sim.h"   /* BENCH-ONLY simulated speeds (feeds the shadows only) */
 
 #define LIVE_U8(a)   (*(const volatile uint8_t *)(uintptr_t)(a))
 
@@ -76,6 +77,7 @@ void gp_hook_10ms(void)
     in2.pedal = (uint8_t)ped;
     in2.pad = 0u;
     in2.now_ms = (uint16_t)sched_now_ms();
+    gp_hook_sim_in2(&in2);
     gp_shadow_set_in2(&in2);
     const uint32_t t0 = plat_frt_us();
     gp_hook_feed(&in);
@@ -84,8 +86,29 @@ void gp_hook_10ms(void)
 }
 #endif
 
-void gp_hook_feed(const gp_in_t *in)
+void gp_hook_feed(const gp_in_t *in0)
 {
-    gp_shadow_pass(in);
+    /* TCU_SHADOW_SIM: the bench's simulated speeds replace the sensors' for the shadow only */
+    gp_in_t in = *in0;
+    shadow_sim_in_t ss;
+    shadow_sim_get(&ss);
+    if (ss.valid != 0u) {
+        in.gf.cb8 = ss.output_rpm;
+        in.gf.cba = ss.turbine_rpm;
+    }
+    gp_shadow_pass(&in);
+}
+
+/* TCU_SHADOW_SIM: the retirements' inputs (input torque 0x89CA0 in Nm, the pedal 0x89CD8 by the
+ * 0x13CA22 rule) from the simulated frame while it is fresh; also the host harness's entry */
+void gp_hook_sim_in2(gp_in2_t *in2)
+{
+    shadow_sim_in_t ss;
+    shadow_sim_get(&ss);
+    if (ss.valid != 0u) {
+        const uint32_t raw = ss.pedal_raw;
+        in2->tq = ss.torque_nm;
+        in2->pedal = (uint8_t)((raw == 0xFFu) ? 23u : ((raw >= 0xFBu) ? 0xFEu : (raw * 127u) / 125u));
+    }
 }
 #endif /* !TCU_RAM_APP */

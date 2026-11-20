@@ -54,6 +54,7 @@ void fr_hook_rx(uint8_t bus, uint16_t id, uint8_t dlc, const uint8_t *data)
 #include "io/vehicle/vehicle.h"
 #include "platform/platform.h"
 #include "safety/kl15.h"
+#include "io/vehicle/shadow_sim.h"   /* BENCH-ONLY simulated speeds (feeds the shadows only) */
 #include "safety/park_pair.h"
 
 void fr_hook_10ms(void)
@@ -80,7 +81,12 @@ void fr_hook_10ms(void)
     in.rng_g109 = rm->g109;
     in.rng_g98 = rm->g98;
     in.eng_st = (v->q_engine_speed == Q_OK) ? 0u : 2u;
-    in.out_st = (sn->q_output_speed == Q_OK) ? 0u : 2u;
+    {
+        /* TCU_SHADOW_SIM: a fresh simulated-speed frame = a valid output speed for the shadow only */
+        shadow_sim_in_t ss;
+        shadow_sim_get(&ss);
+        in.out_st = (ss.valid != 0u || sn->q_output_speed == Q_OK) ? 0u : 2u;
+    }
     in.gf_e4a5 = gf->e4a5;
     in.gf_e69c1 = gf->e69c[1];
     in.gf_e69f = gf->e69f;

@@ -59,6 +59,8 @@
 #include "app/gp_shadow.h"
 #include "app/gp_cal.h"
 #include "app/sm_cal.h"
+#include "platform/platform.h"
+#include "io/vehicle/shadow_sim.h"   /* BENCH-ONLY simulated speeds (2026-11-20, ~/tcu_sweep/shadow_sim_port.md) */
 
 #include <stdio.h>
 #include <time.h>
@@ -66,6 +68,13 @@
 #include <string.h>
 
 static int g_fail;
+/* the sim mode: 0 the hooks get the speeds directly (the original tests); 1 the hooks get ZERO real
+ * speeds and the speeds / pedal / torque arrive as the bench's 0x7F6 frame (every 10 ms, bus 2);
+ * 2 zero real speeds and NO frame (the dry bench: shadows must read zeros) */
+static int g_sim;
+static uint32_t s_sim_tx;           /* frames sent */
+/* shadow_sim.c registers its id with the platform; the host unit test has no platform */
+bool plat_can_rx_register(can_bus_t bus, uint16_t id) { (void)bus; (void)id; return true; }
 #define CHECK(c, ...) do { if (!(c)) { g_fail++; printf("FAIL %s:%d: ", __FILE__, __LINE__); \
     printf(__VA_ARGS__); printf("\n"); } } while (0)
 
@@ -269,6 +278,23 @@ static void tick(const drive_t *d)
         s_frac = 0.0f;
     }
     const uint16_t turb = (uint16_t)(((uint32_t)r * d->out) / 1000u);
+    const uint16_t real_out = (g_sim != 0) ? 0u : d->out;      /* what the REAL sensors read */
+    const uint16_t real_turb = (g_sim != 0) ? 0u : turb;
+    if (g_sim == 1) {
+        /* app/main.c's order: the 1 ms drain delivers the frame, the 10 ms task ages it */
+        uint8_t fr[8];
+        fr[0] = (uint8_t)(d->out >> 8);
+        fr[1] = (uint8_t)d->out;
+        fr[2] = (uint8_t)(turb >> 8);
+        fr[3] = (uint8_t)turb;
+        fr[4] = s_ped;
+        fr[5] = (uint8_t)((uint16_t)s_tq >> 8);
+        fr[6] = (uint8_t)s_tq;
+        fr[7] = (uint8_t)(0xA5u ^ fr[0] ^ fr[1] ^ fr[2] ^ fr[3] ^ fr[4] ^ fr[5] ^ fr[6]);
+        shadow_sim_rx((uint8_t)CAN_BUS2, 0x7F6u, 8u, fr);
+        s_sim_tx++;
+    }
+    shadow_sim_tick_10ms();
     gf_in_t gin;
     memset(&gin, 0, sizeof gin);
     s_pf_now = d->pf;
@@ -277,8 +303,8 @@ static void tick(const drive_t *d)
     gin.e6ef = d->pf;
     gin.os_mode = 2u;
     gin.cd2 = 0x4Fu;
-    gin.cb8 = d->out;
-    gin.cba = turb;
+    gin.cb8 = real_out;
+    gin.cba = real_turb;
     gin.cd0 = d->eng;
     sm_hook_gear_feed(&gin);
     gp_in_t gi;
@@ -288,9 +314,10 @@ static void tick(const drive_t *d)
     gi.r_e69f = sm_gear_state()->e69f;
     gp_in2_t in2;
     memset(&in2, 0, sizeof in2);
-    in2.tq = s_tq;
-    in2.pedal = s_ped;
+    in2.tq = (g_sim != 0) ? (int16_t)0 : s_tq;
+    in2.pedal = (g_sim != 0) ? 23u : s_ped;
     in2.now_ms = (uint16_t)(s_tick * 10u);
+    gp_hook_sim_in2(&in2);          /* the bench frame, while fresh (app/gp_hook.c) */
     gp_shadow_set_in2(&in2);
     {
         struct timespec t0, t1;
@@ -309,7 +336,7 @@ static void tick(const drive_t *d)
         }
     }
     if (s_tick % 3u == 0u) {
-        sm_hook_feed(d->out, d->out > 0u ? 1u : 0u, 0u, 0u, 2u);
+        sm_hook_feed(real_out, real_out > 0u ? 1u : 0u, 0u, 0u, 2u);
     }
     s_tick++;
     if (getenv("GP_TRACE") != NULL && gp->bd15 != 0u && gp->a.on.elem != 0u && gp->a.from == (int8_t)atoi(getenv("GP_TRACE")) && gp->bd16 != 3u) {
@@ -1301,6 +1328,101 @@ static void test_phases(void)
     }
 }
 
+/* ---- TCU_SHADOW_SIM (2026-11-20, ~/tcu_sweep/shadow_sim_port.md) --------------------------- */
+static void send_frame(uint8_t bus, uint16_t id, uint8_t dlc, uint16_t out, uint16_t tb, uint8_t ped, int16_t tq, int bad)
+{
+    uint8_t fr[8];
+    fr[0] = (uint8_t)(out >> 8);
+    fr[1] = (uint8_t)out;
+    fr[2] = (uint8_t)(tb >> 8);
+    fr[3] = (uint8_t)tb;
+    fr[4] = ped;
+    fr[5] = (uint8_t)((uint16_t)tq >> 8);
+    fr[6] = (uint8_t)tq;
+    fr[7] = (uint8_t)(0xA5u ^ fr[0] ^ fr[1] ^ fr[2] ^ fr[3] ^ fr[4] ^ fr[5] ^ fr[6] ^ (bad ? 1u : 0u));
+    shadow_sim_rx(bus, id, dlc, fr);
+}
+
+/* the frame parser, the 100 ms timeout, the id / bus / dlc / check-byte refusals */
+static void test_sim_frame(void)
+{
+    shadow_sim_in_t v;
+    shadow_sim_init();
+    shadow_sim_get(&v);
+    CHECK(v.valid == 0u, "valid before any frame");
+    send_frame((uint8_t)CAN_BUS2, 0x7F6u, 8u, 2600u, 1733u, 60u, -123, 0);
+    shadow_sim_get(&v);
+    CHECK(v.valid == 1u && v.output_rpm == 2600u && v.turbine_rpm == 1733u && v.pedal_raw == 60u && v.torque_nm == -123,
+          "frame decode: valid %u out %u turb %u ped %u tq %d", v.valid, v.output_rpm, v.turbine_rpm, v.pedal_raw, v.torque_nm);
+    shadow_sim_init();
+    send_frame((uint8_t)CAN_BUS1, 0x7F6u, 8u, 100u, 100u, 1u, 1, 0);       /* the vehicle bus: refused */
+    send_frame((uint8_t)CAN_BUS2, 0x7F7u, 8u, 100u, 100u, 1u, 1, 0);       /* another id */
+    send_frame((uint8_t)CAN_BUS2, 0x7F6u, 7u, 100u, 100u, 1u, 1, 0);       /* dlc */
+    send_frame((uint8_t)CAN_BUS2, 0x7F6u, 8u, 100u, 100u, 1u, 1, 1);       /* check byte */
+    shadow_sim_get(&v);
+    CHECK(v.valid == 0u, "a refused frame made the input valid");
+    send_frame((uint8_t)CAN_BUS2, 0x7F6u, 8u, 700u, 500u, 23u, 5, 0);
+    for (unsigned i = 0u; i < 9u; i++) {
+        shadow_sim_tick_10ms();
+    }
+    shadow_sim_get(&v);
+    CHECK(v.valid == 1u, "90 ms after the frame the input is already invalid");
+    shadow_sim_tick_10ms();
+    shadow_sim_get(&v);
+    CHECK(v.valid == 0u, "100 ms after the frame the input is still valid");
+    send_frame((uint8_t)CAN_BUS2, 0x7F6u, 8u, 700u, 500u, 23u, 5, 0);       /* a new frame revives it */
+    shadow_sim_get(&v);
+    CHECK(v.valid == 1u, "a new frame did not revive the input");
+}
+
+/* the sim ramp through the REAL hooks' feed functions with zero real speeds: the same full judging as
+ * the direct ramp (every shift 1..8 and back, one gear at a time, the phase sequences, the NV stubs) */
+static void test_sim_ramp(void)
+{
+    g_sim = 1;
+    s_sim_tx = 0u;
+    shadow_sim_init();
+    test_ramp_tq(0, 4, 1);
+    CHECK(s_sim_tx > 14000u, "only %u sim frames sent", (unsigned)s_sim_tx);
+    g_sim = 0;
+}
+
+/* no frame (or a timed-out one): the shadows read the REAL speeds, here zero: no pre-select, no commit */
+static void test_sim_absent(void)
+{
+    g_sim = 2;
+    shadow_sim_init();
+    test_bench();
+    reset_all();
+    settle();
+    const volatile gp_t *gp = gp_shadow_state();
+    const uint32_t c0 = gp->w.commit_n;
+    drive_t d = { 2000u, 1u, 0u, 700u };      /* the shaft "turns" in the model, the real sensors read 0 */
+    for (unsigned i = 0u; i < 2000u; i++) {
+        tick(&d);
+        judge_tick(0);
+    }
+    CHECK(gp->w.commit_n == c0, "frames absent but a commit happened (%u -> %u)", (unsigned)c0, (unsigned)gp->w.commit_n);
+    CHECK(sm_shadow_state()->a697 == 1u, "frames absent: the shift target %u (1)", sm_shadow_state()->a697);
+    /* frames for 1 s then silence: the shadows go back to the real zeros after 100 ms */
+    g_sim = 1;
+    d.out = 100u;               /* a gentle speed (no gear change): the judge wants one gear per commit */
+    for (unsigned i = 0u; i < 100u; i++) {
+        tick(&d);
+        judge_tick(0);
+    }
+    g_sim = 2;
+    for (unsigned i = 0u; i < 3000u; i++) {
+        tick(&d);
+        judge_tick(0);
+    }
+    shadow_sim_in_t v;
+    shadow_sim_get(&v);
+    CHECK(v.valid == 0u, "the input is still valid 30 s after the last frame");
+    g_sim = 0;
+    printf("sim absent / timeout: ok\n");
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1 && strcmp(argv[1], "--cal") == 0) {
@@ -1319,6 +1441,9 @@ int main(int argc, char **argv)
     test_bench();
     test_noconv();
     test_phases();
+    test_sim_frame();
+    test_sim_ramp();
+    test_sim_absent();
     printf("host cost of one gp_hook_feed pass: mean %.2f us, mean during a shift %.2f us, max %.2f us (native x86; the SH2A runs this ~50-100x slower)\n",
            (double)s_ns_sum / (double)s_ns_n / 1000.0, s_ns_shift_n ? (double)s_ns_shift_sum / (double)s_ns_shift_n / 1000.0 : 0.0,
            (double)s_ns_max / 1000.0);

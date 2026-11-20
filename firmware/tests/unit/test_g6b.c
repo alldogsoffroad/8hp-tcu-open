@@ -241,6 +241,16 @@ static void run_child(const scen_t *sc, bool g6b, gr_t *g, res_t *res, uint8_t *
                     (unsigned)gc->strobe_n);
         }
 #endif
+#if defined(SS_TEST)
+        {
+            shadow_sim_in_t sv;
+            shadow_sim_get(&sv);
+            fprintf(stderr, "SS run '%s': frames %u valid %u maxtgt %u maxgear %u gp_commit %u gp_end %u sm_walks %u\n",
+                    sc->name, s_ss_frames, (unsigned)sv.valid, s_ss_maxtgt, s_ss_maxgear,
+                    (unsigned)gp_shadow_state()->w.commit_n, (unsigned)gp_shadow_state()->w.end_n,
+                    (unsigned)sm_shadow_state()->walk_n);
+        }
+#endif
 #if defined(FR_TEST)
         {
             /* F1: the fault-reaction shadow ran: its verdicts, the comparators */

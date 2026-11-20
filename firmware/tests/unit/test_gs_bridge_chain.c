@@ -89,6 +89,48 @@ static uint8_t s_sm_ph, s_sm_on;
 #  endif
 #endif
 
+#if defined(SS_TEST)
+/* (2026-11-20, ~/tcu_sweep/shadow_sim_port.md) THE BENCH-ONLY SIMULATED-SPEED FRAME: from the mode-1 switch on,
+ * every 10 ms task delivers one 0x7F6 frame on bus 2 (output speed a triangle 0 -> 2600 -> 0 rpm over 2000
+ * passes, the turbine at the commanded gear's ratio, pedal raw 23) and ages it, as app/main.c does; the REAL
+ * sensors stay zero. The shadows' feed functions (app/sm_hook.c, app/gp_hook.c) substitute the values; the
+ * live path (engine, monitor, range, park, drivers) must not notice: the test is test_g6b's golden compare */
+#  if !defined(SM_TEST) || !defined(GP_TEST)
+#    error "SS_TEST needs SM_TEST and GP_TEST (the shadows the frame feeds)"
+#  endif
+#include "io/vehicle/shadow_sim.h"
+static unsigned s_ss_frames, s_ss_passes, s_ss_maxtgt, s_ss_maxgear;
+static void ss_frame_10ms(uint8_t mode)
+{
+    static const uint16_t ratio[10] = { 3306, 0, 4714, 3143, 2106, 1667, 1285, 1000, 839, 667 };
+    if (mode >= 1u && mode <= 3u) {
+        const unsigned ph = s_ss_passes % 2000u;
+        const unsigned out = ph < 1000u ? (2600u * ph) / 1000u : (2600u * (2000u - ph)) / 1000u;
+        const int g = sm_gear_state()->e69f;
+        const unsigned tb = (g >= -1 && g <= 8) ? (unsigned)(((uint32_t)ratio[g + 1] * out) / 1000u) : 0u;
+        uint8_t fr[8];
+        fr[0] = (uint8_t)(out >> 8);
+        fr[1] = (uint8_t)out;
+        fr[2] = (uint8_t)(tb >> 8);
+        fr[3] = (uint8_t)tb;
+        fr[4] = 23u;
+        fr[5] = 0u;
+        fr[6] = 0u;
+        fr[7] = (uint8_t)(0xA5u ^ fr[0] ^ fr[1] ^ fr[2] ^ fr[3] ^ fr[4] ^ fr[5] ^ fr[6]);
+        shadow_sim_rx((uint8_t)CAN_BUS2, 0x7F6u, 8u, fr);
+        s_ss_frames++;
+        s_ss_passes++;
+    }
+    shadow_sim_tick_10ms();
+    if (sm_shadow_state()->a697 > s_ss_maxtgt) {
+        s_ss_maxtgt = sm_shadow_state()->a697;
+    }
+    if (sm_gear_state()->e4a7 > 0 && (unsigned)sm_gear_state()->e4a7 > s_ss_maxgear) {
+        s_ss_maxgear = (unsigned)sm_gear_state()->e4a7;
+    }
+}
+#endif
+
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -654,6 +696,17 @@ static void task10(gr_t *g, unsigned p)
     }
 #endif
 #if defined(SM_TEST)
+#if defined(SS_TEST)
+    ss_frame_10ms(mode);
+#if defined(SS_NEG_LEAK)
+    /* the negative: a leak of the simulated output speed into a live-path cell */
+    {
+        shadow_sim_in_t lk;
+        shadow_sim_get(&lk);
+        *(volatile uint8_t *)(uintptr_t)0xFFF89CD8u = (uint8_t)(lk.output_rpm >> 4);
+    }
+#endif
+#endif
     {
         /* the gear feedback chain (app/main.c's sm_hook_10ms, after the
          * engine and the monitor): the engine's cells BY VALUE (on SH its

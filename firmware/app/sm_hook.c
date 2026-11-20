@@ -34,6 +34,7 @@
 #include <stdint.h>
 
 #if !defined(TCU_RAM_APP)
+#include "io/vehicle/shadow_sim.h"   /* BENCH-ONLY simulated speeds (feeds the shadows only) */
 
 #define LIVE_U8(a)   (*(const volatile uint8_t *)(uintptr_t)(a))
 
@@ -80,9 +81,18 @@ void sm_hook_10ms(void)
 }
 #endif
 
-void sm_hook_gear_feed(const gf_in_t *in)
+void sm_hook_gear_feed(const gf_in_t *in0)
 {
-    sm_gear_pass(in);
+    /* TCU_SHADOW_SIM (~/tcu_sweep/shadow_sim_port.md): while the bench's simulated-speed frame is
+     * fresh the shadow chain sees ITS output / turbine speeds (the live path reads the sensors) */
+    gf_in_t in = *in0;
+    shadow_sim_in_t ss;
+    shadow_sim_get(&ss);
+    if (ss.valid != 0u) {
+        in.cb8 = ss.output_rpm;
+        in.cba = ss.turbine_rpm;
+    }
+    sm_gear_pass(&in);
 }
 
 #if defined(SM_HOOK_NO_GATHER)
@@ -95,6 +105,14 @@ void sm_hook_feed(uint16_t rpm, uint8_t q_speed, uint16_t pedal_permil, uint8_t 
                   uint8_t os_mode)
 {
     sm_in_t in;
+    shadow_sim_in_t ss;
+    shadow_sim_get(&ss);
+    if (ss.valid != 0u) {                           /* the bench's simulated frame (shadows only) */
+        rpm = ss.output_rpm;
+        q_speed = 1u;
+        pedal_permil = (uint16_t)((uint16_t)ss.pedal_raw * 4u);
+        q_pedal = 1u;
+    }
     /* 0x13CA22: invalid → 23; raw 0xFF (not available) → 23; raw >= 0xFB →
      * 0xFE; else raw · 127 / 125 truncated [O] */
     uint32_t ped = SM_SI_PEDAL;

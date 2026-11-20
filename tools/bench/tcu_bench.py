@@ -58,6 +58,14 @@ Commands:
                           PROJECT firmware: the garage engine (G6c: app/gs_cand.c, the producer under the monitor)
                           - lever P, D, P, R, P; prints the shadow's witnesses and its
                           per-pass engagement recorder after the P->D and P->R commits
+  drive-cycle [--hold-d S] [--peak RPM] [--ramp-up S] [--ramp-down S] [--sim-brake] [--sim-engine RPM]
+              [--start-before-power]
+                          PROJECT firmware: BENCH-ONLY SIMULATED SPEEDS FOR THE READ-ONLY SHADOWS
+                          (firmware TCU_SHADOW_SIM, CAN 0x7F6 on bus 2): engages D (the live path as
+                          gs-check), then ramps the simulated output speed 0 -> peak -> 0 with the
+                          turbine at the commanded gear's ratio, printing the shift-map target, the
+                          commanded gear, the gear-pair shadow's commits / phases / producer ids and
+                          the LIVE law currents (which must not move); then P
   keyoff-check [--off-code C] [--sim-brake] [--sim-engine RPM] [--settle S]
                           PROJECT firmware: KEY-OFF TEST - sends 0x112 (ignition status) 4, then
                           the OFF code C (the only command that may send a code other than 4/5)
@@ -1778,6 +1786,223 @@ def cmd_gs_check(b, args):
     return 0
 
 
+# ---------------------------------------------------------------- drive-cycle (TCU_SHADOW_SIM, 2026-11-20)
+
+SHADOW_SIM_ID = 0x7F6           # firmware/io/vehicle/diag_ids.h DIAG_ID_SHADOW_SIM (bus 2)
+SS_RATIO = {-1: 3306, 1: 4714, 2: 3143, 3: 2106, 4: 1667, 5: 1285, 6: 1000, 7: 839, 8: 667}   # x 1/1000 (the gear chain's table)
+
+
+def shadow_sim_frame(out_rpm, turb_rpm, pedal_raw, torque_nm):
+    """The 0x7F6 frame: b0..1 output rpm, b2..3 turbine rpm, b4 pedal raw, b5..6 torque Nm (s16),
+    b7 = 0xA5 ^ b0..b6 (firmware/io/vehicle/diag_ids.h)."""
+    d = bytearray(8)
+    d[0:2] = int(max(0, min(0xFFFF, out_rpm))).to_bytes(2, "big")
+    d[2:4] = int(max(0, min(0xFFFF, turb_rpm))).to_bytes(2, "big")
+    d[4] = pedal_raw & 0xFF
+    d[5:7] = int(torque_nm).to_bytes(2, "big", signed=True)
+    x = 0xA5
+    for v in d[:7]:
+        x ^= v
+    d[7] = x
+    return bytes(d)
+
+
+class ShadowSimSender(threading.Thread):
+    """Every 10 ms on bus 2: the simulated output / turbine speed. The profile (a triangle in time) is
+    evaluated HERE so the ramp does not depend on how fast the main thread reads. The turbine follows
+    the commanded gear's ratio with a 0.3 s settle (self.gear, set by the main thread). SIMULATED
+    SPEEDS FEED THE FIRMWARE'S READ-ONLY SHADOWS ONLY - the live path reads the real sensors."""
+    def __init__(self, b, peak, up_s, down_s, pedal, torque):
+        super().__init__(daemon=True)
+        self.b, self.peak, self.up_s, self.down_s = b, peak, up_s, down_s
+        self.pedal, self.torque = pedal, torque
+        self.stop = threading.Event()
+        self.t_start = None         # None: output 0
+        self.gear = 1
+        self.out = 0
+        self.turb = 0
+        self.sent = 0
+        self.ratio = float(SS_RATIO[1])
+
+    def profile(self, t):
+        if t is None or t < 0:
+            return 0
+        if t < self.up_s:
+            return int(self.peak * t / self.up_s)
+        t -= self.up_s
+        if t < self.down_s:
+            return int(self.peak * (1.0 - t / self.down_s))
+        return 0
+
+    def run(self):
+        t = time.monotonic()
+        last = t
+        while not self.stop.is_set():
+            now = time.monotonic()
+            self.out = self.profile(None if self.t_start is None else now - self.t_start)
+            tgt = float(SS_RATIO.get(self.gear, SS_RATIO[1]))
+            self.ratio += (tgt - self.ratio) * min(1.0, (now - last) / 0.3)
+            last = now
+            self.turb = int(self.ratio * self.out / 1000.0)
+            try:
+                self.b.send(2, SHADOW_SIM_ID, shadow_sim_frame(self.out, self.turb, self.pedal, self.torque))
+                self.sent += 1
+            except Exception as e:
+                print("  sim send error:", e)
+            t += 0.010
+            time.sleep(max(0.0, t - time.monotonic()))
+
+
+def elf_addr(elf, name):
+    """Address of a symbol from sh-elf-nm (also size-less linker symbols such as __gp_shadow_start)."""
+    import subprocess
+    out = subprocess.run(["sh-elf-nm", elf], capture_output=True, text=True, check=True).stdout
+    for l in out.splitlines():
+        f = l.split()
+        if len(f) == 3 and f[2] == name:
+            return int(f[0], 16)
+    sys.exit(f"symbol {name} not found in {elf} - rebuild with TCU_SHADOW_SIM? (cmake default ON)")
+
+
+def shadow_sim_banner(args):
+    print("#" * 78)
+    print("## SIMULATED SPEEDS FEED THE SHADOWS ONLY (CAN 0x7F6, bus 2, firmware TCU_SHADOW_SIM).")
+    print("##   The shift-map / gear-chain / gear-pair / fault shadows see an output speed ramping to")
+    print(f"##   {args.peak} rpm and a turbine at the commanded gear's ratio; the LIVE path (engine, monitor,")
+    print("##   range chain, park, drivers) keeps reading the REAL sensors (still 0 rpm on a dry bench).")
+    print("##   NO solenoid current follows these speeds. The frames stop when this command ends.")
+    print("#" * 78)
+
+
+def cmd_drive_cycle(b, args):
+    """BENCH-ONLY SIMULATED SPEEDS -> the READ-ONLY shadows shift (firmware 2026-11-20 shadow_sim).
+    As gs-check: the lever sim (P), brake + engine sims (--sim-brake --sim-engine 700 --start-before-power),
+    then lever D (the live park release + hold + the garage engagement, ~1 s; --hold-d waits for it), then
+    the 0x7F6 frame every 10 ms ramps the simulated output speed 0 -> --peak (default 2600 rpm) over
+    --ramp-up s and back over --ramp-down s (turbine = output x the commanded gear's ratio, pedal 23).
+    Printed every --every s: the shift-map target A697 / A0AA, AB30, the commanded gear (the coupled chain's
+    E4A7 / E69F), the gear-pair shadow's BD16 / commits / done / ends and block A (from -> to, on-coming /
+    off-going phases), producer ids 1..4 (computed, never applied), and the LIVE law currents ch 0..6
+    (0x94ED4: must stay the D content throughout). Then lever P. The park release budget (30 s per
+    power cycle) is used for the whole time in D: keep ramp-up + ramp-down + hold-d under ~25 s, or
+    lower --peak speeds time."""
+    b.start_drain()     # keep the Teensy ports drained (lever-sim gaps, 2026-11-17)
+    syms = {n: elf_addr(args.elf, n) for n in ("__gp_shadow_start", "__gp_gear_start", "__shadow_sim_start")}
+    SM = 0xFFF86800                 # the shift-map shadow (pinned, firmware/platform/sh7254r/linker.ld)
+    print("drive-cycle: BENCH-ONLY simulated speeds for the READ-ONLY shadows; the live path is the gs-check's")
+    print("  dry bench, ammeter on, supply limit 5 A; ~(hold-d + ramp-up + ramp-down) s of the 30 s release budget")
+    print("  both Teensy ports are used: the ammeter logger cannot run - watch the meter")
+    fake_signal_banner(args)
+    shadow_sim_banner(args)
+    if args.ramp_up + args.ramp_down + args.hold_d > 25.0:
+        print("  WARNING: more than ~25 s in D: the 30 s park-release budget would latch the release off")
+    if input("Mechatronic dry (no pump, no driveline), ammeter running, supply limit set? [yes/no] ").strip() != "yes":
+        return 1
+    sim = VehicleSim(b)
+    sim.code, sim.lever_on = 1, True
+    sim.brake = bool(args.sim_brake)
+    sim.rpm = int(args.sim_engine or 0)
+    if args.start_before_power:
+        print("TCU must be OFF now. Starting the frames on a dark bus (as the wake storm does).")
+        if input("TCU switched off? [yes/no] ").strip() != "yes":
+            return 1
+    sim.start()
+    ss = ShadowSimSender(b, args.peak, args.ramp_up, args.ramp_down, args.pedal, args.torque)
+
+    def rd(addr, n, tries=5):
+        for k in range(tries):
+            try:
+                return read_mem(b, args.bus, addr, n)
+            except RuntimeError:
+                if k == tries - 1:
+                    return None
+                time.sleep(0.15)
+
+    def sbyte(v):
+        return v - 256 if v > 127 else v
+
+    def snap(t, label):
+        g = rd(syms["__gp_gear_start"], 12)          # the coupled chain: E4A4 .. E69F
+        sm = rd(SM + 0x2E, 12)                       # A67C min gear .. A697 .. AB30
+        gp = rd(syms["__gp_shadow_start"], 0x18)     # BD15 BD16 BD17 ...
+        ba = rd(syms["__gp_shadow_start"] + 0x20, 36)        # block A
+        wi = rd(syms["__gp_shadow_start"] + 0xB8, 20)        # commit .. end
+        pr = rd(syms["__gp_shadow_start"] + 0x68, 32)        # producer ids 1..4
+        cu = rd(0xFFF94ED4, 14)                      # the LIVE law currents ch 0..6
+        if None in (g, sm, gp, ba, wi, pr, cu):
+            print(f"  t {t:6.1f} s {label}: read failed")
+            return None
+        e4a7, e69f = sbyte(g[3]), sbyte(g[8])
+        ss.gear = e69f if e69f in SS_RATIO else (e4a7 if e4a7 in SS_RATIO else 1)
+        u16 = lambda d, o: int.from_bytes(d[o:o + 2], "big")
+        u32 = lambda d, o: int.from_bytes(d[o:o + 4], "big")
+        print(f"  t {t:6.1f} s {label:9s} sim out {ss.out:5d} turb {ss.turb:5d} | TARGET A697 {sm[6]} A0AA {sm[8]} "
+              f"AB30 {u16(sm, 10)} | gear cmd E4A7 {e4a7} E69F {e69f} | gp BD15 {gp[0]} BD16 {gp[1]} commits {u32(wi, 0)} "
+              f"done {u32(wi, 12)} ends {u32(wi, 16)} | A "
+              f"{sbyte(ba[2])}->{sbyte(ba[1])} on ph {ba[13]:02X} off ph {ba[25]:02X}")
+        print("        producer ids (computed, NOT applied): " + " | ".join(
+            f"id{i + 1} e{pr[8 * i]} ph{pr[8 * i + 1]:02X} m{pr[8 * i + 2]} {u16(pr, 8 * i + 4)}" for i in range(4))
+            + "   LIVE law cur ch0..6: " + " ".join(f"{u16(cu, 2 * i)}" for i in range(7)))
+        return {"commits": u32(wi, 0), "done": u32(wi, 12), "tgt": sm[6], "gear": e69f, "cur": cu}
+
+    result, first_cur, bad_cur = None, None, 0
+    try:
+        if args.start_before_power:
+            input("frames running (lever P" + (", brake ON" if sim.brake else "")
+                  + (f", engine {sim.rpm} rpm" if sim.rpm else "")
+                  + ") - switch the TCU ON now, then press Enter ... ")
+            print("waiting 5 s for boot, mode 1 and the 0x9B228 one-shot")
+            time.sleep(5.0)
+        for _ in range(10):         # read hygiene (CLAUDE.md rule 6)
+            if meas(b, args.bus, [0x02], timeout=1.5):
+                break
+            time.sleep(0.4)
+        else:
+            print("  WARNING: meas 0x02 got no reply (continuing with retries)")
+        ss.start()                  # frames at output 0 first: the witness shows valid before the ramp
+        time.sleep(0.5)
+        snap(0.0, "P, 0 rpm")
+        print("lever D ...")
+        sim.code = 4
+        time.sleep(args.hold_d)
+        r0 = snap(0.0, "D, 0 rpm")
+        first_cur = r0["cur"] if r0 else None
+        print(f"ramp: 0 -> {args.peak} rpm in {args.ramp_up:.0f} s, back in {args.ramp_down:.0f} s")
+        ss.t_start = time.monotonic()
+        total = args.ramp_up + args.ramp_down + 1.0
+        while True:
+            t = time.monotonic() - ss.t_start
+            if t > total:
+                break
+            r = snap(t, "ramp")
+            if r is not None:
+                result = r
+                if first_cur is not None and r["cur"] != first_cur:
+                    bad_cur += 1
+            time.sleep(max(0.0, args.every - 0.3))
+        ss.t_start = None
+        print("lever P ...")
+        sim.code = 1
+        time.sleep(2.0)
+        snap(0.0, "P, 0 rpm")
+        sw = rd(syms["__shadow_sim_start"], 0x20)
+        if sw:
+            u = lambda o, n: int.from_bytes(sw[o:o + n], "big", signed=False)
+            print(f"sim input witness: frames {u(0, 4)} bad {u(4, 4)} timeouts {u(8, 4)} last out {u(12, 2)} turb {u(14, 2)} "
+                  f"tq {int.from_bytes(sw[16:18], 'big', signed=True)} pedal {sw[18]} valid {sw[19]} age {sw[20]} "
+                  f"magic {sw[24:28].hex()} (53534944 = ok); sent here {ss.sent}")
+    finally:
+        ss.stop.set()
+        sim.stop.set()
+        ss.join(1.0)
+        sim.join(1.0)
+        print("all simulated frames stopped (lever, brake, engine, shadow speeds)")
+    if result is not None:
+        print(f"drive-cycle: gear-pair commits {result['commits']} (done {result['done']}); LIVE law currents "
+              f"{'unchanged' if bad_cur == 0 else 'CHANGED in %d reads - investigate' % bad_cur} during the ramp")
+    return 0
+
+
 GSB_SIZE_G6B = 224          # app/gs_bridge.h gsb_t with the G6b monitor block (+172), r04q +12 (+212)
 
 
@@ -2189,6 +2414,16 @@ def main():
     p = sub.add_parser("gs-check"); p.add_argument("--bus", type=int, default=1)
     p.add_argument("--elf", default="build/sh2a/tcu_app.elf"); p.add_argument("--hold", type=float, default=2.0)
     sim_args(p)
+    p = sub.add_parser("drive-cycle"); p.add_argument("--bus", type=int, default=1)
+    p.add_argument("--elf", default="build/sh2a/tcu_app.elf")
+    p.add_argument("--hold-d", type=float, default=3.0, help="seconds in D before the ramp (the engagement completes)")
+    p.add_argument("--peak", type=int, default=2600, help="simulated output speed peak, rpm")
+    p.add_argument("--ramp-up", type=float, default=10.0)
+    p.add_argument("--ramp-down", type=float, default=10.0)
+    p.add_argument("--pedal", type=int, default=23, help="simulated pedal raw (the 0x120 byte-2 convention)")
+    p.add_argument("--torque", type=int, default=0, help="simulated engine torque, Nm (signed)")
+    p.add_argument("--every", type=float, default=1.0, help="print period, s")
+    sim_args(p)
     p = sub.add_parser("keyoff-check"); p.add_argument("--bus", type=int, default=1)
     p.add_argument("--elf", default="build/sh2a/tcu_app.elf"); p.add_argument("--settle", type=float, default=1.0)
     p.add_argument("--off-code", type=int, default=0, help="the 0x112 OFF code sent (0, 1, 2, 3 or 6)")
@@ -2239,7 +2474,8 @@ def main():
          "app-selftest": cmd_app_selftest, "sensors": cmd_sensors, "park": cmd_park,
          "park-check": cmd_park_check, "park-out": cmd_park_out,
          "range-check": cmd_range_check, "shadow-check": cmd_range_check,
-         "keyoff-check": cmd_keyoff_check, "gs-check": cmd_gs_check}[args.cmd](b, args)
+         "keyoff-check": cmd_keyoff_check, "gs-check": cmd_gs_check,
+         "drive-cycle": cmd_drive_cycle}[args.cmd](b, args)
     finally:
         b.shutdown()
 

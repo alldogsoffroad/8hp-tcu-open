@@ -28,6 +28,14 @@ else()
         "~/tcu_sweep/fork_readiness_audit.md §4-§5 and ~/tcu_sweep/fork_seams_port.md.")
 endif()
 
+# BENCH-ONLY simulated speeds for the read-only shadows (~/tcu_sweep/shadow_sim_port.md,
+# io/vehicle/shadow_sim.h): ON for the SH code-flash application and the host builds; the RAM
+# application and the loader never get it (-UTCU_SHADOW_SIM below + #error in the header)
+option(TCU_SHADOW_SIM "bench-only simulated-speed input for the shadows" ON)
+if(TCU_SHADOW_SIM)
+    add_compile_definitions(TCU_SHADOW_SIM=1)
+endif()
+
 set(CORE_SOURCES
     bsw/sched/sched.c
     bsw/sup/sup_jobs.c
@@ -46,7 +54,7 @@ set(CORE_SOURCES
     bsw/com/com.c
     bsw/com/com_tx.c
     bsw/com/sigpack.c
-    io/vehicle/vehicle.c
+    io/vehicle/vehicle.c io/vehicle/shadow_sim.c
     ${TCU_VEHICLE_TX_SOURCES}     # TCU_VEHICLE: the transmit set (FCA: io/vehicle/fca_tx.c)
     io/sensors/adc.c
     io/sensors/speed.c
@@ -211,6 +219,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         flasher/fl_sh7254r.c
     )
     target_compile_definitions(tcu_loader.elf PRIVATE TCU_LOADER)
+    target_compile_options(tcu_loader.elf PRIVATE -UTCU_SHADOW_SIM)
     target_include_directories(tcu_loader.elf PRIVATE ${CMAKE_SOURCE_DIR}/platform/sh7254r/include)
     target_link_options(tcu_loader.elf PRIVATE -T ${LD_LDSCRIPT} -Wl,-Map=tcu_loader.map)
     target_link_libraries(tcu_loader.elf PRIVATE gcc)
@@ -236,6 +245,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         ${CORE_SOURCES}
     )
     target_compile_definitions(tcu_app_ram.elf PRIVATE TCU_RAM_APP)
+    target_compile_options(tcu_app_ram.elf PRIVATE -UTCU_SHADOW_SIM)
     # M4b park outputs (docs/firmware/01-m4-range-park.md): the bench application drives
     # the park actuators; the code-flash application stays output-gated until the M4b
     # bench check passes. Overridable: -DM4B_OUTPUTS=OFF builds the RAM app gated too.
@@ -1668,29 +1678,29 @@ else()
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/sm_shadow_scan.py outputs
             ${CMAKE_SOURCE_DIR}/tests/unit/sm_gear_fixture_output.c)
     set_tests_properties(sm_gear_scan_hook_negative sm_gear_scan_outputs_negative PROPERTIES WILL_FAIL TRUE)
-    add_executable(test_g6b_norep_gfleak ${G6B_NOREP_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c)
+    add_executable(test_g6b_norep_gfleak ${G6B_NOREP_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c io/vehicle/shadow_sim.c)
     target_compile_definitions(test_g6b_norep_gfleak PRIVATE ${G6B_DEFS} G6R_HOLDER_REPLICA=0 G6R_NOREP=1
         SM_TEST=1 SM_HOOK_NO_GATHER=1 SM_NEG_GLEAK=1)
     add_test(NAME sm_gear_identity_negative_leak COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/sm_identity.py
         $<TARGET_FILE:test_g6b_norep_gfleak>)
     set_tests_properties(sm_gear_identity_negative_leak PROPERTIES WILL_FAIL TRUE ENVIRONMENT "${G6C_GOLD_ENV}")
-    add_executable(test_g6b_norep_sm ${G6B_NOREP_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c)
+    add_executable(test_g6b_norep_sm ${G6B_NOREP_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c io/vehicle/shadow_sim.c)
     target_compile_definitions(test_g6b_norep_sm PRIVATE ${G6B_DEFS} G6R_HOLDER_REPLICA=0 G6R_NOREP=1
         SM_TEST=1 SM_HOOK_NO_GATHER=1)
     add_test(NAME sm_identity COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/sm_identity.py
         $<TARGET_FILE:test_g6b_norep_sm>)
-    add_executable(test_g6b_norep_smleak ${G6B_NOREP_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c)
+    add_executable(test_g6b_norep_smleak ${G6B_NOREP_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c io/vehicle/shadow_sim.c)
     target_compile_definitions(test_g6b_norep_smleak PRIVATE ${G6B_DEFS} G6R_HOLDER_REPLICA=0 G6R_NOREP=1
         SM_TEST=1 SM_HOOK_NO_GATHER=1 SM_NEG_LEAK=1)
     add_test(NAME sm_identity_negative_leak COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/sm_identity.py
         $<TARGET_FILE:test_g6b_norep_smleak>)
     # the replica form (test_g6b: the retired holder replayed so the per-frame
     # cell-window hash is compared too, not only the wire and the end window)
-    add_executable(test_g6b_sm ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c)
+    add_executable(test_g6b_sm ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c io/vehicle/shadow_sim.c)
     target_compile_definitions(test_g6b_sm PRIVATE ${G6B_DEFS} SM_TEST=1 SM_HOOK_NO_GATHER=1)
     add_test(NAME sm_identity_cells COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/sm_identity.py
         $<TARGET_FILE:test_g6b_sm>)
-    add_executable(test_g6b_smleak ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c)
+    add_executable(test_g6b_smleak ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c io/vehicle/shadow_sim.c)
     target_compile_definitions(test_g6b_smleak PRIVATE ${G6B_DEFS} SM_TEST=1 SM_HOOK_NO_GATHER=1
         SM_NEG_LEAK=1)
     add_test(NAME sm_identity_cells_negative_leak COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/sm_identity.py
@@ -1779,19 +1789,19 @@ else()
     add_test(NAME fr_shadow_neg_G28 COMMAND test_fr_shadow_neg_G28)
     set_tests_properties(fr_shadow_neg_G28 PROPERTIES WILL_FAIL TRUE)
     set(FR_APP_SOURCES app/fr_shadow.c app/fr_fm.c app/fr_cal.c app/fr_hook.c)
-    add_executable(test_g6b_norep_fr ${G6B_NOREP_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c
+    add_executable(test_g6b_norep_fr ${G6B_NOREP_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c io/vehicle/shadow_sim.c
         ${FR_APP_SOURCES})
     target_compile_definitions(test_g6b_norep_fr PRIVATE ${G6B_DEFS} G6R_HOLDER_REPLICA=0 G6R_NOREP=1
         SM_TEST=1 SM_HOOK_NO_GATHER=1 FR_TEST=1 FR_HOOK_NO_GATHER=1)
     add_test(NAME fr_identity COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fr_identity.py
         $<TARGET_FILE:test_g6b_norep_fr>)
-    add_executable(test_g6b_fr ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c
+    add_executable(test_g6b_fr ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c io/vehicle/shadow_sim.c
         ${FR_APP_SOURCES})
     target_compile_definitions(test_g6b_fr PRIVATE ${G6B_DEFS} SM_TEST=1 SM_HOOK_NO_GATHER=1
         FR_TEST=1 FR_HOOK_NO_GATHER=1)
     add_test(NAME fr_identity_cells COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fr_identity.py
         $<TARGET_FILE:test_g6b_fr>)
-    add_executable(test_g6b_frleak ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c
+    add_executable(test_g6b_frleak ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c io/vehicle/shadow_sim.c
         ${FR_APP_SOURCES})
     target_compile_definitions(test_g6b_frleak PRIVATE ${G6B_DEFS} SM_TEST=1 SM_HOOK_NO_GATHER=1
         FR_TEST=1 FR_HOOK_NO_GATHER=1 FR_NEG_LEAK=1)
@@ -1888,7 +1898,7 @@ else()
     # must pass unchanged and the shadow must have run; the leak negative must
     # FAIL. The scans (outputs / shadow / hook, nvm) and the SH compile checks.
     set(GP_TEST_SOURCES tests/unit/test_gp_shadow.c app/gp_shadow.c app/gp_cal.c app/gp_gear.c app/gp_hook.c
-        app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c)
+        app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c io/vehicle/shadow_sim.c)
     add_executable(test_gp_shadow ${GP_TEST_SOURCES})
     target_compile_definitions(test_gp_shadow PRIVATE _POSIX_C_SOURCE=200809L GP_HOOK_NO_GATHER=1
         SM_HOOK_NO_GATHER=1 GP_CAL_CHECK=1 "TCU_STOCK_IMAGE=\"${TCU_STOCK_IMAGE}\"")
@@ -1927,13 +1937,13 @@ else()
     add_test(NAME gp_shadow_neg_SWAP COMMAND test_gp_shadow_neg_SWAP)
     set_tests_properties(gp_shadow_neg_CLASS gp_shadow_neg_SWAP PROPERTIES WILL_FAIL TRUE)
     set(GP_APP_SOURCES app/gp_shadow.c app/gp_cal.c app/gp_gear.c app/gp_hook.c)
-    add_executable(test_g6b_gp ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c
+    add_executable(test_g6b_gp ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c io/vehicle/shadow_sim.c
         ${GP_APP_SOURCES})
     target_compile_definitions(test_g6b_gp PRIVATE ${G6B_DEFS} SM_TEST=1 SM_HOOK_NO_GATHER=1
         GP_TEST=1 GP_HOOK_NO_GATHER=1)
     add_test(NAME gp_identity COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/gp_identity.py
         $<TARGET_FILE:test_g6b_gp>)
-    add_executable(test_g6b_gpleak ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c
+    add_executable(test_g6b_gpleak ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c io/vehicle/shadow_sim.c
         ${GP_APP_SOURCES})
     target_compile_definitions(test_g6b_gpleak PRIVATE ${G6B_DEFS} SM_TEST=1 SM_HOOK_NO_GATHER=1
         GP_TEST=1 GP_HOOK_NO_GATHER=1 GP_NEG_LEAK=1)
@@ -1941,6 +1951,56 @@ else()
         $<TARGET_FILE:test_g6b_gpleak>)
     set_tests_properties(gp_identity gp_identity_negative_leak PROPERTIES ENVIRONMENT "${G6C_GOLD_ENV}")
     set_tests_properties(gp_identity_negative_leak PROPERTIES WILL_FAIL TRUE)
+    # ---- BENCH-ONLY simulated speeds for the shadows (2026-11-20, ~/tcu_sweep/shadow_sim_port.md) ----
+    # test_g6b with the shift-map + gear-pair shadows AND the 0x7F6 frame active (SS_TEST): the live path
+    # (every bus-A word, the park demands, the cell window) must equal the goldens exactly; the leak
+    # negative (the simulated speed written into a live-path cell) must FAIL. The scans (interface named
+    # only by the shadow hooks / main.c's rx-tick-init; the hooks never write a cell) and the SH checks.
+    add_executable(test_g6b_ss ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c io/vehicle/shadow_sim.c
+        ${GP_APP_SOURCES})
+    target_compile_definitions(test_g6b_ss PRIVATE ${G6B_DEFS} SM_TEST=1 SM_HOOK_NO_GATHER=1
+        GP_TEST=1 GP_HOOK_NO_GATHER=1 SS_TEST=1)
+    add_test(NAME ss_identity COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/ss_identity.py
+        $<TARGET_FILE:test_g6b_ss>)
+    add_executable(test_g6b_ssleak ${G6B_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c io/vehicle/shadow_sim.c
+        ${GP_APP_SOURCES})
+    target_compile_definitions(test_g6b_ssleak PRIVATE ${G6B_DEFS} SM_TEST=1 SM_HOOK_NO_GATHER=1
+        GP_TEST=1 GP_HOOK_NO_GATHER=1 SS_TEST=1 SS_NEG_LEAK=1)
+    add_test(NAME ss_identity_negative_leak COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/ss_identity.py
+        $<TARGET_FILE:test_g6b_ssleak>)
+    set_tests_properties(ss_identity ss_identity_negative_leak PROPERTIES ENVIRONMENT "${G6C_GOLD_ENV}")
+    set_tests_properties(ss_identity_negative_leak PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME shadow_sim_scan_tree
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/shadow_sim_scan.py tree ${CMAKE_SOURCE_DIR})
+    add_test(NAME shadow_sim_scan_tree_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/shadow_sim_scan.py outputs
+            ${CMAKE_SOURCE_DIR}/tests/unit/ss_scan_fixture_output.c)
+    add_test(NAME shadow_sim_scan_main
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/shadow_sim_scan.py main ${CMAKE_SOURCE_DIR}/app/main.c)
+    add_test(NAME shadow_sim_scan_main_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/shadow_sim_scan.py main
+            ${CMAKE_SOURCE_DIR}/tests/unit/ss_scan_fixture_main.c)
+    add_test(NAME shadow_sim_scan_hooks
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/shadow_sim_scan.py hooks ${CMAKE_SOURCE_DIR}/app/sm_hook.c
+            ${CMAKE_SOURCE_DIR}/app/gp_hook.c ${CMAKE_SOURCE_DIR}/app/fr_hook.c)
+    add_test(NAME shadow_sim_scan_hooks_negative
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/shadow_sim_scan.py hooks
+            ${CMAKE_SOURCE_DIR}/tests/unit/ss_scan_fixture_hook.c)
+    set_tests_properties(shadow_sim_scan_tree_negative shadow_sim_scan_main_negative
+        shadow_sim_scan_hooks_negative PROPERTIES WILL_FAIL TRUE)
+    # header #error guards (host cc stands in for sh-elf-gcc here, as the other SH checks): the RAM
+    # application, the loader and an output path refuse the interface
+    add_test(NAME shadow_sim_guard_ram_app
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DTCU_SHADOW_SIM=1 -DTCU_RAM_APP ${CMAKE_SOURCE_DIR}/io/vehicle/shadow_sim.c)
+    add_test(NAME shadow_sim_guard_loader
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DTCU_SHADOW_SIM=1 -DTCU_LOADER ${CMAKE_SOURCE_DIR}/io/vehicle/shadow_sim.c)
+    add_test(NAME shadow_sim_guard_output_path
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DTCU_SHADOW_SIM=1 -DTCU_OUTPUT_PATH
+            ${CMAKE_SOURCE_DIR}/tests/unit/ss_scan_fixture_output.c)
+    add_test(NAME shadow_sim_guard_ok
+        COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -DTCU_SHADOW_SIM=1 ${CMAKE_SOURCE_DIR}/io/vehicle/shadow_sim.c)
+    set_tests_properties(shadow_sim_guard_ram_app shadow_sim_guard_loader shadow_sim_guard_output_path
+        PROPERTIES WILL_FAIL TRUE)
     set(GP_OUTPUT_PATHS ${FR_OUTPUT_PATHS} ${CMAKE_SOURCE_DIR}/app/fr_shadow.c ${CMAKE_SOURCE_DIR}/app/fr_hook.c)
     # app/sm_gear.c is the coupled chain's template (its SMG_COUPLED part binds
     # the hooks); its r04w instance compiles to the same object code as before

@@ -51,4 +51,16 @@
  * DUMP_ID literal; tests/unit/vehicle_seam_scan.py checks the two agree. */
 #define DIAG_ID_PLANTDUMP       0x7EAu
 
+/* BENCH-ONLY SHADOW SIMULATED-SPEED INPUT (2026-11-20, ~/tcu_sweep/shadow_sim_port.md):
+ * 0x7F6 on bus 2 (CAN-C side; the bench tool's second Teensy port), received only in the
+ * code-flash application built with TCU_SHADOW_SIM (never the RAM application or the
+ * loader), consumed ONLY by the read-only shadows' hooks (io/vehicle/shadow_sim.h).
+ * Layout, 8 bytes, big endian:
+ *   b0..1 output speed rpm (u16)   b2..3 turbine speed rpm (u16)
+ *   b4    pedal raw (the 0x120 byte-2 convention the shift-map hook uses)
+ *   b5..6 engine torque Nm (s16)   b7 = 0xA5 ^ b0 ^ b1 ^ b2 ^ b3 ^ b4 ^ b5 ^ b6
+ * Valid for 100 ms after the last good frame. */
+#define DIAG_ID_SHADOW_SIM      0x7F6u
+#define DIAG_BUS_SHADOW_SIM     CAN_BUS2
+
 #endif

@@ -444,6 +444,16 @@ SECTIONS
     } > RAM
     ASSERT(__gp_phase_start == 0xFFF87EB0 && __gp_phase_start >= __out_wit_end && SIZEOF(.gp_phase) == 0x60 &&
            __gp_phase_end <= 0xFFF88000, ".gp_phase: gp_ph_t is off 0xFFF87EB0 or leaves the dump-zero run (witness_gp.py)")
+    /* BENCH-ONLY simulated-speed witness (io/vehicle/shadow_sim.c, TCU_SHADOW_SIM;
+     * ~/tcu_sweep/shadow_sim_port.md): 0x20 bytes at 0xFFF87F10, a dump-zero run
+     * 0xFFF87F10..0xFFF88120 below .gp_phase's end (0xFFF87F10) and the A-DMAC ring. */
+    .shadow_sim 0xFFF87F10 (NOLOAD) : {
+        __shadow_sim_start = .; *(.shadow_sim)
+        . = ALIGN(4); __shadow_sim_end = .;
+    } > RAM
+    ASSERT(__shadow_sim_start == 0xFFF87F10 && __shadow_sim_start >= __gp_phase_end &&
+           __shadow_sim_end <= 0xFFF88120 && SIZEOF(.shadow_sim) <= 0x20,
+           ".shadow_sim: the simulated-speed witness is off 0xFFF87F10 or leaves the dump-zero run")
     /* the fault-reaction shadow's FAULT MANAGER (app/fr_fm.c, ours; RAM
      * only, written by that TU alone): struct fr_fm_t in the dump-zero gap
      * between the A-DMAC ring (+ its guard 0x88728) and the range chain's

@@ -28,6 +28,7 @@
 #include "io/vehicle/vehicle.h"
 #include "io/vehicle/fca_tx.h"
 #include "io/vehicle/diag_ids.h"
+#include "io/vehicle/shadow_sim.h"   /* TCU_SHADOW_SIM: bench-only, feeds the shadows' hooks only */
 #include "io/actuators/sol_ctl.h"
 #include "app/bench_out.h"
 #include "app/bench_dump.h"
@@ -212,6 +213,7 @@ static void task_1ms(void)
             /* F1: the read-only fault-reaction shadow takes the RAW frame
              * (app/fr_hook.c) before our com layer judges it (D-FR-8) */
             fr_hook_rx(bus, f.id, f.dlc, f.data);
+            shadow_sim_rx(bus, f.id, f.dlc, f.data);   /* bench-only simulated speeds (shadows only) */
 #endif
             vehicle_rx((can_bus_t)bus, &f);
         }
@@ -331,6 +333,9 @@ static void task_10ms(void)
 #endif
     sensors_update_10ms();
     vehicle_update_10ms();
+#if !defined(TCU_RAM_APP)
+    shadow_sim_tick_10ms();             /* bench-only: ages the simulated-speed frame (100 ms) */
+#endif
 #if !defined(TCU_RAM_APP)
     {
         /* G5b: THE MODE SELECTOR 0x1418E2 (10 ms slot 0 0x14F34C, after the
@@ -601,6 +606,9 @@ int main(void)
     /* the read-only gear-pair shadow (its RAM cleared; the coupled chain's
      * init = 0xCFFDE(1)'s, as the r04w chain) */
     gp_hook_init();
+    /* BENCH-ONLY simulated speeds for the shadows (io/vehicle/shadow_sim.c): registers
+     * 0x7F6 on bus 2 before plat_can_rx_commit below */
+    shadow_sim_init();
 #endif
     park_pair_init();                   /* park sensor: 0x141B1C (safety layer) */
     sensors_init(&s_sensors_cfg);

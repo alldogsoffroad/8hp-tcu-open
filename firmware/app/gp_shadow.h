@@ -469,6 +469,7 @@ uint16_t gp_cpl_ratio(int8_t gear);                                 /* 0xD7C8C *
 void gp_hook_init(void);
 void gp_hook_10ms(void);                         /* main.c's task_10ms, after sm_hook_10ms */
 void gp_hook_feed(const gp_in_t *in);            /* the part after the gather (host harness) */
+void gp_hook_sim_in2(gp_in2_t *in2);             /* TCU_SHADOW_SIM: bench frame -> torque / pedal (shadow only) */
 void gp_hook_time(uint32_t us);                  /* the CPU witness of one pass */
 
 #if !defined(__sh__)
