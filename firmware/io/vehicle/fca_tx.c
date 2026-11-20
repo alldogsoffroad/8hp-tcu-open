@@ -14,13 +14,20 @@ static const struct {
 
 static com_tx_state_t s_st[FCA_TX_MSG_COUNT];
 static uint16_t s_val[FCA_TX_FIELD_COUNT];
-static bool     s_set[FCA_TX_FIELD_COUNT];   /* written since fca_tx_init() */
+/* Bit 15 of a 13-bit field's s_val marks "written since fca_tx_init()" (no
+ * extra RAM: the .bss layout is pinned). Masked off before packing. */
+#define FCA_SET_FLAG 0x8000u
+
+static uint16_t field_mask(uint8_t f)
+{
+    return (s_field[f].sig.len >= 16u) ? 0xFFFFu : (uint16_t)((1u << s_field[f].sig.len) - 1u);
+}
 
 static void pack(uint8_t idx, uint8_t data[8])
 {
     for (uint8_t f = 0u; f < FCA_TX_FIELD_COUNT; f++) {
         if (s_field[f].msg == idx) {
-            sig_put(data, s_field[f].sig, s_val[f]);
+            sig_put(data, s_field[f].sig, (uint16_t)(s_val[f] & field_mask(f)));
         }
     }
 }
@@ -29,7 +36,6 @@ void fca_tx_init(void)
 {
     for (uint8_t f = 0u; f < FCA_TX_FIELD_COUNT; f++) {
         s_val[f] = 0u;
-        s_set[f] = false;
     }
     com_tx_init(s_msg, s_st, FCA_TX_MSG_COUNT, pack);
 }
@@ -37,14 +43,16 @@ void fca_tx_init(void)
 void fca_tx_set(fca_tx_field_t f, uint16_t raw)
 {
     if (f < FCA_TX_FIELD_COUNT) {
-        s_val[f] = (uint16_t)(raw & ((1u << s_field[f].sig.len) - 1u));
-        s_set[f] = true;
+        s_val[f] = (uint16_t)(raw & field_mask(f));
+        if (s_field[f].sig.len == 13u) {
+            s_val[f] = (uint16_t)(s_val[f] | FCA_SET_FLAG);
+        }
     }
 }
 
 uint16_t fca_tx_get(fca_tx_field_t f)
 {
-    return f < FCA_TX_FIELD_COUNT ? s_val[f] : 0u;
+    return f < FCA_TX_FIELD_COUNT ? (uint16_t)(s_val[f] & field_mask((uint8_t)f)) : 0u;
 }
 
 /* The torque-request messages (0x037, 0x2F9: 13-bit Nm*4+2000 fields) may only
@@ -56,7 +64,7 @@ static bool torque_fields_ready(fca_tx_msg_t m)
         return true;
     }
     for (uint8_t f = 0u; f < FCA_TX_FIELD_COUNT; f++) {
-        if (s_field[f].msg == m && s_field[f].sig.len == 13u && !s_set[f]) {
+        if (s_field[f].msg == m && s_field[f].sig.len == 13u && (s_val[f] & FCA_SET_FLAG) == 0u) {
             return false;
         }
     }
