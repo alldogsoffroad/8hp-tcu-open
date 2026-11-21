@@ -22,10 +22,9 @@ An open C reimplementation of the firmware for the Bosch transmission control un
 
 **The fork point is defined in `docs/fca_finish_line.md`** (every driving function: LIVE / SHADOW / STOOD IN / MISSING, with its live switch). Keep it current.
 
-1. **The gear-pair shadow is complete as decoded (r05c).** Remaining undecoded inside it: class-0/skip downshifts, the torque-phase terms of class 1, the adaptation value 0xAED5C — all counted stand-ins.
-2. **Before any live shift:** line pressure during shifts and torque intervention (`~/tcu_sweep/line_pressure_torque_decode.md`; the input-torque writer 0xDDFD8), D-FR-5 (the monitor latches P on any gear-code change while engaged) stays until then.
-3. **Fork prep (cheap, optional):** re-base the 11 FCA-frame host tests on the `vehicle_in` injector; a neutral TX seam (`main.c` still calls `fca_tx_*`). Open decisions for the fork: D-N1 the lever source (a Nissan cabin has no CAN lever), D-N4 moving debug/meas IDs to bus 2.
-4. **Before any vehicle:** the honest gear target and fault reactions (in the Nissan fork), line pressure in drive, WK lock-up, a test on an assembled transmission.
+1. **The Nissan build (`TCU_VEHICLE=NISSAN`, skeleton merged 2026-11-20 — confirmed DBC signals only, no TX, DO NOT FLASH).** Waits on the user: the bench-ECU capture (`docs/reference/nissan-ecu-bench-capture-plan.md`) and the lever. **D-N1 (2026-11-20): the factory Nissan shifter** — 0x421 may be its own position message (the capture's T2 decides); fallback a Jeep JL 8HP-style shifter. Then: fill the profile from the capture, the Nissan TX (0x177, 0x421?), the fault chain bound to Nissan messages ("option C"), the shadows' live switches. D-N4 (open): debug/meas IDs on bus 2.
+2. **FCA, low priority (shared logic, benefits both builds):** decode + shadow the WK closed micro-slip hold (B388/B424) and the remaining WK pressure levels (0x108652, 0x10B79E), the six downshift torque/inertia terms.
+3. **Before any live shift / vehicle:** line pressure and torque intervention go live with real vehicle inputs; D-FR-5 (the monitor latches P on any gear-code change while engaged) stays until then; WK live; a test on an assembled transmission.
 
 ## The rules (each one earned)
 

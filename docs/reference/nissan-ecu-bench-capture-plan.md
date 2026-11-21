@@ -53,7 +53,7 @@ diagnostic readout if available.
 | # | Condition | Gives |
 |---|---|---|
 | T1 | key on, engine off, Nissan TCM connected | the TCM's transmit set at rest |
-| T2 | same, Nissan TCM **unplugged** | which IDs disappear (the TCM's set); confirms 0x177 / 0x421 senders |
+| T2 | same, Nissan TCM **unplugged** | which IDs disappear (the TCM's set); confirms 0x177 / 0x421 senders — **0x421 staying = the lever is directly usable (D-N1)** |
 | T3 | idle in P/N, then D with brake | engine torque at idle, pedal at rest, gear indicator |
 | T4 | gentle drive, full upshift ladder; one wide-open-throttle pull | torque scaling end points, the 0x177 handshake, pedal end points |
 | T5 | engine start and stop | the ECM's engine-state / crank signals |
@@ -72,8 +72,16 @@ diagnostic readout if available.
   — at least 0x177 (torque reduction, bytes 2/3/5 as well as 4) and 0x421 (gear indicator).
 - **The ECM's no-TCM reaction:** what it flags or changes in B4 / T2 — the fork must either
   reproduce the TCM messages that prevent it or accept it.
-- **The lever source (decision D-N1):** none of this gives a CAN lever; the fork needs a Ram
-  e-shifter on bus 2, a hard-wired range switch, or a gateway.
+- **The lever (decision D-N1, 2026-11-20: the factory Nissan shifter first; fallback a Jeep JL
+  8HP-style shifter).** The RE5R05A is electronically selected (no cable). 0x421 byte 0 (P 0x08,
+  R 0x10, N 0x18, D 0x20, 0x00 between detents) may be the lever's own position message. Answer:
+  - **who sends 0x421** — T2: does it stay with the old TCM unplugged? (stays → the lever / another
+    module, directly usable; gone → the TCM derives it, and we need the lever's own signal);
+  - its period, any counter / checksum, and whether a second, independent lever signal exists
+    (the stock cross-checks two sources);
+  - manual positions (2 / 1, a manual gate, OD-off button) and how they appear on CAN;
+  - any lever wiring to the old TCM (park / neutral signal, the shift-lock solenoid, starter
+    inhibit, reverse lights) that our TCU or the vehicle must still provide.
 
 ## 6. After the captures
 
