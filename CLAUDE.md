@@ -6,7 +6,7 @@ You are joining 8hp-tcu-open mid-flight. This file is the orientation: what this
 
 An open C reimplementation of the firmware for the Bosch transmission control unit of the ZF 8HP (P/N 1034420267, Renesas SH7254R, SH-2A big-endian, superloop, no RTOS). The stock firmware is fully decompiled (10,982 functions, Ghidra sweep, specs 19–26 in `docs/spec/`); our rewrite lives in `firmware/` and runs on the real bench controller with a real (dry) mechatronic. The goal of M3 — the engaged rail and the stock's P-state solenoid currents under open-firmware control — was met on 2026-11-13. The current arc is M5 (garage engagement) and M6 (shifting), built by porting the stock's own logic, mostly first as read-only shadows, then live.
 
-**The plan (user decision 2026-11-20):** finish the open FCA (Ram 1500 8HP70) firmware as the stock-faithful reference, then FORK it and adapt the fork to a Nissan Frontier/Xterra ECU on the Nissan CAN bus. A Nissan ECU is on the bench (not wired in yet). Nissan sniff data: `github.com/alldogsoffroad/NissanDBCFilez`. Keep FCA-specific CAN knowledge inside `firmware/io/vehicle/` (the seam scan enforces it).
+**The plan (user decisions 2026-11-20):** the open FCA (Ram 1500 8HP70) firmware is the stock-faithful reference; the Nissan Frontier/Xterra version is built **in the same codebase as a second vehicle profile (`TCU_VEHICLE=NISSAN`: `io/vehicle/profile_nissan.c` + its TX), not as a separate fork** — shared logic stays shared, the FCA build stays byte-identical. A Nissan ECU is on the bench (not wired in yet). Nissan sniff data: `github.com/alldogsoffroad/NissanDBCFilez`. Keep FCA-specific CAN knowledge inside `firmware/io/vehicle/` (the seam scan enforces it).
 
 ## The state now (2026-11-20, r05f on the bench)
 
