@@ -13,4 +13,7 @@ static void fixture(can_frame_t *f)
 static const fixture_row_t s_rows[] = {
     { 0x14Bu, CAN_BUS1, 8u },
     { 0x2F9u, 1u, 8u },
+    { 0x1F9u, CAN_BUS1, 8u },                       /* Nissan ENGINE_1 */
+    { 0x35Du, 1u, 8u },                             /* Nissan BCM */
 };
+#define NISSAN_TX_FIXTURE_ID 0x421u            /* Nissan GEARBOX, a TCM transmit ID */

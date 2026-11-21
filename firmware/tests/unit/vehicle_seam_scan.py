@@ -8,7 +8,9 @@ Two checks:
   vehicle_seam_scan.py ids FIRMWARE_DIR [--only FILE ...]
       No firmware source OUTSIDE io/vehicle/ may name a vehicle-bus CAN ID in code.
       The vehicle IDs are the FCA receive table (io/vehicle/profile_fca.c), the FCA
-      transmit set (io/vehicle/fca_tx_fields.h) and the stock comm-monitor table
+      transmit set (io/vehicle/fca_tx_fields.h), the NISSAN skeleton's receive table
+      (io/vehicle/profile_nissan.c, 9) and its two documented-TODO transmit IDs
+      (io/vehicle/nissan_tx.h, 0x177 / 0x421, never sent), and the stock comm-monitor table
       (app/fr_cal.c fr_cal_rx — parsed read-only, plus a frozen 2026-11-20 snapshot in
       case its format changes). Sources are read with comments and string literals
       stripped; a hex literal of a vehicle ID is a hit when the same line has a CAN
@@ -53,6 +55,13 @@ ALLOWLIST = {
     "app/fr_fm.c": "fault-chain shadow fault manager",
     "app/fr_hook.c": "raw-frame tap of the fault-chain shadow (D-FR-8)",
 }
+
+# CROSS-VEHICLE COLLISIONS (2026-11-20, the Nissan skeleton): 0x160 and 0x180 are IDs of BOTH vehicles
+# (Nissan THROTTLE / ENGINE_RPM_ALT; FCA transfer case / engine temperature, both in the stock
+# comm-monitor table fr_cal_rx). The ID set is a union, so a literal of either is a hit outside
+# io/vehicle/; the one file that names them on purpose, app/fr_cal.c (FCA table, allowlisted
+# below), names them as FCA entries only - on a Nissan build the fault shadow is FCA-only data
+# and must be re-bound to a Nissan node map (audit §4.3) before it means anything there.
 
 # frozen 2026-11-20 snapshot of fr_cal_rx's IDs (53 entries, 52 distinct; 0x200 on both buses)
 FR_CAL_SNAPSHOT = [
@@ -104,6 +113,17 @@ def vehicle_ids(root):
         sys.exit(f"vehicle seam guard violation: could not parse the FCA tables "
                  f"(rx {len(rx)}/10, tx {len(tx)}/8)")
     ids |= rx | tx
+    # the NISSAN skeleton: nine receive rows and the two documented-TODO transmit IDs
+    nrx = {int(h, 16) for h in re.findall(
+        r"\{\s*0x([0-9A-Fa-f]+)u,\s*CAN_BUS",
+        open(os.path.join(root, "io/vehicle/profile_nissan.c")).read())}
+    ntx = {int(h, 16) for h in re.findall(
+        r"#define\s+NISSAN_TX_TODO_ID_\w+\s+0x([0-9A-Fa-f]+)u",
+        open(os.path.join(root, "io/vehicle/nissan_tx.h")).read())}
+    if len(nrx) != 9 or len(ntx) != 2:
+        sys.exit(f"vehicle seam guard violation: could not parse the Nissan tables "
+                 f"(rx {len(nrx)}/9, tx {len(ntx)}/2)")
+    ids |= nrx | ntx
     try:
         s = open(os.path.join(root, "app/fr_cal.c")).read()
         i = s.index("fr_cal_rx[")

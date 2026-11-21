@@ -39,6 +39,8 @@ typedef struct {
  *                                      profile with the CAN hardware */
 #if defined(TCU_VEHICLE_FCA) && TCU_VEHICLE_FCA == 1
 #include "io/vehicle/vehicle_tx_fca.h"
+#elif defined(TCU_VEHICLE_NISSAN) && TCU_VEHICLE_NISSAN == 1
+#include "io/vehicle/vehicle_tx_nissan.h"
 #else
 #error "vehicle_tx.h: no vehicle selected (CMake TCU_VEHICLE defines TCU_VEHICLE_<name>=1 for the targets that link a profile)"
 #endif

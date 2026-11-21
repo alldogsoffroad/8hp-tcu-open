@@ -12,20 +12,24 @@ include_directories(${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/include ${CMAKE_SOUR
 # audit ~/tcu_sweep/fork_readiness_audit.md §4.5): selects the vehicle profile (receive,
 # io/vehicle/profile_*.c) and its transmit set (io/vehicle/*_tx.c), and defines
 # TCU_VEHICLE_<name>=1 on every target that builds them (the loop at the end of this
-# file). Only FCA exists today; a Nissan profile is the planned fork (audit §4/§5, the
-# lever decision D-N1 first). The default produces images byte-identical to the build
-# before the switch existed (same sources, same link order).
-set(TCU_VEHICLE FCA CACHE STRING "vehicle profile of every image and test (FCA only, today)")
-set_property(CACHE TCU_VEHICLE PROPERTY STRINGS FCA)
+# file). FCA (the default) produces images byte-identical to the build before the switch
+# existed (same sources, same link order). NISSAN (2026-11-20, ~/tcu_sweep/nissan_profile_skeleton.md)
+# is a SKELETON: profile_nissan.c receives the DBC's confirmed signals only, nissan_tx.c
+# transmits nothing. Configure it in its OWN build directory (-DTCU_VEHICLE=NISSAN): the
+# FCA tree and its install chain are never touched, and its tcu_app.elf must not be flashed.
+set(TCU_VEHICLE FCA CACHE STRING "vehicle profile of every image and test (FCA or NISSAN)")
+set_property(CACHE TCU_VEHICLE PROPERTY STRINGS FCA NISSAN)
 if(TCU_VEHICLE STREQUAL "FCA")
     set(TCU_VEHICLE_RX_SOURCES io/vehicle/profile_fca.c)
     set(TCU_VEHICLE_TX_SOURCES io/vehicle/fca_tx.c)
-    set(TCU_VEHICLE_DEFINE TCU_VEHICLE_FCA=1)
-    set(TCU_VEHICLE_SRC_REGEX "io/vehicle/(profile_fca|fca_tx)\\.c$")
+elseif(TCU_VEHICLE STREQUAL "NISSAN")
+    set(TCU_VEHICLE_RX_SOURCES io/vehicle/profile_nissan.c)
+    set(TCU_VEHICLE_TX_SOURCES io/vehicle/nissan_tx.c)
+    message(STATUS "TCU_VEHICLE=NISSAN: a SKELETON profile (confirmed DBC signals only, no TX) - DO NOT FLASH")
 else()
-    message(FATAL_ERROR "TCU_VEHICLE='${TCU_VEHICLE}' is not supported: only FCA exists. "
-        "A Nissan profile (profile_nissan.c / nissan_tx.c) is the planned fork - see "
-        "~/tcu_sweep/fork_readiness_audit.md §4-§5 and ~/tcu_sweep/fork_seams_port.md.")
+    message(FATAL_ERROR "TCU_VEHICLE='${TCU_VEHICLE}' is not supported: only FCA and NISSAN exist. "
+        "NISSAN is the skeleton fork (io/vehicle/profile_nissan.c / nissan_tx.c) - see "
+        "~/tcu_sweep/fork_readiness_audit.md §4-§5 and ~/tcu_sweep/nissan_profile_skeleton.md.")
 endif()
 
 # BENCH-ONLY simulated speeds for the read-only shadows (~/tcu_sweep/shadow_sim_port.md,
@@ -662,6 +666,17 @@ else()
     add_executable(test_rng_chain tests/unit/test_rng_chain.c ${RNG_TEST_SOURCES})
     target_compile_definitions(test_rng_chain PRIVATE RNG_CHAIN_TEST_HOOKS=1)
     add_test(NAME rng_chain COMMAND test_rng_chain)
+    # THE NISSAN PROFILE SKELETON (2026-11-20, ~/tcu_sweep/nissan_profile_skeleton.md): the DBC's
+    # confirmed signals decoded from frames built to the DBC layouts, timeouts, "not available" for
+    # the rest, the transmit stub (no frame), and the range chain on this profile with no lever
+    # source (holds P). Built in both configures: the sources carry their own TCU_VEHICLE_NISSAN
+    # definition (the loop at the end of this file).
+    set(NISSAN_TEST_SOURCES ${RNG_TEST_SOURCES})
+    list(REMOVE_ITEM NISSAN_TEST_SOURCES io/vehicle/vehicle_inject.c)
+    add_executable(test_profile_nissan tests/unit/test_profile_nissan.c ${NISSAN_TEST_SOURCES}
+        io/vehicle/profile_nissan.c io/vehicle/nissan_tx.c bsw/com/com.c)
+    target_compile_definitions(test_profile_nissan PRIVATE RNG_CHAIN_TEST_HOOKS=1)
+    add_test(NAME profile_nissan COMMAND test_profile_nissan)
     # KEY-OFF AUTO-P (2026-11-17, ~/tcu_sweep/keyoff_autop_port.md): the
     # terminal-15 object 0x140B80 (safety/kl15.c) feeding D641 / D642 / D643,
     # the chain's 0xC286C at key-off, the voltage path, the fault-reaction
@@ -2505,12 +2520,12 @@ else()
     set_tests_properties(fca_tx_fields_diff PROPERTIES DEPENDS fca_tx_fields_current)
     # ---- the vehicle seams (2026-11-20, ~/tcu_sweep/fork_seams_port.md; the fork-
     # readiness audit ~/tcu_sweep/fork_readiness_audit.md §4.5-§4.6) ----
-    # (1) TCU_VEHICLE accepts only FCA: any other value stops the configure, naming the plan
+    # (1) TCU_VEHICLE accepts only FCA and NISSAN: any other value stops the configure, naming the plan
     add_test(NAME tcu_vehicle_refuses_other
         COMMAND ${CMAKE_COMMAND} -S ${CMAKE_SOURCE_DIR} -B ${CMAKE_BINARY_DIR}/tcu_vehicle_neg
-            -G ${CMAKE_GENERATOR} -DTCU_VEHICLE=NISSAN)
+            -G ${CMAKE_GENERATOR} -DTCU_VEHICLE=BOGUS)
     set_tests_properties(tcu_vehicle_refuses_other PROPERTIES
-        PASS_REGULAR_EXPRESSION "is not supported: only FCA exists.*planned fork")
+        PASS_REGULAR_EXPRESSION "is not supported: only FCA and NISSAN exist")
     # (2) the TEST-ONLY injector: refuses to compile for the SH target, and the SH-ELF
     # scan (POST_BUILD of every SH image) catches it if it were linked
     add_test(NAME vehicle_inject_sh_guard
@@ -2534,6 +2549,10 @@ else()
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/vehicle_seam_scan.py ids ${CMAKE_SOURCE_DIR}
             --only ${CMAKE_SOURCE_DIR}/io/vehicle/profile_fca.c ${CMAKE_SOURCE_DIR}/io/vehicle/fca_tx_fields.h)
     set_tests_properties(vehicle_seam_scan_profile_control PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME vehicle_seam_scan_profile_control_nissan
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/vehicle_seam_scan.py ids ${CMAKE_SOURCE_DIR}
+            --only ${CMAKE_SOURCE_DIR}/io/vehicle/profile_nissan.c ${CMAKE_SOURCE_DIR}/io/vehicle/nissan_tx.h)
+    set_tests_properties(vehicle_seam_scan_profile_control_nissan PROPERTIES WILL_FAIL TRUE)
     # THE SHADOWS READ THE STOCK CALIBRATION IN PLACE (2026-11-20, ~/tcu_sweep/cal_in_place_port.md):
     # cal_inplace: the address list (>= 0x80000, inside the image, aligned), the FNV digests of every
     # in-place object against the goldens (= the retired generated copies' digests), the accessors
@@ -2550,9 +2569,9 @@ else()
     set_tests_properties(cal_inplace_scan_negative PROPERTIES WILL_FAIL TRUE)
 endif()
 
-# TCU_VEHICLE (2026-11-20, ~/tcu_sweep/fork_seams_port.md): every target that builds the
-# selected vehicle profile or transmit set gets TCU_VEHICLE_<name>=1 (profile_fca.c and
-# fca_tx.c refuse to compile without it). A preprocessor definition only: the FCA images
+# TCU_VEHICLE (2026-11-20, ~/tcu_sweep/fork_seams_port.md): every target that builds a
+# vehicle profile or transmit set gets TCU_VEHICLE_<name>=1 (profile_fca.c / fca_tx.c and
+# profile_nissan.c / nissan_tx.c refuse to compile without it). A preprocessor definition only: the FCA images
 # stay byte-identical.
 get_property(_tcu_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
 foreach(_t IN LISTS _tcu_targets)
@@ -2564,12 +2583,22 @@ foreach(_t IN LISTS _tcu_targets)
     if(NOT _srcs)
         continue()
     endif()
+    set(_def_fca OFF)
+    set(_def_nissan OFF)
     foreach(_s IN LISTS _srcs)
-        if(_s MATCHES "${TCU_VEHICLE_SRC_REGEX}")
-            target_compile_definitions(${_t} PRIVATE ${TCU_VEHICLE_DEFINE})
-            break()
+        if(_s MATCHES "io/vehicle/(profile_fca|fca_tx)\\.c$")
+            set(_def_fca ON)
+        endif()
+        if(_s MATCHES "io/vehicle/(profile_nissan|nissan_tx)\\.c$")
+            set(_def_nissan ON)
         endif()
     endforeach()
+    if(_def_fca)
+        target_compile_definitions(${_t} PRIVATE TCU_VEHICLE_FCA=1)
+    endif()
+    if(_def_nissan)
+        target_compile_definitions(${_t} PRIVATE TCU_VEHICLE_NISSAN=1)
+    endif()
 endforeach()
 
 # THE SHADOWS READ THE STOCK CALIBRATION IN PLACE (2026-11-20, ~/tcu_sweep/cal_in_place_port.md):
