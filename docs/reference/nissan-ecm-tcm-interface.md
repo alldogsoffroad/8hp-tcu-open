@@ -130,3 +130,23 @@ user's logger; ECM software of that truck unknown). Findings [O = observed on th
 - Discriminators: the logged truck's ECM software ID (`21 FE`), or a bench replay: send 0x174 +
   0x177 with B4 ≠ 0 (and 0x560 B3, since cal 0x8AAF bit 4 routes it into the same cell) and
   watch the ECM's 0x180 actual-torque field.
+
+## Resolved: the 0x177 B4 reader (bench test + trace, 2026-11-23)
+**Bench replay** (bench ECM, engine not running): the truck's 0x174/0x176/0x177 frames sent every
+10 ms with 0x177 B4 = 00 / 67 / 67 (+0x560 B3 = 67) / 00. `0xFFFF289F` follows B4 within a frame
+(read via `23` in session FB). The 0x180 torque fields stayed at −330 / 2090 throughout (engine
+stopped: no torque to reduce, so not a test of the effect).
+**RAM diff** (all 48 KB, 0xFFFF0000–0xFFFFBFFF, two dumps with B4 = 0 and two with B4 = 67):
+44 bytes are stable within each condition and differ between them. Two hold the B4 value itself:
+**0xFFFF274F and 0xFFFF3910** (besides 0xFFFF3FF1 and 0xFFFF289F); state bytes such as
+0xFFFF253D (63 → 00), 3335, 35B4, 3C66/67, 3E50/54/56, 4392, 449D and 46B5 change too.
+**The missing link is a block copy:** at 0x20E04 the firmware calls the generic copy routine
+0x21CA4 with length `84 << 2` = **0x150** bytes, destination end 0xFFFF2784 and a **source
+pointer computed at run time from GBR + r9**. That copies 0xFFFF2784–0xFFFF28D3 (the receive
+variables, including 0xFFFF289F) to 0xFFFF2634–0xFFFF2783, putting B4 at **0xFFFF274F**. The RAM
+dumps show the mirror directly (0xFFFF2823–28D3 = 0xFFFF26D3–2783 byte for byte). 0x68AC0 reads
+0xFFFF274F into 0xFFFF3910, which the function at 0x68AD4 tests (with counters at 0xFFFF108E and
+the flag 0xFFFF253C).
+**So explanation (a) holds: software 9CJ3A does consume 0x177 B4**; no literal ever names the
+source or the copy, which is why every static search missed it. Not yet traced: the path from
+0xFFFF3910 / 0x68AD4 to the actuators (ignition retard / fuel cut / throttle).
