@@ -40,6 +40,14 @@ DLC 6, about 10 ms period.
 No rolling counter and no checksum (checked over 1,080 frames). **Not confirmed** that the TCM is
 the sender (test: unplug the TCM and see whether `0x177` disappears).
 
+> **ECM ROM decode, 2026-11-23 (`nissan-ecm-tcm-interface.md`): conflicts with the above.** The
+> bench ECM (DH1, software 9CJ3A, SH7058) receives `0x177` as **8 bytes**, alongside `0x174` (8)
+> and `0x176` (7); it **never reads byte 4** (or B0/B7), uses only B5[6:3] (shift type, 0xF = none),
+> B3[3:0] and single status bits, and no 0x174/0x177 value reaches ignition, fuel or throttle in
+> this software. Losing any of the three frames for ~1–2 s sets U1001. Either the sniffed data
+> above comes from a different vehicle/software, or the torque path is read in a way the decode
+> missed: the capture with a running truck decides.
+
 ### `0x182` — engine torque (ECM)
 
 DLC 8.
