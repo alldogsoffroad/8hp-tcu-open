@@ -47,6 +47,7 @@ the sender (test: unplug the TCM and see whether `0x177` disappears).
 > this software. Losing any of the three frames for ~1–2 s sets U1001. Either the sniffed data
 > above comes from a different vehicle/software, or the torque path is read in a way the decode
 > missed: the capture with a running truck decides.
+> **Resolved by vehicle logs (2026-11-23):** on a running 2015 Frontier 0x177 is 6 bytes and B4 is a real torque-reduction level the ECM applies (0x180 actual torque drops while B4 ≠ 0). The section above stands; the ROM decode missed it.
 
 ### `0x182` — engine torque (ECM)
 

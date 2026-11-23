@@ -57,7 +57,9 @@ is the way to pin them.
   found. **No torque limit, idle-up or MIL effect of the timeouts was found** [I: absence].
 
 ## Torque intervention
-**None found.** No 0x174/0x177 value reaches ignition, fuel or throttle in this ROM; the
+> **Superseded by the vehicle-log check below: the ECM does reduce torque on 0x177 B4.**
+
+**None found (ROM decode).** No 0x174/0x177 value reaches ignition, fuel or throttle in this ROM; the
 torque-format values in 0x174 and 0x177 B0/B4/B7 have no readers; no echo/handshake [I: a
 pointer-indexed read could have been missed]. In this software the ECM consumes the gear, the
 "shifting" state and speeds, not a torque request.
@@ -76,3 +78,34 @@ pointer-indexed read could have been missed]. In this software the ECM consumes 
 - Open: units of the speed/torque fields, the meaning of the status bits, transmit periods, and
   whether other ECM software versions behave the same. A capture of a running truck with its
   TCM fills these.
+
+## Vehicle-log check (2026-11-23): a different 2015 Frontier, TCM connected
+Logs: `~/Downloads/2026-09-1{0,1}_torque_*.txt` (64 shift-triggered windows, ~117k frames, the
+user's logger; ECM software of that truck unknown). Findings [O = observed on the bus]:
+- **Periods [O]:** 0x174, 0x176, 0x177 every **10 ms**; 0x180/0x182/0x1F9/0x160 10 ms; 0x421 60 ms.
+- **DLC [O]:** 0x174 8, 0x176 7, **0x177 6** (the bench ROM's table copies 8; receive mailboxes
+  accept any length, so the table DLC is a copy length, not a requirement [I]). Also 0x560 4
+  (table 3), 0x215 6 (table 7).
+- **0x174 B3 [O]: low nibble = engaged gear, high nibble = target gear** (steady acceleration
+  shows 21, 32, 43, 54; equal nibbles 22/33/44/55 = no shift pending; 34, 45 = downshift
+  targets). Sequence at an upshift: 43 → 44 (gear engaged) → 54 (next target). B0–B2 constant
+  FF E7 1C; B4[3:0] 4-bit counter (all 16 values); B5 00/80; B6, B7 00.
+- **0x176 [O/I]:** B2:B3 ≈ 0.91 × engine rpm and B2:B3 ÷ B0:B1 = 3.36 / 2.24 / 1.50 / 1.00 /
+  0.84 by gear (RE5R05A ratios 3.83 / 2.37 / 1.52 / 1.00 / 0.83) → **B2:B3 = turbine speed,
+  B0:B1 = output-shaft speed**, same units (≈ 1 rpm/bit [I]); B0:B1 ≈ 25.8 counts per mph.
+  B4, B5 = 00; B6[3:0] counter.
+- **0x177 [O]:** B0, B1 = 00; B2 slow sequence (00–0C); B3 = 01 only in 1st;
+  **B5[6:3] = shift type: 0 = 1→2, 1 = 2→3, 2 = 3→4, 3 = 4→5, 9 = 4→3, 13 = 5→4, 15 = none**
+  (matches the ROM's "0xF = no shift"); **B4 = torque-reduction level, non-zero only during
+  upshifts** (0x1A–0xA7 seen).
+- **The ECM acts on 0x177 B4 [O]:** event 1 (1→2 at 3300 rpm, 40 % throttle): B4 = 0x67 at
+  142.335 s → the first 12-bit value in 0x180 (and 0x160 second value) falls 2835 → 1790 within
+  ~50 ms while the second value (≈ 3315, driver demand [I]) is unchanged; it recovers after B4
+  returns to 0. With phys = raw·5 − 4000 read as 0.1 Nm [I], that is ≈ 283 → 179 Nm actual
+  against ≈ 331 Nm demanded.
+- **This corrects the ROM decode's "no torque intervention found"**: either the decode missed
+  an indexed read of the 0x177 record (no literal reference to its byte-4 RAM cell 0xFFFF3FF1
+  exists), or the vehicle's ECM software differs from the bench unit's 9CJ3A. Next
+  discriminator: trace reads of the 0x177 receive record (base 0xFFFF3F87 + 10·10) in the bench
+  ROM by offset, not by literal.
+- 0x421 [O]: 3 bytes, constant 20 00 00 (D per the DBC) in every window; sender not settled.
