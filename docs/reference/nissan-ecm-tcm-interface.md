@@ -150,3 +150,38 @@ the flag 0xFFFF253C).
 **So explanation (a) holds: software 9CJ3A does consume 0x177 B4**; no literal ever names the
 source or the copy, which is why every static search missed it. Not yet traced: the path from
 0xFFFF3910 / 0x68AD4 to the actuators (ignition retard / fuel cut / throttle).
+
+## From 0xFFFF3910 toward the actuators (static trace, 2026-11-23) — chain NOT closed
+Tags: [V] verified in code ([V✔] re-checked by hand), [I] inferred.
+1. **Source [V✔]:** cal 0x8AAF = 0x1C (bit 4 set): 0x68958 copies 0xFFFF274F (B4) into 0xFFFF3910
+   directly; the alternative map lookup (tables 0x103C9–0x10455) is not used.
+2. **Gate, active flag 0xFFFF2401 bit 6 (0x68AD4) [V]:** needs 0xFFFF241D.6 and 0xFFFF2417.5 set,
+   0xFFFF470E.4 clear, 3910 ≠ 0, the two 0x174-derived gear values 0xFFFF108E ≠ 108F (108F > 108E
+   = upshift branch), at most one of the 0x177 B3 flags, and a shift timer not expired:
+   0xFFFF253D from cal 0x849F = **100** (upshift) [V✔], 0xFFFF253C from 0x849E = **60** (downshift)
+   [V✔]. 241D.6 needs engine-running conditions (0xFFFF107F ≥ 0x1E, 0xFFFF44E6 ≥ 0x32 [I: rpm],
+   0xFFFF11A1 ≥ 2), so on the stopped bench engine the flag stayed 0 (matches the RAM diff:
+   253D counted 0x63 → 0).
+3. **Scaling [V code, I meaning]:** 0x68C44: 0xFFFF1856 = [T·(256 − B4) + 256·L] / (T + L), T =
+   filtered net torque 0xFFFF18CE, L = losses (0xFFFF2394 + 0xFFFF14D0): **B4/256 = fraction of net
+   torque to remove** (0x67 ≈ 40 %, the truck showed ≈ 35 %).
+4. **Ramps [V]:** 0x68E62 → 0x69356, ramped request 0xFFFF185A. Upshift: first step 60 % (×0x99/256),
+   ramp-in ≈ 3 calls, ramp-out ≈ 17 calls (B4·0x0F per call). Downshift: immediate, ramp-out from
+   maps 0xB3B4 / 0xB3A4. 0x6960E / 0x69812 combine it with a second (disabled, 0x8AA6 & 0x18 = 0
+   [V✔]) reducer into the torque ratio 0xFFFF185E.
+5. **Actuator = spark retard [V]:** 0x6863E inverts the spark-efficiency tables 0xF29C / 0xF6B0
+   (lookup 0x23070) to find the retard that gives the requested ratio, floor −7° (cal 0x8237 =
+   0xF9 [V✔]) → **0xFFFF234C** (retard, deg·256 [I]). **Fuel cut is calibrated off** (thresholds
+   0x8F64 = 0xFF, 0x8301 = 0xFF [V✔]: never), **no throttle path found**.
+6. **The open link:** the only code found that consumes 0xFFFF234C is 0x4C7BC (spark limit
+   0xFFFF11C6/11C8), and it is **skipped**: at 0x4C790 `tst.b #32,@(r0,gbr)` with GBR 0xFFFF2214,
+   r0 0x16897 → cal **0x8AAB = 0xAE, bit 5 set → branch past** [V✔]. The reported torque
+   (0xFFFF18CA → 18CC → 18CE → 239A) drops only through 0xFFFF11B8 (applied retard) or the cut
+   count, and 0xFFFF11B8 has no visible writer (likely a copied block or the ignition interrupt).
+   The 0x180/0x160 packer was not traced.
+7. So in this ROM the request becomes a **spark-retard target**; whether and how it reaches the
+   coils in the 0x8AAB.5 = 1 mode (likely via the 0xFFFF1826/2390 spark path from 0x4AA40, or a
+   copy into 0xFFFF11B8) is not established statically. Discriminator: RAM reads (0x23, session
+   FB) of 0xFFFF2401, 0xFFFF234C, 0xFFFF11B8 and 0xFFFF18CE during upshifts on a **running**
+   engine. Note: the truck's "actual torque" drop in 0x180 is consistent with either a real
+   retard or the ECM reporting its reduced torque target.
