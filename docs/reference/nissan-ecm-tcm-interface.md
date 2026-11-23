@@ -109,3 +109,24 @@ user's logger; ECM software of that truck unknown). Findings [O = observed on th
   discriminator: trace reads of the 0x177 receive record (base 0xFFFF3F87 + 10·10) in the bench
   ROM by offset, not by literal.
 - 0x421 [O]: 3 bytes, constant 20 00 00 (D per the DBC) in every window; sender not settled.
+
+## Why the ROM decode reported "no torque intervention" (trace, 2026-11-23)
+- The 0x177 handler 0xE297C reads the receive record through `mov #offset,r0; mov.b @(r0,r13)`
+  with r13 = 0xFFFF3F87 (B0 = offset 102 … B4 = **offset 106**), so the data bytes never appear
+  as addresses. **B4 is stored to 0xFFFF289F** (0xE2B4C, in the delay slot of `bt.s`).
+- **0xFFFF289F has four writers and no statically resolvable reader:** the 0x177 handler; the
+  substitute writers 0xE4B86 (`mov.b r0,@(0,gbr)` with GBR = 0xFFFF289F) and 0xE4C64; and
+  0xE1D9C, which, when cal **0x8AAF bit 4 = 1 (set in this calibration)**, overwrites it with the
+  byte at 0xFFFF3FE6 (GBR 0xFFFF3F16 + 208 = the 0x560 record, data byte 3).
+  Searched: literal pools, raw ROM data (the address occurs only in the three literal pools),
+  register + displacement, and GBR/indexed accesses with the r0-offset idiom this compiler uses
+  (e.g. `mov.l #0x14B99,r0; tst.b #16,@(r0,gbr)` with GBR 0xFFFF3F16 = cal byte 0x8AAF):
+  no read of 0xFFFF289F.
+- So the decode's "B4 stored only, no reader found" was accurate as far as static search goes;
+  the error was concluding "no torque intervention" from an absence. Two explanations remain:
+  (a) a read through a computed pointer that static tracking cannot resolve [I: likely, since
+  the firmware maintains substitute values and an alternative source for this cell], or
+  (b) the logged truck's ECM software differs from 9CJ3A.
+- Discriminators: the logged truck's ECM software ID (`21 FE`), or a bench replay: send 0x174 +
+  0x177 with B4 ≠ 0 (and 0x560 B3, since cal 0x8AAF bit 4 routes it into the same cell) and
+  watch the ECM's 0x180 actual-torque field.
