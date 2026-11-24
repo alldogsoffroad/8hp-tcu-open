@@ -22,9 +22,12 @@ set_property(CACHE TCU_VEHICLE PROPERTY STRINGS FCA NISSAN)
 if(TCU_VEHICLE STREQUAL "FCA")
     set(TCU_VEHICLE_RX_SOURCES io/vehicle/profile_fca.c)
     set(TCU_VEHICLE_TX_SOURCES io/vehicle/fca_tx.c)
+    set(TCU_VEHICLE_APP_SOURCES)
 elseif(TCU_VEHICLE STREQUAL "NISSAN")
     set(TCU_VEHICLE_RX_SOURCES io/vehicle/profile_nissan.c)
-    set(TCU_VEHICLE_TX_SOURCES io/vehicle/nissan_tx.c)
+    set(TCU_VEHICLE_TX_SOURCES io/vehicle/nissan_tx.c io/vehicle/nissan_out.c)
+    # the code-flash application only: the TCU state -> the transmit set (reads the shadows)
+    set(TCU_VEHICLE_APP_SOURCES io/vehicle/nissan_out_gather.c)
     message(STATUS "TCU_VEHICLE=NISSAN: a SKELETON profile (confirmed DBC signals only, no TX) - DO NOT FLASH")
 else()
     message(FATAL_ERROR "TCU_VEHICLE='${TCU_VEHICLE}' is not supported: only FCA and NISSAN exist. "
@@ -142,6 +145,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         platform/sh7254r/plat_adcmux.c
         platform/sh7254r/libc_min.c
         ${CORE_SOURCES}
+        ${TCU_VEHICLE_APP_SOURCES}    # TCU_VEHICLE: application glue (FCA: none; NISSAN: nissan_out_gather.c)
         # G6a (2026-11-19, ~/tcu_sweep/g6a_port.md): the read-only CANDIDATE
         # (instance 2 of the garage engine template, its own RAM .gsc_req /
         # .gsc_obj) and the comparator (.g6a) — code-flash application only
@@ -674,7 +678,7 @@ else()
     set(NISSAN_TEST_SOURCES ${RNG_TEST_SOURCES})
     list(REMOVE_ITEM NISSAN_TEST_SOURCES io/vehicle/vehicle_inject.c)
     add_executable(test_profile_nissan tests/unit/test_profile_nissan.c ${NISSAN_TEST_SOURCES}
-        io/vehicle/profile_nissan.c io/vehicle/nissan_tx.c bsw/com/com.c bsw/com/com_tx.c)
+        io/vehicle/profile_nissan.c io/vehicle/nissan_tx.c io/vehicle/nissan_out.c bsw/com/com.c bsw/com/com_tx.c)
     target_compile_definitions(test_profile_nissan PRIVATE RNG_CHAIN_TEST_HOOKS=1)
     add_test(NAME profile_nissan COMMAND test_profile_nissan)
     # KEY-OFF AUTO-P (2026-11-17, ~/tcu_sweep/keyoff_autop_port.md): the

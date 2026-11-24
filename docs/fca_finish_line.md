@@ -59,7 +59,7 @@ the live path) · **MISSING** (not ported) · **UNDECODED** (inside a ported fun
 | Fault-reaction / gear-code chain (195 groups) | SHADOW (= the stock dump's masks) | r04x, r05a | fork, bound to Nissan messages |
 | Gear-pair shift engine: skeleton, kind/class, counters, swap | SHADOW | r04z, r05b | live with real speeds |
 | Phase bodies: all upshifts, class-1 downshifts | SHADOW | r05c, r05d (14 shifts on simulated speeds) | class-0 / skip downshifts UNDECODED |
-| Torque intervention (request to the ECM) | SHADOW (sequence only) | r05d | per-phase amounts UNDECODED; live = transmit (FCA 0x2F9/0x037; Nissan 0x177 in the fork) |
+| Torque intervention (request to the ECM) | SHADOW (amounts r05e); **Nissan build: LIVE switch written** (2026-11-23, `io/vehicle/nissan_out*.c`: 0x177 B4 = −delta ÷ the ECM's actual torque × 256) | r05d, r05e; Nissan host tests | FCA live = 0x2F9/0x037 transmit; Nissan: bench proof needs a running engine (the ECM gates the cut on engine running) |
 | Line pressure during shifts | SHADOW | r05d | as Sys above |
 | Adaptation (learned fill/kiss offsets) | STOOD IN (reads only; learners kept out) | adaptation_decode | the learners need an EEPROM decision — never without the user |
 

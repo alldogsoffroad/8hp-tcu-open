@@ -16,8 +16,13 @@ static inline void vehicle_tx_init(void)
     nissan_tx_init();
 }
 
+void nissan_out_tick_1ms(void);     /* io/vehicle/nissan_out_gather.c (the code-flash application) */
+
 static inline void vehicle_tx_tick_1ms(void)
 {
+#if defined(__sh__) && !defined(TCU_RAM_APP)
+    nissan_out_tick_1ms();          /* the application: the TCU state -> the frames (D-N5) */
+#endif
     nissan_tx_tick_1ms();
 }
 

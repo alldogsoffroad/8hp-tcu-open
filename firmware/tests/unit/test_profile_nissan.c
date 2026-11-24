@@ -10,6 +10,7 @@
 #include "io/vehicle/vehicle.h"
 #include "io/vehicle/profile_nissan.h"
 #include "io/vehicle/vehicle_tx.h"
+#include "io/vehicle/nissan_out.h"
 #include "app/rng_chain.h"
 #include "safety/kl15.h"
 #include "app/park.h"
@@ -503,7 +504,16 @@ static void test_tx(void)
     o.gear_target = 2u;
     vehicle_tx_set(&o);
     nissan_tx_build(2u, &f);
-    CHECK(f.data[4] == 0u && f.data[5] == 0x78u);
+    CHECK(f.data[4] == 0x67u && f.data[5] == 0x78u);   /* any pending shift carries the cut (D-N5);
+                                                           no 5-speed code for 3-2: 15 */
+    /* 8HP gears (D-N5): 7 -> 8 */
+    o.gear_engaged = 7u;
+    o.gear_target = 8u;
+    vehicle_tx_set(&o);
+    nissan_tx_build(0u, &f);
+    CHECK(f.data[3] == 0x87u);
+    nissan_tx_build(2u, &f);
+    CHECK(f.data[2] == 0x06u && f.data[4] == 0x67u && f.data[5] == 0x78u);
     /* disable: nothing more is sent */
     CHECK(!vehicle_tx_enable_torque(false));
     {
@@ -515,6 +525,65 @@ static void test_tx(void)
         CHECKV(stub.n_tx, before);
     }
     CHECK(last_tx(0x174u) != NULL);
+}
+
+/* the TCU state -> the drivetrain fields (nissan_out_build, D-N5 + the 8HP TI amounts) */
+static void test_out(void)
+{
+    nissan_out_src_t s;
+    vehicle_out_t o;
+
+    memset(&s, 0, sizeof s);
+    CHECKV(nissan_gear_nibble(1), 1);
+    CHECKV(nissan_gear_nibble(8), 8);
+    CHECKV(nissan_gear_nibble(-1), NISSAN_GEAR_R);
+    CHECKV(nissan_gear_nibble(0), NISSAN_GEAR_PN);
+    CHECKV(nissan_gear_nibble(9), NISSAN_GEAR_PN);
+    /* steady 6th, lock-up closed, speeds through */
+    s.engaged = 6; s.target = 6; s.output_rpm = 1500u; s.turbine_rpm = 1505u; s.lockup = true;
+    s.actual_ok = true; s.actual_nm10 = 2000;
+    nissan_out_build(&s, &o);
+    CHECK(o.drivetrain_valid && o.gear_engaged == 6u && o.gear_target == 6u && o.lockup);
+    CHECK(o.output_rpm == 1500u && o.turbine_rpm == 1505u && o.torque_cut_q8 == 0u);
+    /* a 2 -> 3 upshift, TI reduction -80 Nm of 200 Nm actual -> 0.4 x 256 = 102 */
+    s.engaged = 2; s.target = 3; s.ti_armed = true; s.ti_cls = 1u; s.ti_type = 2u; s.ti_delta_nm = -80;
+    nissan_out_build(&s, &o);
+    CHECKV(o.gear_target, 3);
+    CHECKV(o.torque_cut_q8, 102);
+    s.ti_delta_nm = -500;                            /* more than the torque: clamped */
+    nissan_out_build(&s, &o);
+    CHECKV(o.torque_cut_q8, 255);
+    s.ti_delta_nm = -80;
+    s.ti_type = 1u;                                  /* an increase is not a cut */
+    nissan_out_build(&s, &o);
+    CHECKV(o.torque_cut_q8, 0);
+    s.ti_type = 2u; s.ti_cls = 2u;                   /* garage: no gear pair */
+    nissan_out_build(&s, &o);
+    CHECKV(o.torque_cut_q8, 0);
+    s.ti_cls = 0u;                                   /* a downshift reduction passes (the ECM's down timer) */
+    s.engaged = 4; s.target = 3;
+    nissan_out_build(&s, &o);
+    CHECKV(o.torque_cut_q8, 102);
+    s.actual_ok = false;                             /* no actual torque: no cut */
+    nissan_out_build(&s, &o);
+    CHECKV(o.torque_cut_q8, 0);
+    s.actual_ok = true; s.actual_nm10 = 50;          /* < 10 Nm: no cut */
+    nissan_out_build(&s, &o);
+    CHECKV(o.torque_cut_q8, 0);
+    s.actual_nm10 = 2000; s.ti_armed = false;
+    nissan_out_build(&s, &o);
+    CHECKV(o.torque_cut_q8, 0);
+    /* no shift pending: no cut even with a stale reduction */
+    s.ti_armed = true; s.engaged = 5; s.target = 5;
+    nissan_out_build(&s, &o);
+    CHECKV(o.torque_cut_q8, 0);
+    /* into N from 3rd: no pending shift reported; R reported as 9 */
+    s.engaged = 3; s.target = 0;
+    nissan_out_build(&s, &o);
+    CHECK(o.gear_engaged == 3u && o.gear_target == 3u && o.torque_cut_q8 == 0u);
+    s.engaged = -1; s.target = -1;
+    nissan_out_build(&s, &o);
+    CHECK(o.gear_engaged == NISSAN_GEAR_R && o.gear_target == NISSAN_GEAR_R);
 }
 
 /* ---- end to end: the stock range chain with no lever source ---------------------------------- */
@@ -575,6 +644,7 @@ int main(void)
     test_not_available();
     test_torque_pedal();
     test_tx();
+    test_out();
     test_range_holds_p();
     if (fails == 0) {
         printf("profile_nissan: all checks passed\n");

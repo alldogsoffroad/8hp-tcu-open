@@ -104,7 +104,8 @@ static void pack(uint8_t idx, uint8_t d[8])
     case T_177:
         d[2] = (uint8_t)((e > 0u ? (uint8_t)((e - 1u) & 7u) : 0u) | (in->lockup ? 0x08u : 0u));
         d[3] = e == 1u ? 0x01u : 0x00u;
-        d[4] = code <= 3u ? in->cut : 0u;          /* a cut only during a known upshift */
+        d[4] = t != e ? in->cut : 0u;              /* a cut only while a shift is pending (the ECM
+                                                      gates it on its own up/down shift timers) */
         d[5] = (uint8_t)(code << 3);
         break;
     case T_560: {
