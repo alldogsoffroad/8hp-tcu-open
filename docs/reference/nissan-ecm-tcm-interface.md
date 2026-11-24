@@ -242,3 +242,16 @@ Practical route for the TCU: the hard-wired ignition feed. The Nissan TCM is pow
 ignition-switched supply, and the TCU firmware already has the voltage ignition path (kl15,
 "mux 14") the Nissan profile uses today (ign_code reported invalid). Engine running is known
 from 0x1F9 (and the ECM stops broadcasting at key-off).
+
+## What the ECM does with 0x560 (static decode, 2026-11-23; handler and dispatch re-checked by hand)
+Handler **0xE2D48** (dispatch 0xE0FF6 on ID word AC00): B0 → 0xFFFF27C0, B1 (page) → 0xFFFF27A2,
+B2 → 0xFFFF3F17 [V✔]; no plausibility, counter or page-order check [V]. Page router 0xE1762 [V].
+| Byte / page | Use |
+|---|---|
+| B0 | **[I] ATF temperature, °C + 50** (the code subtracts 50; a 0x3C–0x82 = 10–80 °C window; the truck's 0x61–0x76 = 47–68 °C). Feeds a few maps and flags (0x350AE, 0x36DB6, 0x3D192, 0x447DC, 0x44CF8, 0x4F54A); in this calibration they are flat/zero or flags only; no fault from B0 found [V/I] |
+| pages 0x10–0x15 | the TCM's **calibration ID for OBD Mode 09 InfoType 4**, ASCII: the truck sent **"RH2236"**. Until all six pages have arrived the ECM answers that Mode 09 request negatively [V] |
+| pages 0x16–0x17 | the TCM's **calibration verification number (Mode 09 InfoType 6)**; until both arrive the CAN path answers "pending" (0x78) [V] |
+| pages 0x20, 0x21, 0x30–0x32, 0x40–0x43, 0x50–0x53, 0x70–0x73 | **TCM fault bitmaps**: each set bit (where a ROM mask at 0x13C5C enables it) makes the ECM log a DTC through 0x8716C (indices 0x07, 0x17, 0x18, 0x1D, 0x8C–0x98, 0x102 …) [V code, I meaning]. **Must be 00** (the truck sent 0x40–0x43 = 00) |
+| other pages, byte 3 | ignored (the ECM copies only 3 bytes) [V] |
+**0xE1D9C is not a problem:** it lives in 0xE1D04, the handler of ID **0x253** (dispatch 0xE0F2A), which is not in this ECM's receive table, so the 0x177 torque-cut cell is never overwritten from the 0x560 record [V].
+**Minimum for the TCU:** 0x560 on time (U0101); B0 a plausible ATF temperature (°C + 50 [I]); pages 0x10–0x17 cycling (calibration ID + CVN, else Mode 09 answers fail); every fault page 00. **Open decision:** the replay currently reports the truck TCM's calibration ID "RH2236" and its CVN in the ECM's OBD Mode 09 answers; a replacement TCU should probably report its own ID.

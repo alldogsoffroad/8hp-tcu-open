@@ -15,14 +15,17 @@ static const com_tx_cfg_t s_msg[T_COUNT] = {
 };
 
 /* 0x560: a multiplexed status frame, B1 = page, B2 = page data, one page per frame; the 12
- * pages as the truck's TCM sent them (2026-09-11 log). Meanings are NOT known [I]: replayed as
- * logged. The ECM's U0101 (lost communication with the TCM) watches this frame (0x9CAFC). */
+ * pages as the truck's TCM sent them (2026-09-11 log). The ECM's U0101 (lost communication with
+ * the TCM) watches this frame (0x9CAFC). Decoded 2026-11-23 (handler 0xE2D48): pages 0x10-0x15 =
+ * the TCM's calibration ID for OBD Mode 09 (here the truck's "RH2236"), 0x16-0x17 its CVN,
+ * 0x40-0x43 TCM fault bitmaps (must stay 00: a set bit makes the ECM log a DTC). TODO(decision):
+ * report this TCU's own calibration ID / CVN instead of the truck TCM's. */
 static const uint8_t s_560_pages[12][2] = {
     { 0x15u, 0x36u }, { 0x16u, 0xC2u }, { 0x17u, 0xC0u }, { 0x40u, 0x00u },
     { 0x41u, 0x00u }, { 0x42u, 0x00u }, { 0x43u, 0x00u }, { 0x10u, 0x52u },
     { 0x11u, 0x48u }, { 0x12u, 0x32u }, { 0x13u, 0x32u }, { 0x14u, 0x33u },
 };
-#define NISSAN_560_B0 0x65u          /* logged B0 (drifts 0x61..0x76 on the truck) [I: ATF temp?] */
+#define NISSAN_560_B0 0x65u          /* B0 = ATF temperature, degC + 50 [I]: 0x65 = 51 degC (logged 0x61..0x76) */
 
 /* the drivetrain snapshot the frames are packed from */
 typedef struct {
