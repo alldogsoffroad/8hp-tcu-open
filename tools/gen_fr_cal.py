@@ -176,6 +176,10 @@ def main():
         u16(0x195EBE), u16(0x195EC0), u16(0x195EC2), u16(0x195EC4), u16(0x195EC6), u16(0x195EC8),
         img[0x195D76], img[0x195D77], img[0x195D78]))
     o.append('};')
+    # OPTION C (2026-11-23): the Nissan build (TCU_VEHICLE_NISSAN) binds the comm monitor to the
+    # Nissan messages: its own hand-written tables in app/fr_cal_nissan.c replace these three; the
+    # FCA preprocessed text (and so the FCA image) is unchanged
+    o.append('#if !defined(TCU_VEHICLE_NISSAN)   /* the Nissan tables: app/fr_cal_nissan.c (option C) */')
     o.append('/* RAM 0xFFF85289 (the driving dump; built by 0x15A458): group, bus, slot per entry */')
     o.append('const uint8_t  fr_cal_ent[FR_NE][3] = {')
     for i in range(0, NE, 8):
@@ -198,6 +202,7 @@ def main():
             r['id'], r['bus'], r['dlc'], r['to'], r['en'], r['crc'], r['ctr'],
             r['tol'][0][1], r['tol'][1][1], r['tol'][2][1], r['h'], r['st'], r['o'], r['en_a'], r['n']))
     o.append('};')
+    o.append('#endif /* !TCU_VEHICLE_NISSAN */')
     o.append('const uint8_t fr_cal_ctr_step = %du;   /* 0x1918FE (via 0x664D8[0]) */' % img[step_a])
     o.append('')
     o.append('/* 0x64450 (0xFFF95858 +0xC): 0x13A9D4 / 0x13A616\'s cal, value by value */')

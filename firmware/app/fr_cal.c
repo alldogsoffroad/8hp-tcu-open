@@ -10,6 +10,7 @@
 const fr_cal_comm_t fr_cal_comm = {
     9000u, 17000u, 50u, 50u, 50u, 50u, 1u, 1u, 0u,
 };
+#if !defined(TCU_VEHICLE_NISSAN)   /* the Nissan tables: app/fr_cal_nissan.c (option C) */
 /* RAM 0xFFF85289 (the driving dump; built by 0x15A458): group, bus, slot per entry */
 const uint8_t  fr_cal_ent[FR_NE][3] = {
     { 139u, 1u, 1u }, { 139u, 1u, 1u }, { 139u, 1u, 1u }, { 139u, 1u, 1u }, { 139u, 1u, 1u }, { 139u, 1u, 1u }, { 139u, 1u, 1u }, { 139u, 1u, 1u },
@@ -81,6 +82,7 @@ const fr_cal_rx_t fr_cal_rx[FR_NE] = {
     { 0x200u, 2u, 5u, 5u, 0x00u, 1u, 1u, 3u, 3u, 3u, 0x45u, 0xFFF8447Cu, 0x42B58u, 0x191998u }, /* 51 */
     { 0x210u, 2u, 5u, 5u, 0x3Bu, 1u, 1u, 3u, 3u, 3u, 0x44u, 0xFFF84464u, 0x42B08u, 0x191999u }, /* 52 */
 };
+#endif /* !TCU_VEHICLE_NISSAN */
 const uint8_t fr_cal_ctr_step = 3u;   /* 0x1918FE (via 0x664D8[0]) */
 
 /* 0x64450 (0xFFF95858 +0xC): 0x13A9D4 / 0x13A616's cal, value by value */

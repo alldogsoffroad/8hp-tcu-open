@@ -56,7 +56,7 @@ the live path) · **MISSING** (not ported) · **UNDECODED** (inside a ported fun
 |---|---|---|---|
 | Shift map (target) | SHADOW | r04t, r05d | live = feed the engine's target from it (needs real speeds) |
 | Gear feedback chain (commanded gear) | SHADOW (+ E4A7 hold live) | r04w, r04y | — |
-| Fault-reaction / gear-code chain (195 groups) | SHADOW (= the stock dump's masks) | r04x, r05a | fork, bound to Nissan messages |
+| Fault-reaction / gear-code chain (195 groups) | SHADOW (= the stock dump's masks); **Nissan build: comm monitor bound to the Nissan messages** (option C, 2026-11-23, `app/fr_cal_nissan.c`: ECM 0x1F9/0x180/0x182/0x160/0x551 → 139 U0100, ABS 0x280/0x284/0x285/0x354 → 140 U0121, BCM 0x35D → 146 U0140; FCA-only groups unreported) | r04x, r05a; Nissan host test `fr_nissan` | still a shadow in both builds: live = its reactions (gear code / substitute gear, Sys, auto-P) drive the engine, after a Nissan bench capture confirms a clean bus raises nothing |
 | Gear-pair shift engine: skeleton, kind/class, counters, swap | SHADOW | r04z, r05b | live with real speeds |
 | Phase bodies: all upshifts, class-1 downshifts | SHADOW | r05c, r05d (14 shifts on simulated speeds) | class-0 / skip downshifts UNDECODED |
 | Torque intervention (request to the ECM) | SHADOW (amounts r05e); **Nissan build: LIVE switch written** (2026-11-23, `io/vehicle/nissan_out*.c`: 0x177 B4 = −delta ÷ the ECM's actual torque × 256) | r05d, r05e; Nissan host tests | FCA live = 0x2F9/0x037 transmit; Nissan: bench proof needs a running engine (the ECM gates the cut on engine running) |

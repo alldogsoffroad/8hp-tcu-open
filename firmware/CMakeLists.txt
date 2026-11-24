@@ -23,11 +23,16 @@ if(TCU_VEHICLE STREQUAL "FCA")
     set(TCU_VEHICLE_RX_SOURCES io/vehicle/profile_fca.c)
     set(TCU_VEHICLE_TX_SOURCES io/vehicle/fca_tx.c)
     set(TCU_VEHICLE_APP_SOURCES)
+    set(TCU_VEHICLE_FR_SOURCES)
 elseif(TCU_VEHICLE STREQUAL "NISSAN")
     set(TCU_VEHICLE_RX_SOURCES io/vehicle/profile_nissan.c)
     set(TCU_VEHICLE_TX_SOURCES io/vehicle/nissan_tx.c io/vehicle/nissan_out.c)
     # the code-flash application only: the TCU state -> the transmit set (reads the shadows)
     set(TCU_VEHICLE_APP_SOURCES io/vehicle/nissan_out_gather.c)
+    # option C (2026-11-23): the fault-reaction shadow's comm monitor bound to the Nissan
+    # messages - replaces app/fr_cal.c's three per-entry tables (excluded there under
+    # TCU_VEHICLE_NISSAN); with every app/fr_cal.c of a target that defines it
+    set(TCU_VEHICLE_FR_SOURCES app/fr_cal_nissan.c)
     message(STATUS "TCU_VEHICLE=NISSAN: a SKELETON profile (confirmed DBC signals only, no TX) - DO NOT FLASH")
 else()
     message(FATAL_ERROR "TCU_VEHICLE='${TCU_VEHICLE}' is not supported: only FCA and NISSAN exist. "
@@ -154,6 +159,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         # fault-reaction / gear-code shadow (its own RAM .fr_shadow / .fr_fm)
         # — code-flash application only
         app/fr_shadow.c app/fr_fm.c app/fr_cal.c app/fr_hook.c
+        ${TCU_VEHICLE_FR_SOURCES}     # TCU_VEHICLE: the comm monitor's table (FCA: none; NISSAN: fr_cal_nissan.c)
         # (2026-11-20, ~/tcu_sweep/gp_shadow_port.md): the READ-ONLY gear-pair
         # shift-engine shadow + its coupled gear chain (own RAM .gp_shadow /
         # .gp_gear) — code-flash application only
@@ -225,6 +231,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
         COMMAND ${CMAKE_OBJCOPY} -O ihex --remove-section=.bss tcu_app.elf tcu_app.hex
         COMMAND ${CMAKE_SIZE} tcu_app.elf
         COMMENT "G6a link-map scan; G6c RAM-section overlap scan; writing application block as Intel HEX (load addresses)")
+    if(TCU_VEHICLE_FR_SOURCES)
+        # option C (Nissan only): the comm monitor's Nissan table through the same NVM scan
+        add_custom_command(TARGET tcu_app.elf POST_BUILD
+            COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py nvm ${SH_NM}
+                CMakeFiles/tcu_app.elf.dir/app/fr_cal_nissan.c.obj
+            COMMENT "option C: the Nissan comm table through the NVM scan")
+    endif()
 
     # ---- Data-flash loader (spec 18): code flash at 0x40000, written with the Teensy flasher ----
     set(LD_LDSCRIPT ${CMAKE_SOURCE_DIR}/loader/ld_link.ld)
@@ -305,6 +318,7 @@ else()
     add_executable(tcu_sim platform/host/plat_host.c ${CORE_SOURCES}
         app/gs_cand.c app/gs_cand_fill.c app/g6a.c
         app/fr_shadow.c app/fr_fm.c app/fr_cal.c app/fr_hook.c   # F1: as the image
+        ${TCU_VEHICLE_FR_SOURCES}
         app/gp_shadow.c app/gp_cal.c app/gp_gear.c app/gp_hook.c
         app/lp_shadow.c app/lp_cal.c app/ti_shadow.c app/ti_cal.c app/lp_hook.c
         app/wk_shadow.c app/wk_cal.c app/wk_hook.c)
@@ -1837,6 +1851,17 @@ else()
         FR_NEG_G28=1)
     add_test(NAME fr_shadow_neg_G28 COMMAND test_fr_shadow_neg_G28)
     set_tests_properties(fr_shadow_neg_G28 PROPERTIES WILL_FAIL TRUE)
+    # OPTION C (2026-11-23, app/fr_cal_nissan.c): the comm monitor on a NISSAN bus - all frames
+    # present: no comm group; one ECM / ABS / BCM message stops: 139 / 140 / 146 after the stock
+    # lost time, with their reactions; a dead bus: U11E4; the FCA-only groups never reported.
+    # The Nissan configure only (the FCA suite and its count unchanged)
+    if(TCU_VEHICLE STREQUAL "NISSAN")
+        add_executable(test_fr_nissan tests/unit/test_fr_nissan.c app/fr_shadow.c app/fr_fm.c app/fr_cal.c
+            app/fr_hook.c app/fr_cal_nissan.c app/sm_cal.c bsw/com/crc8.c)
+        target_compile_definitions(test_fr_nissan PRIVATE _POSIX_C_SOURCE=200809L FR_HOOK_NO_GATHER=1
+            TCU_VEHICLE_NISSAN=1)
+        add_test(NAME fr_nissan COMMAND test_fr_nissan)
+    endif()
     set(FR_APP_SOURCES app/fr_shadow.c app/fr_fm.c app/fr_cal.c app/fr_hook.c)
     add_executable(test_g6b_norep_fr ${G6B_NOREP_SOURCES} app/sm_shadow.c app/sm_cal.c app/sm_gear.c app/sm_hook.c io/vehicle/shadow_sim.c
         ${FR_APP_SOURCES})
@@ -1874,7 +1899,8 @@ else()
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fr_shadow_scan.py shadow
             ${CMAKE_SOURCE_DIR}/tests/unit/fr_scan_fixture_shadow.c)
     add_test(NAME fr_shadow_scan_cal
-        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fr_shadow_scan.py cal ${CMAKE_SOURCE_DIR}/app/fr_cal.c)
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fr_shadow_scan.py cal ${CMAKE_SOURCE_DIR}/app/fr_cal.c
+            ${CMAKE_SOURCE_DIR}/app/fr_cal_nissan.c)
     add_test(NAME fr_shadow_scan_cal_negative
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/fr_shadow_scan.py cal
             ${CMAKE_SOURCE_DIR}/tests/unit/fr_scan_fixture_cal.c)

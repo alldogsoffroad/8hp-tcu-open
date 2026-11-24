@@ -230,6 +230,13 @@ static uint8_t comm_1362b0(unsigned lo, unsigned hi) /* every key message timed 
     uint8_t r = 0u;
     for (unsigned n = lo; n <= hi; n++) {
         const uint8_t m = FR_MASK(n);
+#if defined(TCU_VEHICLE_NISSAN)
+        /* option C (app/fr_cal_nissan.c): an inert entry (coding 0, no Nissan message) is
+         * not a key message - U11E4 fails when every NISSAN key message is lost */
+        if (fr_cal_rx[n].en == 0u) {
+            continue;
+        }
+#endif
         if ((m & 1u) != 0u && (m & 0x80u) != 0u) {
             if ((CM.st[n] & 1u) == 0u) {
                 return 0u;
