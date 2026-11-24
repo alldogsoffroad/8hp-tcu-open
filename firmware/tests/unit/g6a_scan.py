@@ -272,6 +272,26 @@ def scan_cmp(f, txt, bad):
         bad.append("%s: call of %s( (not an allowed read getter)" % (f, name))
 
 
+
+# Sections that never reach the image: their bytes are debug bookkeeping (DWARF string offsets,
+# line numbers ...) and can spell any word by coincidence. 2026-11-23: fr_shadow.c.obj's
+# .debug_info in the Nissan configure held FF F8 25 00 (a struct member's string offset and
+# line), a false hit on the DSM range; the FCA build's offsets differ, so it passed.
+NONLOADED_PREFIXES = (".debug", ".comment", ".note", ".stab", ".gnu.attributes")
+
+
+def loaded_dump(objdump, o):
+    """objdump -s of o, lower-cased, without the sections that are not loaded."""
+    dump = subprocess.run([objdump, "-s", o], capture_output=True, text=True).stdout.lower()
+    keep, out = True, []
+    for ln in dump.splitlines():
+        m = re.match(r"contents of section (\S+):", ln)
+        if m:
+            keep = not m.group(1).startswith(NONLOADED_PREFIXES)
+        if keep:
+            out.append(ln)
+    return "\n".join(out) + "\n"
+
 def scan_link(nm, objs, bad):
     for o in objs:
         und = subprocess.run([nm, "-u", o], capture_output=True, text=True, check=True).stdout.split()
@@ -287,7 +307,7 @@ def scan_link(nm, objs, bad):
                 bad.append("%s: a symbol names the stock routine 0x%s (EEPROM / NVM / DSM / event log / fatal)"
                            % (o, k.upper()))
         objdump = nm.replace("nm", "objdump")
-        dump = subprocess.run([objdump, "-s", o], capture_output=True, text=True).stdout.lower()
+        dump = loaded_dump(objdump, o)
         hexes = "".join(re.findall(r"^ [0-9a-f]+ ((?:[0-9a-f]{2,8} ?){1,4})", dump, flags=re.M)).replace(" ", "")
         for lit in LIT_FORBIDDEN:
             be = "%08x" % lit
@@ -309,7 +329,7 @@ def scan_nvm(nm, objs, bad):
             if any(k in nmx for nmx in names):
                 bad.append("%s: a symbol names the stock routine 0x%s (EEPROM / NVM / DSM record / event log / fatal)"
                            % (o, k.upper()))
-        dump = subprocess.run([objdump, "-s", o], capture_output=True, text=True).stdout.lower()
+        dump = loaded_dump(objdump, o)
         words = []
         for m in re.finditer(r"^ ([0-9a-f]+) ((?:[0-9a-f]{2,8} ?){1,4})", dump, flags=re.M):
             for chunk in m.group(2).split():
