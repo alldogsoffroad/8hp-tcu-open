@@ -74,7 +74,7 @@ static void test_defaults(void)
           v->q_park_speed == Q_INVALID && v->q_soak == Q_INVALID && v->q_ign_code == Q_INVALID &&
           v->q_lever == Q_INVALID);
     CHECK(v->brake == BRAKE_NA && v->lever == RANGE_NONE && v->lever_src == LEVER_SRC_NONE && !v->lever_flag);
-    CHECK(x->q_speed == Q_INVALID && x->q_wheels == Q_INVALID && x->q_throttle == Q_INVALID);
+    CHECK(x->q_speed == Q_INVALID && x->q_wheels == Q_INVALID && x->q_torque_demand == Q_INVALID);
     CHECKV(vehicle_quality_bits(v), 0);
     vehicle_update_10ms();
     CHECKV(vehicle_quality_bits(v), 0);              /* no frame: nothing OK */
@@ -121,10 +121,10 @@ static void test_engine(void)
     send_rpm(5650u, 5650u + 801u);
     vehicle_update_10ms();
     CHECK(v->q_engine_speed == Q_INVALID && v->engine_speed == 0);
-    /* timeout 200 ms (placeholder): fresh at 200 ms, invalid after */
+    /* timeout 50 ms (5 x the logged 10 ms period): fresh at 50 ms, invalid after */
     vehicle_init();
     send_rpm(5650u, 5650u);
-    ticks(20u);
+    ticks(5u);
     CHECK(v->q_engine_speed == Q_OK);
     ticks(1u);
     CHECK(v->q_engine_speed == Q_INVALID && v->engine_speed == 0);
@@ -203,7 +203,7 @@ static void test_coolant_and_extras(void)
         uint8_t s[8] = { 0, 0, 0, 0, 0x04, 0x43, 0, 0 };    /* 0x280 4-5 BE: 1091 = 10.91 mph */
         uint8_t w1[8] = { 0x07, 0x42, 0x07, 0x4C, 0, 0, 0, 0 };   /* 1858 / 1868 */
         uint8_t w2[8] = { 0x07, 0x4D, 0x07, 0x5E, 0, 0, 0, 0 };   /* 1869 / 1886 */
-        uint8_t th[7] = { 0, 0, 0, 128, 8, 127, 0 };        /* 0x160: b3 = 128, b5 = 255 - 128 */
+        uint8_t th[7] = { 0, 0, 0, 128, 8, 127, 0xC0 };     /* 0x160: pedal 512, complement 511 */
 
         send(0x551u, 8u, t);
         send(0x280u, 8u, s);
@@ -215,8 +215,8 @@ static void test_coolant_and_extras(void)
         CHECKV(x->speed_mph100, 1091);
         CHECK(x->q_speed == Q_OK);
         CHECK(x->q_wheels == Q_INVALID);                    /* 0x285 not yet seen */
-        CHECKV(x->throttle, 502);                           /* 128 x 0.392 % = 50.2 % */
-        CHECK(x->q_throttle == Q_OK && x->throttle_track_ok);
+        CHECKV(v->pedal, 502);                              /* 512 raw x 0.98 = 50.2 % */
+        CHECK(v->q_pedal == Q_OK);
         send(0x285u, 8u, w2);
         vehicle_update_10ms();
         CHECK(x->q_wheels == Q_OK);
@@ -225,18 +225,17 @@ static void test_coolant_and_extras(void)
         CHECKV(x->wheel_kmh100[2], 1869);
         CHECKV(x->wheel_kmh100[3], 1886);
         th[3] = 255u;
-        th[5] = 3u;                                         /* the redundant track disagrees */
+        th[5] = 3u;                                         /* the complement disagrees */
         send(0x160u, 7u, th);
         vehicle_update_10ms();
-        CHECKV(x->throttle, 1000);
-        CHECK(x->q_throttle == Q_OK && !x->throttle_track_ok);
+        CHECK(v->q_pedal == Q_INVALID && v->pedal == 0);
         t[0] = 0u;                                          /* raw 0 = -45 degC */
         send(0x551u, 8u, t);
         vehicle_update_10ms();
         CHECKV(v->engine_temp, -450);
         send(0x160u, 6u, th);                               /* DLC 6 < 7: rejected, the old data ages */
-        ticks(21u);
-        CHECK(x->q_throttle == Q_INVALID && x->q_speed == Q_INVALID && x->q_wheels == Q_INVALID);
+        ticks(51u);                                         /* past the slowest timeout (0x551, 500 ms) */
+        CHECK(v->q_pedal == Q_INVALID && x->q_speed == Q_INVALID && x->q_wheels == Q_INVALID);
         CHECK(v->q_engine_temp == Q_INVALID);
     }
 }
@@ -249,7 +248,7 @@ static void test_not_available(void)
     vehicle_init();
     for (unsigned i = 0u; i < 5u; i++) {
         uint8_t t[8] = { 90, 0, 0, 0, 0, 0, 0, 0 };
-        uint8_t th[7] = { 0, 0, 0, 200, 200, 55, 0 };       /* byte 4 = the accel-pedal CANDIDATE: unused */
+        uint8_t th[7] = { 0, 0, 0, 200, 200, 55, 0 };       /* pedal 803 raw, complement 220: valid */
         uint8_t e[8]  = { 0, 0, 0, 0, 0xFF, 0, 0, 0 };      /* 0x182 byte 4, the torque candidate: not even received */
 
         send_rpm(5650u, 5650u);
@@ -261,15 +260,110 @@ static void test_not_available(void)
         vehicle_update_10ms();
     }
     CHECK(v->q_engine_speed == Q_OK && v->q_brake == Q_OK && v->q_engine_temp == Q_OK);
-    CHECK(v->q_torque_actual == Q_INVALID && v->torque_actual == 0);
+    CHECK(v->q_torque_actual == Q_INVALID && v->torque_actual == 0);   /* 0x180 counter frozen at 0 */
     CHECK(v->q_torque_t2 == Q_INVALID && v->q_torque_t3 == Q_INVALID);
-    CHECK(v->q_pedal == Q_INVALID && v->pedal == 0);
+    CHECK(v->q_pedal == Q_OK && v->pedal == 787);         /* 803 x 0.98 permil (2026-11-23) */
     CHECK(v->q_engine_mode == Q_INVALID && v->q_soak == Q_INVALID);
     CHECK(v->q_park_speed == Q_INVALID && v->park_speed_raw == 0u);
     CHECK(v->q_ign_code == Q_INVALID && v->ign_code == 0u);
     CHECK(v->q_lever == Q_INVALID && v->lever == RANGE_NONE && v->lever_src == LEVER_SRC_NONE);
-    /* quality bits: engine speed (0), engine temp (5), brake (6) only */
-    CHECKV(vehicle_quality_bits(v), (1u << 0) | (1u << 5) | (1u << 6));
+    /* quality bits: engine speed (0), pedal (4), engine temp (5), brake (6) */
+    CHECKV(vehicle_quality_bits(v), (1u << 0) | (1u << 4) | (1u << 5) | (1u << 6));
+}
+
+/* 0x180 torques (actual -> T1, demand -> nissan_in_t) gated by the B6[3:0] counter; 0x160 pedal
+ * with its complement (2026-11-23, truck logs) */
+static void send180(uint16_t ta, uint16_t td, uint8_t ctr)
+{
+    uint8_t b[8] = { 0x16, 0x12, (uint8_t)(ta >> 4), (uint8_t)((ta & 15u) << 4 | (td >> 8)), (uint8_t)td,
+                     0, ctr, 0 };
+
+    send(0x180u, 8u, b);
+}
+
+static void send160(uint16_t v, uint16_t c)
+{
+    uint8_t d[7] = { 0, 0, (uint8_t)(v >> 2), (uint8_t)(v << 6), 0, 0, 0 };
+
+    d[3] = (uint8_t)(v >> 2);
+    d[4] = (uint8_t)(v << 6);
+    d[5] = (uint8_t)(c >> 2);
+    d[6] = (uint8_t)(c << 6);
+    send(0x160u, 7u, d);
+}
+
+static unsigned d160_byte3_pct10(uint16_t v)
+{
+    return ((v >> 2) * 392u + 50u) / 100u;
+}
+
+static void test_torque_pedal(void)
+{
+    const vehicle_in_t *v = vehicle_in();
+    const nissan_in_t *x = nissan_in();
+
+    vehicle_init();
+    /* logged values: actual 0x5B4 -> 2835 x 0.1 Nm? raw 0x5B4 = 1460 -> 1460 x 5 - 4000 = 3300 */
+    send180(0x5B4u, 0x5C5u, 3u);                     /* first frame: no previous counter -> invalid */
+    vehicle_update_10ms();
+    CHECK(v->q_torque_actual == Q_INVALID && x->q_torque_demand == Q_INVALID);
+    send180(0x5B4u, 0x5C5u, 4u);                     /* counter +1 */
+    vehicle_update_10ms();
+    CHECK(v->q_torque_actual == Q_OK && x->q_torque_demand == Q_OK);
+    CHECKV(v->torque_actual, 3300);                  /* 330.0 Nm */
+    CHECKV(x->torque_demand, 3385);                  /* 0x5C5 = 1477 -> 338.5 Nm */
+    CHECK((vehicle_quality_bits(v) & (1u << 1)) != 0u);
+    send180(0x2DEu, 0x4C2u, 5u);                     /* the bench ECM's engine-off frame: -33.0 / 209.0 Nm */
+    vehicle_update_10ms();
+    CHECKV(v->torque_actual, -330);
+    CHECKV(x->torque_demand, 2090);
+    send180(0x000u, 0xFFFu, 6u);                     /* raw 0 = -400.0 Nm (the minimum); 0xFFF = invalid */
+    vehicle_update_10ms();
+    CHECK(v->q_torque_actual == Q_OK && v->torque_actual == -4000);
+    CHECK(x->q_torque_demand == Q_INVALID && x->torque_demand == 0);
+    send180(0x5B4u, 0x5C5u, 6u);                     /* counter frozen: both invalid */
+    vehicle_update_10ms();
+    CHECK(v->q_torque_actual == Q_INVALID && v->torque_actual == 0 && x->q_torque_demand == Q_INVALID);
+    send180(0x5B4u, 0x5C5u, 8u);                     /* skipped one: invalid */
+    vehicle_update_10ms();
+    CHECK(v->q_torque_actual == Q_INVALID);
+    send180(0x5B4u, 0x5C5u, 9u);                     /* back in step */
+    vehicle_update_10ms();
+    CHECK(v->q_torque_actual == Q_OK);
+    send180(0x5B4u, 0x5C5u, 0u);                     /* wrap 15 -> 0 is +1: tested from 9 via 10..15 */
+    vehicle_update_10ms();
+    CHECK(v->q_torque_actual == Q_INVALID);
+    for (uint8_t c = 1u; c <= 15u; c++) {
+        send180(0x5B4u, 0x5C5u, c);
+        vehicle_update_10ms();
+    }
+    send180(0x5B4u, 0x5C5u, 0u);
+    vehicle_update_10ms();
+    CHECK(v->q_torque_actual == Q_OK);
+    ticks(4u);                                       /* 50 ms after the last frame: still fresh */
+    CHECK(v->q_torque_actual == Q_OK);
+    ticks(1u);
+    CHECK(v->q_torque_actual == Q_INVALID && x->q_torque_demand == Q_INVALID);
+
+    /* pedal: 800 raw (the logged full throttle) = 784 permil; complement checked */
+    vehicle_init();
+    send160(800u, 223u);
+    vehicle_update_10ms();
+    CHECK(v->q_pedal == Q_OK);
+    CHECKV(v->pedal, 784);
+    CHECKV(d160_byte3_pct10(800u), 784);            /* the DBC's byte-3 reading agrees: 200 x 0.392 % */
+    send160(0u, 1023u);
+    vehicle_update_10ms();
+    CHECK(v->q_pedal == Q_OK && v->pedal == 0);
+    send160(1023u, 0u);
+    vehicle_update_10ms();
+    CHECKV(v->pedal, 1000);                          /* 1003 clamped */
+    send160(800u, 224u);                             /* complement off by one: invalid */
+    vehicle_update_10ms();
+    CHECK(v->q_pedal == Q_INVALID && v->pedal == 0);
+    send160(800u, 223u);
+    ticks(6u);                                       /* timeout 50 ms */
+    CHECK(v->q_pedal == Q_INVALID);
 }
 
 static void test_tx_stub(void)
@@ -344,6 +438,7 @@ int main(void)
     test_brake();
     test_coolant_and_extras();
     test_not_available();
+    test_torque_pedal();
     test_tx_stub();
     test_range_holds_p();
     if (fails == 0) {
