@@ -255,3 +255,26 @@ B2 → 0xFFFF3F17 [V✔]; no plausibility, counter or page-order check [V]. Page
 | other pages, byte 3 | ignored (the ECM copies only 3 bytes) [V] |
 **0xE1D9C is not a problem:** it lives in 0xE1D04, the handler of ID **0x253** (dispatch 0xE0F2A), which is not in this ECM's receive table, so the 0x177 torque-cut cell is never overwritten from the 0x560 record [V].
 **Minimum for the TCU:** 0x560 on time (U0101); B0 a plausible ATF temperature (°C + 50 [I]); pages 0x10–0x17 cycling (calibration ID + CVN, else Mode 09 answers fail); every fault page 00. **Open decision:** the replay currently reports the truck TCM's calibration ID "RH2236" and its CVN in the ECM's OBD Mode 09 answers; a replacement TCU should probably report its own ID.
+
+## How the ECM uses the gear values (static decode, 2026-11-23; ratio tables, gear list, nibble limits and free space re-checked by hand)
+0x174's nibbles land in 0xFFFF1091 (target - 1) / 0xFFFF1090 (engaged - 1) when < 8, else **0 (= 1st)**;
+copies 108E/F, 1092/93, 1094/95, 1505 (= gear number); ~55 reader functions.
+- **Memory-safe for gears 6 and 7 [V]:** every gear-indexed table is clamped (to 4 for the 5-entry
+  tables, to 7 for the 8-entry ones) or has >= 7 entries. Ratio tables: **0x1247E = 5 entries**
+  (3.842 / 2.353 / 1.529 / 1.000 / 0.839, readers clamp to 4) ✔; **0x12488 and 0x141A6 = 8 entries**
+  with 5-7 repeating 0.839 ✔; gear-number list 0xFF80 = [2,2,3,4,5,6,7,8] ✔; per-gear limits
+  0x11772 / 0x112D2 (8 entries, padded), 8x8 maps 0xB314 / 0xE48C (rows 5-7 zero), 4x4 maps with the
+  axis 0xF7B0 = 0..3 (gear >= 4 reads the 4th row), byte tables 0xF700..0xF70F (5, clamp 4), upshift
+  tables 0x10409 / 0xF9C1 / 0xF9BC (4 pairs), the if-chain 0xF0ED8 (gear 7 -> 0 + abort flag).
+- **But not meaningful for an 8HP:** ratio-based rpm uses 0.839 for every gear >= 5; the enable window
+  cal 0x86B9..0x86B8 = gear 1..5 drops out at 6+; the top-gear test 0x7B900 hard-codes target 4.
+  The (state, engaged, target) legality table 0x167A4.. lists only 0..4, but its check is calibrated
+  off (cal 0x13C7A bit 4 = 0).
+- **Nibble 8 is unsafe today:** it fails `cmp/ge #8` (0xE26E8 / 0xE2826) and becomes 1st gear.
+- **8-gear ECM patch scope [V/I]:** limits #8 -> #9 at 0xE26E8 / 0xE2826; add 8 to both classification
+  chains (0xE271A.., 0xE2760..); repoint the four 0x1247E users (literals 0x44E28, 0x4E4B8, 0x9B794,
+  0xF16FA) to an 8-entry table and raise their clamp to 7; extend 0xF700..0xF70F, the upshift tables,
+  the 0xF0ED8 chain, the 0xF7B0 axis; calibration-only: real 8HP ratios into 0x12488 / 0x141A6,
+  0x86B8, 0xB314, 0xE48C, 0x11772, 0x112D2. Free space 0x1988C-0x1FFFF (26 KB) ✔ and 0xF471C-0xFFF7F;
+  checksums (0x2AC2 sums to 0x100000 / 0x20000; nissutils "alt"/"alt2") to fix. Not determined: the
+  second gear writer 0xE1B48 (another frame layout, ID unknown), the consumers behind 0xFFFF10E4/10B8.
