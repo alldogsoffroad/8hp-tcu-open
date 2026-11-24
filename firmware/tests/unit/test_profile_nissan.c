@@ -366,20 +366,132 @@ static void test_torque_pedal(void)
     CHECK(v->q_pedal == Q_INVALID);
 }
 
-static void test_tx_stub(void)
+/* the transmit set 0x174 / 0x176 / 0x177 (2026-11-23): refused until data, layouts as logged on
+ * the truck, counters, 10 ms period, the cut only in a known upshift, 0x421 never sent */
+static const can_frame_t *last_tx(uint16_t id)
 {
-    const vehicle_out_t o = { { 2000u, 2000u, 2000u }, true };
+    for (int i = (int)stub.n_tx - 1; i >= 0; i--) {
+        if (stub.tx[i].id == id) {
+            return &stub.tx[i];
+        }
+    }
+    return NULL;
+}
 
+static void test_tx(void)
+{
+    vehicle_out_t o;
+    can_frame_t f;
+
+    memset(&o, 0, sizeof o);
     stub.n_tx = 0u;
     vehicle_tx_init();
+    CHECK(!vehicle_tx_enable_torque(true));          /* no drivetrain data yet */
+    vehicle_tx_set(&o);                              /* drivetrain_valid false: ignored */
+    CHECK(!vehicle_tx_enable_torque(true));
+    for (unsigned i = 0u; i < 50u; i++) {
+        vehicle_tx_tick_1ms();
+    }
+    CHECKV(stub.n_tx, 0);
+
+    /* a 3 -> 4 upshift in progress (logged: 174 B3 0x43, 177 B5 0x10 with B2 0x0A) */
+    o.drivetrain_valid = true;
+    o.gear_engaged = 3u;
+    o.gear_target = 4u;
+    o.output_rpm = 0x07C5u;
+    o.turbine_rpm = 0x1252u;
+    o.torque_cut_q8 = 0x4Du;
+    o.lockup = true;
     vehicle_tx_set(&o);
-    CHECK(!vehicle_tx_enable_torque(true));          /* nothing exists to enable */
-    CHECK(!vehicle_tx_enable_torque(false));
+    CHECK(vehicle_tx_enable_torque(true));
+    nissan_tx_build(0u, &f);                         /* 0x174 */
+    CHECK(f.id == 0x174u && f.dlc == 8u);
+    CHECK(f.data[0] == 0xFFu && f.data[1] == 0xE7u && f.data[2] == 0x1Cu && f.data[3] == 0x43u);
+    CHECK(f.data[4] == 0x00u && f.data[5] == 0x80u && f.data[6] == 0u && f.data[7] == 0u);
+    nissan_tx_build(1u, &f);                         /* 0x176: the logged 07 C5 12 52 00 00 cc */
+    CHECK(f.id == 0x176u && f.dlc == 7u);
+    CHECK(f.data[0] == 0x07u && f.data[1] == 0xC5u && f.data[2] == 0x12u && f.data[3] == 0x52u &&
+          f.data[4] == 0u && f.data[5] == 0u && f.data[6] == 0u);
+    nissan_tx_build(2u, &f);                         /* 0x177: 00 00 0A 00 4D 10 */
+    CHECK(f.id == 0x177u && f.dlc == 6u);
+    CHECK(f.data[0] == 0u && f.data[1] == 0u && f.data[2] == 0x0Au && f.data[3] == 0u &&
+          f.data[4] == 0x4Du && f.data[5] == 0x10u);
+
+    /* 10 ms period, three frames each slot, counters +1 per frame in their low nibble */
     for (unsigned i = 0u; i < 100u; i++) {
         vehicle_tx_tick_1ms();
     }
-    CHECKV(stub.n_tx, 0);                            /* 0x177 / 0x421 are TODOs: no frame, ever */
-    CHECKV(nissan_tx_sent_count(), 0);
+    CHECKV(nissan_tx_sent_count(), 30);
+    {
+        unsigned n174 = 0u, n176 = 0u, n177 = 0u, n421 = 0u;
+        uint8_t c174 = 0xFFu, c176 = 0xFFu;
+        bool step_ok = true;
+
+        for (unsigned i = 0u; i < stub.n_tx; i++) {
+            const can_frame_t *t = &stub.tx[i];
+
+            if (t->id == 0x174u) {
+                if (c174 != 0xFFu && (uint8_t)((t->data[4] - c174) & 15u) != 1u) {
+                    step_ok = false;
+                }
+                c174 = t->data[4] & 15u;
+                n174++;
+            } else if (t->id == 0x176u) {
+                if (c176 != 0xFFu && (uint8_t)((t->data[6] - c176) & 15u) != 1u) {
+                    step_ok = false;
+                }
+                c176 = t->data[6] & 15u;
+                n176++;
+            } else if (t->id == 0x177u) {
+                n177++;
+            } else if (t->id == 0x421u) {
+                n421++;
+            }
+        }
+        CHECKV(n174, 10);
+        CHECKV(n176, 10);
+        CHECKV(n177, 10);
+        CHECKV(n421, 0);                             /* the gear indicator is never sent (D-N1) */
+        CHECK(step_ok);
+    }
+
+    /* shift finished: target = engaged, no cut even if a stale level is still set */
+    o.gear_engaged = 4u;
+    o.gear_target = 4u;
+    o.lockup = false;
+    vehicle_tx_set(&o);
+    nissan_tx_build(0u, &f);
+    CHECK(f.data[3] == 0x44u && f.data[5] == 0x00u);
+    nissan_tx_build(2u, &f);
+    CHECK(f.data[2] == 0x03u && f.data[4] == 0u && f.data[5] == 0x78u);   /* code 15 = none */
+    /* 1st gear: 177 B3 = 1, B2 = 0 (logged 1-2: 00 00 00 01 B4 00) */
+    o.gear_engaged = 1u;
+    o.gear_target = 2u;
+    o.torque_cut_q8 = 0x67u;
+    vehicle_tx_set(&o);
+    nissan_tx_build(2u, &f);
+    CHECK(f.data[2] == 0x00u && f.data[3] == 0x01u && f.data[4] == 0x67u && f.data[5] == 0x00u);
+    /* downshift codes as logged; an unlogged shift sends "none" and no cut */
+    CHECKV(nissan_tx_shift_code(4u, 3u), 9);
+    CHECKV(nissan_tx_shift_code(5u, 4u), 13);
+    CHECKV(nissan_tx_shift_code(3u, 2u), 15);
+    CHECKV(nissan_tx_shift_code(4u, 5u), 3);
+    o.gear_engaged = 3u;
+    o.gear_target = 2u;
+    vehicle_tx_set(&o);
+    nissan_tx_build(2u, &f);
+    CHECK(f.data[4] == 0u && f.data[5] == 0x78u);
+    /* disable: nothing more is sent */
+    CHECK(!vehicle_tx_enable_torque(false));
+    {
+        const unsigned before = stub.n_tx;
+
+        for (unsigned i = 0u; i < 50u; i++) {
+            vehicle_tx_tick_1ms();
+        }
+        CHECKV(stub.n_tx, before);
+    }
+    CHECK(last_tx(0x174u) != NULL);
 }
 
 /* ---- end to end: the stock range chain with no lever source ---------------------------------- */
@@ -439,7 +551,7 @@ int main(void)
     test_coolant_and_extras();
     test_not_available();
     test_torque_pedal();
-    test_tx_stub();
+    test_tx();
     test_range_holds_p();
     if (fails == 0) {
         printf("profile_nissan: all checks passed\n");

@@ -674,7 +674,7 @@ else()
     set(NISSAN_TEST_SOURCES ${RNG_TEST_SOURCES})
     list(REMOVE_ITEM NISSAN_TEST_SOURCES io/vehicle/vehicle_inject.c)
     add_executable(test_profile_nissan tests/unit/test_profile_nissan.c ${NISSAN_TEST_SOURCES}
-        io/vehicle/profile_nissan.c io/vehicle/nissan_tx.c bsw/com/com.c)
+        io/vehicle/profile_nissan.c io/vehicle/nissan_tx.c bsw/com/com.c bsw/com/com_tx.c)
     target_compile_definitions(test_profile_nissan PRIVATE RNG_CHAIN_TEST_HOOKS=1)
     add_test(NAME profile_nissan COMMAND test_profile_nissan)
     # KEY-OFF AUTO-P (2026-11-17, ~/tcu_sweep/keyoff_autop_port.md): the

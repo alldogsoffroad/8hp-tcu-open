@@ -9,8 +9,9 @@
  * Fields: only what the FCA transmit set already carries. The FCA field MEANINGS are still
  * open (spec 08 section 5), so the struct offers the one decoded thing the transmit layer
  * itself guards: the three 13-bit torque request fields of the torque-request messages
- * (raw = Nm*4 + 2000). Gear indicator and the Nissan messages join this struct when their
- * layouts are confirmed (audit §4.2: 0x421 / 0x177).
+ * (raw = Nm*4 + 2000), and (2026-11-23) the drivetrain state the Nissan engine controller
+ * expects in 0x174 / 0x176 / 0x177. The gear indicator (0x421) is not sent: its sender is open
+ * (decision D-N1).
  *
  * Every message starts disabled. The torque-request messages refuse to enable until every
  * torque field has been set (an all-zero field encodes -500 Nm): that guard lives in
@@ -21,9 +22,18 @@
 
 #include "platform/platform.h"
 
-typedef struct {
+typedef struct vehicle_out {
     uint16_t torque_request_raw[3];   /* the three 13-bit torque request fields (Nm*4+2000) */
     bool     torque_request_valid;    /* true: the fields above are written by vehicle_tx_set */
+    /* drivetrain state for a vehicle whose engine controller expects transmission frames (the
+     * Nissan set, 2026-11-23; docs/reference/nissan-ecm-tcm-interface.md). Unused by FCA. */
+    uint16_t output_rpm;              /* output-shaft speed, 1 rpm                            */
+    uint16_t turbine_rpm;             /* turbine speed, 1 rpm                                 */
+    uint8_t  gear_engaged;            /* 1..8; 0 = no gear (P / N)                            */
+    uint8_t  gear_target;             /* 1..8; equal to gear_engaged when no shift is pending */
+    uint8_t  torque_cut_q8;           /* torque to remove during an upshift, fraction x 256   */
+    bool     lockup;                  /* converter lock-up flag [I for the Nissan bits]       */
+    bool     drivetrain_valid;        /* true: the drivetrain fields above are written        */
 } vehicle_out_t;
 
 /* The interface (implemented, static inline, by the selected vehicle's header below):

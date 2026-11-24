@@ -1,5 +1,5 @@
-/* The neutral transmit seam (vehicle_tx.h), Nissan implementation: the stub (nissan_tx.c).
- * Included by vehicle_tx.h only. Nothing is transmitted. */
+/* The neutral transmit seam (vehicle_tx.h), Nissan implementation: nissan_tx.c (0x174 / 0x176 /
+ * 0x177). Included by vehicle_tx.h only. Every frame starts disabled. */
 #ifndef TCU_VEHICLE_TX_NISSAN_H
 #define TCU_VEHICLE_TX_NISSAN_H
 
@@ -23,12 +23,12 @@ static inline void vehicle_tx_tick_1ms(void)
 
 static inline void vehicle_tx_set(const vehicle_out_t *o)
 {
-    (void)o;                 /* TODO(capture): no Nissan message is built yet */
+    nissan_tx_set(o);
 }
 
 static inline bool vehicle_tx_enable_torque(bool on)
 {
-    return nissan_tx_enable(on);     /* always false */
+    return nissan_tx_enable(on);     /* refused until drivetrain data was set */
 }
 
 static inline bool vehicle_hw_register(void)

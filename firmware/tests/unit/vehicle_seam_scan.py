@@ -113,16 +113,17 @@ def vehicle_ids(root):
         sys.exit(f"vehicle seam guard violation: could not parse the FCA tables "
                  f"(rx {len(rx)}/10, tx {len(tx)}/8)")
     ids |= rx | tx
-    # the NISSAN skeleton: nine receive rows and the two documented-TODO transmit IDs
+    # the NISSAN profile: nine receive rows; the transmit set 0x174 / 0x176 / 0x177 (2026-11-23)
+    # and the never-sent gear indicator 0x421
     nrx = {int(h, 16) for h in re.findall(
         r"\{\s*0x([0-9A-Fa-f]+)u,\s*CAN_BUS",
         open(os.path.join(root, "io/vehicle/profile_nissan.c")).read())}
     ntx = {int(h, 16) for h in re.findall(
-        r"#define\s+NISSAN_TX_TODO_ID_\w+\s+0x([0-9A-Fa-f]+)u",
+        r"#define\s+NISSAN_TX_(?:TODO_)?ID_\w+\s+0x([0-9A-Fa-f]+)u",
         open(os.path.join(root, "io/vehicle/nissan_tx.h")).read())}
-    if len(nrx) != 9 or len(ntx) != 2:
+    if len(nrx) != 9 or len(ntx) != 4:
         sys.exit(f"vehicle seam guard violation: could not parse the Nissan tables "
-                 f"(rx {len(nrx)}/9, tx {len(ntx)}/2)")
+                 f"(rx {len(nrx)}/9, tx {len(ntx)}/4)")
     ids |= nrx | ntx
     try:
         s = open(os.path.join(root, "app/fr_cal.c")).read()
