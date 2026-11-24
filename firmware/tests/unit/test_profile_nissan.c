@@ -421,9 +421,9 @@ static void test_tx(void)
     for (unsigned i = 0u; i < 100u; i++) {
         vehicle_tx_tick_1ms();
     }
-    CHECKV(nissan_tx_sent_count(), 30);
+    CHECKV(nissan_tx_sent_count(), 31);              /* 3 x 10 at 10 ms + 0x560 once (100 ms) */
     {
-        unsigned n174 = 0u, n176 = 0u, n177 = 0u, n421 = 0u;
+        unsigned n174 = 0u, n176 = 0u, n177 = 0u, n421 = 0u, n560 = 0u;
         uint8_t c174 = 0xFFu, c176 = 0xFFu;
         bool step_ok = true;
 
@@ -446,13 +446,36 @@ static void test_tx(void)
                 n177++;
             } else if (t->id == 0x421u) {
                 n421++;
+            } else if (t->id == 0x560u) {
+                CHECK(t->dlc == 4u && t->data[0] == 0x65u && t->data[1] == 0x15u && t->data[2] == 0x36u &&
+                      t->data[3] == 0u);                 /* page 0, as logged */
+                n560++;
             }
         }
         CHECKV(n174, 10);
         CHECKV(n176, 10);
         CHECKV(n177, 10);
         CHECKV(n421, 0);                             /* the gear indicator is never sent (D-N1) */
+        CHECKV(n560, 1);
         CHECK(step_ok);
+    }
+
+    /* 0x560 cycles its 12 logged pages, one per 100 ms frame */
+    {
+        static const uint8_t pg[13] = { 0x16, 0x17, 0x40, 0x41, 0x42, 0x43, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16 };
+        bool ok = true;
+
+        for (unsigned k = 0u; k < 13u; k++) {
+            stub.n_tx = 0u;
+            for (unsigned i = 0u; i < 100u; i++) {
+                vehicle_tx_tick_1ms();
+            }
+            const can_frame_t *t = last_tx(0x560u);
+            if (t == NULL || t->data[1] != pg[k]) {
+                ok = false;
+            }
+        }
+        CHECK(ok);
     }
 
     /* shift finished: target = engaged, no cut even if a stale level is still set */

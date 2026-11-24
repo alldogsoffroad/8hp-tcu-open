@@ -1,4 +1,4 @@
-/* Nissan transmit set (2026-11-23): the three frames the Nissan ECM expects from the
+/* Nissan transmit set (2026-11-23): the four frames the Nissan ECM expects from the
  * transmission controller, rebuilt from the user's 2015 Frontier logs (TCM connected) and the
  * bench ECM's ROM (docs/reference/nissan-ecm-tcm-interface.md). Every frame starts disabled;
  * nissan_tx_enable(true) is refused until nissan_tx_set() has delivered valid drivetrain data.
@@ -12,7 +12,11 @@
  *                          B3 = 1 in 1st gear, B4 torque cut (fraction x 256; the ECM converts
  *                          it to spark retard), B5[6:3] shift type: 0..3 = 1-2..4-5, 9 = 4-3,
  *                          13 = 5-4, 15 = none
- * Losing any of the three for about 1-2 s sets U1001 in the ECM.
+ *   0x560  4 bytes, 100 ms B1 page / B2 page data, 12 pages cycling, B0 0x65, B3 0: replayed
+ *                          as logged (meanings open [I]); its timeout sets U0101 (lost
+ *                          communication with the TCM) in the ECM (ROM 0x9CAFC; bench-proven
+ *                          2026-11-23: U0101 cleared only once 0x560 was sent)
+ * Losing 0x174 / 0x176 / 0x177 for about 1-2 s sets U1001.
  *
  * NOT sent: 0x421 (the gear indicator; its sender is open, decision D-N1 - two senders on one
  * ID would collide).
@@ -29,6 +33,7 @@
 #define NISSAN_TX_ID_174 0x174u
 #define NISSAN_TX_ID_176 0x176u
 #define NISSAN_TX_ID_177 0x177u
+#define NISSAN_TX_ID_560 0x560u
 #define NISSAN_TX_TODO_ID_GEARBOX 0x421u   /* never sent (D-N1) */
 
 void nissan_tx_init(void);
@@ -38,6 +43,6 @@ void nissan_tx_set(const struct vehicle_out *o);  /* takes the drivetrain fields
 bool nissan_tx_enable(bool on);              /* false (and stays off) until valid data was set */
 uint32_t nissan_tx_sent_count(void);         /* frames transmitted since nissan_tx_init */
 uint8_t nissan_tx_shift_code(uint8_t engaged, uint8_t target);   /* 0x177 B5[6:3] */
-void nissan_tx_build(uint8_t idx, can_frame_t *f);              /* 0 = 0x174, 1 = 0x176, 2 = 0x177 */
+void nissan_tx_build(uint8_t idx, can_frame_t *f);   /* 0 = 0x174, 1 = 0x176, 2 = 0x177, 3 = 0x560 */
 
 #endif

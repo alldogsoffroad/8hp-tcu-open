@@ -5,13 +5,24 @@
 
 #include <string.h>
 
-enum { T_174, T_176, T_177, T_COUNT };
+enum { T_174, T_176, T_177, T_560, T_COUNT };
 
 static const com_tx_cfg_t s_msg[T_COUNT] = {
     [T_174] = { NISSAN_TX_ID_174, CAN_BUS1, 8u, 10u, false, false },
     [T_176] = { NISSAN_TX_ID_176, CAN_BUS1, 7u, 10u, false, false },
     [T_177] = { NISSAN_TX_ID_177, CAN_BUS1, 6u, 10u, false, false },
+    [T_560] = { NISSAN_TX_ID_560, CAN_BUS1, 4u, 100u, false, false },
 };
+
+/* 0x560: a multiplexed status frame, B1 = page, B2 = page data, one page per frame; the 12
+ * pages as the truck's TCM sent them (2026-09-11 log). Meanings are NOT known [I]: replayed as
+ * logged. The ECM's U0101 (lost communication with the TCM) watches this frame (0x9CAFC). */
+static const uint8_t s_560_pages[12][2] = {
+    { 0x15u, 0x36u }, { 0x16u, 0xC2u }, { 0x17u, 0xC0u }, { 0x40u, 0x00u },
+    { 0x41u, 0x00u }, { 0x42u, 0x00u }, { 0x43u, 0x00u }, { 0x10u, 0x52u },
+    { 0x11u, 0x48u }, { 0x12u, 0x32u }, { 0x13u, 0x32u }, { 0x14u, 0x33u },
+};
+#define NISSAN_560_B0 0x65u          /* logged B0 (drifts 0x61..0x76 on the truck) [I: ATF temp?] */
 
 /* the drivetrain snapshot the frames are packed from */
 typedef struct {
@@ -26,6 +37,7 @@ typedef struct {
 typedef struct {
     com_tx_state_t st[T_COUNT];
     tx_in_t        in;
+    uint8_t        page560;
     bool           valid;
 } nissan_tx_t;
 
@@ -92,6 +104,14 @@ static void pack(uint8_t idx, uint8_t d[8])
         d[4] = code <= 3u ? in->cut : 0u;          /* a cut only during a known upshift */
         d[5] = (uint8_t)(code << 3);
         break;
+    case T_560: {
+        const uint8_t p = (uint8_t)(s_tx.page560 % 12u);
+
+        d[0] = NISSAN_560_B0;
+        d[1] = s_560_pages[p][0];
+        d[2] = s_560_pages[p][1];
+        break;
+    }
     default:
         break;
     }
@@ -108,7 +128,12 @@ void nissan_tx_init(void)
 
 void nissan_tx_tick_1ms(void)
 {
+    const uint32_t before = s_tx.st[T_560].sent;
+
     com_tx_tick(1u);
+    if (s_tx.st[T_560].sent != before) {
+        s_tx.page560 = (uint8_t)((s_tx.page560 + 1u) % 12u);   /* next page after each sent frame */
+    }
 }
 
 void nissan_tx_set(const vehicle_out_t *o)
