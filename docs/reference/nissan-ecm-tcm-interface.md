@@ -230,3 +230,15 @@ pulls): 0x180 B5:B6[7:6] = 0x160 B3:B4[7:6] (identical); **0x160 B5:B6[7:6] = 10
 
 **Suggested profile timeouts:** ≈ 5 × period (50 ms for the 10 ms frames, 100 ms for 0x280/284/285,
 200 ms for 0x354, 500 ms for the 100 ms frames), with the counters above checked where present.
+
+## Key-on / ignition signal: not findable in the logs (2026-11-23)
+Every log window was triggered by a shift while driving: engine speed never falls below 400 rpm
+in any file (5 files, 130 windows), so the key never leaves RUN and no key-state bit can be told
+apart. The DBC (NissanDBCFilez) has no ignition signal. Body-frame bits that are constant
+through all windows, i.e. CANDIDATES only: 0x35D B0 = 0xC0, B4 = 0x40 (B4 bit 4 is the brake);
+0x60D B6 = 0x20; 0x358 B0 = 0x01, B4 = 0x02; 0x5C5 B0 = 0x40. Telling them apart needs a capture
+through key OFF → ACC → ON → START (a truck, or a BCM on the bench).
+Practical route for the TCU: the hard-wired ignition feed. The Nissan TCM is powered from the
+ignition-switched supply, and the TCU firmware already has the voltage ignition path (kl15,
+"mux 14") the Nissan profile uses today (ign_code reported invalid). Engine running is known
+from 0x1F9 (and the ECM stops broadcasting at key-off).
