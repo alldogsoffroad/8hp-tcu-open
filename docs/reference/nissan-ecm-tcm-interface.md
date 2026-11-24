@@ -216,7 +216,7 @@ and the ROM decode. [O] = measured in the logs, [I] = inferred.
 
 **Pedal / throttle position [O; I which of the two]:** 10-bit, **0.098 %/bit (raw ÷ 8 ÷ 1.28 →
 same % as the DBC's 0x160 B3 × 0.392)**, raw 0–800 seen (78.4 % at the logged full-throttle
-pulls): 0x180 B5:B6[7:6] = 0x160 B3:B4[7:6] (identical); **0x160 B5:B6[7:6] = 1023 − value**
+pulls): 0x180 B5:B6[7:6] = 0x160 B3:B4[7:6] (identical); **[CORRECTED 2026-11-23: not byte-identical frame by frame — 0x180's copy best matches 0x160 two frames (~20 ms) earlier and is likely filtered; 0x160 is the fresher source, and the one the profile uses]** **0x160 B5:B6[7:6] = 1023 − value**
 (complement copy: an integrity check). Correlates 1.00 with the DBC throttle byte.
 
 **Engine torque [O ranges, I meaning]**, two 12-bit values, phys = raw·5 − 4000 in **0.1 Nm**
