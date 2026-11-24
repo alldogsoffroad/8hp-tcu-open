@@ -45,7 +45,7 @@ the live path) · **MISSING** (not ported) · **UNDECODED** (inside a ported fun
 | Latching monitor of ours (bounds, envelope, windows) | LIVE | G6b | windows revisited before a vehicle (D-G6-6) |
 | Gear target | STOOD IN (1st) | decision A | the honest chain in the fork (option C) |
 | Engine-stall all-release (E28E) | STOOD IN (fence) | D-G6-14 | lift with a monitor allowance |
-| Sys (line pressure) | STOOD IN (500) / SHADOW (healthy law) | r05d (shadow Sys 7271 in P) | fork: healthy law live with the Nissan torque/CAN inputs; on this bench the stock is 500 (reaction 50) |
+| Sys (line pressure) | FCA: STOOD IN (500) / SHADOW (healthy law); **Nissan build: LIVE (switch `NISSAN_LP_LIVE`, default ON, 2026-11-23)** - the shadow's `sys_i` through the monitor's seam (`drv_gsbr_take` ch 6, `app/nissan_lp.c`) and the law's guard (stock range [500, 8500]), gated on shadow valid + 0x180 torque Q_OK + reaction 50 / 0x89CF5 inactive, else 500; latched / fenced P content keeps 500 | r05d (shadow Sys 7271 in P); Nissan host tests `nissan_lp`, `nissan_lp_chain` | FCA: on this bench the stock is 500 (reaction 50). Nissan: DO NOT FLASH (stock ECM reads gear 8 as 1st; dry bench); before a vehicle - the shadow's stood-in 0xEA4C8 reasons, a wet test |
 | Reaction 37 (minimum current 0) | STOOD IN (0) | D-G6-10 | goes live with the fault chain |
 | WK lock-up | MISSING | — | decode → shadow → live (needs real speeds) |
 | Table before the boot pass | STOOD IN (r03f table) | D-G6-15 | optional: the stock stages zeros |

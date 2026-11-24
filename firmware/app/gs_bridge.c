@@ -45,6 +45,9 @@
 #if GS_G6B && !defined(TCU_RAM_APP)
 #include "app/gs_cand.h"          /* G6b: the candidate (instance 2), the monitored source */
 #endif
+#if DRV_RQ_SYS_LIVE && !defined(TCU_RAM_APP)
+#include "app/nissan_lp.h"        /* NISSAN_LP_LIVE: the Sys value, by value (no shadow type) */
+#endif
 
 #if defined(TCU_RAM_APP)
 
@@ -1196,7 +1199,16 @@ bool drv_gsbr_take(uint8_t ch, uint16_t *v)
     if (ch == 5u || ch == 6u) {
         static const uint16_t PC7[7] = DRV_RQ_PCONT_TABLE;
         uint16_t c;
+#if DRV_RQ_SYS_LIVE
+        /* NISSAN_LP_LIVE (app/nissan_lp.h): while the seam carries the candidate, Sys is the
+         * healthy line-pressure law's value, gated, BY VALUE (the candidate's own Sys is the
+         * reaction-50 stand-in 500); latched / fenced it stays the P content's 500 below */
+        if (cand_cur_inj(ch, &c) == 0u && ch == 6u) {
+            c = nissan_lp_sys_request();
+        }
+#else
         (void)cand_cur_inj(ch, &c);
+#endif
         *v = (B.src == GSM_S_CAND) ? c : PC7[ch];
         return true;
     }

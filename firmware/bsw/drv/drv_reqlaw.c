@@ -220,12 +220,23 @@ static uint16_t rq_prod_guarded(uint8_t ch)
     } else if (v == PCONT[ch]) {
         return v;
     }
+#if DRV_RQ_SYS_LIVE
+    /* NISSAN_LP_LIVE (drv_gsbr.h, app/nissan_lp.h): Sys (ch 6) may carry the healthy
+     * line-pressure law's current, inside the stock's Sys range; WK (ch 5) stays 500-only */
+    if (ch == 6u && v >= DRV_RQ_SYS_LIVE_MIN && v <= DRV_RQ_SYS_LIVE_MAX) {
+        return v;
+    }
+#endif
     s_m5_guard_n++;                     /* never in a sound build */
     return PCONT[ch];
 }
 #endif /* GS_LIVE_DIR != 0 */
 _Static_assert(DRV_RQ_PCONT_WK == 500u && DRV_RQ_PCONT_SYS == 500u,
                "drv_reqlaw: WK / Sys stay the compile-time 500 (D-G6-10)");
+#if DRV_RQ_SYS_LIVE
+_Static_assert(DRV_RQ_SYS_LIVE_MIN == DRV_RQ_PCONT_SYS && DRV_RQ_SYS_LIVE_MAX == 8500u,
+               "drv_reqlaw: the Nissan live Sys range is the stock's [500, 8500], its floor the P content");
+#endif
 #else
 /* the holder-fed form (host M5 reference tests only since r04r; the image's
  * r03n..r04n form): app/rq_prod.c's channel 0..6 current through the guard;

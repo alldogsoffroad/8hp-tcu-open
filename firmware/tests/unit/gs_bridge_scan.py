@@ -28,7 +28,11 @@ OUT_PATTERNS = [r"gs_bridge", r"\bgsb_", r"\bGSB_", r"drv_gsbr", r"\.gsb_(win|st
 SEAM_FILE = "bsw/drv/drv_reqlaw.c"
 BRIDGE_INCLUDES = {"app/gs_bridge.h", "app/gs_shadow.h", "bsw/drv/drv_gsbr.h", "app/park_cells.h",
                    # G6b (2026-11-19): the monitored source, the candidate's read accessors
-                   "app/gs_cand.h"}
+                   "app/gs_cand.h",
+                   # NISSAN_LP_LIVE (2026-11-23): the Nissan line-pressure live seam, a by-value
+                   # getter header with no shadow type (its use - one call, inside
+                   # `#if DRV_RQ_SYS_LIVE` only - is held by lp_ti_shadow_scan.py outputs)
+                   "app/nissan_lp.h"}
 BRIDGE_PATTERNS = [
     r"\bCELL_[A-Z0-9_]+",                           # the live cell macros (writable)
     r"\bPCELL_(?!TGT\b)[A-Z0-9_]+",                 # park_cells.h: only PCELL_TGT (const)

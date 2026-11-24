@@ -19,6 +19,11 @@ Comments are stripped first.
                                         0xFFF8E34A, 0xFFF8513E, 0xFFF89CF5, 0xFFF8E21E, the torque-
                                         intervention object 0xFFF8B9D8.., the request 0xFFF8AEC8.., the
                                         hand-over 0xFFF850C6 / 0xFFF850D0) and names no transmit path
+  (2026-11-23) THE NISSAN LINE-PRESSURE LIVE SEAM (app/nissan_lp.h / .c, NISSAN_LP_LIVE): in
+  `outputs` mode no output path may name the seam (nissan_lp_*, app/nissan_lp.h) - EXCEPT the
+  monitor app/gs_bridge.c, which may include app/nissan_lp.h and call nissan_lp_sys_request (its
+  one export the seam drv_gsbr_take needs), each only inside an `#if DRV_RQ_SYS_LIVE` block (the
+  nearest enclosing conditional). The seam itself (app/nissan_lp.c) is checked in `hook` mode.
 Exit 1 ("line-pressure / torque-intervention shadow read-only violation") on any hit.
 """
 import re
@@ -42,6 +47,10 @@ SHADOW_PATTERNS = [
     r"0[xX][fF]{4}[0-9a-fA-F]{4}",
     r"\bvolatile\s+[a-z0-9_]+\s*\*\s*\)",
 ]
+# the Nissan live seam (see the docstring): forbidden in every output path but the monitor's block
+NLP_PATTERNS = [r"\bnissan_lp_[a-z0-9_]*", r'#\s*include\s*"app/nissan_lp\.h"']
+NLP_MONITOR = "app/gs_bridge.c"
+NLP_MONITOR_ALLOW = {"nissan_lp_sys_request"}
 HOOK_PATTERNS = [
     r"(?<!const )\bvolatile\b",
     r"0[xX][fF]{3}8[bB][cC][b-fB-F][0-9a-fA-F]", r"0[xX][fF]{3}8[bB][dD]0[0-9a-fA-F]",
@@ -60,6 +69,36 @@ def strip(txt):
     return txt
 
 
+def enclosing_if(txt, pos):
+    """the nearest unclosed #if / #ifdef / #ifndef / #elif / #else line before pos"""
+    stack = []
+    for m in re.finditer(r"^[ \t]*#[ \t]*(if|ifdef|ifndef|elif|else|endif)\b[^\n]*", txt[:pos], flags=re.M):
+        d = m.group(1)
+        if d in ("if", "ifdef", "ifndef"):
+            stack.append(m.group(0).strip())
+        elif d in ("elif", "else"):
+            if stack:
+                stack[-1] = m.group(0).strip()
+        elif stack:
+            stack.pop()
+    return stack[-1] if stack else ""
+
+
+def nlp_check(f, txt):
+    hits = []
+    mon = f.replace("\\", "/").endswith(NLP_MONITOR)
+    for p in NLP_PATTERNS:
+        for m in re.finditer(p, txt):
+            tok = m.group(0)
+            if mon and (tok in NLP_MONITOR_ALLOW or tok.endswith('"app/nissan_lp.h"')):
+                if re.match(r"#\s*if\s+DRV_RQ_SYS_LIVE\b", enclosing_if(txt, m.start())):
+                    continue
+                hits.append("%s: %s (outside an #if DRV_RQ_SYS_LIVE block)" % (f, tok))
+            else:
+                hits.append("%s: %s (the Nissan live seam named by an output path)" % (f, tok))
+    return hits
+
+
 def main():
     mode, files = sys.argv[1], sys.argv[2:]
     pats = {"outputs": OUT_PATTERNS, "shadow": SHADOW_PATTERNS, "hook": HOOK_PATTERNS}[mode]
@@ -76,6 +115,8 @@ def main():
         for p in pats:
             for m in re.finditer(p, txt):
                 bad.append("%s: %s" % (f, m.group(0)))
+        if mode == "outputs":
+            bad.extend(nlp_check(f, txt))
     if bad:
         print("line-pressure / torque-intervention shadow read-only violation (%s):\n  %s" % (mode, "\n  ".join(bad)))
         return 1

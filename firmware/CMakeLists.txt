@@ -33,6 +33,16 @@ elseif(TCU_VEHICLE STREQUAL "NISSAN")
     # messages - replaces app/fr_cal.c's three per-entry tables (excluded there under
     # TCU_VEHICLE_NISSAN); with every app/fr_cal.c of a target that defines it
     set(TCU_VEHICLE_FR_SOURCES app/fr_cal_nissan.c)
+    # THE NISSAN LINE-PRESSURE LIVE SWITCH (2026-11-23, app/nissan_lp.h; user-approved design):
+    # ON (default) - the read-only healthy line-pressure shadow's Sys current is the LIVE Sys
+    # request (gated: shadow valid, actual torque Q_OK, fault reaction 50 inactive; else 500),
+    # through the monitor's seam and the request law's guard. Every target that builds
+    # app/nissan_lp.c gets NISSAN_LP_LIVE=1 (the loop at the end of this file); OFF = the Sys 500
+    # stand-in, as before. Never in the FCA configure (its images stay byte-identical).
+    option(NISSAN_LP_LIVE "Nissan: the healthy line-pressure law drives the live Sys request" ON)
+    if(NISSAN_LP_LIVE)
+        list(APPEND TCU_VEHICLE_APP_SOURCES app/nissan_lp.c)
+    endif()
     message(STATUS "TCU_VEHICLE=NISSAN: a SKELETON profile (confirmed DBC signals only, no TX) - DO NOT FLASH")
 else()
     message(FATAL_ERROR "TCU_VEHICLE='${TCU_VEHICLE}' is not supported: only FCA and NISSAN exist. "
@@ -237,6 +247,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
             COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py nvm ${SH_NM}
                 CMakeFiles/tcu_app.elf.dir/app/fr_cal_nissan.c.obj
             COMMENT "option C: the Nissan comm table through the NVM scan")
+    endif()
+    if(TCU_VEHICLE STREQUAL "NISSAN" AND NISSAN_LP_LIVE)
+        # NISSAN_LP_LIVE (2026-11-23): the seam app/nissan_lp.c (a reader of the lp / fr shadows)
+        # through the NVM scan
+        add_custom_command(TARGET tcu_app.elf POST_BUILD
+            COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/g6a_scan.py nvm ${SH_NM}
+                CMakeFiles/tcu_app.elf.dir/app/nissan_lp.c.obj
+            COMMENT "NISSAN_LP_LIVE: the line-pressure live seam through the NVM scan")
     endif()
 
     # ---- Data-flash loader (spec 18): code flash at 0x40000, written with the Teensy flasher ----
@@ -2213,7 +2231,8 @@ else()
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/lp_ti_shadow_scan.py shadow
             ${CMAKE_SOURCE_DIR}/tests/unit/lp_scan_fixture_shadow.c)
     add_test(NAME lp_shadow_scan_hook
-        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/lp_ti_shadow_scan.py hook ${CMAKE_SOURCE_DIR}/app/lp_hook.c)
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/lp_ti_shadow_scan.py hook ${CMAKE_SOURCE_DIR}/app/lp_hook.c
+            ${CMAKE_SOURCE_DIR}/app/nissan_lp.c)
     add_test(NAME lp_shadow_scan_hook_negative
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/lp_ti_shadow_scan.py hook
             ${CMAKE_SOURCE_DIR}/tests/unit/lp_scan_fixture_hook.c)
@@ -2238,6 +2257,32 @@ else()
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/ti_cal.c)
     add_test(NAME lp_sh_guard_cal
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -Wall -Wextra -Wconversion ${CMAKE_SOURCE_DIR}/app/lp_cal.c)
+    # THE NISSAN LINE-PRESSURE LIVE SWITCH (2026-11-23, app/nissan_lp.h; NISSAN_LP_LIVE, the Nissan
+    # configure only - the FCA suite and its count unchanged). test_nissan_lp: the gates on a
+    # simulated Nissan bus (the profile's 0x180 torque, the fault-reaction shadow on the Nissan table,
+    # the line-pressure shadow): healthy -> the shadow's law value, torque invalid / reaction 50 /
+    # shadow skipped -> 500. test_nissan_lp_chain: the plumbing on the G6b chain (seam -> monitor ->
+    # guard -> the law's 0x94ED4[6]); the monitor's latch puts 500 back. The scan negative: an
+    # output path naming the seam must be refused.
+    if(TCU_VEHICLE STREQUAL "NISSAN" AND NISSAN_LP_LIVE)
+        add_executable(test_nissan_lp tests/unit/test_nissan_lp.c app/nissan_lp.c ${LP_APP_SOURCES}
+            app/fr_shadow.c app/fr_fm.c app/fr_cal.c app/fr_hook.c app/fr_cal_nissan.c app/sm_cal.c
+            io/vehicle/profile_nissan.c bsw/com/com.c bsw/com/crc8.c tests/unit/stub_plat.c)
+        target_compile_definitions(test_nissan_lp PRIVATE _POSIX_C_SOURCE=200809L LP_HOOK_NO_GATHER=1
+            FR_HOOK_NO_GATHER=1 GS_LIVE_DIR=3 GS_G6B=1)
+        add_test(NAME nissan_lp COMMAND test_nissan_lp)
+        set(NLP_CHAIN_SOURCES ${G6B_SOURCES})
+        list(REMOVE_ITEM NLP_CHAIN_SOURCES tests/unit/test_g6b.c)
+        add_executable(test_nissan_lp_chain tests/unit/test_nissan_lp_chain.c ${NLP_CHAIN_SOURCES}
+            app/nissan_lp.c ${LP_APP_SOURCES} ${FR_APP_SOURCES} app/fr_cal_nissan.c app/sm_cal.c)
+        target_compile_definitions(test_nissan_lp_chain PRIVATE ${G6B_DEFS} LP_HOOK_NO_GATHER=1
+            FR_HOOK_NO_GATHER=1 TCU_VEHICLE_NISSAN=1)
+        add_test(NAME nissan_lp_chain COMMAND test_nissan_lp_chain)
+        add_test(NAME lp_shadow_scan_outputs_negative_nlp
+            COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/unit/lp_ti_shadow_scan.py outputs
+                ${CMAKE_SOURCE_DIR}/tests/unit/lp_scan_fixture_nlp.c)
+        set_tests_properties(lp_shadow_scan_outputs_negative_nlp PROPERTIES WILL_FAIL TRUE)
+    endif()
     add_test(NAME lp_sh_guard_hook
         COMMAND ${RQ_SH_CC} ${RQ_SH_ARGS} -I${CMAKE_SOURCE_DIR}/platform -Wall -Wextra -Wconversion
             ${CMAKE_SOURCE_DIR}/app/lp_hook.c)
@@ -2615,7 +2660,11 @@ foreach(_t IN LISTS _tcu_targets)
     endif()
     set(_def_fca OFF)
     set(_def_nissan OFF)
+    set(_def_nlp OFF)
     foreach(_s IN LISTS _srcs)
+        if(_s MATCHES "(^|/)app/nissan_lp\\.c$")
+            set(_def_nlp ON)
+        endif()
         if(_s MATCHES "io/vehicle/(profile_fca|fca_tx)\\.c$")
             set(_def_fca ON)
         endif()
@@ -2628,6 +2677,10 @@ foreach(_t IN LISTS _tcu_targets)
     endif()
     if(_def_nissan)
         target_compile_definitions(${_t} PRIVATE TCU_VEHICLE_NISSAN=1)
+    endif()
+    if(_def_nlp)
+        # NISSAN_LP_LIVE: the switch follows its source (app/nissan_lp.c; the Nissan configure only)
+        target_compile_definitions(${_t} PRIVATE NISSAN_LP_LIVE=1)
     endif()
 endforeach()
 

@@ -131,6 +131,11 @@ static void ss_frame_10ms(uint8_t mode)
     }
 }
 #endif
+#if defined(NLP_CHAIN)
+/* (2026-11-23) the NISSAN_LP_LIVE chain test (tests/unit/test_nissan_lp_chain.c): called after
+ * every law pass with the frame number */
+static void nlp_law_pass(unsigned frame);
+#endif
 #if defined(LP_TEST)
 /* (2026-11-20, ~/tcu_sweep/lp_ti_shadow_port.md): THE LINE-PRESSURE / TORQUE-INTERVENTION SHADOWS'
  * live identity - their 10 ms pass at app/main.c's slot (right after the gear-pair shadow), the live
@@ -1062,6 +1067,9 @@ static void run_g(gr_t *g)
 #endif
                 if (drv_out_wit()->law_n != law0) {
                     law0 = drv_out_wit()->law_n;
+#if defined(NLP_CHAIN)
+                    nlp_law_pass(p);    /* NISSAN_LP_LIVE chain test: the law's Sys after this pass */
+#endif
                     r->passes++;
                     observe(&now);
                     diff_print(r, p, &prev, &now);

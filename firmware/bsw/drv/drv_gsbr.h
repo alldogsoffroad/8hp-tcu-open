@@ -84,6 +84,30 @@ _Static_assert(GS_G6B == 1, "gs bridge: G6b - on SH builds a live seam carries t
 #define DRV_RQ_PCONT_TABLE { DRV_RQ_PCONT_A, DRV_RQ_PCONT_D, DRV_RQ_PCONT_B, DRV_RQ_PCONT_E, \
                              DRV_RQ_PCONT_C, DRV_RQ_PCONT_WK, DRV_RQ_PCONT_SYS }
 
+/* THE NISSAN LINE-PRESSURE LIVE SWITCH (2026-11-23, app/nissan_lp.h; user-approved design):
+ * NISSAN_LP_LIVE=1 (CMake defines it on every target that builds app/nissan_lp.c - the Nissan
+ * configure only; absent in FCA, whose images stay byte-identical) - the seam hands channel 6
+ * (Sys) the healthy line-pressure shadow's law value, gated, instead of the candidate's 500
+ * while it carries the candidate; the P content (latched / fenced) keeps Sys 500. The request
+ * law's guard then passes channel 6 inside the stock's Sys range [500, 8500] (cal 0x1FEF6C /
+ * 0x1FEF6E, the 0x107FE0 clamp) instead of the 500-only rule. DRV_RQ_SYS_LIVE is the one
+ * normalized form every TU tests. */
+#if defined(NISSAN_LP_LIVE) && (NISSAN_LP_LIVE != 0)
+#  define DRV_RQ_SYS_LIVE 1
+#else
+#  define DRV_RQ_SYS_LIVE 0
+#endif
+#if DRV_RQ_SYS_LIVE
+#  if !defined(TCU_VEHICLE_NISSAN) || (TCU_VEHICLE_NISSAN != 1) || (NISSAN_LP_LIVE != 1)
+#    error "drv_gsbr: NISSAN_LP_LIVE is 1 and only in the Nissan build (TCU_VEHICLE_NISSAN=1)"
+#  endif
+#  if (GS_LIVE_DIR == 0) || (GS_G6B != 1)
+#    error "drv_gsbr: NISSAN_LP_LIVE needs the seam carrying the candidate under the monitor (GS_LIVE_DIR 3, GS_G6B 1)"
+#  endif
+#  define DRV_RQ_SYS_LIVE_MIN  500u
+#  define DRV_RQ_SYS_LIVE_MAX  8500u
+#endif
+
 #if GS_LIVE_DIR != 0
 /* the seam (host G2/G3 dry-run builds only in G1): true and *v = the
  * bridged current (0.1 mA, already inside the bridge's guard) for channel

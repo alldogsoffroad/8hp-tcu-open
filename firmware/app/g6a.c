@@ -40,6 +40,11 @@ static volatile g6a_t s_g6a G6A_SEC;
 #define LRD8(a)     (*(const volatile uint8_t *)(uintptr_t)(a))
 #define LRD16(a)    (*(const volatile uint16_t *)(uintptr_t)(a))
 #define G6A_NCH     7u          /* ch 0..6: A D B E C WK Sys */
+#if DRV_RQ_SYS_LIVE
+#  define G6A_LAW_NCH 6u        /* NISSAN_LP_LIVE: Sys (ch 6) not replicable here (wire_cur) */
+#else
+#  define G6A_LAW_NCH 7u
+#endif
 #define LAW_I(ch)       LRD16(0xFFF94ED4u + 2u * (uint32_t)(ch))   /* 0x94ED4[ch] gated current */
 #define SEQ2_0          LRD8(0xFFF94FD0u)                         /* seq2 state, channel 0 */
 
@@ -85,6 +90,15 @@ static uint16_t wire_cur(uint8_t ch, bool applied, const volatile gsb_t *b, bool
             return v;
         }
     } else {
+#if DRV_RQ_SYS_LIVE
+        if (ch == 6u) {
+            /* NISSAN_LP_LIVE (app/nissan_lp.h): the seam's Sys is the line-pressure shadow's
+             * value, computed AFTER this comparison in the 10 ms task (lp_hook_10ms) - not
+             * replicable here: the candidate's own Sys is recorded and channel 6 is left out
+             * of the law cross-check (G6A_LAW_NCH); the Nissan chain test checks it instead */
+            return gs_cand_cur(ch);
+        }
+#endif
         v = (b->src == GSM_S_CAND) ? gs_cand_cur(ch) : PCONT[ch];
         if (v == PCONT[ch]) {
             return v;
@@ -145,7 +159,7 @@ static void compare(void)
         const uint32_t ln = drv_out_wit()->law_n;
         if (C.prev_ok != 0u && ln != C.prev_law && SEQ2_0 == (uint8_t)'U') {
             C.law_n++;
-            for (uint8_t ch = 0u; ch < 7u; ch++) {
+            for (uint8_t ch = 0u; ch < G6A_LAW_NCH; ch++) {
                 if (LAW_I(ch) != C.prev_app[ch]) {
                     C.law_x++;
                     break;
