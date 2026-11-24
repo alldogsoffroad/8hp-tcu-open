@@ -274,6 +274,13 @@ plant or by a scan tool.
 | 2 | A only |
 | 3 | B only |
 
+**Bench, a real JL Wrangler shifter on the shifter bus (2026-11-24, lab record "D-N1: THE JEEP JL
+SHIFTER ON THE BENCH")** [O]: `0x210` byte 0 bits 2..0 = **1 P, 2 R, 3 N, 4 D, 5 M** (manual
+gate); **bit 4 = tap active, bit 3 = 1 downshift / 0 upshift** (0x05 M, 0x1D M−, 0x15 M+); bytes
+1–2 = 0; counter byte 3 high nibble, CRC-8 J1850 over bytes 0–3 in byte 4 (valid in every frame);
+period 20 ms. The shifter sends only while it receives the TCU's `0x300` (spec 08). Open: where
+the stock type-1 path reads code 5 and the tap bits.
+
 A source is usable when its message status byte is 0 (no timeout / integrity error) and its
 code passes the table check below. `E95D` = 0 (preferred source used), 1 (fallback used),
 2 (no valid source).

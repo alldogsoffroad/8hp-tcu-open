@@ -22,6 +22,9 @@ the electronic shifter module**; the shifter messages on that bus duplicate thos
 shifter type 0; details in spec 14 §5a. Bus 2 is the dedicated shifter bus as well as the
 diagnostic path; transmit `0x300` on bus 2 is [I] the TCM's message to the shifter. Which TCM pin pair is bus 1 and which is bus 2 must be confirmed on the bench. For the
 Nissan swap the shifter messages will have to be emulated (later work).
+[O bench 2026-11-24] A JL Wrangler shifter (P68268664AG) on its own: the shifter bus is 500 kbit/s,
+the shifter sends only `0x210` (20 ms) and only while it receives `0x300` from the TCU; layout and
+lever codes in spec 14 §5a.
 
 ## 1. Receive path (behavior to reproduce)
 

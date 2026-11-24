@@ -53,6 +53,11 @@ Idle payloads without a vehicle (first frames): `0x037` / `0x2F9` = `1F FF 1F FF
 fast, protected messages `0x037` and `0x2F9` have the shape of torque request/limit values sent to
 the engine controller; meaning to be confirmed.
 
+**`0x300` keeps the shifter awake** [O bench 2026-11-24]: the stock sequence above (6 × `00 00 FF 00`,
+3 × `00 00 4E 02`, then `00 00 4E 42`; counter byte 4 high nibble, CRC byte 5), replayed every 20 ms
+to a JL Wrangler shifter alone, keeps it awake and sending `0x210`; ~1 s after it stops the shifter
+goes silent and sleeps. Byte meanings still open.
+
 The TCU also receives `0x037`, `0x2F9` and `0x170` back and checks them (spec 07 §5).
 
 Note: comma.ai opendbc names `0x144` "SPEED_2" and treats it as received by other modules; in

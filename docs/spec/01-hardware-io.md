@@ -142,6 +142,11 @@ TCM connector: 16-pin round.
 | 14 | ground | Z908 |
 | 15 | **TRS Park signal output** (hard-wired, to another module) | T824 |
 
+**Shifter end of the shifter bus (bench 2026-11-24, JL Wrangler shifter P68268664AG, 6-wire
+pigtail)** [O]: pin 1 ground (black), pin 6 battery (red/yellow), **pin 4 CAN-H / pin 5 CAN-L of
+the shifter bus** (to TCM pins 4/3), pins 2/3 CAN-C [I]. The shifter carries the bus's 120 Ω
+terminator (124.4 Ω across pins 4–5 unpowered); 0.8 A start-up, ~0.37 A awake.
+
 **Bench measurement (2026-10-17, spare unit, unpowered):** 27.68 kΩ between pins 5–6 and
 27.68 kΩ between pins 3–4, i.e. **no internal CAN termination** on either bus; the value is the
 transceivers' unpowered input resistance. On the bench each bus needs 120 Ω at the TCU end as
