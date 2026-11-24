@@ -12,8 +12,9 @@
  *                          B3 = 1 in 1st gear, B4 torque cut (fraction x 256; the ECM converts
  *                          it to spark retard), B5[6:3] shift type: 0..3 = 1-2..4-5, 9 = 4-3,
  *                          13 = 5-4, 15 = none
- *   0x560  4 bytes, 100 ms B1 page / B2 page data, 12 pages cycling, B0 0x65, B3 0: replayed
- *                          as logged (meanings open [I]); its timeout sets U0101 (lost
+ *   0x560  4 bytes, 100 ms B1 page / B2 page data, 12 pages cycling, B0 0x65 (ATF 51 degC [I]);
+ *                          pages 0x10-0x15 = calibration ID "8HP001", 0x16-0x17 = CVN (image CRC),
+ *                          0x40-0x43 = TCM fault bitmaps 00; its timeout sets U0101 (lost
  *                          communication with the TCM) in the ECM (ROM 0x9CAFC; bench-proven
  *                          2026-11-23: U0101 cleared only once 0x560 was sent)
  * Losing 0x174 / 0x176 / 0x177 for about 1-2 s sets U1001.
@@ -42,6 +43,9 @@ struct vehicle_out;                          /* io/vehicle/vehicle_tx.h */
 void nissan_tx_set(const struct vehicle_out *o);  /* takes the drivetrain fields when drivetrain_valid */
 bool nissan_tx_enable(bool on);              /* false (and stays off) until valid data was set */
 uint32_t nissan_tx_sent_count(void);         /* frames transmitted since nissan_tx_init */
+#if !defined(__sh__) || defined(TCU_RAM_APP)
+extern uint32_t nissan_tx_host_crc;          /* host / RAM app: stands for the code-flash image CRC */
+#endif
 uint8_t nissan_tx_shift_code(uint8_t engaged, uint8_t target);   /* 0x177 B5[6:3] */
 void nissan_tx_build(uint8_t idx, can_frame_t *f);   /* 0 = 0x174, 1 = 0x176, 2 = 0x177, 3 = 0x560 */
 

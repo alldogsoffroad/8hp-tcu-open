@@ -448,8 +448,8 @@ static void test_tx(void)
             } else if (t->id == 0x421u) {
                 n421++;
             } else if (t->id == 0x560u) {
-                CHECK(t->dlc == 4u && t->data[0] == 0x65u && t->data[1] == 0x15u && t->data[2] == 0x36u &&
-                      t->data[3] == 0u);                 /* page 0, as logged */
+                CHECK(t->dlc == 4u && t->data[0] == 0x65u && t->data[1] == 0x15u && t->data[2] == '1' &&
+                      t->data[3] == 0u);                 /* page 0x15: the 6th ID character of "8HP001" */
                 n560++;
             }
         }
@@ -464,7 +464,10 @@ static void test_tx(void)
     /* 0x560 cycles its 12 logged pages, one per 100 ms frame */
     {
         static const uint8_t pg[13] = { 0x16, 0x17, 0x40, 0x41, 0x42, 0x43, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16 };
+        static const uint8_t dt[13] = { 0x14, 0x06, 0, 0, 0, 0, '8', 'H', 'P', '0', '0', '1', 0x14 };
         bool ok = true;
+
+        nissan_tx_host_crc = 0x1406A444u;            /* the CVN: the image CRC's top two bytes */
 
         for (unsigned k = 0u; k < 13u; k++) {
             stub.n_tx = 0u;
@@ -472,7 +475,7 @@ static void test_tx(void)
                 vehicle_tx_tick_1ms();
             }
             const can_frame_t *t = last_tx(0x560u);
-            if (t == NULL || t->data[1] != pg[k]) {
+            if (t == NULL || t->data[1] != pg[k] || t->data[2] != dt[k]) {
                 ok = false;
             }
         }

@@ -7,6 +7,10 @@
 
 enum { T_174, T_176, T_177, T_560, T_COUNT };
 
+#if !defined(__sh__) || defined(TCU_RAM_APP)
+uint32_t nissan_tx_host_crc;                       /* tests: the image CRC the CVN pages report */
+#endif
+
 static const com_tx_cfg_t s_msg[T_COUNT] = {
     [T_174] = { NISSAN_TX_ID_174, CAN_BUS1, 8u, 10u, false, false },
     [T_176] = { NISSAN_TX_ID_176, CAN_BUS1, 7u, 10u, false, false },
@@ -19,12 +23,41 @@ static const com_tx_cfg_t s_msg[T_COUNT] = {
  * the TCM) watches this frame (0x9CAFC). Decoded 2026-11-23 (handler 0xE2D48): pages 0x10-0x15 =
  * the TCM's calibration ID for OBD Mode 09 (here the truck's "RH2236"), 0x16-0x17 its CVN,
  * 0x40-0x43 TCM fault bitmaps (must stay 00: a set bit makes the ECM log a DTC). TODO(decision):
- * report this TCU's own calibration ID / CVN instead of the truck TCM's. */
+ * The calibration ID and CVN are THIS TCU's (user, 2026-11-23): ID "8HP001", CVN = the top two
+ * bytes of the application image's CRC-32 (application header +0x44, written by
+ * tools/build_image.py), so an OBD Mode 09 scan reports what is installed. Page order as logged.
+ * Page data marked 0xFF below is filled in pack(). */
+#define NISSAN_CAL_ID "8HP001"
 static const uint8_t s_560_pages[12][2] = {
-    { 0x15u, 0x36u }, { 0x16u, 0xC2u }, { 0x17u, 0xC0u }, { 0x40u, 0x00u },
-    { 0x41u, 0x00u }, { 0x42u, 0x00u }, { 0x43u, 0x00u }, { 0x10u, 0x52u },
-    { 0x11u, 0x48u }, { 0x12u, 0x32u }, { 0x13u, 0x32u }, { 0x14u, 0x33u },
+    { 0x15u, 0xFFu }, { 0x16u, 0xFFu }, { 0x17u, 0xFFu }, { 0x40u, 0x00u },
+    { 0x41u, 0x00u }, { 0x42u, 0x00u }, { 0x43u, 0x00u }, { 0x10u, 0xFFu },
+    { 0x11u, 0xFFu }, { 0x12u, 0xFFu }, { 0x13u, 0xFFu }, { 0x14u, 0xFFu },
 };
+
+/* the application image's CRC-32 (header +0x44 at 0x40044); 0 where no code-flash image exists */
+static uint32_t image_crc(void)
+{
+#if defined(__sh__) && !defined(TCU_RAM_APP)
+    return *(const volatile uint32_t *)0x00040044u;
+#else
+    return nissan_tx_host_crc;
+#endif
+}
+
+/* page data: the calibration ID (0x10..0x15), the CVN (0x16 / 0x17), else the table */
+static uint8_t page_data(uint8_t page, uint8_t tbl)
+{
+    if (page >= 0x10u && page <= 0x15u) {
+        return (uint8_t)NISSAN_CAL_ID[page - 0x10u];
+    }
+    if (page == 0x16u) {
+        return (uint8_t)(image_crc() >> 24);
+    }
+    if (page == 0x17u) {
+        return (uint8_t)(image_crc() >> 16);
+    }
+    return tbl;
+}
 #define NISSAN_560_B0 0x65u          /* B0 = ATF temperature, degC + 50 [I]: 0x65 = 51 degC (logged 0x61..0x76) */
 
 /* the drivetrain snapshot the frames are packed from */
@@ -113,7 +146,7 @@ static void pack(uint8_t idx, uint8_t d[8])
 
         d[0] = NISSAN_560_B0;
         d[1] = s_560_pages[p][0];
-        d[2] = s_560_pages[p][1];
+        d[2] = page_data(s_560_pages[p][0], s_560_pages[p][1]);
         break;
     }
     default:
