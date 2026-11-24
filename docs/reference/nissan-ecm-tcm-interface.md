@@ -185,3 +185,48 @@ Tags: [V] verified in code ([V✔] re-checked by hand), [I] inferred.
    FB) of 0xFFFF2401, 0xFFFF234C, 0xFFFF11B8 and 0xFFFF18CE during upshifts on a **running**
    engine. Note: the truck's "actual torque" drop in 0x180 is consistent with either a real
    retard or the ECM reporting its reduced torque target.
+
+## Saved avenue (not started): close the B4 → coil link on the bench
+The logging truck was sold, so the running-engine check has to be simulated. Plan, if needed:
+Teensy generates the VQ40 crank (CKP) and cam (CMP) signals (decode the tooth pattern from the ROM;
+believed 3-wire Hall sensors, 5 V square waves, to be confirmed in the FSM) so the ECM sees rpm;
+replay 0x174/0x176/0x177 with B4 set during an "upshift"; read 0xFFFF2401 / 234C / 11B8 / 18CE
+over CAN (service 23, session FB) and timestamp the IGT coil-trigger outputs against the
+simulated crank to measure the spark advance directly. Desk work first: the tooth pattern, the
+gate conditions 0xFFFF107F / 44E6 / 11A1, and whether the immobilizer (NATS) inhibits ignition.
+Needs the FSM EC pin numbers for CKP, CMP and IGT. Risks: immobilizer, sensor-fault limp modes,
+open-circuit faults on unloaded outputs (harmless on this junkyard unit).
+
+## ECM → TCU inputs for the Nissan profile (truck logs + ROM, 2026-11-23)
+From the user's logs of a 2015 Frontier (64 windows, ~117k frames, 1400–5900 rpm, 0–78 % throttle)
+and the ROM decode. [O] = measured in the logs, [I] = inferred.
+
+**Message periods [O]** (median; p99 and max within +1.5 ms of the median):
+| Period | IDs |
+|---|---|
+| 10 ms | 0x1F9, 0x180, 0x182, 0x160 (ECM, ≈10.2 ms); 0x174, 0x176, 0x177 (TCM, 10.0 ms) |
+| 20 ms | 0x280, 0x284, 0x285 |
+| 40 ms | 0x354 |
+| 60 ms | 0x421 |
+| ≈100 ms | 0x35D, 0x551 (102.4), 0x560, 0x60D, 0x358 |
+
+**Rolling counters [O]** (4-bit, +1 per frame in ≥ 99 % of steps): 0x180 B6[3:0], 0x182 B5[3:0]
+(the same counter in the ROM), 0x174 B4[3:0], 0x176 B6[3:0], 0x284 B6[3:0]. None in 0x160, 0x1F9,
+0x177, 0x354, 0x35D, 0x280. No checksums found.
+
+**Pedal / throttle position [O; I which of the two]:** 10-bit, **0.098 %/bit (raw ÷ 8 ÷ 1.28 →
+same % as the DBC's 0x160 B3 × 0.392)**, raw 0–800 seen (78.4 % at the logged full-throttle
+pulls): 0x180 B5:B6[7:6] = 0x160 B3:B4[7:6] (identical); **0x160 B5:B6[7:6] = 1023 − value**
+(complement copy: an integrity check). Correlates 1.00 with the DBC throttle byte.
+
+**Engine torque [O ranges, I meaning]**, two 12-bit values, phys = raw·5 − 4000 in **0.1 Nm**
+(range seen −67.0 … +353.5 Nm, consistent with a 381 Nm VQ40):
+| Field | Value | Meaning |
+|---|---|---|
+| 0x180 B2:B3[7:4] (first) | −67 … +331 Nm | **actual engine torque**: this one drops during a 0x177 B4 torque cut [O] |
+| 0x180 B3[3:0]:B4 (second) = 0x160 B0:B1[7:4] (first) | −24 … +353.5 Nm | **driver-demand / pre-intervention torque**: unchanged during the cut [O] |
+| 0x160 B1[3:0]:B2 (second) | −67 … +336.5 Nm | close to the actual torque, not identical to 0x180's first value [I: a filtered or differently-timed copy] |
+| raw 0xFFF | invalid (ROM) | |
+
+**Suggested profile timeouts:** ≈ 5 × period (50 ms for the 10 ms frames, 100 ms for 0x280/284/285,
+200 ms for 0x354, 500 ms for the 100 ms frames), with the counters above checked where present.
